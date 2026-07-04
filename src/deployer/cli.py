@@ -51,6 +51,9 @@ def _cmd_verify(args: argparse.Namespace) -> int:
 def _cmd_author(args: argparse.Namespace) -> int:
     project = Path(args.path)
     target = _load_target(args.target)
+    if args.max_iterations < 1:
+        print("error: --max-iterations must be >= 1", file=sys.stderr)
+        return 2
     run = author_dockerfile(
         project,
         target,

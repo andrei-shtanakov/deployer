@@ -78,3 +78,33 @@ def test_e2e_author_loop_with_real_docker(hello_service: Path, tool: str) -> Non
     run = author_dockerfile(hello_service, TARGET, FakeAuthor())
     assert run.success is True
     assert run.stopped_reason == "success"
+
+
+def test_cli_author_with_real_docker_exits_zero(
+    hello_service: Path, tool: str, tmp_path: Path, monkeypatch
+) -> None:
+    import json
+
+    from deployer import cli
+
+    project = tmp_path / "proj"
+    project.mkdir()
+    for name in ("pyproject.toml", "main.py"):
+        (project / name).write_text((hello_service / name).read_text())
+    good = (hello_service / "Dockerfile.good").read_text()
+
+    class FakeAuthor:
+        def generate(self, facts, target):
+            return good
+
+        def repair(self, facts, target, dockerfile, report):
+            return good
+
+    monkeypatch.setattr("deployer.cli.AnthropicAuthor", lambda: FakeAuthor())
+    target_file = tmp_path / "target.json"
+    target_file.write_text('{"service": {"port": 8000}}')
+    exit_code = cli.main(["author", str(project), "--target", str(target_file)])
+    assert exit_code == 0
+    run_data = json.loads((project / ".deployer" / "authoring-run.json").read_text())
+    assert run_data["stopped_reason"] == "success"
+    assert run_data["success"] is True

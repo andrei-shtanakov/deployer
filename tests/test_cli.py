@@ -82,3 +82,7 @@ def test_author_reads_target_json(
     monkeypatch.setattr("deployer.cli.AnthropicAuthor", lambda: FakeAuthor())
     cli.main(["author", str(project), "--no-docker", "--target", str(target_file)])
     assert captured["target"].service.port == 8000
+
+
+def test_author_rejects_nonpositive_max_iterations(tmp_path: Path) -> None:
+    assert cli.main(["author", str(tmp_path), "--max-iterations", "0"]) == 2
