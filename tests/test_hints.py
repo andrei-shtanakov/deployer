@@ -45,3 +45,9 @@ def test_sorted_output() -> None:
 def test_wheel_covered_packages_absent_from_table() -> None:
     for name in ("lxml", "pillow", "cryptography", "numpy", "cffi"):
         assert name not in KNOWN_SYSTEM_DEPS
+
+
+def test_every_gcc_entry_also_carries_libc6_dev() -> None:
+    for hint in KNOWN_SYSTEM_DEPS.values():
+        if "gcc" in hint.build_packages:
+            assert "libc6-dev" in hint.build_packages, hint.python_package

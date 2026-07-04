@@ -3,7 +3,7 @@
 Hints are NOT facts: the table lists only packages with no (or unreliable)
 wheels for linux x86_64/aarch64 as of early 2026. Owner: Andrei. Re-audit on
 base-image major bumps (bookworm->trixie) or every 6 months — stale entries
-fail silently (successful build, bloated image). Debian/bookworm names.
+fail silently (successful build, bloated image). Debian (bookworm/trixie) names.
 """
 
 import re
@@ -23,13 +23,13 @@ KNOWN_SYSTEM_DEPS: dict[str, SystemDepHint] = {
     "psycopg": SystemDepHint(python_package="psycopg", runtime_packages=["libpq5"]),
     "python-ldap": SystemDepHint(
         python_package="python-ldap",
-        build_packages=["libldap2-dev", "libsasl2-dev", "gcc"],
+        build_packages=["libldap2-dev", "libsasl2-dev", "gcc", "libc6-dev"],
         runtime_packages=["libldap-2.5-0", "libsasl2-2"],
     ),
     "uwsgi": SystemDepHint(python_package="uwsgi", build_packages=["build-essential"]),
     "mysqlclient": SystemDepHint(
         python_package="mysqlclient",
-        build_packages=["default-libmysqlclient-dev", "pkg-config", "gcc"],
+        build_packages=["default-libmysqlclient-dev", "pkg-config", "gcc", "libc6-dev"],
         runtime_packages=["libmariadb3"],
     ),
     "llama-cpp-python": SystemDepHint(
@@ -39,16 +39,16 @@ KNOWN_SYSTEM_DEPS: dict[str, SystemDepHint] = {
     ),
     "m2crypto": SystemDepHint(
         python_package="m2crypto",
-        build_packages=["libssl-dev", "swig", "gcc"],
+        build_packages=["libssl-dev", "swig", "gcc", "libc6-dev"],
     ),
     "pygraphviz": SystemDepHint(
         python_package="pygraphviz",
-        build_packages=["graphviz-dev", "gcc"],
+        build_packages=["graphviz-dev", "gcc", "libc6-dev"],
         runtime_packages=["graphviz"],
     ),
     "pyaudio": SystemDepHint(
         python_package="pyaudio",
-        build_packages=["portaudio19-dev", "gcc"],
+        build_packages=["portaudio19-dev", "gcc", "libc6-dev"],
         runtime_packages=["libportaudio2"],
     ),
 }
