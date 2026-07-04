@@ -1,3 +1,6 @@
+import pytest
+from pydantic import ValidationError
+
 from deployer.models import (
     AuthoringRun,
     CheckResult,
@@ -73,3 +76,17 @@ def test_authoring_run_serializes() -> None:
         success=False,
     )
     assert '"static_only"' in run.model_dump_json()
+
+
+def test_failed_check_requires_failure_kind() -> None:
+    with pytest.raises(ValidationError):
+        CheckResult(check_id="x", status=CheckStatus.FAILED)
+
+
+def test_error_signature_sorts_multiple_failures() -> None:
+    a = _failed("zeta", FailureKind.AUTHORING, "zz")
+    b = _failed("alpha", FailureKind.AUTHORING, "aa")
+    r1 = VerificationReport(results=[a, b])
+    r2 = VerificationReport(results=[b, a])
+    assert r1.error_signature() == r2.error_signature()
+    assert r1.error_signature() == "alpha:aa|zeta:zz"

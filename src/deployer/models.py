@@ -3,7 +3,7 @@
 from enum import StrEnum
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class ServiceSpec(BaseModel):
@@ -23,7 +23,10 @@ class DeployTarget(BaseModel):
 
 
 class ProjectFacts(BaseModel):
-    """Deterministically scanned project facts. Missing facts are None, never guessed."""
+    """Deterministically scanned project facts.
+
+    Missing facts are None, never guessed.
+    """
 
     name: str | None = None
     requires_python: str | None = None
@@ -34,6 +37,8 @@ class ProjectFacts(BaseModel):
 
 
 class CheckStatus(StrEnum):
+    """Outcome status of a verification check."""
+
     PASSED = "passed"
     FAILED = "failed"
     WARNING = "warning"
@@ -41,6 +46,8 @@ class CheckStatus(StrEnum):
 
 
 class FailureKind(StrEnum):
+    """Taxonomy of failure causes."""
+
     AUTHORING = "authoring"
     ENVIRONMENT = "environment"
 
@@ -52,6 +59,14 @@ class CheckResult(BaseModel):
     status: CheckStatus
     failure_kind: FailureKind | None = None
     message: str = ""
+
+    @model_validator(mode="after")
+    def enforce_failure_taxonomy(self) -> "CheckResult":
+        if self.status is CheckStatus.FAILED and self.failure_kind is None:
+            raise ValueError(
+                "CheckResult with status=FAILED must have failure_kind set"
+            )
+        return self
 
 
 class VerificationReport(BaseModel):
