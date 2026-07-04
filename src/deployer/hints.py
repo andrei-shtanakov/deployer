@@ -78,5 +78,5 @@ def collect_hints(facts: ProjectFacts) -> list[SystemDepHint]:
     for name in sorted(candidates):
         hint = KNOWN_SYSTEM_DEPS.get(name)
         if hint is not None and (hint.build_packages or hint.runtime_packages):
-            hints.append(hint)
+            hints.append(hint.model_copy(deep=True))
     return hints

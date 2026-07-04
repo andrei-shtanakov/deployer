@@ -8,6 +8,7 @@ from typing import Any, Literal
 from deployer.models import ProjectFacts
 
 _REQ_NAME_SPLIT = re.compile(r"[=<>!~;\[\s]")
+_VALID_NAME = re.compile(r"^[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?$")
 
 
 def _normalize_requirement_name(raw: str) -> str:
@@ -31,7 +32,7 @@ def _parse_requirements(path: Path) -> list[str]:
             entries.append(stripped)
             continue
         name = _normalize_requirement_name(stripped)
-        if name:
+        if name and _VALID_NAME.match(name):
             entries.append(name)
     return entries
 

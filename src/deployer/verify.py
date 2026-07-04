@@ -23,6 +23,7 @@ from deployer.models import (
 
 HADOLINT_VERSION = "2.12.0"
 _ENV_ASSIGNMENT = re.compile(r"^(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)+")
+_PYTHON_M_PIP = re.compile(r"^\S*python[\d.]*\s+-m\s+pip\s+install\b")
 
 
 def parse_dockerfile(text: str) -> list[tuple[str, str]]:
@@ -153,9 +154,8 @@ def _check_install_strategy(
     # pip-in-uv-project rule
     if facts.package_manager == "uv":
         for cmd in commands:
-            if (
-                cmd.startswith(("pip install", "pip3 install"))
-                or " -m pip install" in cmd
+            if cmd.startswith(("pip install", "pip3 install")) or _PYTHON_M_PIP.match(
+                cmd
             ):
                 problems.append("project uses uv (uv.lock) but Dockerfile invokes pip")
                 break

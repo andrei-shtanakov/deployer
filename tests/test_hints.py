@@ -51,3 +51,10 @@ def test_every_gcc_entry_also_carries_libc6_dev() -> None:
     for hint in KNOWN_SYSTEM_DEPS.values():
         if "gcc" in hint.build_packages:
             assert "libc6-dev" in hint.build_packages, hint.python_package
+
+
+def test_collect_hints_returns_copies() -> None:
+    facts = ProjectFacts(dependencies=["psycopg2"])
+    hints = collect_hints(facts)
+    hints[0].build_packages.append("EVIL")
+    assert "EVIL" not in KNOWN_SYSTEM_DEPS["psycopg2"].build_packages

@@ -108,3 +108,11 @@ def test_bom_prefixed_requirements_parse_clean(tmp_path: Path) -> None:
     (tmp_path / "requirements.txt").write_bytes(b"\xef\xbb\xbfflask==3.0\n")
     facts = analyze_project(tmp_path)
     assert facts.requirements_files["requirements.txt"] == ["flask"]
+
+
+def test_vcs_and_url_requirements_are_skipped(tmp_path: Path) -> None:
+    (tmp_path / "requirements.txt").write_text(
+        "git+https://github.com/x/y.git\nhttps://example.com/pkg.whl\nflask\n"
+    )
+    facts = analyze_project(tmp_path)
+    assert facts.requirements_files["requirements.txt"] == ["flask"]
