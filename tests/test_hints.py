@@ -7,6 +7,7 @@ def test_psycopg2_matched_from_pyproject_deps() -> None:
     hints = collect_hints(facts)
     assert [h.python_package for h in hints] == ["psycopg2"]
     assert "libpq-dev" in hints[0].build_packages
+    assert "libc6-dev" in hints[0].build_packages
     assert "libpq5" in hints[0].runtime_packages
 
 

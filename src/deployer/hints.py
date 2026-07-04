@@ -15,7 +15,7 @@ _NAME_SPLIT = re.compile(r"[=<>!~;\[\s]")
 KNOWN_SYSTEM_DEPS: dict[str, SystemDepHint] = {
     "psycopg2": SystemDepHint(
         python_package="psycopg2",
-        build_packages=["libpq-dev", "gcc"],
+        build_packages=["libpq-dev", "gcc", "libc6-dev"],
         runtime_packages=["libpq5"],
     ),
     # Explicit no-hint entry: the whole point of -binary is the prebuilt wheel.
