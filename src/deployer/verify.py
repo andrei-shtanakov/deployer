@@ -22,6 +22,7 @@ from deployer.models import (
 )
 
 HADOLINT_VERSION = "2.12.0"
+_ENV_ASSIGNMENT = re.compile(r"^(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)+")
 
 
 def parse_dockerfile(text: str) -> list[tuple[str, str]]:
@@ -103,6 +104,9 @@ def _run_commands(run_lines: list[str]) -> list[str]:
     for line in run_lines:
         for segment in re.split(r"&&|\|\||;|\|", line):
             stripped = segment.strip()
+            if not stripped:
+                continue
+            stripped = _ENV_ASSIGNMENT.sub("", stripped)
             if stripped:
                 commands.append(stripped)
     return commands

@@ -200,3 +200,23 @@ def test_python_m_pip_detected_in_uv_project(hello_service: Path) -> None:
     )
     report = verify_static(dockerfile, hello_service, facts)
     assert _by_id(report, "install_strategy").status is CheckStatus.FAILED
+
+
+def test_env_prefix_does_not_bypass_rules(hello_service: Path) -> None:
+    facts = ProjectFacts(package_manager="uv", has_build_system=False)
+    dockerfile = (
+        "FROM python:3.12-slim\nWORKDIR /app\nCOPY main.py .\n"
+        "RUN UV_LINK_MODE=copy uv sync --frozen\n"
+        'CMD ["python", "main.py"]\n'
+    )
+    report = verify_static(dockerfile, hello_service, facts)
+    assert _by_id(report, "install_strategy").status is CheckStatus.FAILED
+
+    facts_uv = ProjectFacts(package_manager="uv", has_build_system=True)
+    dockerfile2 = (
+        "FROM python:3.12-slim\nWORKDIR /app\nCOPY main.py .\n"
+        "RUN PIP_NO_CACHE_DIR=1 pip install -r requirements.txt\n"
+        'CMD ["python", "main.py"]\n'
+    )
+    report2 = verify_static(dockerfile2, hello_service, facts_uv)
+    assert _by_id(report2, "install_strategy").status is CheckStatus.FAILED
