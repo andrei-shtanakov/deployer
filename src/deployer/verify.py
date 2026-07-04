@@ -284,7 +284,6 @@ def _run_healthcheck(
                 tool,
                 "run",
                 "-d",
-                "--rm",
                 "--name",
                 container,
                 "--network=none",
@@ -326,13 +325,14 @@ def _run_healthcheck(
         logs = subprocess.run(
             [tool, "logs", container], capture_output=True, text=True, timeout=10
         )
+        log_text = (logs.stdout + "\n" + logs.stderr).strip()
         return CheckResult(
             check_id="run_healthcheck",
             status=CheckStatus.FAILED,
             failure_kind=FailureKind.AUTHORING,
             message=(
                 f"healthcheck {url} failed within {timeout}s: "
-                f"{_tail(last_error, 3)}\ncontainer logs:\n{_tail(logs.stdout)}"
+                f"{_tail(last_error, 3)}\ncontainer logs:\n{_tail(log_text)}"
             ),
         )
     except subprocess.TimeoutExpired:

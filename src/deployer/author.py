@@ -50,38 +50,52 @@ def author_dockerfile(
     environment_retries = 0
     hadolint_available = False
     stopped_reason: StopReason = "budget_exhausted"
-    dockerfile = author.generate(facts, target)
+    llm_error: str | None = None
     prev_signature: str | None = None
 
-    for index in range(max_iterations):
-        start = time.monotonic()
-        report = verify(dockerfile, project_path, target, tool)
-        if report.environment_failures and environment_retries == 0:
-            environment_retries += 1
-            report = verify(dockerfile, project_path, target, tool)
-        iterations.append(
-            IterationRecord(
-                index=index,
-                dockerfile=dockerfile,
-                report=report,
-                duration_s=time.monotonic() - start,
-            )
-        )
-        hadolint_available = report.hadolint_available
+    dockerfile: str | None
+    try:
+        dockerfile = author.generate(facts, target)
+    except Exception as exc:
+        dockerfile = None
+        llm_error = f"{exc.__class__.__name__}: {exc}"
+        stopped_reason = "llm_error"
 
-        if report.environment_failures:
-            stopped_reason = "environment_failure"
-            break
-        if report.passed:
-            stopped_reason = "success" if tool is not None else "static_only"
-            break
-        signature = report.error_signature()
-        if signature == prev_signature:
-            stopped_reason = "no_progress"
-            break
-        prev_signature = signature
-        if index < max_iterations - 1:
-            dockerfile = author.repair(facts, target, dockerfile, report)
+    if dockerfile is not None:
+        for index in range(max_iterations):
+            start = time.monotonic()
+            report = verify(dockerfile, project_path, target, tool)
+            if report.environment_failures and environment_retries == 0:
+                environment_retries += 1
+                report = verify(dockerfile, project_path, target, tool)
+            iterations.append(
+                IterationRecord(
+                    index=index,
+                    dockerfile=dockerfile,
+                    report=report,
+                    duration_s=time.monotonic() - start,
+                )
+            )
+            hadolint_available = report.hadolint_available
+
+            if report.environment_failures:
+                stopped_reason = "environment_failure"
+                break
+            if report.passed:
+                stopped_reason = "success" if tool is not None else "static_only"
+                break
+            signature = report.error_signature()
+            if signature == prev_signature:
+                stopped_reason = "no_progress"
+                break
+            prev_signature = signature
+            if index < max_iterations - 1:
+                try:
+                    dockerfile = author.repair(facts, target, dockerfile, report)
+                except Exception as exc:
+                    llm_error = f"{exc.__class__.__name__}: {exc}"
+                    stopped_reason = "llm_error"
+                    break
 
     return AuthoringRun(
         project=facts.name or project_path.name,
@@ -92,4 +106,5 @@ def author_dockerfile(
         hadolint_available=hadolint_available,
         stopped_reason=stopped_reason,
         success=stopped_reason == "success",
+        llm_error=llm_error,
     )

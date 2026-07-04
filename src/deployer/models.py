@@ -109,7 +109,12 @@ class IterationRecord(BaseModel):
 
 
 StopReason = Literal[
-    "success", "budget_exhausted", "no_progress", "environment_failure", "static_only"
+    "success",
+    "budget_exhausted",
+    "no_progress",
+    "environment_failure",
+    "static_only",
+    "llm_error",
 ]
 
 
@@ -124,3 +129,4 @@ class AuthoringRun(BaseModel):
     hadolint_available: bool = False
     stopped_reason: StopReason
     success: bool
+    llm_error: str | None = None

@@ -87,6 +87,46 @@ def test_budget_exhausted_returns_failed_run(hello_service: Path) -> None:
     assert len(run.iterations) == 3
 
 
+class ExplodingAuthor:
+    """An author whose generate() or repair() raises, like an LLM/API outage."""
+
+    def __init__(self, explode_on: str) -> None:
+        self._explode_on = explode_on
+
+    def generate(self, facts: ProjectFacts, target: DeployTarget) -> str:
+        if self._explode_on == "generate":
+            raise RuntimeError("api down")
+        return BAD_COPY
+
+    def repair(
+        self,
+        facts: ProjectFacts,
+        target: DeployTarget,
+        dockerfile: str,
+        report: VerificationReport,
+    ) -> str:
+        raise RuntimeError("rate limited")
+
+
+def test_generate_error_yields_llm_error_run(hello_service: Path) -> None:
+    run = author_dockerfile(
+        hello_service, DeployTarget(), ExplodingAuthor("generate"), run_docker=False
+    )
+    assert run.stopped_reason == "llm_error"
+    assert run.iterations == []
+    assert run.success is False
+    assert "RuntimeError" in (run.llm_error or "")
+
+
+def test_repair_error_preserves_completed_iterations(hello_service: Path) -> None:
+    run = author_dockerfile(
+        hello_service, DeployTarget(), ExplodingAuthor("repair"), run_docker=False
+    )
+    assert run.stopped_reason == "llm_error"
+    assert len(run.iterations) == 1  # the failed BAD_COPY iteration is preserved
+    assert run.success is False
+
+
 def test_environment_failure_retries_once_without_consuming_iteration(
     hello_service: Path, monkeypatch
 ) -> None:
