@@ -123,46 +123,59 @@ def _check_hadolint(dockerfile: str) -> tuple[CheckResult, bool]:
             ),
             False,
         )
-    version = subprocess.run(
-        [binary, "--version"], capture_output=True, text=True, timeout=10
-    ).stdout
-    if HADOLINT_VERSION not in version:
+    try:
+        version = subprocess.run(
+            [binary, "--version"], capture_output=True, text=True, timeout=10
+        ).stdout
+        if HADOLINT_VERSION not in version:
+            return (
+                CheckResult(
+                    check_id="hadolint",
+                    status=CheckStatus.SKIPPED,
+                    message=f"hadolint version mismatch (want {HADOLINT_VERSION}, "
+                    f"got: {version.strip()}); run is non-comparable",
+                ),
+                False,
+            )
+        proc = subprocess.run(
+            [binary, "--no-color", "-f", "json", "-"],
+            input=dockerfile,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        findings = json.loads(proc.stdout) if proc.stdout.strip() else []
+        errors = [f for f in findings if f.get("level") == "error"]
+        if errors:
+            lines = "; ".join(f"{f['code']}: {f['message']}" for f in errors)
+            return (
+                CheckResult(
+                    check_id="hadolint",
+                    status=CheckStatus.FAILED,
+                    failure_kind=FailureKind.AUTHORING,
+                    message=lines,
+                ),
+                True,
+            )
+        if findings:
+            lines = "; ".join(f"{f['code']}: {f['message']}" for f in findings)
+            return (
+                CheckResult(
+                    check_id="hadolint", status=CheckStatus.WARNING, message=lines
+                ),
+                True,
+            )
+        return (CheckResult(check_id="hadolint", status=CheckStatus.PASSED), True)
+    except (subprocess.TimeoutExpired, json.JSONDecodeError, OSError) as exc:
         return (
             CheckResult(
                 check_id="hadolint",
                 status=CheckStatus.SKIPPED,
-                message=f"hadolint version mismatch (want {HADOLINT_VERSION}, "
-                f"got: {version.strip()}); run is non-comparable",
+                message=f"hadolint execution failed ({exc.__class__.__name__}); "
+                "run is non-comparable",
             ),
             False,
         )
-    proc = subprocess.run(
-        [binary, "--no-color", "-f", "json", "-"],
-        input=dockerfile,
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    findings = json.loads(proc.stdout) if proc.stdout.strip() else []
-    errors = [f for f in findings if f.get("level") == "error"]
-    if errors:
-        lines = "; ".join(f"{f['code']}: {f['message']}" for f in errors)
-        return (
-            CheckResult(
-                check_id="hadolint",
-                status=CheckStatus.FAILED,
-                failure_kind=FailureKind.AUTHORING,
-                message=lines,
-            ),
-            True,
-        )
-    if findings:
-        lines = "; ".join(f"{f['code']}: {f['message']}" for f in findings)
-        return (
-            CheckResult(check_id="hadolint", status=CheckStatus.WARNING, message=lines),
-            True,
-        )
-    return (CheckResult(check_id="hadolint", status=CheckStatus.PASSED), True)
 
 
 def verify_static(dockerfile: str, project_path: Path) -> VerificationReport:

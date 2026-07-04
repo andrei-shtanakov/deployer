@@ -75,3 +75,41 @@ def test_hadolint_skipped_marks_non_comparable(
     report = verify_static(GOOD, hello_service)
     assert _by_id(report, "hadolint").status is CheckStatus.SKIPPED
     assert report.hadolint_available is False
+
+
+def test_hadolint_timeout_degrades_to_skipped(hello_service: Path, monkeypatch) -> None:
+    import subprocess
+
+    monkeypatch.setattr("deployer.verify.shutil.which", lambda _: "/usr/bin/hadolint")
+
+    def _boom(*args, **kwargs):
+        raise subprocess.TimeoutExpired(cmd="hadolint", timeout=30)
+
+    monkeypatch.setattr("deployer.verify.subprocess.run", _boom)
+    report = verify_static(GOOD, hello_service)
+    check = _by_id(report, "hadolint")
+    assert check.status is CheckStatus.SKIPPED
+    assert report.hadolint_available is False
+
+
+def test_hadolint_garbage_output_degrades_to_skipped(
+    hello_service: Path, monkeypatch
+) -> None:
+    import subprocess
+
+    monkeypatch.setattr("deployer.verify.shutil.which", lambda _: "/usr/bin/hadolint")
+
+    def _fake_run(cmd, **kwargs):
+        if "--version" in cmd:
+            return subprocess.CompletedProcess(
+                cmd, 0, stdout="Haskell Dockerfile Linter 2.12.0", stderr=""
+            )
+        return subprocess.CompletedProcess(
+            cmd, 1, stdout="hadolint: internal error", stderr=""
+        )
+
+    monkeypatch.setattr("deployer.verify.subprocess.run", _fake_run)
+    report = verify_static(GOOD, hello_service)
+    check = _by_id(report, "hadolint")
+    assert check.status is CheckStatus.SKIPPED
+    assert report.hadolint_available is False
