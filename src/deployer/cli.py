@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 from deployer.author import author_dockerfile
+from deployer.facts import analyze_project
 from deployer.llm import AnthropicAuthor
 from deployer.models import CheckStatus, DeployTarget, VerificationReport
 from deployer.verify import detect_container_tool, verify
@@ -42,7 +43,11 @@ def _cmd_verify(args: argparse.Namespace) -> int:
         return 1
     target = _load_target(args.target)
     report = verify(
-        dockerfile_path.read_text(), project, target, detect_container_tool()
+        dockerfile_path.read_text(),
+        project,
+        target,
+        detect_container_tool(),
+        analyze_project(project),
     )
     _print_report(report)
     return 0 if report.passed else 1

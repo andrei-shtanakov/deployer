@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Protocol
 
 from deployer.facts import analyze_project
+from deployer.hints import collect_hints
 from deployer.models import (
     AuthoringRun,
     DeployTarget,
@@ -44,6 +45,7 @@ def author_dockerfile(
     this function owns files, subprocesses, and control flow.
     """
     facts = analyze_project(project_path)
+    hints = collect_hints(facts)
     tool = detect_container_tool() if run_docker else None
 
     iterations: list[IterationRecord] = []
@@ -64,10 +66,10 @@ def author_dockerfile(
     if dockerfile is not None:
         for index in range(max_iterations):
             start = time.monotonic()
-            report = verify(dockerfile, project_path, target, tool)
+            report = verify(dockerfile, project_path, target, tool, facts)
             if report.environment_failures and environment_retries == 0:
                 environment_retries += 1
-                report = verify(dockerfile, project_path, target, tool)
+                report = verify(dockerfile, project_path, target, tool, facts)
             iterations.append(
                 IterationRecord(
                     index=index,
@@ -107,4 +109,5 @@ def author_dockerfile(
         stopped_reason=stopped_reason,
         success=stopped_reason == "success",
         llm_error=llm_error,
+        hints_offered=hints,
     )

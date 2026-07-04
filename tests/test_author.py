@@ -134,7 +134,7 @@ def test_environment_failure_retries_once_without_consuming_iteration(
 
     calls = {"n": 0}
 
-    def flaky_verify(dockerfile, project_path, target, tool):
+    def flaky_verify(dockerfile, project_path, target, tool, facts=None):
         calls["n"] += 1
         if calls["n"] == 1:
             return VerificationReport(
@@ -159,3 +159,58 @@ def test_environment_failure_retries_once_without_consuming_iteration(
     assert len(run.iterations) == 1
     assert run.stopped_reason == "success"
     assert run.success is True
+
+
+def test_hints_offered_recorded_and_facts_passed(
+    hello_service: Path, monkeypatch, tmp_path: Path
+) -> None:
+    from deployer.models import SystemDepHint
+
+    project = tmp_path / "proj"
+    project.mkdir()
+    (project / "requirements.txt").write_text("psycopg2\n")
+    (project / "main.py").write_text("print('hi')\n")
+
+    captured: dict = {}
+
+    def spy_verify(dockerfile, project_path, target, tool, facts=None):
+        captured["facts"] = facts
+        return VerificationReport(
+            results=[CheckResult(check_id="parses", status=CheckStatus.PASSED)]
+        )
+
+    monkeypatch.setattr("deployer.author.verify", spy_verify)
+    run = author_dockerfile(
+        project, DeployTarget(), ScriptedAuthor(GOOD), run_docker=False
+    )
+    assert captured["facts"] is not None
+    assert captured["facts"].package_manager == "pip"
+    assert [h.python_package for h in run.hints_offered] == ["psycopg2"]
+    assert isinstance(run.hints_offered[0], SystemDepHint)
+
+
+def test_second_environment_failure_stops_run(hello_service: Path, monkeypatch) -> None:
+    from deployer.models import FailureKind
+
+    calls = {"n": 0}
+
+    def env_fail_verify(dockerfile, project_path, target, tool, facts=None):
+        calls["n"] += 1
+        return VerificationReport(
+            results=[
+                CheckResult(
+                    check_id="build",
+                    status=CheckStatus.FAILED,
+                    failure_kind=FailureKind.ENVIRONMENT,
+                    message=f"flake {calls['n']}",
+                )
+            ]
+        )
+
+    monkeypatch.setattr("deployer.author.verify", env_fail_verify)
+    monkeypatch.setattr("deployer.author.detect_container_tool", lambda: "docker")
+    run = author_dockerfile(hello_service, DeployTarget(), ScriptedAuthor(GOOD))
+    assert run.stopped_reason == "environment_failure"
+    assert run.environment_retries == 1
+    assert run.success is False
+    assert len(run.iterations) == 1

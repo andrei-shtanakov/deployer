@@ -71,3 +71,36 @@ def test_repair_includes_previous_dockerfile_and_failures() -> None:
     prompt = client.messages.calls[0]["messages"][0]["content"]
     assert "COPY nope.py ." in prompt
     assert "nope.py" in prompt
+
+
+def test_generate_includes_hints_and_system_packages() -> None:
+    client = _StubClient("FROM python:3.12-slim\n")
+    author = AnthropicAuthor(client=client)
+    facts = ProjectFacts(
+        package_manager="pip",
+        requirements_files={"requirements.txt": ["psycopg2"]},
+    )
+    target = DeployTarget(system_packages=["curl"])
+    author.generate(facts, target)
+    prompt = client.messages.calls[0]["messages"][0]["content"]
+    assert "Suspected system dependencies" in prompt
+    assert "libpq-dev" in prompt
+    assert "Required system packages" in prompt
+    assert "curl" in prompt
+
+
+def test_generate_omits_empty_blocks() -> None:
+    client = _StubClient("FROM python:3.12-slim\n")
+    author = AnthropicAuthor(client=client)
+    author.generate(ProjectFacts(), DeployTarget())
+    prompt = client.messages.calls[0]["messages"][0]["content"]
+    assert "Suspected system dependencies" not in prompt
+    assert "Required system packages" not in prompt
+
+
+def test_system_prompt_carries_install_strategy_rules() -> None:
+    from deployer.llm import SYSTEM_PROMPT
+
+    assert "uv sync --frozen" in SYSTEM_PROMPT
+    assert "--no-install-project" in SYSTEM_PROMPT
+    assert "trust build errors over hints" in SYSTEM_PROMPT
