@@ -71,18 +71,20 @@ The table and matcher live in `hints.py`:
   platforms (linux x86_64 AND aarch64 — verification runs on Apple-Silicon
   podman, where wheel coverage is thinner). Launch set, post wheel-audit
   (state as of early 2026):
-  - `psycopg2` — build: `libpq-dev, gcc`; runtime: `libpq5` (source-only by design)
+  - `psycopg2` — build: `libpq-dev, gcc, libc6-dev`; runtime: `libpq5` (source-only by design)
   - `psycopg` — build: none; runtime: `libpq5` (pure-python wrapper needs libpq)
   - `psycopg2-binary` — explicit **no-hint entry** (empty lists): the whole point
     of the package is the prebuilt wheel; encoded so a prefix-match can never
     assign it build deps
-  - `python-ldap` — build: `libldap2-dev, libsasl2-dev, gcc`; runtime: `libldap-2.5-0, libsasl2-2`
+  - `python-ldap` — build: `libldap2-dev, libsasl2-dev, gcc, libc6-dev`; runtime: `libldap-2.5-0, libsasl2-2`
   - `uwsgi` — build: `build-essential`; runtime: none
-  - `mysqlclient` — build: `default-libmysqlclient-dev, pkg-config, gcc`; runtime: `libmariadb3` (aarch64 wheels unreliable)
+  - `mysqlclient` — build: `default-libmysqlclient-dev, pkg-config, gcc, libc6-dev`; runtime: `libmariadb3` (aarch64 wheels unreliable)
   - `llama-cpp-python` — build: `build-essential, cmake, git`; runtime: `libgomp1` (evidence: lab_aist)
-  - `M2Crypto` — build: `libssl-dev, swig, gcc`; runtime: none
-  - `pygraphviz` — build: `graphviz-dev, gcc`; runtime: `graphviz`
-  - `pyaudio` — build: `portaudio19-dev, gcc`; runtime: `libportaudio2`
+  - `M2Crypto` — build: `libssl-dev, swig, gcc, libc6-dev`; runtime: none
+  - `pygraphviz` — build: `graphviz-dev, gcc, libc6-dev`; runtime: `graphviz`
+  - `pyaudio` — build: `portaudio19-dev, gcc, libc6-dev`; runtime: `libportaudio2`
+
+  All gcc-bearing entries also carry libc6-dev — on Debian trixie gcc only Recommends it and generated Dockerfiles use --no-install-recommends (live-build evidence, 2026-07-04).
 
   Explicitly EXCLUDED as wheel-covered (would be confident false alarms whose
   cost — a useless apt layer — builds successfully and is invisible to the
@@ -212,6 +214,7 @@ without facts keep the old behavior.
 - The hints table encodes a point-in-time wheel landscape; it fails silently
   when stale (successful build, bloated image) — hence the ownership/re-audit
   rule in §2 and the image-size metric in §5.
+- The no-build-system rule fails any `uv sync` without `--no-install-project` even though current uv treats a project without `[build-system]` as unpackaged (virtual) and would not install it — such a FAILED can cost one repair iteration on a Dockerfile that would have built; research reads must not count these as genuine authoring errors.
 
 ## Out of scope
 

@@ -102,3 +102,9 @@ def test_unreadable_requirements_degrades_to_empty(tmp_path: Path) -> None:
     (tmp_path / "requirements.txt").write_bytes(b"\xff\xfe\x00bad")
     facts = analyze_project(tmp_path)
     assert facts.requirements_files == {"requirements.txt": []}
+
+
+def test_bom_prefixed_requirements_parse_clean(tmp_path: Path) -> None:
+    (tmp_path / "requirements.txt").write_bytes(b"\xef\xbb\xbfflask==3.0\n")
+    facts = analyze_project(tmp_path)
+    assert facts.requirements_files["requirements.txt"] == ["flask"]

@@ -19,7 +19,7 @@ def _normalize_requirement_name(raw: str) -> str:
 def _parse_requirements(path: Path) -> list[str]:
     """Names from one requirements file; directives kept verbatim; never raises."""
     try:
-        text = path.read_text()
+        text = path.read_text(encoding="utf-8-sig")
     except (OSError, UnicodeDecodeError):
         return []
     entries: list[str] = []
