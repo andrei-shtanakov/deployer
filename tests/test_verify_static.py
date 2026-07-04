@@ -68,6 +68,16 @@ def test_pinned_base_image_passes(hello_service: Path) -> None:
     assert _by_id(report, "base_pinned").status is CheckStatus.PASSED
 
 
+def test_base_pinned_skips_platform_flag(hello_service: Path) -> None:
+    text = "FROM --platform=linux/amd64 python:3.12-slim\nCOPY main.py .\n"
+    report = verify_static(text, hello_service)
+    assert _by_id(report, "base_pinned").status is CheckStatus.PASSED
+
+    unpinned = "FROM --platform=linux/amd64 python\nCOPY main.py .\n"
+    report = verify_static(unpinned, hello_service)
+    assert _by_id(report, "base_pinned").status is CheckStatus.WARNING
+
+
 def test_hadolint_skipped_marks_non_comparable(
     hello_service: Path, monkeypatch
 ) -> None:

@@ -99,7 +99,10 @@ def _check_base_pinned(instructions: list[tuple[str, str]]) -> CheckResult:
     for name, args in instructions:
         if name != "FROM":
             continue
-        image = args.split()[0]
+        tokens = [t for t in args.split() if not t.startswith("--")]
+        if not tokens:
+            continue
+        image = tokens[0]
         if "@sha256:" in image:
             continue
         _, _, tag = image.partition(":")
