@@ -7,11 +7,14 @@ hadolint at a pinned version. L2 (docker half, Task 5): sandboxed build + run.
 import json
 import shutil
 import subprocess
+import time
+import uuid
 from pathlib import Path
 
 from deployer.models import (
     CheckResult,
     CheckStatus,
+    DeployTarget,
     FailureKind,
     VerificationReport,
 )
@@ -188,3 +191,193 @@ def verify_static(dockerfile: str, project_path: Path) -> VerificationReport:
     hadolint_result, hadolint_available = _check_hadolint(dockerfile)
     results.append(hadolint_result)
     return VerificationReport(results=results, hadolint_available=hadolint_available)
+
+
+ENVIRONMENT_MARKERS = (
+    "tls handshake",
+    "connection refused",
+    "connection reset",
+    "temporary failure",
+    "i/o timeout",
+    "toomanyrequests",
+    "network is unreachable",
+    "no route to host",
+    "service unavailable",
+)
+
+
+def detect_container_tool() -> str | None:
+    """Prefer rootless-friendly podman; fall back to docker."""
+    for tool in ("podman", "docker"):
+        if shutil.which(tool):
+            return tool
+    return None
+
+
+def _classify(stderr: str) -> FailureKind:
+    lowered = stderr.lower()
+    if any(marker in lowered for marker in ENVIRONMENT_MARKERS):
+        return FailureKind.ENVIRONMENT
+    return FailureKind.AUTHORING
+
+
+def _tail(text: str, lines: int = 15) -> str:
+    return "\n".join(text.strip().splitlines()[-lines:])
+
+
+def _build(
+    dockerfile: str,
+    project_path: Path,
+    target: DeployTarget,
+    tool: str,
+    tag: str,
+    timeout: int,
+) -> CheckResult:
+    try:
+        proc = subprocess.run(
+            [
+                tool,
+                "build",
+                "--memory",
+                target.memory_limit,
+                "-t",
+                tag,
+                "-f",
+                "-",
+                str(project_path),
+            ],
+            input=dockerfile,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        return CheckResult(
+            check_id="build",
+            status=CheckStatus.FAILED,
+            failure_kind=FailureKind.ENVIRONMENT,
+            message=f"build timed out after {timeout}s",
+        )
+    if proc.returncode != 0:
+        return CheckResult(
+            check_id="build",
+            status=CheckStatus.FAILED,
+            failure_kind=_classify(proc.stderr),
+            message=_tail(proc.stderr),
+        )
+    return CheckResult(check_id="build", status=CheckStatus.PASSED)
+
+
+def _run_healthcheck(
+    target: DeployTarget, tool: str, tag: str, timeout: int
+) -> CheckResult:
+    assert target.service is not None
+    container = f"deployer-check-{uuid.uuid4().hex[:8]}"
+    url = f"http://127.0.0.1:{target.service.port}{target.service.healthcheck_path}"
+    probe = f"import urllib.request; urllib.request.urlopen('{url}', timeout=2)"
+    try:
+        started = subprocess.run(
+            [
+                tool,
+                "run",
+                "-d",
+                "--rm",
+                "--name",
+                container,
+                "--network=none",
+                "--memory",
+                target.memory_limit,
+                tag,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        if started.returncode != 0:
+            return CheckResult(
+                check_id="run_healthcheck",
+                status=CheckStatus.FAILED,
+                failure_kind=_classify(started.stderr),
+                message=_tail(started.stderr),
+            )
+        deadline = time.monotonic() + timeout
+        last_error = ""
+        while time.monotonic() < deadline:
+            probe_proc = subprocess.run(
+                [tool, "exec", container, "python", "-c", probe],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if probe_proc.returncode == 0:
+                return CheckResult(
+                    check_id="run_healthcheck", status=CheckStatus.PASSED
+                )
+            last_error = probe_proc.stderr
+            time.sleep(1)
+        logs = subprocess.run(
+            [tool, "logs", container], capture_output=True, text=True, timeout=10
+        )
+        return CheckResult(
+            check_id="run_healthcheck",
+            status=CheckStatus.FAILED,
+            failure_kind=FailureKind.AUTHORING,
+            message=(
+                f"healthcheck {url} failed within {timeout}s: "
+                f"{_tail(last_error, 3)}\ncontainer logs:\n{_tail(logs.stdout)}"
+            ),
+        )
+    except subprocess.TimeoutExpired:
+        return CheckResult(
+            check_id="run_healthcheck",
+            status=CheckStatus.FAILED,
+            failure_kind=FailureKind.ENVIRONMENT,
+            message="container runtime command timed out",
+        )
+    finally:
+        subprocess.run([tool, "rm", "-f", container], capture_output=True, timeout=30)
+
+
+def verify_docker(
+    dockerfile: str,
+    project_path: Path,
+    target: DeployTarget,
+    tool: str,
+    *,
+    build_timeout: int = 600,
+    health_timeout: int = 30,
+) -> list[CheckResult]:
+    """L2: real sandboxed build; for service intents, run + loopback healthcheck.
+
+    The healthcheck probes over the container's loopback via `exec python -c`,
+    so `--network=none` still works. This assumes a Python base image — true
+    for every artifact this MVP authors.
+    """
+    tag = f"deployer-verify-{uuid.uuid4().hex[:8]}"
+    results: list[CheckResult] = []
+    try:
+        build_result = _build(
+            dockerfile, project_path, target, tool, tag, build_timeout
+        )
+        results.append(build_result)
+        if build_result.status is CheckStatus.PASSED and target.service is not None:
+            results.append(_run_healthcheck(target, tool, tag, health_timeout))
+    finally:
+        subprocess.run([tool, "rmi", "-f", tag], capture_output=True, timeout=60)
+    return results
+
+
+def verify(
+    dockerfile: str,
+    project_path: Path,
+    target: DeployTarget,
+    tool: str | None,
+) -> VerificationReport:
+    """Full verification: L1 static always; L2 docker when available and L1 passed."""
+    report = verify_static(dockerfile, project_path)
+    if tool is None:
+        return report
+    report.docker_available = True
+    if report.passed:
+        report.results.extend(verify_docker(dockerfile, project_path, target, tool))
+    return report
