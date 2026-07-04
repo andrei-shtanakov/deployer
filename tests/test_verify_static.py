@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from deployer.models import CheckStatus
+from deployer.models import CheckStatus, ProjectFacts
 from deployer.verify import parse_dockerfile, verify_static
 
 GOOD = """\
@@ -10,6 +10,16 @@ COPY main.py .
 EXPOSE 8000
 CMD ["python", "main.py"]
 """
+
+UV_STYLE = (
+    "FROM python:3.12-slim\nWORKDIR /app\nCOPY main.py .\n"
+    'RUN uv sync --frozen\nCMD ["python", "main.py"]\n'
+)
+PIP_STYLE = (
+    "FROM python:3.12-slim\nWORKDIR /app\nCOPY main.py .\n"
+    "RUN pip install --no-cache-dir -r requirements.txt\n"
+    'CMD ["python", "main.py"]\n'
+)
 
 
 def _by_id(report, check_id: str):
@@ -123,3 +133,47 @@ def test_hadolint_garbage_output_degrades_to_skipped(
     check = _by_id(report, "hadolint")
     assert check.status is CheckStatus.SKIPPED
     assert report.hadolint_available is False
+
+
+def test_install_strategy_skipped_without_facts(hello_service: Path) -> None:
+    report = verify_static(GOOD, hello_service)
+    assert _by_id(report, "install_strategy").status is CheckStatus.SKIPPED
+
+
+def test_pip_project_using_uv_fails(hello_service: Path) -> None:
+    facts = ProjectFacts(package_manager="pip", has_build_system=False)
+    report = verify_static(UV_STYLE, hello_service, facts)
+    check = _by_id(report, "install_strategy")
+    assert check.status is CheckStatus.FAILED
+    assert check.failure_kind == "authoring"
+
+
+def test_uv_project_using_pip_fails(hello_service: Path) -> None:
+    facts = ProjectFacts(package_manager="uv", has_build_system=True)
+    report = verify_static(PIP_STYLE, hello_service, facts)
+    assert _by_id(report, "install_strategy").status is CheckStatus.FAILED
+
+
+def test_no_build_system_project_install_fails(hello_service: Path) -> None:
+    facts = ProjectFacts(package_manager="uv", has_build_system=False)
+    report = verify_static(UV_STYLE, hello_service, facts)
+    assert _by_id(report, "install_strategy").status is CheckStatus.FAILED
+
+
+def test_no_install_project_flag_passes_per_line(hello_service: Path) -> None:
+    facts = ProjectFacts(package_manager="uv", has_build_system=False)
+    ok = UV_STYLE.replace(
+        "RUN uv sync --frozen", "RUN uv sync --frozen --no-install-project"
+    )
+    report = verify_static(ok, hello_service, facts)
+    assert _by_id(report, "install_strategy").status is CheckStatus.PASSED
+
+    mixed = ok + "RUN uv sync --frozen\n"  # second line installs the project
+    report = verify_static(mixed, hello_service, facts)
+    assert _by_id(report, "install_strategy").status is CheckStatus.FAILED
+
+
+def test_matching_strategy_passes(hello_service: Path) -> None:
+    facts = ProjectFacts(package_manager="pip", has_build_system=False)
+    report = verify_static(PIP_STYLE, hello_service, facts)
+    assert _by_id(report, "install_strategy").status is CheckStatus.PASSED

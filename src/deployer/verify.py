@@ -16,6 +16,7 @@ from deployer.models import (
     CheckStatus,
     DeployTarget,
     FailureKind,
+    ProjectFacts,
     VerificationReport,
 )
 
@@ -116,6 +117,38 @@ def _check_base_pinned(instructions: list[tuple[str, str]]) -> CheckResult:
     return CheckResult(check_id="base_pinned", status=CheckStatus.PASSED)
 
 
+def _check_install_strategy(
+    instructions: list[tuple[str, str]], facts: ProjectFacts
+) -> CheckResult:
+    """Deterministic install-strategy rules, promoted from prompt to check."""
+    run_lines = [args for name, args in instructions if name == "RUN"]
+    joined = "\n".join(run_lines)
+    problems: list[str] = []
+    if facts.package_manager == "pip" and ("uv sync" in joined or "uv pip" in joined):
+        problems.append("project uses pip (requirements.txt) but Dockerfile invokes uv")
+    if facts.package_manager == "uv" and "pip install" in joined:
+        problems.append("project uses uv (uv.lock) but Dockerfile invokes pip")
+    if not facts.has_build_system:
+        for line in run_lines:
+            installs_project = "pip install ." in line or (
+                "uv sync" in line and "--no-install-project" not in line
+            )
+            if installs_project:
+                problems.append(
+                    "project has no [build-system]: do not install it as a "
+                    "package (run sources directly / use --no-install-project)"
+                )
+                break
+    if problems:
+        return CheckResult(
+            check_id="install_strategy",
+            status=CheckStatus.FAILED,
+            failure_kind=FailureKind.AUTHORING,
+            message="; ".join(problems),
+        )
+    return CheckResult(check_id="install_strategy", status=CheckStatus.PASSED)
+
+
 def _check_hadolint(dockerfile: str) -> tuple[CheckResult, bool]:
     """Run hadolint at the pinned version; (result, available_and_comparable)."""
     binary = shutil.which("hadolint")
@@ -184,13 +217,25 @@ def _check_hadolint(dockerfile: str) -> tuple[CheckResult, bool]:
         )
 
 
-def verify_static(dockerfile: str, project_path: Path) -> VerificationReport:
+def verify_static(
+    dockerfile: str, project_path: Path, facts: ProjectFacts | None = None
+) -> VerificationReport:
     """Run all L1 static checks against a Dockerfile candidate."""
     instructions = parse_dockerfile(dockerfile)
     results = [_check_parses(instructions)]
     if results[0].status is CheckStatus.PASSED:
         results.append(_check_copy_sources(instructions, project_path))
         results.append(_check_base_pinned(instructions))
+        if facts is not None:
+            results.append(_check_install_strategy(instructions, facts))
+        else:
+            results.append(
+                CheckResult(
+                    check_id="install_strategy",
+                    status=CheckStatus.SKIPPED,
+                    message="no project facts provided",
+                )
+            )
     hadolint_result, hadolint_available = _check_hadolint(dockerfile)
     results.append(hadolint_result)
     return VerificationReport(results=results, hadolint_available=hadolint_available)
@@ -269,6 +314,25 @@ def _build(
             message=_tail(proc.stderr),
         )
     return CheckResult(check_id="build", status=CheckStatus.PASSED)
+
+
+def _image_size(tool: str, tag: str) -> int | None:
+    """Size of a built image in bytes; None when inspection fails."""
+    try:
+        proc = subprocess.run(
+            [tool, "image", "inspect", "--format", "{{.Size}}", tag],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    if proc.returncode != 0:
+        return None
+    try:
+        return int(proc.stdout.strip())
+    except ValueError:
+        return None
 
 
 def _run_healthcheck(
@@ -354,7 +418,7 @@ def verify_docker(
     *,
     build_timeout: int = 600,
     health_timeout: int = 30,
-) -> list[CheckResult]:
+) -> tuple[list[CheckResult], int | None]:
     """L2: real sandboxed build; for service intents, run + loopback healthcheck.
 
     The healthcheck probes over the container's loopback via `exec python -c`,
@@ -363,16 +427,19 @@ def verify_docker(
     """
     tag = f"deployer-verify-{uuid.uuid4().hex[:8]}"
     results: list[CheckResult] = []
+    image_size: int | None = None
     try:
         build_result = _build(
             dockerfile, project_path, target, tool, tag, build_timeout
         )
         results.append(build_result)
-        if build_result.status is CheckStatus.PASSED and target.service is not None:
-            results.append(_run_healthcheck(target, tool, tag, health_timeout))
+        if build_result.status is CheckStatus.PASSED:
+            image_size = _image_size(tool, tag)
+            if target.service is not None:
+                results.append(_run_healthcheck(target, tool, tag, health_timeout))
     finally:
         subprocess.run([tool, "rmi", "-f", tag], capture_output=True, timeout=60)
-    return results
+    return results, image_size
 
 
 def verify(
@@ -380,12 +447,17 @@ def verify(
     project_path: Path,
     target: DeployTarget,
     tool: str | None,
+    facts: ProjectFacts | None = None,
 ) -> VerificationReport:
     """Full verification: L1 static always; L2 docker when available and L1 passed."""
-    report = verify_static(dockerfile, project_path)
+    report = verify_static(dockerfile, project_path, facts)
     if tool is None:
         return report
     report.docker_available = True
     if report.passed:
-        report.results.extend(verify_docker(dockerfile, project_path, target, tool))
+        docker_results, image_size = verify_docker(
+            dockerfile, project_path, target, tool
+        )
+        report.results.extend(docker_results)
+        report.image_size_bytes = image_size
     return report

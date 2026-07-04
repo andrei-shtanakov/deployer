@@ -31,6 +31,7 @@ def test_good_dockerfile_builds_runs_and_healthchecks(
     assert _by_id(report, "build").status is CheckStatus.PASSED
     assert _by_id(report, "run_healthcheck").status is CheckStatus.PASSED
     assert report.passed
+    assert report.image_size_bytes is not None and report.image_size_bytes > 0
 
 
 def test_broken_run_instruction_fails_build_as_authoring(
