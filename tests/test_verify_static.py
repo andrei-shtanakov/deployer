@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from deployer.models import CheckStatus
+from deployer.models import CheckStatus, ProjectFacts
 from deployer.verify import parse_dockerfile, verify_static
 
 GOOD = """\
@@ -10,6 +10,16 @@ COPY main.py .
 EXPOSE 8000
 CMD ["python", "main.py"]
 """
+
+UV_STYLE = (
+    "FROM python:3.12-slim\nWORKDIR /app\nCOPY main.py .\n"
+    'RUN uv sync --frozen\nCMD ["python", "main.py"]\n'
+)
+PIP_STYLE = (
+    "FROM python:3.12-slim\nWORKDIR /app\nCOPY main.py .\n"
+    "RUN pip install --no-cache-dir -r requirements.txt\n"
+    'CMD ["python", "main.py"]\n'
+)
 
 
 def _by_id(report, check_id: str):
@@ -123,3 +133,101 @@ def test_hadolint_garbage_output_degrades_to_skipped(
     check = _by_id(report, "hadolint")
     assert check.status is CheckStatus.SKIPPED
     assert report.hadolint_available is False
+
+
+def test_install_strategy_skipped_without_facts(hello_service: Path) -> None:
+    report = verify_static(GOOD, hello_service)
+    assert _by_id(report, "install_strategy").status is CheckStatus.SKIPPED
+
+
+def test_pip_project_using_uv_fails(hello_service: Path) -> None:
+    facts = ProjectFacts(package_manager="pip", has_build_system=False)
+    report = verify_static(UV_STYLE, hello_service, facts)
+    check = _by_id(report, "install_strategy")
+    assert check.status is CheckStatus.FAILED
+    assert check.failure_kind == "authoring"
+
+
+def test_uv_project_using_pip_fails(hello_service: Path) -> None:
+    facts = ProjectFacts(package_manager="uv", has_build_system=True)
+    report = verify_static(PIP_STYLE, hello_service, facts)
+    assert _by_id(report, "install_strategy").status is CheckStatus.FAILED
+
+
+def test_no_build_system_project_install_fails(hello_service: Path) -> None:
+    facts = ProjectFacts(package_manager="uv", has_build_system=False)
+    report = verify_static(UV_STYLE, hello_service, facts)
+    assert _by_id(report, "install_strategy").status is CheckStatus.FAILED
+
+
+def test_no_install_project_flag_passes_per_line(hello_service: Path) -> None:
+    facts = ProjectFacts(package_manager="uv", has_build_system=False)
+    ok = UV_STYLE.replace(
+        "RUN uv sync --frozen", "RUN uv sync --frozen --no-install-project"
+    )
+    report = verify_static(ok, hello_service, facts)
+    assert _by_id(report, "install_strategy").status is CheckStatus.PASSED
+
+    mixed = ok + "RUN uv sync --frozen\n"  # second line installs the project
+    report = verify_static(mixed, hello_service, facts)
+    assert _by_id(report, "install_strategy").status is CheckStatus.FAILED
+
+
+def test_matching_strategy_passes(hello_service: Path) -> None:
+    facts = ProjectFacts(package_manager="pip", has_build_system=False)
+    report = verify_static(PIP_STYLE, hello_service, facts)
+    assert _by_id(report, "install_strategy").status is CheckStatus.PASSED
+
+
+def test_echoed_uv_sync_string_does_not_trigger(hello_service: Path) -> None:
+    facts = ProjectFacts(package_manager="pip", has_build_system=False)
+    dockerfile = (
+        "FROM python:3.12-slim\nWORKDIR /app\nCOPY main.py .\n"
+        'RUN echo "do not run uv sync here" && '
+        "pip install --no-cache-dir -r requirements.txt\n"
+        'CMD ["python", "main.py"]\n'
+    )
+    report = verify_static(dockerfile, hello_service, facts)
+    assert _by_id(report, "install_strategy").status is CheckStatus.PASSED
+
+
+def test_python_m_pip_detected_in_uv_project(hello_service: Path) -> None:
+    facts = ProjectFacts(package_manager="uv", has_build_system=True)
+    dockerfile = (
+        "FROM python:3.12-slim\nWORKDIR /app\nCOPY main.py .\n"
+        "RUN python -m pip install -r requirements.txt\n"
+        'CMD ["python", "main.py"]\n'
+    )
+    report = verify_static(dockerfile, hello_service, facts)
+    assert _by_id(report, "install_strategy").status is CheckStatus.FAILED
+
+
+def test_env_prefix_does_not_bypass_rules(hello_service: Path) -> None:
+    facts = ProjectFacts(package_manager="uv", has_build_system=False)
+    dockerfile = (
+        "FROM python:3.12-slim\nWORKDIR /app\nCOPY main.py .\n"
+        "RUN UV_LINK_MODE=copy uv sync --frozen\n"
+        'CMD ["python", "main.py"]\n'
+    )
+    report = verify_static(dockerfile, hello_service, facts)
+    assert _by_id(report, "install_strategy").status is CheckStatus.FAILED
+
+    facts_uv = ProjectFacts(package_manager="uv", has_build_system=True)
+    dockerfile2 = (
+        "FROM python:3.12-slim\nWORKDIR /app\nCOPY main.py .\n"
+        "RUN PIP_NO_CACHE_DIR=1 pip install -r requirements.txt\n"
+        'CMD ["python", "main.py"]\n'
+    )
+    report2 = verify_static(dockerfile2, hello_service, facts_uv)
+    assert _by_id(report2, "install_strategy").status is CheckStatus.FAILED
+
+
+def test_echoed_python_m_pip_does_not_trigger(hello_service: Path) -> None:
+    facts = ProjectFacts(package_manager="uv", has_build_system=True)
+    dockerfile = (
+        "FROM python:3.12-slim\nWORKDIR /app\nCOPY main.py .\n"
+        'RUN echo "python -m pip install nothing"\n'
+        'CMD ["python", "main.py"]\n'
+    )
+    report = verify_static(dockerfile, hello_service, facts)
+    assert _by_id(report, "install_strategy").status is CheckStatus.PASSED

@@ -1,10 +1,40 @@
 """Deterministic project scanner. Never guesses: missing facts stay None."""
 
+import re
 import tomllib
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from deployer.models import ProjectFacts
+
+_REQ_NAME_SPLIT = re.compile(r"[=<>!~;\[\s]")
+_VALID_NAME = re.compile(r"^[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?$")
+
+
+def _normalize_requirement_name(raw: str) -> str:
+    """PEP 503-ish normalization: name only, lowercase, underscores to dashes."""
+    name = _REQ_NAME_SPLIT.split(raw.strip(), maxsplit=1)[0]
+    return name.lower().replace("_", "-")
+
+
+def _parse_requirements(path: Path) -> list[str]:
+    """Names from one requirements file; directives kept verbatim; never raises."""
+    try:
+        text = path.read_text(encoding="utf-8-sig")
+    except (OSError, UnicodeDecodeError):
+        return []
+    entries: list[str] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if stripped.startswith("-"):
+            entries.append(stripped)
+            continue
+        name = _normalize_requirement_name(stripped)
+        if name and _VALID_NAME.match(name):
+            entries.append(name)
+    return entries
 
 
 def analyze_project(path: Path) -> ProjectFacts:
@@ -49,11 +79,25 @@ def analyze_project(path: Path) -> ProjectFacts:
     else:
         entrypoints = {}
 
+    requirements_files = {
+        req.name: _parse_requirements(req)
+        for req in sorted(path.glob("requirements*.txt"))
+    }
+    has_uv_lock = (path / "uv.lock").is_file()
+    package_manager: Literal["uv", "pip"] | None = None
+    if has_uv_lock:
+        package_manager = "uv"
+    elif requirements_files:
+        package_manager = "pip"
+
     return ProjectFacts(
         name=name,
         requires_python=requires_python,
         python_version=python_version,
         dependencies=dependencies,
         entrypoints=entrypoints,
-        has_uv_lock=(path / "uv.lock").is_file(),
+        has_uv_lock=has_uv_lock,
+        package_manager=package_manager,
+        has_build_system=isinstance(pyproject.get("build-system"), dict),
+        requirements_files=requirements_files,
     )

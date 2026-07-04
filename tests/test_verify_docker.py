@@ -31,6 +31,7 @@ def test_good_dockerfile_builds_runs_and_healthchecks(
     assert _by_id(report, "build").status is CheckStatus.PASSED
     assert _by_id(report, "run_healthcheck").status is CheckStatus.PASSED
     assert report.passed
+    assert report.image_size_bytes is not None and report.image_size_bytes > 0
 
 
 def test_broken_run_instruction_fails_build_as_authoring(
@@ -108,3 +109,26 @@ def test_cli_author_with_real_docker_exits_zero(
     run_data = json.loads((project / ".deployer" / "authoring-run.json").read_text())
     assert run_data["stopped_reason"] == "success"
     assert run_data["success"] is True
+
+
+def test_pip_service_e2e(pip_service: Path, tool: str) -> None:
+    from deployer.facts import analyze_project
+
+    dockerfile = (pip_service / "Dockerfile.good").read_text()
+    report = verify(dockerfile, pip_service, TARGET, tool, analyze_project(pip_service))
+    assert report.passed
+    assert _by_id(report, "install_strategy").status is CheckStatus.PASSED
+
+
+def test_sysdep_service_apt_layers_build_and_healthcheck(
+    sysdep_service: Path, tool: str
+) -> None:
+    from deployer.facts import analyze_project
+
+    dockerfile = (sysdep_service / "Dockerfile.good").read_text()
+    report = verify(
+        dockerfile, sysdep_service, TARGET, tool, analyze_project(sysdep_service)
+    )
+    assert report.passed, report.error_signature()
+    assert _by_id(report, "run_healthcheck").status is CheckStatus.PASSED
+    assert report.image_size_bytes is not None and report.image_size_bytes > 0

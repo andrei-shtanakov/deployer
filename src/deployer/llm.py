@@ -4,6 +4,7 @@ from typing import Any
 
 import anthropic
 
+from deployer.hints import collect_hints
 from deployer.models import DeployTarget, ProjectFacts, VerificationReport
 
 DEFAULT_MODEL = "claude-opus-4-8"
@@ -11,7 +12,7 @@ MAX_TOKENS = 8192
 
 SYSTEM_PROMPT = """\
 You are a deployment artifact author. You write production-quality Dockerfiles
-for Python projects managed with uv.
+for Python projects.
 
 Rules:
 - Reply with ONLY the Dockerfile content. No prose, no markdown fences.
@@ -20,8 +21,48 @@ Rules:
 - Pin the base image to a specific tag (never :latest, never untagged).
 - The project facts are deterministic ground truth; missing facts are None —
   do not guess values for them.
+- Install strategy follows package_manager from the facts:
+  - "uv": COPY pyproject.toml and uv.lock, install with `uv sync --frozen`,
+    copying the uv binary from the official uv image.
+  - "pip": COPY the requirements file(s) and use
+    `pip install --no-cache-dir -r <file>`. Never invent a pyproject-based
+    install for a pip project.
+  - null: no lockfile or requirements exist; run the sources directly.
+- If has_build_system is false, do NOT install the project as a package
+  (no `pip install .`; with uv always pass `--no-install-project`). Run the
+  sources directly.
+- Packages listed under "Required system packages" MUST be installed via
+  apt-get.
+- "Suspected system dependencies" are curated hints, not facts: verify them,
+  put build packages in the build stage and runtime packages in the final
+  stage, and trust build errors over hints.
 - Prefer slim base images and a non-root user where practical.
 """
+
+
+def _context_blocks(facts: ProjectFacts, target: DeployTarget) -> str:
+    blocks = [
+        f"Project facts (deterministic scan):\n{facts.model_dump_json(indent=2)}",
+        f"Deploy intent:\n{target.model_dump_json(indent=2)}",
+    ]
+    if target.system_packages:
+        listed = "\n".join(f"- {p}" for p in target.system_packages)
+        blocks.append(
+            "Required system packages (operator intent, MUST install via "
+            f"apt-get):\n{listed}"
+        )
+    hints = collect_hints(facts)
+    if hints:
+        listed = "\n".join(
+            f"- {h.python_package}: build={h.build_packages}, "
+            f"runtime={h.runtime_packages}"
+            for h in hints
+        )
+        blocks.append(
+            "Suspected system dependencies (curated hints — verify, and "
+            f"trust build errors over hints):\n{listed}"
+        )
+    return "\n\n".join(blocks)
 
 
 def _extract_dockerfile(text: str) -> str:
@@ -56,8 +97,8 @@ class AnthropicAuthor:
     def generate(self, facts: ProjectFacts, target: DeployTarget) -> str:
         prompt = (
             "Write a Dockerfile for this project.\n\n"
-            f"Project facts (deterministic scan):\n{facts.model_dump_json(indent=2)}\n\n"
-            f"Deploy intent:\n{target.model_dump_json(indent=2)}\n"
+            + _context_blocks(facts, target)
+            + "\n"
         )
         return self._complete(prompt)
 
@@ -76,7 +117,7 @@ class AnthropicAuthor:
             "The following Dockerfile failed verification. Fix it.\n\n"
             f"Dockerfile:\n{dockerfile}\n\n"
             f"Verification findings:\n{findings}\n\n"
-            f"Project facts (deterministic scan):\n{facts.model_dump_json(indent=2)}\n\n"
-            f"Deploy intent:\n{target.model_dump_json(indent=2)}\n"
+            + _context_blocks(facts, target)
+            + "\n"
         )
         return self._complete(prompt)
