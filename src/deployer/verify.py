@@ -303,17 +303,22 @@ def _run_healthcheck(
         deadline = time.monotonic() + timeout
         last_error = ""
         while time.monotonic() < deadline:
-            probe_proc = subprocess.run(
-                [tool, "exec", container, "python", "-c", probe],
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-            if probe_proc.returncode == 0:
-                return CheckResult(
-                    check_id="run_healthcheck", status=CheckStatus.PASSED
+            remaining = deadline - time.monotonic()
+            try:
+                probe_proc = subprocess.run(
+                    [tool, "exec", container, "python", "-c", probe],
+                    capture_output=True,
+                    text=True,
+                    timeout=max(1.0, remaining),
                 )
-            last_error = probe_proc.stderr
+                if probe_proc.returncode == 0:
+                    return CheckResult(
+                        check_id="run_healthcheck", status=CheckStatus.PASSED
+                    )
+                last_error = probe_proc.stderr
+            except subprocess.TimeoutExpired:
+                # Probe timed out; treat as loop exhaustion
+                break
             time.sleep(1)
         logs = subprocess.run(
             [tool, "logs", container], capture_output=True, text=True, timeout=10
