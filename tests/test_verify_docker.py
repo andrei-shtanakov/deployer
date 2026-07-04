@@ -61,3 +61,20 @@ def test_no_tool_degrades_to_static_only(hello_service: Path) -> None:
     report = verify(dockerfile, hello_service, TARGET, tool=None)
     assert report.docker_available is False
     assert all(r.check_id not in ("build", "run_healthcheck") for r in report.results)
+
+
+def test_e2e_author_loop_with_real_docker(hello_service: Path, tool: str) -> None:
+    from deployer.author import author_dockerfile
+
+    good = (hello_service / "Dockerfile.good").read_text()
+
+    class FakeAuthor:
+        def generate(self, facts, target):
+            return good
+
+        def repair(self, facts, target, dockerfile, report):
+            return good
+
+    run = author_dockerfile(hello_service, TARGET, FakeAuthor())
+    assert run.success is True
+    assert run.stopped_reason == "success"
