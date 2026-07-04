@@ -20,6 +20,7 @@ class DeployTarget(BaseModel):
     service: ServiceSpec | None = None
     env: dict[str, str] = Field(default_factory=dict)
     memory_limit: str = "512m"
+    system_packages: list[str] = Field(default_factory=list)
 
 
 class ProjectFacts(BaseModel):
@@ -34,6 +35,20 @@ class ProjectFacts(BaseModel):
     dependencies: list[str] = Field(default_factory=list)
     entrypoints: dict[str, str] = Field(default_factory=dict)
     has_uv_lock: bool = False
+    package_manager: Literal["uv", "pip"] | None = None
+    has_build_system: bool = False
+    requirements_files: dict[str, list[str]] = Field(default_factory=dict)
+
+
+class SystemDepHint(BaseModel):
+    """Curated mapping from a python package to likely apt packages.
+
+    Hints, not facts: a project may still resolve to a wheel needing none.
+    """
+
+    python_package: str
+    build_packages: list[str] = Field(default_factory=list)
+    runtime_packages: list[str] = Field(default_factory=list)
 
 
 class CheckStatus(StrEnum):
@@ -75,6 +90,7 @@ class VerificationReport(BaseModel):
     results: list[CheckResult] = Field(default_factory=list)
     hadolint_available: bool = False
     docker_available: bool = False
+    image_size_bytes: int | None = None
 
     @property
     def passed(self) -> bool:
@@ -130,3 +146,4 @@ class AuthoringRun(BaseModel):
     stopped_reason: StopReason
     success: bool
     llm_error: str | None = None
+    hints_offered: list[SystemDepHint] = Field(default_factory=list)
