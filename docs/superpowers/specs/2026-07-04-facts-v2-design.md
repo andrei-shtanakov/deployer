@@ -1,7 +1,8 @@
 # Facts v2: Package Managers + System-Dependency Hints — Design
 
 Date: 2026-07-04
-Status: approved by Andrei (brainstorming session)
+Status: approved by Andrei (brainstorming session); revised after his review
+(wheel-audit of the hints table, image-size metric, install-strategy L1 check)
 Builds on: `2026-07-04-deployer-mvp-design.md` (MVP merged as PR #1)
 
 ## Goal and motivation
@@ -65,18 +66,45 @@ class SystemDepHint(BaseModel):
 
 The table and matcher live in `hints.py`:
 
-- `KNOWN_SYSTEM_DEPS: dict[str, SystemDepHint]` — a curated, static table of
-  ~15–20 popular packages at launch (psycopg2/psycopg2-binary/psycopg, lxml,
-  pillow, mysqlclient, cryptography, numpy/scipy edge cases, cffi,
-  python-ldap, pycurl, uwsgi, llama-cpp-python, …). Debian/bookworm package
-  names (matches `python:3.x-slim` images).
+- `KNOWN_SYSTEM_DEPS: dict[str, SystemDepHint]` — a curated, static table
+  containing ONLY packages with no (or unreliable) wheels for the target
+  platforms (linux x86_64 AND aarch64 — verification runs on Apple-Silicon
+  podman, where wheel coverage is thinner). Launch set, post wheel-audit
+  (state as of early 2026):
+  - `psycopg2` — build: `libpq-dev, gcc`; runtime: `libpq5` (source-only by design)
+  - `psycopg` — build: none; runtime: `libpq5` (pure-python wrapper needs libpq)
+  - `psycopg2-binary` — explicit **no-hint entry** (empty lists): the whole point
+    of the package is the prebuilt wheel; encoded so a prefix-match can never
+    assign it build deps
+  - `python-ldap` — build: `libldap2-dev, libsasl2-dev, gcc`; runtime: `libldap-2.5-0, libsasl2-2`
+  - `uwsgi` — build: `build-essential`; runtime: none
+  - `mysqlclient` — build: `default-libmysqlclient-dev, pkg-config, gcc`; runtime: `libmariadb3` (aarch64 wheels unreliable)
+  - `llama-cpp-python` — build: `build-essential, cmake, git`; runtime: `libgomp1` (evidence: lab_aist)
+  - `M2Crypto` — build: `libssl-dev, swig, gcc`; runtime: none
+  - `pygraphviz` — build: `graphviz-dev, gcc`; runtime: `graphviz`
+  - `pyaudio` — build: `portaudio19-dev, gcc`; runtime: `libportaudio2`
+
+  Explicitly EXCLUDED as wheel-covered (would be confident false alarms whose
+  cost — a useless apt layer — builds successfully and is invisible to the
+  verify gate): lxml, pillow, cryptography, numpy, scipy, cffi, pycurl,
+  confluent-kafka, pyodbc. Debian/bookworm package names (matches
+  `python:3.x-slim`).
+
+  **Table ownership and drift**: owner — Andrei; re-audit the table whenever the
+  recommended base image major-bumps (bookworm→trixie) or at latest every 6
+  months — both apt package names and wheel availability drift, and a stale
+  entry fails silently (successful build, bloated image).
 - `collect_hints(facts: ProjectFacts) -> list[SystemDepHint]` — matches the
   union of `facts.dependencies` and all `requirements_files` values against the
-  table, using the same normalization; deduplicated, sorted by package name.
+  table, using the same normalization; entries starting with `-` (recorded
+  requirement-file directives like `-r extra.txt`) are skipped explicitly;
+  deduplicated, sorted by package name; no-hint entries (empty lists) are
+  filtered out of the result.
 - **Epistemic status is explicit**: hints are NOT facts. In the prompt they
   appear under a separate heading — "Suspected system dependencies (curated
   hints — verify, and trust build errors over hints)". The table maps a name to
-  *likely* apt packages; a project may use a wheel that needs none of them.
+  *likely* apt packages; a project may still resolve to a wheel that needs none
+  of them.
 
 ## 3. Intent escape hatch (`models.py`)
 
@@ -103,12 +131,42 @@ System-prompt additions (install-strategy rules):
 User-prompt (generate/repair): facts JSON now carries the new fields; hints and
 intent system_packages are rendered as their own labeled blocks.
 
-## 5. Research seam (`models.py`, `author.py`)
+## 5. Research seam (`models.py`, `author.py`, `verify.py`)
 
-`AuthoringRun` gains `hints_offered: list[SystemDepHint]` (what `collect_hints`
-returned for the run). Combined with the recorded Dockerfiles per iteration this
-lets us measure offline whether hints reduce iterations — no extra plumbing now
-(YAGNI on automatic "hint adopted" detection; the Dockerfile text is recorded).
+- `AuthoringRun` gains `hints_offered: list[SystemDepHint]` (what
+  `collect_hints` returned for the run). Combined with the recorded Dockerfiles
+  per iteration this lets us measure offline whether hints reduce iterations —
+  no extra plumbing now (YAGNI on automatic "hint adopted" detection; the
+  Dockerfile text is recorded).
+- **Second quality metric — image size.** Iteration count alone is a one-sided
+  measure: on wheel-covered projects a bad hint adds a useless apt layer that
+  *builds successfully* and never shows up as an extra iteration. To catch
+  that: `VerificationReport.image_size_bytes: int | None = None`, captured via
+  `{tool} image inspect --format '{{.Size}}'` immediately after a successful
+  build (before the `finally` rmi). Serialized into the run report through
+  `IterationRecord.report` with zero extra plumbing. Research conclusions about
+  hint value must weigh BOTH metrics (iterations saved vs bytes added).
+
+## 5a. Install-strategy L1 check (`verify.py`)
+
+The strongest deterministic prompt rules are promoted from prompt-hope to a
+verifiable invariant — a new L1 check `install_strategy` (FAILED/authoring on
+violation, PASSED otherwise, SKIPPED when facts are unavailable):
+
+- `facts.package_manager == "pip"` and the Dockerfile invokes `uv sync` /
+  `uv pip` → FAILED (wrong toolchain for the project).
+- `facts.package_manager == "uv"` and the Dockerfile invokes `pip install` →
+  FAILED.
+- `facts.has_build_system == False` and the Dockerfile installs the project as
+  a package (`pip install .` / `uv sync` without `--no-install-project`) →
+  FAILED (exactly the dogfood no_progress loop, now caught statically at
+  iteration 1).
+
+Plumbing: `verify_static(dockerfile, project_path, facts: ProjectFacts | None
+= None)` — the check runs only when facts are provided; `verify()` gains the
+same optional parameter and passes it through; the author loop and the CLI
+(`verify` command runs `analyze_project` first) supply facts. Existing callers
+without facts keep the old behavior.
 
 ## 6. Fixtures and tests
 
@@ -117,12 +175,17 @@ lets us measure offline whether hints reduce iterations — no extra plumbing no
   pyproject. Unit tests: scanner yields `package_manager="pip"`,
   `has_build_system=False`, correct `requirements_files`. Docker e2e (FakeAuthor
   with a known-good pip-style Dockerfile): build + healthcheck pass.
-- `tests/fixtures/sysdep_service/` — the hello service plus `lxml` in
-  `requirements.txt`, an import of `lxml.etree` in `main.py`, and a known-good
-  Dockerfile that `apt-get install`s what lxml needs. Chosen over psycopg
-  because it needs no running database to prove the point. Unit test:
-  `collect_hints` returns the lxml hint. Docker e2e: the apt-layer Dockerfile
-  builds and healthchecks — first honest pipeline test of the hard half.
+- `tests/fixtures/sysdep_service/` — the hello service plus `psycopg2` in
+  `requirements.txt`, an `import psycopg2` in `main.py` (importing works
+  without a running PostgreSQL server — the healthcheck response includes
+  `psycopg2.__version__` to prove the import genuinely executed), and a
+  known-good Dockerfile that installs `libpq-dev gcc` at build and `libpq5` at
+  runtime. psycopg2 (non-binary) is chosen because it is source-only BY DESIGN
+  — the one hint that can never be invalidated by a future wheel (lxml, the
+  earlier candidate, already ships wheels and would have made the fixture's
+  premise false). Unit test: `collect_hints` returns the psycopg2 hint and NOT
+  a hint for psycopg2-binary. Docker e2e: the apt-layer Dockerfile builds and
+  healthchecks — first honest pipeline test of the hard half.
 - Backlog item folded in (same loop, cheap): regression test for
   `stopped_reason == "environment_failure"` when a second environment failure
   occurs after the once-per-run retry budget is spent.
@@ -137,6 +200,18 @@ lets us measure offline whether hints reduce iterations — no extra plumbing no
 - Nothing in this feature touches the verify layer; apt-get failures inside
   builds already flow through the existing authoring/environment classification
   (registry/network markers → environment).
+
+## Known limitations (stated honestly)
+
+- **Hints cover top-level dependencies only.** `collect_hints` matches
+  `facts.dependencies` + top-level `requirements_files`; parsing is
+  deliberately non-recursive. A *transitive* no-wheel dependency (exactly the
+  locallogai-backend case) stays invisible to hints and falls through to the
+  repair loop. Research conclusions must not read hint coverage as covering
+  the whole "hard half".
+- The hints table encodes a point-in-time wheel landscape; it fails silently
+  when stale (successful build, bloated image) — hence the ownership/re-audit
+  rule in §2 and the image-size metric in §5.
 
 ## Out of scope
 
