@@ -177,3 +177,26 @@ def test_matching_strategy_passes(hello_service: Path) -> None:
     facts = ProjectFacts(package_manager="pip", has_build_system=False)
     report = verify_static(PIP_STYLE, hello_service, facts)
     assert _by_id(report, "install_strategy").status is CheckStatus.PASSED
+
+
+def test_echoed_uv_sync_string_does_not_trigger(hello_service: Path) -> None:
+    facts = ProjectFacts(package_manager="pip", has_build_system=False)
+    dockerfile = (
+        "FROM python:3.12-slim\nWORKDIR /app\nCOPY main.py .\n"
+        'RUN echo "do not run uv sync here" && '
+        "pip install --no-cache-dir -r requirements.txt\n"
+        'CMD ["python", "main.py"]\n'
+    )
+    report = verify_static(dockerfile, hello_service, facts)
+    assert _by_id(report, "install_strategy").status is CheckStatus.PASSED
+
+
+def test_python_m_pip_detected_in_uv_project(hello_service: Path) -> None:
+    facts = ProjectFacts(package_manager="uv", has_build_system=True)
+    dockerfile = (
+        "FROM python:3.12-slim\nWORKDIR /app\nCOPY main.py .\n"
+        "RUN python -m pip install -r requirements.txt\n"
+        'CMD ["python", "main.py"]\n'
+    )
+    report = verify_static(dockerfile, hello_service, facts)
+    assert _by_id(report, "install_strategy").status is CheckStatus.FAILED

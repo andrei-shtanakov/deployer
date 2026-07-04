@@ -5,6 +5,7 @@ hadolint at a pinned version. L2 (docker half, Task 5): sandboxed build + run.
 """
 
 import json
+import re
 import shutil
 import subprocess
 import time
@@ -96,6 +97,17 @@ def _check_copy_sources(
     return CheckResult(check_id="copy_sources", status=CheckStatus.PASSED)
 
 
+def _run_commands(run_lines: list[str]) -> list[str]:
+    """Split RUN lines into individual shell commands (segments)."""
+    commands: list[str] = []
+    for line in run_lines:
+        for segment in re.split(r"&&|\|\||;|\|", line):
+            stripped = segment.strip()
+            if stripped:
+                commands.append(stripped)
+    return commands
+
+
 def _check_base_pinned(instructions: list[tuple[str, str]]) -> CheckResult:
     for name, args in instructions:
         if name != "FROM":
@@ -122,23 +134,50 @@ def _check_install_strategy(
 ) -> CheckResult:
     """Deterministic install-strategy rules, promoted from prompt to check."""
     run_lines = [args for name, args in instructions if name == "RUN"]
-    joined = "\n".join(run_lines)
+    commands = _run_commands(run_lines)
     problems: list[str] = []
-    if facts.package_manager == "pip" and ("uv sync" in joined or "uv pip" in joined):
-        problems.append("project uses pip (requirements.txt) but Dockerfile invokes uv")
-    if facts.package_manager == "uv" and "pip install" in joined:
-        problems.append("project uses uv (uv.lock) but Dockerfile invokes pip")
+
+    # uv-in-pip-project rule
+    if facts.package_manager == "pip":
+        for cmd in commands:
+            if cmd.startswith(("uv sync", "uv pip")):
+                problems.append(
+                    "project uses pip (requirements.txt) but Dockerfile invokes uv"
+                )
+                break
+
+    # pip-in-uv-project rule
+    if facts.package_manager == "uv":
+        for cmd in commands:
+            if (
+                cmd.startswith(("pip install", "pip3 install"))
+                or " -m pip install" in cmd
+            ):
+                problems.append("project uses uv (uv.lock) but Dockerfile invokes pip")
+                break
+
+    # no-build-system rule
     if not facts.has_build_system:
-        for line in run_lines:
-            installs_project = "pip install ." in line or (
-                "uv sync" in line and "--no-install-project" not in line
-            )
+        for cmd in commands:
+            installs_project = False
+
+            # Check for "pip install ." (bare . token)
+            if cmd.startswith(("pip install", "pip3 install")):
+                tokens = cmd.split()
+                if "." in tokens:
+                    installs_project = True
+
+            # Check for "uv sync" without "--no-install-project"
+            if cmd.startswith("uv sync") and "--no-install-project" not in cmd:
+                installs_project = True
+
             if installs_project:
                 problems.append(
                     "project has no [build-system]: do not install it as a "
                     "package (run sources directly / use --no-install-project)"
                 )
                 break
+
     if problems:
         return CheckResult(
             check_id="install_strategy",
