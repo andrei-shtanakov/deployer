@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from deployer.models import CheckStatus, ProjectFacts
-from deployer.verify import parse_dockerfile, verify_static
+from deployer.models import CheckResult, CheckStatus, DeployTarget, ProjectFacts
+from deployer.verify import parse_dockerfile, verify, verify_static
 
 GOOD = """\
 FROM python:3.12-slim
@@ -231,3 +231,59 @@ def test_echoed_python_m_pip_does_not_trigger(hello_service: Path) -> None:
     )
     report = verify_static(dockerfile, hello_service, facts)
     assert _by_id(report, "install_strategy").status is CheckStatus.PASSED
+
+
+def _spy_docker(captured: dict):
+    """verify_docker replacement that records the timeout kwargs it got."""
+
+    def spy(dockerfile, project_path, target, tool, *, build_timeout, health_timeout):
+        captured["build_timeout"] = build_timeout
+        captured["health_timeout"] = health_timeout
+        return [CheckResult(check_id="build", status=CheckStatus.PASSED)], None
+
+    return spy
+
+
+def _skip_hadolint(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "deployer.verify._check_hadolint",
+        lambda _: (
+            CheckResult(check_id="hadolint", status=CheckStatus.SKIPPED),
+            False,
+        ),
+    )
+
+
+def test_verify_forwards_timeouts_to_verify_docker(
+    hello_service: Path, monkeypatch
+) -> None:
+    _skip_hadolint(monkeypatch)
+    captured: dict = {}
+    monkeypatch.setattr("deployer.verify.verify_docker", _spy_docker(captured))
+    report = verify(
+        GOOD,
+        hello_service,
+        DeployTarget(),
+        "podman",
+        build_timeout=1200,
+        health_timeout=45,
+    )
+    assert captured == {"build_timeout": 1200, "health_timeout": 45}
+    assert report.docker_available
+
+
+def test_verify_defaults_match_module_constants(
+    hello_service: Path, monkeypatch
+) -> None:
+    from deployer.verify import DEFAULT_BUILD_TIMEOUT, DEFAULT_HEALTH_TIMEOUT
+
+    _skip_hadolint(monkeypatch)
+    captured: dict = {}
+    monkeypatch.setattr("deployer.verify.verify_docker", _spy_docker(captured))
+    verify(GOOD, hello_service, DeployTarget(), "podman")
+    assert captured == {
+        "build_timeout": DEFAULT_BUILD_TIMEOUT,
+        "health_timeout": DEFAULT_HEALTH_TIMEOUT,
+    }
+    assert DEFAULT_BUILD_TIMEOUT == 600
+    assert DEFAULT_HEALTH_TIMEOUT == 30

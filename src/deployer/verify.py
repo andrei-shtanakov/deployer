@@ -22,6 +22,8 @@ from deployer.models import (
 )
 
 HADOLINT_VERSION = "2.12.0"
+DEFAULT_BUILD_TIMEOUT = 600
+DEFAULT_HEALTH_TIMEOUT = 30
 _ENV_ASSIGNMENT = re.compile(r"^(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)+")
 _PYTHON_M_PIP = re.compile(r"^\S*python[\d.]*\s+-m\s+pip\s+install\b")
 
@@ -459,8 +461,8 @@ def verify_docker(
     target: DeployTarget,
     tool: str,
     *,
-    build_timeout: int = 600,
-    health_timeout: int = 30,
+    build_timeout: int = DEFAULT_BUILD_TIMEOUT,
+    health_timeout: int = DEFAULT_HEALTH_TIMEOUT,
 ) -> tuple[list[CheckResult], int | None]:
     """L2: real sandboxed build; for service intents, run + loopback healthcheck.
 
@@ -491,6 +493,9 @@ def verify(
     target: DeployTarget,
     tool: str | None,
     facts: ProjectFacts | None = None,
+    *,
+    build_timeout: int = DEFAULT_BUILD_TIMEOUT,
+    health_timeout: int = DEFAULT_HEALTH_TIMEOUT,
 ) -> VerificationReport:
     """Full verification: L1 static always; L2 docker when available and L1 passed."""
     report = verify_static(dockerfile, project_path, facts)
@@ -499,7 +504,12 @@ def verify(
     report.docker_available = True
     if report.passed:
         docker_results, image_size = verify_docker(
-            dockerfile, project_path, target, tool
+            dockerfile,
+            project_path,
+            target,
+            tool,
+            build_timeout=build_timeout,
+            health_timeout=health_timeout,
         )
         report.results.extend(docker_results)
         report.image_size_bytes = image_size
