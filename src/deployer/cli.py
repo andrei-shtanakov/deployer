@@ -8,7 +8,12 @@ from deployer.author import author_dockerfile
 from deployer.facts import analyze_project
 from deployer.llm import AnthropicAuthor
 from deployer.models import CheckStatus, DeployTarget, VerificationReport
-from deployer.verify import detect_container_tool, verify
+from deployer.verify import (
+    DEFAULT_BUILD_TIMEOUT,
+    DEFAULT_HEALTH_TIMEOUT,
+    detect_container_tool,
+    verify,
+)
 
 _STATUS_ICONS = {
     CheckStatus.PASSED: "ok",
@@ -24,6 +29,29 @@ def _load_target(path: str | None) -> DeployTarget:
     return DeployTarget.model_validate_json(Path(path).read_text())
 
 
+def _add_timeout_flags(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--build-timeout",
+        type=int,
+        default=DEFAULT_BUILD_TIMEOUT,
+        help="seconds allowed for the container build",
+    )
+    parser.add_argument(
+        "--health-timeout",
+        type=int,
+        default=DEFAULT_HEALTH_TIMEOUT,
+        help="seconds allowed for the healthcheck; ignored for non-service targets",
+    )
+
+
+def _timeout_error(args: argparse.Namespace) -> str | None:
+    if args.build_timeout < 1:
+        return "--build-timeout must be >= 1"
+    if args.health_timeout < 1:
+        return "--health-timeout must be >= 1"
+    return None
+
+
 def _print_report(report: VerificationReport) -> None:
     for result in report.results:
         icon = _STATUS_ICONS[result.status]
@@ -36,6 +64,10 @@ def _print_report(report: VerificationReport) -> None:
 
 
 def _cmd_verify(args: argparse.Namespace) -> int:
+    error = _timeout_error(args)
+    if error:
+        print(f"error: {error}", file=sys.stderr)
+        return 2
     project = Path(args.path)
     dockerfile_path = project / "Dockerfile"
     if not dockerfile_path.is_file():
@@ -48,6 +80,8 @@ def _cmd_verify(args: argparse.Namespace) -> int:
         target,
         detect_container_tool(),
         analyze_project(project),
+        build_timeout=args.build_timeout,
+        health_timeout=args.health_timeout,
     )
     _print_report(report)
     return 0 if report.passed else 1
@@ -59,12 +93,18 @@ def _cmd_author(args: argparse.Namespace) -> int:
     if args.max_iterations < 1:
         print("error: --max-iterations must be >= 1", file=sys.stderr)
         return 2
+    error = _timeout_error(args)
+    if error:
+        print(f"error: {error}", file=sys.stderr)
+        return 2
     run = author_dockerfile(
         project,
         target,
         AnthropicAuthor(),
         max_iterations=args.max_iterations,
         run_docker=not args.no_docker,
+        build_timeout=args.build_timeout,
+        health_timeout=args.health_timeout,
     )
     if run.iterations:
         (project / "Dockerfile").write_text(run.iterations[-1].dockerfile + "\n")
@@ -88,6 +128,7 @@ def main(argv: list[str] | None = None) -> int:
     p_verify = sub.add_parser("verify", help="verify an existing Dockerfile")
     p_verify.add_argument("path")
     p_verify.add_argument("--target", default=None, help="DeployTarget JSON file")
+    _add_timeout_flags(p_verify)
     p_verify.set_defaults(func=_cmd_verify)
 
     p_author = sub.add_parser("author", help="author a Dockerfile with the LLM")
@@ -97,6 +138,7 @@ def main(argv: list[str] | None = None) -> int:
     p_author.add_argument(
         "--no-docker", action="store_true", help="static-only verification"
     )
+    _add_timeout_flags(p_author)
     p_author.set_defaults(func=_cmd_author)
 
     args = parser.parse_args(argv)

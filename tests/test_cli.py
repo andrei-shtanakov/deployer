@@ -86,3 +86,96 @@ def test_author_reads_target_json(
 
 def test_author_rejects_nonpositive_max_iterations(tmp_path: Path) -> None:
     assert cli.main(["author", str(tmp_path), "--max-iterations", "0"]) == 2
+
+
+def test_verify_rejects_nonpositive_timeouts(tmp_path: Path) -> None:
+    (tmp_path / "Dockerfile").write_text("FROM python:3.12-slim\n")
+    assert cli.main(["verify", str(tmp_path), "--build-timeout", "0"]) == 2
+    assert cli.main(["verify", str(tmp_path), "--health-timeout", "0"]) == 2
+
+
+def test_author_rejects_nonpositive_timeouts(tmp_path: Path) -> None:
+    assert cli.main(["author", str(tmp_path), "--build-timeout", "0"]) == 2
+    assert cli.main(["author", str(tmp_path), "--health-timeout", "-5"]) == 2
+
+
+def test_verify_flags_reach_library(
+    hello_service: Path, tmp_path: Path, monkeypatch
+) -> None:
+    from deployer.models import VerificationReport
+
+    project = tmp_path / "proj"
+    project.mkdir()
+    for name in ("pyproject.toml", "main.py"):
+        (project / name).write_text((hello_service / name).read_text())
+    (project / "Dockerfile").write_text((hello_service / "Dockerfile.good").read_text())
+    captured = {}
+
+    def spy_verify(
+        dockerfile,
+        project_path,
+        target,
+        tool,
+        facts=None,
+        *,
+        build_timeout,
+        health_timeout,
+    ):
+        captured["timeouts"] = (build_timeout, health_timeout)
+        return VerificationReport(
+            results=[CheckResult(check_id="parses", status=CheckStatus.PASSED)]
+        )
+
+    monkeypatch.setattr("deployer.cli.verify", spy_verify)
+    exit_code = cli.main(
+        [
+            "verify",
+            str(project),
+            "--build-timeout",
+            "1200",
+            "--health-timeout",
+            "45",
+        ]
+    )
+    assert exit_code == 0
+    assert captured["timeouts"] == (1200, 45)
+
+
+def test_author_flags_reach_library(tmp_path: Path, monkeypatch) -> None:
+    from deployer.models import AuthoringRun, DeployTarget
+
+    captured = {}
+
+    def spy_author(
+        project_path,
+        target,
+        author,
+        *,
+        max_iterations,
+        run_docker,
+        build_timeout,
+        health_timeout,
+    ):
+        captured["timeouts"] = (build_timeout, health_timeout)
+        return AuthoringRun(
+            project="p",
+            target=DeployTarget(),
+            stopped_reason="static_only",
+            success=False,
+        )
+
+    monkeypatch.setattr("deployer.cli.author_dockerfile", spy_author)
+    monkeypatch.setattr("deployer.cli.AnthropicAuthor", lambda: object())
+    exit_code = cli.main(
+        [
+            "author",
+            str(tmp_path),
+            "--no-docker",
+            "--build-timeout",
+            "1200",
+            "--health-timeout",
+            "45",
+        ]
+    )
+    assert exit_code == 0
+    assert captured["timeouts"] == (1200, 45)

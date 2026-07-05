@@ -14,7 +14,12 @@ from deployer.models import (
     StopReason,
     VerificationReport,
 )
-from deployer.verify import detect_container_tool, verify
+from deployer.verify import (
+    DEFAULT_BUILD_TIMEOUT,
+    DEFAULT_HEALTH_TIMEOUT,
+    detect_container_tool,
+    verify,
+)
 
 
 class DockerfileAuthor(Protocol):
@@ -38,11 +43,14 @@ def author_dockerfile(
     *,
     max_iterations: int = 3,
     run_docker: bool = True,
+    build_timeout: int = DEFAULT_BUILD_TIMEOUT,
+    health_timeout: int = DEFAULT_HEALTH_TIMEOUT,
 ) -> AuthoringRun:
     """Generate -> verify -> repair until success, budget, or no progress.
 
     The LLM (author) only ever sees facts and reports and returns text;
-    this function owns files, subprocesses, and control flow.
+    this function owns files, subprocesses, and control flow. The timeouts
+    bound each iteration's L2 build/healthcheck subprocesses (seconds).
     """
     facts = analyze_project(project_path)
     hints = collect_hints(facts)
@@ -66,10 +74,26 @@ def author_dockerfile(
     if dockerfile is not None:
         for index in range(max_iterations):
             start = time.monotonic()
-            report = verify(dockerfile, project_path, target, tool, facts)
+            report = verify(
+                dockerfile,
+                project_path,
+                target,
+                tool,
+                facts,
+                build_timeout=build_timeout,
+                health_timeout=health_timeout,
+            )
             if report.environment_failures and environment_retries == 0:
                 environment_retries += 1
-                report = verify(dockerfile, project_path, target, tool, facts)
+                report = verify(
+                    dockerfile,
+                    project_path,
+                    target,
+                    tool,
+                    facts,
+                    build_timeout=build_timeout,
+                    health_timeout=health_timeout,
+                )
             iterations.append(
                 IterationRecord(
                     index=index,
