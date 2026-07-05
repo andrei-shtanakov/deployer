@@ -17,8 +17,12 @@ Design: `docs/superpowers/specs/2026-07-04-deployer-mvp-design.md`.
 ## Usage
 
 ```sh
-uv run deployer author <project-path> [--target target.json] [--no-docker]
-uv run deployer verify <project-path>   # checks <project-path>/Dockerfile
+uv run deployer author <project-path> [--target target.json] [--no-docker] \
+    [--build-timeout 600] [--health-timeout 30]
+uv run deployer verify <project-path> [--build-timeout 600] [--health-timeout 30]
+# verify checks <project-path>/Dockerfile; --health-timeout is ignored for
+# non-service targets. Slow source builds (e.g. llama-cpp-python) need
+# --build-timeout well above the 600s default.
 ```
 
 `target.json` is a `DeployTarget`: e.g.
