@@ -305,3 +305,10 @@ def test_nondir_project_wins_over_bad_target(tmp_path: Path, capsys) -> None:
 
 def test_missing_dockerfile_still_exit_1(tmp_path: Path) -> None:
     assert cli.main(["verify", str(tmp_path)]) == 1
+
+
+def test_rejects_non_utf8_target_file(tmp_path: Path, capsys) -> None:
+    bad = tmp_path / "target.json"
+    bad.write_bytes(b"\xff\xfe{")
+    assert cli.main(["verify", str(tmp_path), "--target", str(bad)]) == 2
+    assert capsys.readouterr().err.startswith("error:")

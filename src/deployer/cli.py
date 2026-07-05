@@ -31,7 +31,7 @@ def _load_target(path: str | None) -> DeployTarget | str:
         return DeployTarget()
     try:
         return DeployTarget.model_validate_json(Path(path).read_text())
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         return f"cannot read --target file: {exc}"
     except ValidationError as exc:
         return f"--target is not a valid DeployTarget: {exc}"
