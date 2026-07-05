@@ -4,6 +4,8 @@ import argparse
 import sys
 from pathlib import Path
 
+from pydantic import ValidationError
+
 from deployer.author import author_dockerfile
 from deployer.facts import analyze_project
 from deployer.llm import AnthropicAuthor
@@ -23,10 +25,16 @@ _STATUS_ICONS = {
 }
 
 
-def _load_target(path: str | None) -> DeployTarget:
+def _load_target(path: str | None) -> DeployTarget | str:
+    """Load a DeployTarget JSON file; return an error message on failure."""
     if path is None:
         return DeployTarget()
-    return DeployTarget.model_validate_json(Path(path).read_text())
+    try:
+        return DeployTarget.model_validate_json(Path(path).read_text())
+    except OSError as exc:
+        return f"cannot read --target file: {exc}"
+    except ValidationError as exc:
+        return f"--target is not a valid DeployTarget: {exc}"
 
 
 def _add_timeout_flags(parser: argparse.ArgumentParser) -> None:
@@ -67,16 +75,22 @@ def _print_report(report: VerificationReport) -> None:
 
 
 def _cmd_verify(args: argparse.Namespace) -> int:
+    project = Path(args.path)
+    if not project.is_dir():
+        print(f"error: {project} is not a directory", file=sys.stderr)
+        return 2
     error = _timeout_error(args)
     if error:
         print(f"error: {error}", file=sys.stderr)
         return 2
-    project = Path(args.path)
+    target = _load_target(args.target)
+    if isinstance(target, str):
+        print(f"error: {target}", file=sys.stderr)
+        return 2
     dockerfile_path = project / "Dockerfile"
     if not dockerfile_path.is_file():
         print(f"error: {dockerfile_path} not found", file=sys.stderr)
         return 1
-    target = _load_target(args.target)
     report = verify(
         dockerfile_path.read_text(),
         project,
@@ -97,13 +111,19 @@ def _cmd_verify(args: argparse.Namespace) -> int:
 
 def _cmd_author(args: argparse.Namespace) -> int:
     project = Path(args.path)
-    target = _load_target(args.target)
+    if not project.is_dir():
+        print(f"error: {project} is not a directory", file=sys.stderr)
+        return 2
     if args.max_iterations < 1:
         print("error: --max-iterations must be >= 1", file=sys.stderr)
         return 2
     error = _timeout_error(args)
     if error:
         print(f"error: {error}", file=sys.stderr)
+        return 2
+    target = _load_target(args.target)
+    if isinstance(target, str):
+        print(f"error: {target}", file=sys.stderr)
         return 2
     run = author_dockerfile(
         project,

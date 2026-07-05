@@ -240,3 +240,68 @@ def test_verify_writes_report_json_on_fail(
     report = VerificationReport.model_validate_json(report_path.read_text())
     failed = [r for r in report.results if r.status is CheckStatus.FAILED]
     assert failed and "nope.py" in failed[0].message  # full detail persisted
+
+
+def test_verify_rejects_nondir_project(tmp_path: Path, capsys) -> None:
+    assert cli.main(["verify", str(tmp_path / "ghost")]) == 2
+    assert "is not a directory" in capsys.readouterr().err
+
+
+def test_author_rejects_nondir_project(tmp_path: Path, capsys) -> None:
+    assert cli.main(["author", str(tmp_path / "ghost")]) == 2
+    assert "is not a directory" in capsys.readouterr().err
+
+
+def test_verify_rejects_missing_target_file(tmp_path: Path, capsys) -> None:
+    (tmp_path / "Dockerfile").write_text("FROM python:3.12-slim\n")
+    code = cli.main(["verify", str(tmp_path), "--target", str(tmp_path / "nope.json")])
+    assert code == 2
+    assert capsys.readouterr().err.startswith("error:")
+
+
+def test_author_rejects_missing_target_file(tmp_path: Path, capsys) -> None:
+    code = cli.main(["author", str(tmp_path), "--target", str(tmp_path / "nope.json")])
+    assert code == 2
+    assert capsys.readouterr().err.startswith("error:")
+
+
+def test_rejects_malformed_target_json(tmp_path: Path) -> None:
+    bad = tmp_path / "target.json"
+    bad.write_text("{not json")
+    assert cli.main(["verify", str(tmp_path), "--target", str(bad)]) == 2
+    assert cli.main(["author", str(tmp_path), "--target", str(bad)]) == 2
+
+
+def test_rejects_target_failing_validation(tmp_path: Path) -> None:
+    bad = tmp_path / "target.json"
+    bad.write_text('{"service": {"port": "not-a-port"}}')
+    assert cli.main(["verify", str(tmp_path), "--target", str(bad)]) == 2
+    assert cli.main(["author", str(tmp_path), "--target", str(bad)]) == 2
+
+
+def test_nondir_project_wins_over_bad_target(tmp_path: Path, capsys) -> None:
+    """Pins the validation order Part 2 of the spec exists to fix."""
+    code = cli.main(
+        [
+            "verify",
+            str(tmp_path / "ghost"),
+            "--target",
+            str(tmp_path / "nope.json"),
+        ]
+    )
+    assert code == 2
+    assert "is not a directory" in capsys.readouterr().err
+    code = cli.main(
+        [
+            "author",
+            str(tmp_path / "ghost"),
+            "--target",
+            str(tmp_path / "nope.json"),
+        ]
+    )
+    assert code == 2
+    assert "is not a directory" in capsys.readouterr().err
+
+
+def test_missing_dockerfile_still_exit_1(tmp_path: Path) -> None:
+    assert cli.main(["verify", str(tmp_path)]) == 1
