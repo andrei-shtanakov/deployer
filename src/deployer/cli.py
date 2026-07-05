@@ -87,6 +87,11 @@ def _cmd_verify(args: argparse.Namespace) -> int:
         health_timeout=args.health_timeout,
     )
     _print_report(report)
+    report_dir = project / ".deployer"
+    report_dir.mkdir(parents=True, exist_ok=True)
+    report_path = report_dir / "verify-report.json"
+    report_path.write_text(report.model_dump_json(indent=2))
+    print(f"report: {report_path}")
     return 0 if report.passed else 1
 
 
@@ -113,7 +118,7 @@ def _cmd_author(args: argparse.Namespace) -> int:
         (project / "Dockerfile").write_text(run.iterations[-1].dockerfile + "\n")
         _print_report(run.iterations[-1].report)
     report_dir = project / ".deployer"
-    report_dir.mkdir(exist_ok=True)
+    report_dir.mkdir(parents=True, exist_ok=True)
     (report_dir / "authoring-run.json").write_text(run.model_dump_json(indent=2))
     print(
         f"stopped: {run.stopped_reason} after {len(run.iterations)} iteration(s); "
