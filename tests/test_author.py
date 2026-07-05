@@ -134,7 +134,16 @@ def test_environment_failure_retries_once_without_consuming_iteration(
 
     calls = {"n": 0}
 
-    def flaky_verify(dockerfile, project_path, target, tool, facts=None):
+    def flaky_verify(
+        dockerfile,
+        project_path,
+        target,
+        tool,
+        facts=None,
+        *,
+        build_timeout,
+        health_timeout,
+    ):
         calls["n"] += 1
         if calls["n"] == 1:
             return VerificationReport(
@@ -173,7 +182,16 @@ def test_hints_offered_recorded_and_facts_passed(
 
     captured: dict = {}
 
-    def spy_verify(dockerfile, project_path, target, tool, facts=None):
+    def spy_verify(
+        dockerfile,
+        project_path,
+        target,
+        tool,
+        facts=None,
+        *,
+        build_timeout,
+        health_timeout,
+    ):
         captured["facts"] = facts
         return VerificationReport(
             results=[CheckResult(check_id="parses", status=CheckStatus.PASSED)]
@@ -194,7 +212,16 @@ def test_second_environment_failure_stops_run(hello_service: Path, monkeypatch) 
 
     calls = {"n": 0}
 
-    def env_fail_verify(dockerfile, project_path, target, tool, facts=None):
+    def env_fail_verify(
+        dockerfile,
+        project_path,
+        target,
+        tool,
+        facts=None,
+        *,
+        build_timeout,
+        health_timeout,
+    ):
         calls["n"] += 1
         return VerificationReport(
             results=[
@@ -214,3 +241,52 @@ def test_second_environment_failure_stops_run(hello_service: Path, monkeypatch) 
     assert run.environment_retries == 1
     assert run.success is False
     assert len(run.iterations) == 1
+
+
+def test_author_forwards_timeouts_to_both_verify_calls(
+    hello_service: Path, monkeypatch
+) -> None:
+    from deployer.models import FailureKind
+
+    captured: list[dict] = []
+
+    def spy_verify(
+        dockerfile,
+        project_path,
+        target,
+        tool,
+        facts=None,
+        *,
+        build_timeout,
+        health_timeout,
+    ):
+        captured.append(
+            {"build_timeout": build_timeout, "health_timeout": health_timeout}
+        )
+        if len(captured) == 1:  # first call: environment flake -> triggers retry
+            return VerificationReport(
+                results=[
+                    CheckResult(
+                        check_id="build",
+                        status=CheckStatus.FAILED,
+                        failure_kind=FailureKind.ENVIRONMENT,
+                        message="connection reset",
+                    )
+                ]
+            )
+        return VerificationReport(
+            results=[CheckResult(check_id="build", status=CheckStatus.PASSED)]
+        )
+
+    monkeypatch.setattr("deployer.author.verify", spy_verify)
+    monkeypatch.setattr("deployer.author.detect_container_tool", lambda: "podman")
+    run = author_dockerfile(
+        hello_service,
+        DeployTarget(),
+        ScriptedAuthor(GOOD),
+        build_timeout=1200,
+        health_timeout=45,
+    )
+    assert len(captured) == 2  # main call + environment-retry call
+    assert all(c == {"build_timeout": 1200, "health_timeout": 45} for c in captured)
+    assert run.stopped_reason == "success"
