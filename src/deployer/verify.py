@@ -497,7 +497,10 @@ def verify(
     build_timeout: int = DEFAULT_BUILD_TIMEOUT,
     health_timeout: int = DEFAULT_HEALTH_TIMEOUT,
 ) -> VerificationReport:
-    """Full verification: L1 static always; L2 docker when available and L1 passed."""
+    """Full verification: L1 static always; L2 docker when available and L1 passed.
+
+    The timeouts bound the L2 build and healthcheck subprocesses (seconds).
+    """
     report = verify_static(dockerfile, project_path, facts)
     if tool is None:
         return report

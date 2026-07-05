@@ -49,7 +49,8 @@ def author_dockerfile(
     """Generate -> verify -> repair until success, budget, or no progress.
 
     The LLM (author) only ever sees facts and reports and returns text;
-    this function owns files, subprocesses, and control flow.
+    this function owns files, subprocesses, and control flow. The timeouts
+    bound each iteration's L2 build/healthcheck subprocesses (seconds).
     """
     facts = analyze_project(project_path)
     hints = collect_hints(facts)
