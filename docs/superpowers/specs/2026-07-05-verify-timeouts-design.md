@@ -47,8 +47,14 @@ dogfooding happens).
 
 - Both subcommands (`verify`, `author`) gain `--build-timeout` and
   `--health-timeout` (`type=int`, seconds, defaults from the constants).
-- Validation: values `< 1` exit with code 2 and an error message, matching
-  the existing `--max-iterations` pattern.
+- `--health-timeout` help text notes "ignored for non-service targets"
+  (the healthcheck only runs when `target.service` is set).
+- Validation: values `< 1` exit with code 2 and an error message. This
+  must be added to **both** subcommands — `_cmd_author` has the
+  `--max-iterations < 1` precedent, but `_cmd_verify` has no validation
+  today; this is its first. No upper bound is enforced (deliberate: this
+  is a research bench, an operator passing a huge timeout gets what they
+  asked for).
 - Flags are passed through to `verify()` / `author_dockerfile()`.
 
 ## Behavior
@@ -57,6 +63,13 @@ Defaults are unchanged everywhere; a run without the new flags is
 byte-identical to today. The constants live in `verify.py` only — no
 duplicated numbers.
 
+**Known limitation:** the motivating case (`locallogai-backend`,
+llama-cpp-python source build > 600s) is unblocked, not fixed — its L2
+verification still fails unless the operator remembers to pass
+`--build-timeout`. Making that stick per-target needs the future
+run-config seam (see Out of scope); do not expect a green out-of-the-box
+run after this merge.
+
 ## Testing
 
 - `test_verify_docker.py`: `verify()` forwards both values to
@@ -64,7 +77,9 @@ duplicated numbers.
 - `test_author.py`: `author_dockerfile(build_timeout=…, health_timeout=…)`
   forwards to `verify` (spy), including on the environment-retry call.
 - `test_cli.py`: flags parse and reach the library call (spy);
-  `--build-timeout 0` exits 2 with an error message.
+  `--build-timeout 0` exits 2 with an error message — covered for **both**
+  subcommands (the `verify` branch has no validation precedent, so it is
+  the easiest to leave untested).
 - Existing podman e2e tests untouched.
 
 ## Out of scope
