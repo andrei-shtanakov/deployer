@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from deployer import cli
-from deployer.models import CheckResult, CheckStatus
+from deployer.models import CheckResult, CheckStatus, FailureKind, VerificationReport
 
 
 @pytest.fixture(autouse=True)
@@ -179,3 +179,191 @@ def test_author_flags_reach_library(tmp_path: Path, monkeypatch) -> None:
     )
     assert exit_code == 0
     assert captured["timeouts"] == (1200, 45)
+
+
+def test_print_report_shows_full_failed_message_only(capsys) -> None:
+    report = VerificationReport(
+        results=[
+            CheckResult(
+                check_id="build",
+                status=CheckStatus.FAILED,
+                failure_kind=FailureKind.AUTHORING,
+                message="compile failed\ngcc: fatal error: killed\nstopped",
+            ),
+            CheckResult(
+                check_id="base_pinned",
+                status=CheckStatus.WARNING,
+                message="unpinned image\nwarning tail must stay hidden",
+            ),
+        ],
+        docker_available=True,
+    )
+    cli._print_report(report)
+    out = capsys.readouterr().out
+    assert "[FAIL] build: compile failed" in out
+    assert "\n       gcc: fatal error: killed\n" in out  # 7-space alignment
+    assert "\n       stopped\n" in out
+    assert "warning tail must stay hidden" not in out  # WARNING stays one line
+
+
+def _make_project(hello_service: Path, tmp_path: Path, dockerfile: str) -> Path:
+    project = tmp_path / "proj"
+    project.mkdir()
+    for name in ("pyproject.toml", "main.py"):
+        (project / name).write_text((hello_service / name).read_text())
+    (project / "Dockerfile").write_text(dockerfile)
+    return project
+
+
+def test_verify_writes_report_json_on_pass(
+    hello_service: Path, tmp_path: Path, monkeypatch
+) -> None:
+    project = _make_project(
+        hello_service, tmp_path, (hello_service / "Dockerfile.good").read_text()
+    )
+    monkeypatch.setattr("deployer.cli.detect_container_tool", lambda: None)
+    assert cli.main(["verify", str(project)]) == 0
+    report_path = project / ".deployer" / "verify-report.json"
+    report = VerificationReport.model_validate_json(report_path.read_text())
+    assert report.results  # round-trips and is non-empty
+
+
+def test_verify_writes_report_json_on_fail(
+    hello_service: Path, tmp_path: Path, monkeypatch
+) -> None:
+    project = _make_project(
+        hello_service, tmp_path, "FROM python:3.12-slim\nCOPY nope.py .\n"
+    )
+    monkeypatch.setattr("deployer.cli.detect_container_tool", lambda: None)
+    assert cli.main(["verify", str(project)]) == 1
+    report_path = project / ".deployer" / "verify-report.json"
+    report = VerificationReport.model_validate_json(report_path.read_text())
+    failed = [r for r in report.results if r.status is CheckStatus.FAILED]
+    assert failed and "nope.py" in failed[0].message  # full detail persisted
+
+
+def test_verify_rejects_nondir_project(tmp_path: Path, capsys) -> None:
+    assert cli.main(["verify", str(tmp_path / "ghost")]) == 2
+    assert "is not a directory" in capsys.readouterr().err
+
+
+def test_author_rejects_nondir_project(tmp_path: Path, capsys) -> None:
+    assert cli.main(["author", str(tmp_path / "ghost")]) == 2
+    assert "is not a directory" in capsys.readouterr().err
+
+
+def test_verify_rejects_missing_target_file(tmp_path: Path, capsys) -> None:
+    (tmp_path / "Dockerfile").write_text("FROM python:3.12-slim\n")
+    code = cli.main(["verify", str(tmp_path), "--target", str(tmp_path / "nope.json")])
+    assert code == 2
+    assert capsys.readouterr().err.startswith("error:")
+
+
+def test_author_rejects_missing_target_file(tmp_path: Path, capsys) -> None:
+    code = cli.main(["author", str(tmp_path), "--target", str(tmp_path / "nope.json")])
+    assert code == 2
+    assert capsys.readouterr().err.startswith("error:")
+
+
+def test_rejects_malformed_target_json(tmp_path: Path) -> None:
+    bad = tmp_path / "target.json"
+    bad.write_text("{not json")
+    assert cli.main(["verify", str(tmp_path), "--target", str(bad)]) == 2
+    assert cli.main(["author", str(tmp_path), "--target", str(bad)]) == 2
+
+
+def test_rejects_target_failing_validation(tmp_path: Path) -> None:
+    bad = tmp_path / "target.json"
+    bad.write_text('{"service": {"port": "not-a-port"}}')
+    assert cli.main(["verify", str(tmp_path), "--target", str(bad)]) == 2
+    assert cli.main(["author", str(tmp_path), "--target", str(bad)]) == 2
+
+
+def test_nondir_project_wins_over_bad_target(tmp_path: Path, capsys) -> None:
+    """Pins the validation order Part 2 of the spec exists to fix."""
+    code = cli.main(
+        [
+            "verify",
+            str(tmp_path / "ghost"),
+            "--target",
+            str(tmp_path / "nope.json"),
+        ]
+    )
+    assert code == 2
+    assert "is not a directory" in capsys.readouterr().err
+    code = cli.main(
+        [
+            "author",
+            str(tmp_path / "ghost"),
+            "--target",
+            str(tmp_path / "nope.json"),
+        ]
+    )
+    assert code == 2
+    assert "is not a directory" in capsys.readouterr().err
+
+
+def test_missing_dockerfile_still_exit_1(tmp_path: Path) -> None:
+    assert cli.main(["verify", str(tmp_path)]) == 1
+
+
+def test_rejects_non_utf8_target_file(tmp_path: Path, capsys) -> None:
+    bad = tmp_path / "target.json"
+    bad.write_bytes(b"\xff\xfe{")
+    assert cli.main(["verify", str(tmp_path), "--target", str(bad)]) == 2
+    assert capsys.readouterr().err.startswith("error:")
+
+
+def test_print_report_blank_tail_lines_have_no_trailing_spaces(capsys) -> None:
+    report = VerificationReport(
+        results=[
+            CheckResult(
+                check_id="build",
+                status=CheckStatus.FAILED,
+                failure_kind=FailureKind.AUTHORING,
+                message="boom\n\ntail after blank",
+            )
+        ],
+        docker_available=True,
+    )
+    cli._print_report(report)
+    out = capsys.readouterr().out
+    assert "tail after blank" in out
+    assert all(not line.endswith(" ") for line in out.splitlines())
+
+
+def test_verify_report_write_failure_warns_not_crashes(
+    hello_service: Path, tmp_path: Path, monkeypatch, capsys
+) -> None:
+    project = _make_project(
+        hello_service, tmp_path, (hello_service / "Dockerfile.good").read_text()
+    )
+    (project / ".deployer").write_text("a file where a dir must go")
+    monkeypatch.setattr("deployer.cli.detect_container_tool", lambda: None)
+    assert cli.main(["verify", str(project)]) == 0  # exit reflects checks
+    captured = capsys.readouterr()
+    assert "warning: could not write verify-report.json" in captured.err
+    assert "report:" not in captured.out
+
+
+def test_author_report_write_failure_warns_not_crashes(
+    hello_service: Path, tmp_path: Path, monkeypatch, capsys
+) -> None:
+    project = _make_project(
+        hello_service, tmp_path, (hello_service / "Dockerfile.good").read_text()
+    )
+    (project / ".deployer").write_text("a file where a dir must go")
+    good = (hello_service / "Dockerfile.good").read_text()
+
+    class FakeAuthor:
+        def generate(self, facts, target):
+            return good
+
+        def repair(self, facts, target, dockerfile, report):
+            return good
+
+    monkeypatch.setattr("deployer.cli.AnthropicAuthor", lambda: FakeAuthor())
+    assert cli.main(["author", str(project), "--no-docker"]) == 0
+    captured = capsys.readouterr()
+    assert "warning: could not write authoring-run.json" in captured.err
+    assert "stopped: static_only" in captured.out

@@ -25,6 +25,12 @@ uv run deployer verify <project-path> [--build-timeout 600] [--health-timeout 30
 # --build-timeout well above the 600s default.
 ```
 
+Exit codes: `0` success; `1` verification/authoring failed (including a
+missing `Dockerfile` for `verify`); `2` invalid invocation (bad flag
+values, project path not a directory, unreadable or invalid `--target`).
+`verify` writes its full report to `<project>/.deployer/verify-report.json`
+(latest run only).
+
 `target.json` is a `DeployTarget`: e.g.
 `{"service": {"port": 8000, "healthcheck_path": "/health"}}`.
 `{"system_packages": ["libpq5"]}` in the target requires apt packages

@@ -4,6 +4,8 @@ import argparse
 import sys
 from pathlib import Path
 
+from pydantic import ValidationError
+
 from deployer.author import author_dockerfile
 from deployer.facts import analyze_project
 from deployer.llm import AnthropicAuthor
@@ -23,10 +25,16 @@ _STATUS_ICONS = {
 }
 
 
-def _load_target(path: str | None) -> DeployTarget:
+def _load_target(path: str | None) -> DeployTarget | str:
+    """Load a DeployTarget JSON file; return an error message on failure."""
     if path is None:
         return DeployTarget()
-    return DeployTarget.model_validate_json(Path(path).read_text())
+    try:
+        return DeployTarget.model_validate_json(Path(path).read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError) as exc:
+        return f"cannot read --target file: {exc}"
+    except ValidationError as exc:
+        return f"--target is not a valid DeployTarget: {exc}"
 
 
 def _add_timeout_flags(parser: argparse.ArgumentParser) -> None:
@@ -52,28 +60,50 @@ def _timeout_error(args: argparse.Namespace) -> str | None:
     return None
 
 
+def _write_report(project: Path, name: str, payload: str) -> Path | None:
+    """Persist a report under <project>/.deployer; warn instead of crashing."""
+    report_dir = project / ".deployer"
+    try:
+        report_dir.mkdir(parents=True, exist_ok=True)
+        path = report_dir / name
+        path.write_text(payload)
+    except OSError as exc:
+        print(f"warning: could not write {name}: {exc}", file=sys.stderr)
+        return None
+    return path
+
+
 def _print_report(report: VerificationReport) -> None:
     for result in report.results:
         icon = _STATUS_ICONS[result.status]
         line = f"[{icon:>4}] {result.check_id}"
         if result.message:
-            line += f": {result.message.splitlines()[0]}"
+            first, *rest = result.message.splitlines()
+            line += f": {first}"
+            if result.status is CheckStatus.FAILED:
+                line += "".join(f"\n       {tail}" if tail else "\n" for tail in rest)
         print(line)
     if not report.docker_available:
         print("note: no container runtime found; static-only verification")
 
 
 def _cmd_verify(args: argparse.Namespace) -> int:
+    project = Path(args.path)
+    if not project.is_dir():
+        print(f"error: {project} is not a directory", file=sys.stderr)
+        return 2
     error = _timeout_error(args)
     if error:
         print(f"error: {error}", file=sys.stderr)
         return 2
-    project = Path(args.path)
+    target = _load_target(args.target)
+    if isinstance(target, str):
+        print(f"error: {target}", file=sys.stderr)
+        return 2
     dockerfile_path = project / "Dockerfile"
     if not dockerfile_path.is_file():
         print(f"error: {dockerfile_path} not found", file=sys.stderr)
         return 1
-    target = _load_target(args.target)
     report = verify(
         dockerfile_path.read_text(),
         project,
@@ -84,18 +114,29 @@ def _cmd_verify(args: argparse.Namespace) -> int:
         health_timeout=args.health_timeout,
     )
     _print_report(report)
+    report_path = _write_report(
+        project, "verify-report.json", report.model_dump_json(indent=2)
+    )
+    if report_path is not None:
+        print(f"report: {report_path}")
     return 0 if report.passed else 1
 
 
 def _cmd_author(args: argparse.Namespace) -> int:
     project = Path(args.path)
-    target = _load_target(args.target)
+    if not project.is_dir():
+        print(f"error: {project} is not a directory", file=sys.stderr)
+        return 2
     if args.max_iterations < 1:
         print("error: --max-iterations must be >= 1", file=sys.stderr)
         return 2
     error = _timeout_error(args)
     if error:
         print(f"error: {error}", file=sys.stderr)
+        return 2
+    target = _load_target(args.target)
+    if isinstance(target, str):
+        print(f"error: {target}", file=sys.stderr)
         return 2
     run = author_dockerfile(
         project,
@@ -109,13 +150,13 @@ def _cmd_author(args: argparse.Namespace) -> int:
     if run.iterations:
         (project / "Dockerfile").write_text(run.iterations[-1].dockerfile + "\n")
         _print_report(run.iterations[-1].report)
-    report_dir = project / ".deployer"
-    report_dir.mkdir(exist_ok=True)
-    (report_dir / "authoring-run.json").write_text(run.model_dump_json(indent=2))
-    print(
-        f"stopped: {run.stopped_reason} after {len(run.iterations)} iteration(s); "
-        f"run report: {report_dir / 'authoring-run.json'}"
+    report_path = _write_report(
+        project, "authoring-run.json", run.model_dump_json(indent=2)
     )
+    line = f"stopped: {run.stopped_reason} after {len(run.iterations)} iteration(s)"
+    if report_path is not None:
+        line += f"; run report: {report_path}"
+    print(line)
     accepted = ("success", "static_only") if args.no_docker else ("success",)
     return 0 if run.stopped_reason in accepted else 1
 
