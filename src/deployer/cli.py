@@ -57,7 +57,10 @@ def _print_report(report: VerificationReport) -> None:
         icon = _STATUS_ICONS[result.status]
         line = f"[{icon:>4}] {result.check_id}"
         if result.message:
-            line += f": {result.message.splitlines()[0]}"
+            first, *rest = result.message.splitlines()
+            line += f": {first}"
+            if result.status is CheckStatus.FAILED:
+                line += "".join(f"\n       {tail}" for tail in rest)
         print(line)
     if not report.docker_available:
         print("note: no container runtime found; static-only verification")

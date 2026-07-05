@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from deployer import cli
-from deployer.models import CheckResult, CheckStatus
+from deployer.models import CheckResult, CheckStatus, FailureKind, VerificationReport
 
 
 @pytest.fixture(autouse=True)
@@ -179,3 +179,28 @@ def test_author_flags_reach_library(tmp_path: Path, monkeypatch) -> None:
     )
     assert exit_code == 0
     assert captured["timeouts"] == (1200, 45)
+
+
+def test_print_report_shows_full_failed_message_only(capsys) -> None:
+    report = VerificationReport(
+        results=[
+            CheckResult(
+                check_id="build",
+                status=CheckStatus.FAILED,
+                failure_kind=FailureKind.AUTHORING,
+                message="compile failed\ngcc: fatal error: killed\nstopped",
+            ),
+            CheckResult(
+                check_id="base_pinned",
+                status=CheckStatus.WARNING,
+                message="unpinned image\nwarning tail must stay hidden",
+            ),
+        ],
+        docker_available=True,
+    )
+    cli._print_report(report)
+    out = capsys.readouterr().out
+    assert "[FAIL] build: compile failed" in out
+    assert "\n       gcc: fatal error: killed\n" in out  # 7-space alignment
+    assert "\n       stopped\n" in out
+    assert "warning tail must stay hidden" not in out  # WARNING stays one line
