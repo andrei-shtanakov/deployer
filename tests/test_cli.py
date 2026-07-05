@@ -312,3 +312,58 @@ def test_rejects_non_utf8_target_file(tmp_path: Path, capsys) -> None:
     bad.write_bytes(b"\xff\xfe{")
     assert cli.main(["verify", str(tmp_path), "--target", str(bad)]) == 2
     assert capsys.readouterr().err.startswith("error:")
+
+
+def test_print_report_blank_tail_lines_have_no_trailing_spaces(capsys) -> None:
+    report = VerificationReport(
+        results=[
+            CheckResult(
+                check_id="build",
+                status=CheckStatus.FAILED,
+                failure_kind=FailureKind.AUTHORING,
+                message="boom\n\ntail after blank",
+            )
+        ],
+        docker_available=True,
+    )
+    cli._print_report(report)
+    out = capsys.readouterr().out
+    assert "tail after blank" in out
+    assert all(not line.endswith(" ") for line in out.splitlines())
+
+
+def test_verify_report_write_failure_warns_not_crashes(
+    hello_service: Path, tmp_path: Path, monkeypatch, capsys
+) -> None:
+    project = _make_project(
+        hello_service, tmp_path, (hello_service / "Dockerfile.good").read_text()
+    )
+    (project / ".deployer").write_text("a file where a dir must go")
+    monkeypatch.setattr("deployer.cli.detect_container_tool", lambda: None)
+    assert cli.main(["verify", str(project)]) == 0  # exit reflects checks
+    captured = capsys.readouterr()
+    assert "warning: could not write verify-report.json" in captured.err
+    assert "report:" not in captured.out
+
+
+def test_author_report_write_failure_warns_not_crashes(
+    hello_service: Path, tmp_path: Path, monkeypatch, capsys
+) -> None:
+    project = _make_project(
+        hello_service, tmp_path, (hello_service / "Dockerfile.good").read_text()
+    )
+    (project / ".deployer").write_text("a file where a dir must go")
+    good = (hello_service / "Dockerfile.good").read_text()
+
+    class FakeAuthor:
+        def generate(self, facts, target):
+            return good
+
+        def repair(self, facts, target, dockerfile, report):
+            return good
+
+    monkeypatch.setattr("deployer.cli.AnthropicAuthor", lambda: FakeAuthor())
+    assert cli.main(["author", str(project), "--no-docker"]) == 0
+    captured = capsys.readouterr()
+    assert "warning: could not write authoring-run.json" in captured.err
+    assert "stopped: static_only" in captured.out
