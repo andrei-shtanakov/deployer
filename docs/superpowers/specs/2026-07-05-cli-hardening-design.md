@@ -38,9 +38,13 @@ file is an argument the caller supplied — different kinds of failure.
 
 FAILED checks print their full message: the existing one-line header
 (`[FAIL] check_id: <first line>`) followed by the remaining message lines
-indented with six spaces (aligning under the text column). WARNING and
-SKIPPED checks keep the current first-line-only form — their tails are not
-diagnostic. PASSED is unchanged.
+indented with seven spaces — the width of the `[FAIL] ` prefix
+(`[` + 4-char icon + `] ` = 7), so tail lines align under the check-id
+column. WARNING and SKIPPED checks keep the current first-line-only form —
+their tails are not diagnostic. PASSED is unchanged.
+
+Side benefit: `author` calls the same `_print_report` (cli.py:111), so its
+per-iteration failure output gains the full tails too — no extra work.
 
 ### Persisted report (`_cmd_verify`, cli.py:66)
 
@@ -64,10 +68,12 @@ A new helper owns the error boundary and is used by both subcommands:
   (`pydantic.ValidationError`) → exit 2
 
 Each failure prints `error: <specific reason>` to stderr. Implementation
-shape (decided): `_load_target` returns `DeployTarget | None`, printing the
-error itself and returning `None`; each command function does
-`if target is None: return 2`. Least machinery for two call sites; the
-contract is: no bare traceback can escape from target loading.
+shape (decided, aligned with the file's existing `_timeout_error` idiom of
+"helper returns the problem, caller prints"): `_load_target` returns
+`DeployTarget | str`, where `str` is the error message; each command
+function does `if isinstance(target, str): print error; return 2`. One
+printing location per command, one error idiom per file; the contract is:
+no bare traceback can escape from target loading.
 
 ### Validation order in both subcommands
 
@@ -103,11 +109,17 @@ failed, 2 invalid invocation.
 - Bad `--target` (missing file, invalid JSON, JSON failing DeployTarget
   validation) → exit 2 + `error:` on stderr, for **both** subcommands.
 - Project path not a directory → exit 2, both subcommands.
+- Validation-order pin: non-dir project AND missing `--target` together →
+  the dir error wins (guards the ordering Part 2 exists to fix).
 - Missing Dockerfile in an existing project dir → still exit 1.
 - Existing tests (flag forwarding, timeout validation) untouched.
 
 ## Out of scope (YAGNI)
 
+- **Cross-run history**: `verify-report.json` holds the latest run only and
+  is overwritten each invocation. This makes failure detail recoverable
+  *within* a run, not *across* runs — deliberate; per-run archives belong
+  to the future run-config/research seam if ever needed.
 - No report format versioning, no `--report-path` flag.
 - No expansion of WARNING/SKIPPED tails.
 - No structured/JSON output mode for stdout.
