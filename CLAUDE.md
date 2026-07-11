@@ -30,3 +30,24 @@ Python 3.12+, managed exclusively with `uv` (never pip):
 - Type check: `pyrefly check` after every change (run `pyrefly init` once if not yet configured)
 
 There are no tests, lint config, or dependencies yet — set them up alongside the first real code (pydantic is the expected modeling library per the parent lab conventions).
+
+## Repo scope & boundaries
+
+- **Этот репо:** `deployer` — git-корень `all_ai_orchestrators/deployer/`, remote `git@github.com:andrei-shtanakov/deployer.git`.
+- **Соседи (READ-ONLY reference):** `../arbiter/`, `../atp-platform/`, `../dispatcher/`, `../Maestro/`, `../open-prose/`, `../proctor/`, `../prograph/`, `../prograph-vault/`, `../robin-runtime/`, `../robin-toolkit/`, `../spec-runner/`, `../spec-runner-vscode/`, `../steward/` — их код не редактировать.
+- Нужна правка у соседа → **стоп**: запиши handoff в `../prograph-vault/authored/notes/`
+  (кросс-проектное) или `../_cowork_output/` (черновик), не трогай его файлы.
+- Кросс-репные контракты — **вендорить пиненой копией внутрь**, не ссылаться наружу.
+- Полное правило (SSOT): `../prograph-vault/authored/rules/repo-boundaries.md`.
+
+## Git workflow (у репо есть remote)
+
+- Ветка `<type>/<slug>` → push → `gh pr create`. **Прямые коммиты в `master` запрещены.**
+- После открытия PR — прочитать ревью **GitHub Copilot**: валидные замечания исправлять
+  новыми коммитами в ту же ветку; невалидные — ответить с обоснованием, **не применять
+  вслепую**; итерировать, пока не останется открытых замечаний.
+- **Не мержить.** Мерж делает пользователь.
+- После мержа пользователем: `git switch master && git pull --ff-only`, затем удалить
+  влитую ветку (`git branch -d <branch>`) и `git fetch --prune`; убрать прочие влитые ветки.
+- Никогда не делать force-push в общие ветки; не трогать другие репо (см. scope выше).
+- Полное правило (SSOT): `../prograph-vault/authored/rules/git-workflow.md`.
