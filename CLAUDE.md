@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this project is
 
-`deployer` is a deploy-oriented AI-agent subproject within the `all_ai_orchestrators` lab ecosystem (ATP, arbiter, proctor-a, Maestro). It is currently a bare scaffold (`main.py` is a hello-world); the design intent lives in `docs/`:
+`deployer` is a deploy-oriented AI-agent subproject within the `all_ai_orchestrators` lab ecosystem (ATP, arbiter, proctor, Maestro). It is currently a bare scaffold (`main.py` is a hello-world); the design intent lives in `docs/`:
 
 - `docs/idea-deployer-subproject.md` — the founding design doc. Read it before any feature work.
 - `docs/idea-mlops-layer.md` — related direction: MLOps seams (eval hooks, promotion gates, `deploy_target` intent) that should stay pluggable.
