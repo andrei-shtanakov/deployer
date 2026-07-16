@@ -34,7 +34,7 @@ There are no tests, lint config, or dependencies yet — set them up alongside t
 ## Repo scope & boundaries
 
 - **Этот репо:** `deployer` — git-корень `all_ai_orchestrators/deployer/`, remote `git@github.com:andrei-shtanakov/deployer.git`.
-- **Соседи (READ-ONLY reference):** `../arbiter/`, `../atp-platform/`, `../dispatcher/`, `../Maestro/`, `../open-prose/`, `../proctor/`, `../prograph/`, `../prograph-vault/`, `../robin-runtime/`, `../robin-toolkit/`, `../spec-runner/`, `../spec-runner-vscode/`, `../steward/` — их код не редактировать.
+- **Соседи (READ-ONLY reference):** `../arbiter/`, `../atp-platform/`, `../dispatcher/`, `../maestro/`, `../libretto/`, `../proctor/`, `../prograph/`, `../prograph-vault/`, `../robin-runtime/`, `../robin-toolkit/`, `../spec-runner/`, `../spec-runner-vscode/`, `../steward/` — их код не редактировать.
 - Нужна правка у соседа → **стоп**: запиши handoff в `../prograph-vault/authored/notes/`
   (кросс-проектное) или `../_cowork_output/` (черновик), не трогай его файлы.
 - Кросс-репные контракты — **вендорить пиненой копией внутрь**, не ссылаться наружу.
