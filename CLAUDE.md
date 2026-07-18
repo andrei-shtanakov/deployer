@@ -30,7 +30,7 @@ Python 3.12+, managed exclusively with `uv` (never pip):
 - Tests: `uv run pytest` (unit/no Docker), `uv run pytest -m docker` for sandboxed Docker tests; single test: `uv run pytest path/to/test.py::test_name`
 - Format: `uv run ruff format .`
 - Lint: `uv run ruff check . --fix`
-- Type check: `pyrefly check` after every change (run `pyrefly init` once if not yet configured)
+- Type check: `uv run pyrefly check` after every change (run `uv run pyrefly init` once if not yet configured)
 
 The shipped package lives under `src/deployer/` (`facts`, `models`, `verify`, `author`, `llm`, `cli`, `hints`). Tests live under `tests/`; Docker-dependent checks are marker-gated.
 
