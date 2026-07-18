@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this project is
 
-`deployer` is a deploy-oriented AI-agent subproject within the `all_ai_orchestrators` lab ecosystem (ATP, arbiter, proctor, Maestro). It is currently a bare scaffold (`main.py` is a hello-world); the design intent lives in `docs/`:
+`deployer` is a deploy-oriented AI-agent subproject within the `all_ai_orchestrators` lab ecosystem (ATP, arbiter, proctor, Maestro). It is now a working research bench: the `deployer` CLI authors Dockerfiles from deterministic project facts + a declarative `deploy_target`, then verifies them through static checks and optional sandboxed Docker build/run/healthcheck loops.
+
+The design intent lives in `docs/`:
 
 - `docs/idea-deployer-subproject.md` — the founding design doc. Read it before any feature work.
 - `docs/idea-mlops-layer.md` — related direction: MLOps seams (eval hooks, promotion gates, `deploy_target` intent) that should stay pluggable.
@@ -22,14 +24,15 @@ Ecosystem roles to reuse, not reinvent: arbiter = policy/guardrail gate for depl
 
 Python 3.12+, managed exclusively with `uv` (never pip):
 
-- Run: `uv run main.py`
+- Run authoring: `uv run deployer author <project-path> [--target target.json] [--no-docker]`
+- Run verification: `uv run deployer verify <project-path>`
 - Add a dependency: `uv add package`
-- Tests: `uv run pytest` (single test: `uv run pytest path/to/test.py::test_name`); async tests use anyio, not asyncio
+- Tests: `uv run pytest` (unit/no Docker), `uv run pytest -m docker` for sandboxed Docker tests; single test: `uv run pytest path/to/test.py::test_name`
 - Format: `uv run ruff format .`
 - Lint: `uv run ruff check . --fix`
 - Type check: `pyrefly check` after every change (run `pyrefly init` once if not yet configured)
 
-There are no tests, lint config, or dependencies yet — set them up alongside the first real code (pydantic is the expected modeling library per the parent lab conventions).
+The shipped package lives under `src/deployer/` (`facts`, `models`, `verify`, `author`, `llm`, `cli`, `hints`). Tests live under `tests/`; Docker-dependent checks are marker-gated.
 
 ## Repo scope & boundaries
 
