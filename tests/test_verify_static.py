@@ -464,6 +464,7 @@ def test_in_container_traceback_stays_authoring(monkeypatch) -> None:
             ["exec"], 1, stdout="", stderr=traceback_stderr
         ),
         "logs": subprocess.CompletedProcess(["logs"], 0, stdout="", stderr=""),
+        "image": subprocess.CompletedProcess(["image"], 1, stdout="", stderr=""),
         "rm": subprocess.CompletedProcess(["rm"], 0, stdout="", stderr=""),
     }
     monkeypatch.setattr("deployer.verify.container_run", _fake_container_run(responses))
@@ -531,3 +532,124 @@ def test_build_oserror_classifies_as_environment(
     assert results[0].failure_kind is FailureKind.ENVIRONMENT
     assert "no such file or directory" in results[0].message
     assert image_size is None
+
+
+# -- Fix 4: healthcheck failure names the built image's ENTRYPOINT/CMD --
+
+
+def _fake_proc(returncode: int, stdout: str = "", stderr: str = ""):
+    class P:
+        returncode: int
+        stdout: str
+        stderr: str
+
+    p = P()
+    p.returncode, p.stdout, p.stderr = returncode, stdout, stderr
+    return p
+
+
+def _dispatch_with_inspect(inspect_out: str | None):
+    """container_run fake: run -d ok, exec fails, image inspect configurable."""
+
+    def fake(runtime, args, **kwargs):
+        if args[0] == "run":
+            return _fake_proc(0, stdout="cid")
+        if args[0] == "exec":
+            return _fake_proc(1, stderr="probe refused")
+        if args[:2] == ["image", "inspect"]:
+            if inspect_out is None:
+                raise OSError("inspect exploded")
+            return _fake_proc(0, stdout=inspect_out + "\n")
+        if args[0] in ("logs", "rm"):
+            return _fake_proc(0)
+        raise AssertionError(f"unexpected container command: {args}")
+
+    return fake
+
+
+def test_healthcheck_failure_names_container_command(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "deployer.verify.container_run",
+        _dispatch_with_inspect('ENTRYPOINT null, CMD ["python3"]'),
+    )
+    result = _run_healthcheck(
+        DeployTarget(service=ServiceSpec(port=8000)),
+        ContainerRuntime(tool="docker"),
+        "tag",
+        timeout=1,
+    )
+    assert result.status is CheckStatus.FAILED
+    assert result.failure_kind is FailureKind.AUTHORING
+    assert 'container command: ENTRYPOINT null, CMD ["python3"]' in result.message
+
+
+def test_healthcheck_command_feedback_is_best_effort(monkeypatch) -> None:
+    monkeypatch.setattr("deployer.verify.container_run", _dispatch_with_inspect(None))
+    result = _run_healthcheck(
+        DeployTarget(service=ServiceSpec(port=8000)),
+        ContainerRuntime(tool="docker"),
+        "tag",
+        timeout=1,
+    )
+    assert result.status is CheckStatus.FAILED
+    assert result.failure_kind is FailureKind.AUTHORING  # not flipped
+    assert "container command:" not in result.message
+
+
+# -- Fix (review): ENVIRONMENT start failure must never reach image inspect --
+
+
+def test_environment_start_failure_never_calls_image_inspect(monkeypatch) -> None:
+    """run -d failing with a daemon-unreachable error classifies as
+    ENVIRONMENT and must short-circuit before the command-feedback path,
+    which would otherwise call `image inspect`.
+    """
+
+    def fake(runtime, args, **kwargs):
+        if args[0] == "run":
+            return _fake_proc(1, stderr="cannot connect to the docker daemon")
+        if args[:2] == ["image", "inspect"]:
+            raise AssertionError("image inspect must not be called")
+        if args[0] == "rm":
+            return _fake_proc(0)
+        raise AssertionError(f"unexpected container command: {args}")
+
+    monkeypatch.setattr("deployer.verify.container_run", fake)
+    result = _run_healthcheck(
+        DeployTarget(service=ServiceSpec(port=8000)),
+        ContainerRuntime(tool="docker"),
+        "tag",
+        timeout=1,
+    )
+    assert result.status is CheckStatus.FAILED
+    assert result.failure_kind is FailureKind.ENVIRONMENT
+    assert "container command:" not in result.message
+
+
+# -- Fix 5: UnicodeDecodeError in image-command feedback --
+
+
+def test_image_command_unicode_decode_error_swallowed(monkeypatch) -> None:
+    """UnicodeDecodeError during image inspect must be swallowed, not escape."""
+
+    def fake(runtime, args, **kwargs):
+        if args[0] == "run":
+            return _fake_proc(0, stdout="cid")
+        if args[0] == "exec":
+            return _fake_proc(1, stderr="probe refused")
+        if args[:2] == ["image", "inspect"]:
+            raise UnicodeDecodeError("utf-8", b"", 0, 1, "x")
+        if args[0] in ("logs", "rm"):
+            return _fake_proc(0)
+        raise AssertionError(f"unexpected container command: {args}")
+
+    monkeypatch.setattr("deployer.verify.container_run", fake)
+    result = _run_healthcheck(
+        DeployTarget(service=ServiceSpec(port=8000)),
+        ContainerRuntime(tool="docker"),
+        "tag",
+        timeout=1,
+    )
+    assert result.status is CheckStatus.FAILED
+    assert result.failure_kind is FailureKind.AUTHORING
+    assert "container command:" not in result.message

@@ -249,8 +249,10 @@ corpus/
 `deployer bench run [--corpus PATH] [--filter GLOB] [--label NAME]
 [--author fixture|anthropic]`:
 
-- copies each case's project to scratch (ignoring `.git`, `.venv`,
-  `.deployer`, `__pycache__`) — the corpus is never mutated;
+- copies each case's project to scratch with the same `CONTEXT_IGNORE`
+  list as the Phase 1 build context (`.git`, `.venv`, `.deployer`, `.env`,
+  `.env.*`, `__pycache__`, `.pytest_cache`, `.ruff_cache`) — the corpus is
+  never mutated;
 - runs the author loop in the copy; per-case `authoring-run.json`;
 - aggregates `bench-report.json` + a Markdown table: success rate,
   iterations-to-green, failure taxonomy, image size, wall time;
@@ -303,6 +305,113 @@ Each expansion adds its corpus case *first* (target before capability):
    image vs export requirements vs `uv pip` from the lockfile).
 3. **New artifacts**: compose (multi-service) — a new artifact contract and
    a new deterministic verifier; then CI workflow authoring.
+
+## Phase 4a addendum (2026-07-21): script-entrypoint fact + repair feedback
+
+**Status: implemented (PR #13)** (this section describes
+the first Phase-4 PR; Phase 4 deliberately starts by closing the Phase-2
+`slow-build` debt before new capability expansion).
+
+Scope is driven by the llm-baseline research run
+(`.deployer-runs/20260721-191555-llm-baseline`, local artifact — evidence
+reproduced here): both failures shared one root cause — requirements-only
+projects carry no entrypoint fact, so the model invents a CMD and the
+repair loop cannot converge because the healthcheck failure never names
+the command.
+
+| case | authored CMD | failure | why no convergence |
+|---|---|---|---|
+| pip-requirements | `["python", "-m", "http.server", "8000"]` | file server answers `/health` with 404 → healthcheck HTTPError | error shows urllib traceback, never the CMD; 2 identical signatures → no_progress |
+| system-deps-psycopg2 | `["python3"]` | bare REPL exits instantly → "container state improper", empty logs | no logs, no CMD in message; same → no_progress |
+
+Both builds (incl. the psycopg2 apt build/runtime split) were correct —
+only the CMD was invented. Spec recommendations externally reviewed:
+`../../../../_cowork_output/deployer-script-entrypoint-addendum-review-2026-07-21.md`
+(recommendations incorporated into this text).
+
+### script_entrypoint fact
+
+`ProjectFacts.script_entrypoint: str | None = None`. Deterministic scan
+(variant A — never guesses):
+
+- candidates: root-level `*.py` files containing a `__main__` guard,
+  matched as `if\s+__name__\s*==\s*["']__main__["']\s*:` (whitespace- and
+  quote-tolerant, still a cheap text scan);
+- denylist first: `setup.py`, `conftest.py`, `manage.py` are never
+  candidates — they carry `__main__` guards in the wild but are not app
+  entrypoints, and a wrong authoritative fact is worse than no fact
+  (amendment from the whole-branch review);
+- `main.py` among candidates → `"main.py"`;
+- else exactly one candidate → that filename;
+- else `None`. No recursion into `src/`; no filename-convention fallback
+  without a guard (an `app.py` without a guard stays invisible).
+
+Note: `corpus/synthetic/no-build-system/project/main.py` has no guard and
+correctly stays `None` — the case already passes without the fact and now
+doubles as the no-fact regression case.
+
+### Prompt rule (prompt-only in this PR)
+
+Added to `SYSTEM_PROMPT` next to the install-strategy rules, with explicit
+precedence:
+
+> `script_entrypoint` is deterministic ground truth. If it is set and
+> `entrypoints` (`[project.scripts]`) is empty, the Dockerfile CMD MUST
+> execute that file in exec form (e.g. `CMD ["python", "main.py"]` or the
+> package-manager equivalent). Never invent `http.server`, never leave a
+> bare interpreter, never use a file not present in the facts.
+
+`[project.scripts]` wins over `script_entrypoint` (packaged CLIs/services
+keep their console-script CMD). A deterministic L1 check for
+"CMD runs the entrypoint" is deliberately NOT part of this PR — CMD
+equivalence (`python main.py` vs `uv run --no-sync python main.py`) is
+brittle to parse; recorded as a future candidate if prompt-only proves
+insufficient.
+
+### Healthcheck failure names the container command
+
+On a `run_healthcheck` AUTHORING failure the report message gains one line:
+
+```text
+container command: ENTRYPOINT <json-or-null>, CMD <json-or-null>
+```
+
+obtained via **image** inspect (`--format` on Config.Entrypoint/Cmd — the
+image, not the container, so cleanup cannot race the diagnostic), strictly
+best-effort: an inspect failure must not alter the check result or flip it
+to ENVIRONMENT. Repair prompts see only `CheckResult.message`, so this is
+exactly where the model finally sees the culprit.
+
+### slow-build corpus case (Phase 2 debt)
+
+`corpus/synthetic/slow-build/`: requirements.txt
+
+```text
+markupsafe==3.0.2
+--no-binary MarkupSafe
+```
+
+forces an sdist C build. MarkupSafe is deliberately NOT added to
+`KNOWN_SYSTEM_DEPS` — this is the no-hint native-build case: the model must
+derive `gcc`/`libc6-dev` from the build error, not from a hint
+(`system-deps-psycopg2` remains the with-hints twin). `project/main.py` is
+a service with a `__main__` guard that imports and uses `markupsafe`
+(exercises the new fact and proves the C extension actually loads);
+`target.json`: port 8000, `/health`; `expected.json`: success, ≤3
+iterations, `requires_l2: true`, capabilities
+`["pip", "service", "slow-build", "no-hint-system-deps"]`.
+`--no-binary` lines create no false hints (`collect_hints` skips
+`-`-prefixed entries).
+
+### Acceptance (Phase 4a)
+
+- `uv run pytest` and `uv run pytest -m docker` green;
+- `uv run deployer bench verify` green over all **6** cases;
+- `uv run deployer bench run --author fixture` → **6/6 matched**;
+- manual research run `--author anthropic` → **6/6 matched**, then
+  `bench promote` (the golden becomes LLM-authored — compare tracks the
+  measured subject; the fixture baseline stays reproducible on demand);
+- `bench compare <run> golden` after promote: no hard/important findings.
 
 ## Testing strategy
 

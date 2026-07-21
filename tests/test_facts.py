@@ -98,6 +98,75 @@ def test_has_build_system_detected(tmp_path: Path) -> None:
     assert analyze_project(tmp_path).has_build_system is True
 
 
+GUARD = 'if __name__ == "__main__":\n    main()\n'
+
+
+def _py(tmp_path: Path, name: str, body: str = "") -> None:
+    (tmp_path / name).write_text(f"def main() -> None:\n    pass\n\n{body}")
+
+
+def test_script_entrypoint_main_py_with_guard(tmp_path: Path) -> None:
+    _py(tmp_path, "main.py", GUARD)
+    assert analyze_project(tmp_path).script_entrypoint == "main.py"
+
+
+def test_script_entrypoint_single_other_guarded_file(tmp_path: Path) -> None:
+    _py(tmp_path, "worker.py", GUARD)
+    assert analyze_project(tmp_path).script_entrypoint == "worker.py"
+
+
+def test_script_entrypoint_main_py_wins_over_other_candidates(
+    tmp_path: Path,
+) -> None:
+    _py(tmp_path, "main.py", GUARD)
+    _py(tmp_path, "worker.py", GUARD)
+    assert analyze_project(tmp_path).script_entrypoint == "main.py"
+
+
+def test_script_entrypoint_ambiguous_is_none(tmp_path: Path) -> None:
+    _py(tmp_path, "alpha.py", GUARD)
+    _py(tmp_path, "beta.py", GUARD)
+    assert analyze_project(tmp_path).script_entrypoint is None
+
+
+def test_script_entrypoint_no_guard_is_none(tmp_path: Path) -> None:
+    _py(tmp_path, "app.py")  # no guard: filename convention must NOT win
+    assert analyze_project(tmp_path).script_entrypoint is None
+
+
+def test_script_entrypoint_ignores_nested_files(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "main.py").write_text(GUARD)
+    assert analyze_project(tmp_path).script_entrypoint is None
+
+
+def test_script_entrypoint_single_quotes_and_spacing(tmp_path: Path) -> None:
+    _py(tmp_path, "main.py", "if __name__=='__main__' :\n    main()\n")
+    assert analyze_project(tmp_path).script_entrypoint == "main.py"
+
+
+def test_script_entrypoint_denylisted_setup_py_alone_is_none(
+    tmp_path: Path,
+) -> None:
+    _py(tmp_path, "setup.py", GUARD)
+    assert analyze_project(tmp_path).script_entrypoint is None
+
+
+def test_script_entrypoint_denylist_does_not_create_ambiguity(
+    tmp_path: Path,
+) -> None:
+    _py(tmp_path, "setup.py", GUARD)
+    _py(tmp_path, "worker.py", GUARD)
+    assert analyze_project(tmp_path).script_entrypoint == "worker.py"
+
+
+def test_script_entrypoint_denylisted_manage_py_alone_is_none(
+    tmp_path: Path,
+) -> None:
+    _py(tmp_path, "manage.py", GUARD)
+    assert analyze_project(tmp_path).script_entrypoint is None
+
+
 def test_unreadable_requirements_degrades_to_empty(tmp_path: Path) -> None:
     (tmp_path / "requirements.txt").write_bytes(b"\xff\xfe\x00bad")
     facts = analyze_project(tmp_path)
@@ -116,3 +185,12 @@ def test_vcs_and_url_requirements_are_skipped(tmp_path: Path) -> None:
     )
     facts = analyze_project(tmp_path)
     assert facts.requirements_files["requirements.txt"] == ["flask"]
+
+
+def test_slow_build_corpus_case_has_entrypoint_fact() -> None:
+    corpus_case = (
+        Path(__file__).parent.parent / "corpus" / "synthetic" / "slow-build" / "project"
+    )
+    facts = analyze_project(corpus_case)
+    assert facts.script_entrypoint == "main.py"
+    assert facts.package_manager == "pip"

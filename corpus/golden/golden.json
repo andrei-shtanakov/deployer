@@ -1,8 +1,8 @@
 {
-  "promoted_from_label": "golden-candidate",
-  "corpus_commit": "1092254b48a900ca850a3adcb20f66ca4cf2a1af",
+  "promoted_from_label": "llm-entrypoint",
+  "corpus_commit": "c942ba623ea642974c3d80a55f7a83e1507c7808",
   "deployer_version": "0.1.0",
-  "author_backend": "fixture",
+  "author_backend": "anthropic",
   "runtime_tool": "podman",
   "runtime_remote": false,
   "runtime_platform": null,
@@ -15,7 +15,7 @@
       "stopped_reason": "success",
       "iterations": 1,
       "failure_kinds": [],
-      "image_size_bytes": 184809467,
+      "image_size_bytes": 177214579,
       "hadolint_status": "skipped",
       "checks": [
         {
@@ -69,7 +69,7 @@
       "stopped_reason": "success",
       "iterations": 1,
       "failure_kinds": [],
-      "image_size_bytes": 157025832,
+      "image_size_bytes": 157048464,
       "hadolint_status": "skipped",
       "checks": [
         {
@@ -128,7 +128,7 @@
       "stopped_reason": "success",
       "iterations": 1,
       "failure_kinds": [],
-      "image_size_bytes": 148541465,
+      "image_size_bytes": 148564610,
       "hadolint_status": "skipped",
       "checks": [
         {
@@ -181,12 +181,73 @@
       "external_commit": null
     },
     {
+      "case": "slow-build",
+      "success": true,
+      "stopped_reason": "success",
+      "iterations": 1,
+      "failure_kinds": [],
+      "image_size_bytes": 324416199,
+      "hadolint_status": "skipped",
+      "checks": [
+        {
+          "check_id": "parses",
+          "status": "passed",
+          "failure_kind": null
+        },
+        {
+          "check_id": "copy_sources",
+          "status": "passed",
+          "failure_kind": null
+        },
+        {
+          "check_id": "base_pinned",
+          "status": "passed",
+          "failure_kind": null
+        },
+        {
+          "check_id": "install_strategy",
+          "status": "passed",
+          "failure_kind": null
+        },
+        {
+          "check_id": "hadolint",
+          "status": "skipped",
+          "failure_kind": null
+        },
+        {
+          "check_id": "build",
+          "status": "passed",
+          "failure_kind": null
+        },
+        {
+          "check_id": "run_healthcheck",
+          "status": "passed",
+          "failure_kind": null
+        }
+      ],
+      "expected": {
+        "expected_success": true,
+        "max_iterations": 3,
+        "requires_l2": true,
+        "expected_failure_kind": null,
+        "capabilities": [
+          "pip",
+          "service",
+          "slow-build",
+          "no-hint-system-deps"
+        ],
+        "notes": "sdist C build with NO hints: the model must derive gcc from the build error"
+      },
+      "external_url": null,
+      "external_commit": null
+    },
+    {
       "case": "system-deps-psycopg2",
       "success": true,
       "stopped_reason": "success",
       "iterations": 1,
       "failure_kinds": [],
-      "image_size_bytes": 154829446,
+      "image_size_bytes": 154852589,
       "hadolint_status": "skipped",
       "checks": [
         {
@@ -246,7 +307,7 @@
       "stopped_reason": "success",
       "iterations": 1,
       "failure_kinds": [],
-      "image_size_bytes": 188865066,
+      "image_size_bytes": 148620423,
       "hadolint_status": "skipped",
       "checks": [
         {

@@ -32,6 +32,12 @@ Rules:
 - If has_build_system is false, do NOT install the project as a package
   (no `pip install .`; with uv always pass `--no-install-project`). Run the
   sources directly.
+- script_entrypoint is deterministic ground truth. If it is set and
+  entrypoints ([project.scripts]) is empty, the Dockerfile CMD MUST execute
+  that file in exec form (e.g. CMD ["python", "main.py"] or the
+  package-manager equivalent). Never invent servers such as http.server,
+  never leave a bare interpreter, never run a file not present in the
+  facts. When entrypoints is non-empty it wins over script_entrypoint.
 - Packages listed under "Required system packages" MUST be installed via
   apt-get.
 - "Suspected system dependencies" are curated hints, not facts: verify them,

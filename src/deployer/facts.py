@@ -9,6 +9,8 @@ from deployer.models import ProjectFacts
 
 _REQ_NAME_SPLIT = re.compile(r"[=<>!~;\[\s]")
 _VALID_NAME = re.compile(r"^[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?$")
+_MAIN_GUARD = re.compile(r"if\s+__name__\s*==\s*[\"']__main__[\"']\s*:")
+_ENTRYPOINT_DENYLIST = frozenset({"setup.py", "conftest.py", "manage.py"})
 
 
 def _normalize_requirement_name(raw: str) -> str:
@@ -35,6 +37,33 @@ def _parse_requirements(path: Path) -> list[str]:
         if name and _VALID_NAME.match(name):
             entries.append(name)
     return entries
+
+
+def _scan_script_entrypoint(path: Path) -> str | None:
+    """Root-level script with a __main__ guard; never guesses.
+
+    main.py wins among candidates; otherwise the fact exists only when
+    exactly one candidate does. Ambiguity or absence -> None.
+
+    Denylisted files (setup.py, conftest.py, manage.py) are never
+    candidates: they carry __main__ guards in the wild but are not app
+    entrypoints, and a wrong authoritative fact is worse than no fact.
+    """
+    candidates: list[str] = []
+    for file in sorted(path.glob("*.py")):
+        if file.name in _ENTRYPOINT_DENYLIST:
+            continue
+        try:
+            text = file.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if _MAIN_GUARD.search(text):
+            candidates.append(file.name)
+    if "main.py" in candidates:
+        return "main.py"
+    if len(candidates) == 1:
+        return candidates[0]
+    return None
 
 
 def analyze_project(path: Path) -> ProjectFacts:
@@ -99,5 +128,6 @@ def analyze_project(path: Path) -> ProjectFacts:
         has_uv_lock=has_uv_lock,
         package_manager=package_manager,
         has_build_system=isinstance(pyproject.get("build-system"), dict),
+        script_entrypoint=_scan_script_entrypoint(path),
         requirements_files=requirements_files,
     )

@@ -440,6 +440,40 @@ def _image_size(runtime: ContainerRuntime, tag: str) -> int | None:
         return None
 
 
+_IMAGE_COMMAND_FORMAT = (
+    "ENTRYPOINT {{json .Config.Entrypoint}}, CMD {{json .Config.Cmd}}"
+)
+
+
+def _image_command(runtime: ContainerRuntime, tag: str) -> str | None:
+    """Best-effort ENTRYPOINT/CMD of the built image, for repair feedback.
+
+    Reads the image (never the container, so cleanup cannot race it) and
+    swallows every failure: feedback must not change a verdict.
+    """
+    try:
+        proc = container_run(
+            runtime,
+            ["image", "inspect", "--format", _IMAGE_COMMAND_FORMAT, tag],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (subprocess.TimeoutExpired, OSError, UnicodeDecodeError):
+        return None
+    if proc.returncode != 0 or not proc.stdout.strip():
+        return None
+    return proc.stdout.strip()
+
+
+def _with_command_feedback(message: str, runtime: ContainerRuntime, tag: str) -> str:
+    """Append the image's ENTRYPOINT/CMD to an AUTHORING failure, if known."""
+    command = _image_command(runtime, tag)
+    if command is None:
+        return message
+    return f"{message}\ncontainer command: {command}"
+
+
 def _run_healthcheck(
     target: DeployTarget, runtime: ContainerRuntime, tag: str, timeout: int
 ) -> CheckResult:
@@ -465,11 +499,15 @@ def _run_healthcheck(
             timeout=60,
         )
         if started.returncode != 0:
+            failure_kind = _classify(started.stdout + "\n" + started.stderr)
+            message = _tail(started.stderr or started.stdout)
+            if failure_kind is FailureKind.AUTHORING:
+                message = _with_command_feedback(message, runtime, tag)
             return CheckResult(
                 check_id="run_healthcheck",
                 status=CheckStatus.FAILED,
-                failure_kind=_classify(started.stdout + "\n" + started.stderr),
-                message=_tail(started.stderr or started.stdout),
+                failure_kind=failure_kind,
+                message=message,
             )
         deadline = time.monotonic() + timeout
         last_error = ""
@@ -506,14 +544,17 @@ def _run_healthcheck(
                     f"mid-poll: {_tail(last_error, 3)}"
                 ),
             )
+        message = _with_command_feedback(
+            f"healthcheck {url} failed within {timeout}s: "
+            f"{_tail(last_error, 3)}\ncontainer logs:\n{_tail(log_text)}",
+            runtime,
+            tag,
+        )
         return CheckResult(
             check_id="run_healthcheck",
             status=CheckStatus.FAILED,
             failure_kind=FailureKind.AUTHORING,
-            message=(
-                f"healthcheck {url} failed within {timeout}s: "
-                f"{_tail(last_error, 3)}\ncontainer logs:\n{_tail(log_text)}"
-            ),
+            message=message,
         )
     except (subprocess.TimeoutExpired, OSError) as exc:
         message = (

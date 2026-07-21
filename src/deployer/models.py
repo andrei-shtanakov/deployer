@@ -42,6 +42,7 @@ class ProjectFacts(BaseModel):
     has_uv_lock: bool = False
     package_manager: Literal["uv", "pip"] | None = None
     has_build_system: bool = False
+    script_entrypoint: str | None = None
     requirements_files: dict[str, list[str]] = Field(default_factory=dict)
 
 
