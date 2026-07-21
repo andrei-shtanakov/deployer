@@ -104,3 +104,14 @@ def test_system_prompt_carries_install_strategy_rules() -> None:
     assert "uv sync --frozen" in SYSTEM_PROMPT
     assert "--no-install-project" in SYSTEM_PROMPT
     assert "trust build errors over hints" in SYSTEM_PROMPT
+
+
+def test_author_info_exposes_model_and_prompt_hash() -> None:
+    import hashlib
+
+    from deployer.llm import SYSTEM_PROMPT
+
+    info = AnthropicAuthor(client=object()).info()
+    assert info.backend == "anthropic"
+    assert info.model_id == "claude-opus-4-8"
+    assert info.prompt_sha256 == hashlib.sha256(SYSTEM_PROMPT.encode()).hexdigest()

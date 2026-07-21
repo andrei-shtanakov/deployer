@@ -1,5 +1,7 @@
 """The authoring control loop: deterministic pipeline, LLM inside one step."""
 
+import importlib.metadata
+import subprocess
 import time
 from pathlib import Path
 from typing import Protocol
@@ -15,7 +17,30 @@ from deployer.models import (
     StopReason,
     VerificationReport,
 )
+from deployer.runtime import probe_runtime_versions
 from deployer.verify import DEFAULT_BUILD_TIMEOUT, DEFAULT_HEALTH_TIMEOUT, verify
+
+
+def _deployer_version() -> str | None:
+    try:
+        return importlib.metadata.version("deployer")
+    except importlib.metadata.PackageNotFoundError:
+        return None
+
+
+def _deployer_git_sha() -> str | None:
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(Path(__file__).resolve().parent), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0:
+        return None
+    return proc.stdout.strip() or None
 
 
 class DockerfileAuthor(Protocol):
@@ -118,6 +143,10 @@ def author_dockerfile(
                     stopped_reason = "llm_error"
                     break
 
+    runtime_versions = probe_runtime_versions(runtime) if runtime is not None else None
+    info_method = getattr(author, "info", None)
+    author_info = info_method() if callable(info_method) else None
+
     return AuthoringRun(
         project=facts.name or project_path.name,
         target=target,
@@ -130,4 +159,11 @@ def author_dockerfile(
         llm_error=llm_error,
         hints_offered=hints,
         runtime=runtime,
+        build_timeout_s=build_timeout,
+        health_timeout_s=health_timeout,
+        max_iterations=max_iterations,
+        runtime_versions=runtime_versions,
+        author_info=author_info,
+        deployer_version=_deployer_version(),
+        deployer_git_sha=_deployer_git_sha(),
     )

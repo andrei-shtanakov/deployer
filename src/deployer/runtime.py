@@ -1,12 +1,13 @@
 """Container runtime resolution and the single subprocess chokepoint."""
 
+import json
 import os
 import shutil
 import subprocess
 from collections.abc import Mapping
 from typing import Any, Literal, cast
 
-from deployer.models import ContainerRuntime
+from deployer.models import ContainerRuntime, RuntimeVersions
 
 NATIVE_HOST_ENV = {"docker": "DOCKER_HOST", "podman": "CONTAINER_HOST"}
 _DETECTION_ORDER = ("podman", "docker")
@@ -102,3 +103,37 @@ def container_run(
 ) -> subprocess.CompletedProcess[Any]:
     """The single chokepoint for every container CLI invocation."""
     return subprocess.run([runtime.tool, *args], env=runtime_env(runtime), **kwargs)
+
+
+def probe_runtime_versions(runtime: ContainerRuntime) -> RuntimeVersions:
+    """Best-effort `<tool> version` probe; never raises, never blocks a run."""
+    try:
+        proc = container_run(
+            runtime,
+            ["version", "--format", "json"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        if proc.returncode != 0:
+            detail = (proc.stderr or proc.stdout).strip().splitlines()
+            return RuntimeVersions(
+                probe_warning=detail[-1] if detail else "version probe failed"
+            )
+        data = json.loads(proc.stdout)
+        client = (data.get("Client") or {}).get("Version")
+        server_block = data.get("Server") or {}
+        server = server_block.get("Version")
+        os_name = server_block.get("Os") or ""
+        arch = server_block.get("Arch") or ""
+        platform = f"{os_name}/{arch}" if os_name and arch else None
+        return RuntimeVersions(
+            client_version=client, server_version=server, platform=platform
+        )
+    except (
+        subprocess.TimeoutExpired,
+        OSError,
+        json.JSONDecodeError,
+        AttributeError,
+    ) as exc:
+        return RuntimeVersions(probe_warning=f"{exc.__class__.__name__}: {exc}")

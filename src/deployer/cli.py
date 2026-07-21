@@ -15,7 +15,11 @@ from deployer.models import (
     DeployTarget,
     VerificationReport,
 )
-from deployer.runtime import RuntimeConfigError, resolve_runtime
+from deployer.runtime import (
+    RuntimeConfigError,
+    probe_runtime_versions,
+    resolve_runtime,
+)
 from deployer.verify import DEFAULT_BUILD_TIMEOUT, DEFAULT_HEALTH_TIMEOUT, verify
 
 _STATUS_ICONS = {
@@ -143,6 +147,8 @@ def _cmd_verify(args: argparse.Namespace) -> int:
         build_timeout=args.build_timeout,
         health_timeout=args.health_timeout,
     )
+    if runtime is not None:
+        report.runtime_versions = probe_runtime_versions(runtime)
     _print_report(report)
     report_path = _write_report(
         project, "verify-report.json", report.model_dump_json(indent=2)

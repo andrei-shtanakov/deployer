@@ -68,6 +68,23 @@ class ContainerRuntime(BaseModel):
         return self.host is not None
 
 
+class RuntimeVersions(BaseModel):
+    """Best-effort engine/CLI versions; failures are warnings, never fatal."""
+
+    client_version: str | None = None
+    server_version: str | None = None
+    platform: str | None = None
+    probe_warning: str | None = None
+
+
+class AuthorInfo(BaseModel):
+    """Which author produced a run — required for comparable bench data."""
+
+    backend: str
+    model_id: str | None = None
+    prompt_sha256: str | None = None
+
+
 class CheckStatus(StrEnum):
     """Outcome status of a verification check."""
 
@@ -109,6 +126,7 @@ class VerificationReport(BaseModel):
     docker_available: bool = False
     image_size_bytes: int | None = None
     runtime: ContainerRuntime | None = None
+    runtime_versions: RuntimeVersions | None = None
 
     @property
     def passed(self) -> bool:
@@ -166,3 +184,10 @@ class AuthoringRun(BaseModel):
     llm_error: str | None = None
     hints_offered: list[SystemDepHint] = Field(default_factory=list)
     runtime: ContainerRuntime | None = None
+    build_timeout_s: int | None = None
+    health_timeout_s: int | None = None
+    max_iterations: int | None = None
+    runtime_versions: RuntimeVersions | None = None
+    author_info: AuthorInfo | None = None
+    deployer_version: str | None = None
+    deployer_git_sha: str | None = None

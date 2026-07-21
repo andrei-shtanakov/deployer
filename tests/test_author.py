@@ -297,3 +297,20 @@ def test_author_forwards_timeouts_to_both_verify_calls(
     assert len(captured) == 2  # main call + environment-retry call
     assert all(c == {"build_timeout": 1200, "health_timeout": 45} for c in captured)
     assert run.stopped_reason == "success"
+
+
+def test_run_records_effective_config(hello_service: Path) -> None:
+    run = author_dockerfile(
+        hello_service,
+        DeployTarget(),
+        ScriptedAuthor(GOOD),  # the file's existing always-good stub
+        max_iterations=2,
+        runtime=None,
+        build_timeout=123,
+        health_timeout=7,
+    )
+    assert run.build_timeout_s == 123
+    assert run.health_timeout_s == 7
+    assert run.max_iterations == 2
+    assert run.author_info is None  # stub has no .info()
+    assert run.deployer_version  # installed package metadata

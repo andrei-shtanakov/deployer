@@ -1,11 +1,14 @@
 """Runtime resolution matrix: flags -> deployer env -> native env -> local."""
 
+import json
+
 import pytest
 
 from deployer.models import ContainerRuntime
 from deployer.runtime import (
     RuntimeConfigError,
     container_run,
+    probe_runtime_versions,
     resolve_runtime,
     runtime_env,
 )
@@ -156,3 +159,50 @@ def test_container_run_prepends_tool_and_injects_env(monkeypatch) -> None:
     assert result == "sentinel"
     assert seen["cmd"] == ["docker", "build", "-t", "x", "."]
     assert seen["env"]["DOCKER_HOST"] == "ssh://u@h"
+
+
+def _fake_proc(returncode: int, stdout: str = "", stderr: str = ""):
+    class P:
+        returncode: int
+        stdout: str
+        stderr: str
+
+    p = P()
+    p.returncode, p.stdout, p.stderr = returncode, stdout, stderr
+    return p
+
+
+def test_probe_parses_version_json(monkeypatch) -> None:
+    payload = json.dumps(
+        {
+            "Client": {"Version": "27.0.1"},
+            "Server": {"Version": "27.0.1", "Os": "linux", "Arch": "amd64"},
+        }
+    )
+    monkeypatch.setattr(
+        "deployer.runtime.container_run",
+        lambda *a, **k: _fake_proc(0, stdout=payload),
+    )
+    versions = probe_runtime_versions(ContainerRuntime(tool="docker"))
+    assert versions.client_version == "27.0.1"
+    assert versions.server_version == "27.0.1"
+    assert versions.platform == "linux/amd64"
+    assert versions.probe_warning is None
+
+
+def test_probe_is_best_effort_on_failure(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "deployer.runtime.container_run",
+        lambda *a, **k: _fake_proc(1, stderr="cannot connect"),
+    )
+    versions = probe_runtime_versions(ContainerRuntime(tool="docker"))
+    assert versions.probe_warning is not None
+    assert versions.client_version is None
+
+
+def test_probe_never_raises_on_garbage(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "deployer.runtime.container_run",
+        lambda *a, **k: _fake_proc(0, stdout="not json"),
+    )
+    assert probe_runtime_versions(ContainerRuntime(tool="podman")).probe_warning
