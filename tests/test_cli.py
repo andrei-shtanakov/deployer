@@ -508,6 +508,13 @@ def test_bench_verify_static_only_pass_exits_0(tmp_path, monkeypatch, capsys):
     assert "case-one" in capsys.readouterr().out
 
 
+def test_bench_verify_static_only_prints_note(tmp_path, monkeypatch, capsys):
+    corpus = _make_corpus(tmp_path)
+    monkeypatch.setattr("deployer.cli.resolve_runtime", lambda *a, **k: None)
+    assert main(["bench", "verify", "--corpus", str(corpus)]) == 0
+    assert "static-only" in capsys.readouterr().out
+
+
 def test_bench_verify_no_matching_cases_exits_2(tmp_path, monkeypatch, capsys):
     corpus = _make_corpus(tmp_path)
     monkeypatch.setattr("deployer.cli.resolve_runtime", lambda *a, **k: None)
@@ -517,11 +524,13 @@ def test_bench_verify_no_matching_cases_exits_2(tmp_path, monkeypatch, capsys):
 
 
 def test_bench_run_clone_failure_exits_2(tmp_path, monkeypatch, capsys):
+    from deployer.bench import CloneError
+
     corpus = _make_corpus(tmp_path)
     monkeypatch.setattr("deployer.cli.resolve_runtime", lambda *a, **k: None)
 
     def boom(*args, **kwargs):
-        raise RuntimeError("cloning external target demo failed")
+        raise CloneError("cloning external target demo failed")
 
     monkeypatch.setattr("deployer.cli.run_bench", boom)
     code = cli.main(

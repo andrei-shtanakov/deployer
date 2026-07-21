@@ -10,6 +10,7 @@ from pydantic import ValidationError
 
 from deployer.author import author_dockerfile
 from deployer.bench import (
+    CloneError,
     FixtureAuthor,
     PromoteRefusedError,
     compare_runs,
@@ -257,7 +258,7 @@ def _cmd_bench_run(args: argparse.Namespace) -> int:
     except (
         FileNotFoundError,
         ValueError,
-        RuntimeError,
+        CloneError,
         subprocess.TimeoutExpired,
     ) as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -305,6 +306,8 @@ def _cmd_bench_verify(args: argparse.Namespace) -> int:
         if not report.passed:
             failed = True
             _print_report(report)
+    if runtime is None:
+        print("note: no container runtime found; static-only verification")
     return 1 if failed else 0
 
 

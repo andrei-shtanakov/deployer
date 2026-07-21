@@ -447,6 +447,15 @@ def test_clone_external_bad_commit_raises(tmp_path: Path) -> None:
         clone_external(ext, tmp_path / "scratch")
 
 
+def test_clone_external_raises_clone_error(tmp_path: Path) -> None:
+    from deployer.bench import CloneError
+
+    url, _ = _make_local_git_repo(tmp_path)
+    ext = ExternalTarget(name="demo", url=url, commit="0" * 40)
+    with pytest.raises(CloneError):
+        clone_external(ext, tmp_path / "scratch")
+
+
 def test_run_bench_include_external_appends_and_skips_without_fixture(
     tmp_path: Path, monkeypatch
 ) -> None:

@@ -46,6 +46,10 @@ from deployer.verify import (
 )
 
 
+class CloneError(RuntimeError):
+    """Cloning an external target failed."""
+
+
 class FixtureAuthor:
     """Offline DockerfileAuthor replaying a case's known-good Dockerfile.
 
@@ -150,7 +154,7 @@ def clone_external(ext: ExternalTarget, dest_root: Path) -> BenchCase:
             command, cwd=dest, capture_output=True, text=True, timeout=300
         )
         if proc.returncode != 0:
-            raise RuntimeError(
+            raise CloneError(
                 f"cloning external target {ext.name} failed at "
                 f"{' '.join(command)}: {proc.stderr.strip()}"
             )
