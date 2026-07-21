@@ -346,6 +346,75 @@ def test_verify_report_write_failure_warns_not_crashes(
     assert "report:" not in captured.out
 
 
+def test_verify_passes_cli_runtime_flags_through(
+    hello_service: Path, tmp_path: Path, monkeypatch, capsys
+) -> None:
+    project = _make_project(
+        hello_service, tmp_path, (hello_service / "Dockerfile.good").read_text()
+    )
+    seen: dict = {}
+
+    def fake_resolve(tool_arg=None, host_arg=None, env=None):
+        seen["args"] = (tool_arg, host_arg)
+        return None  # static-only keeps the test docker-free
+
+    monkeypatch.setattr("deployer.cli.resolve_runtime", fake_resolve)
+    cli.main(
+        [
+            "verify",
+            str(project),
+            "--container-tool",
+            "docker",
+            "--container-host",
+            "ssh://u@h",
+        ]
+    )
+    assert seen["args"] == ("docker", "ssh://u@h")
+
+
+def test_verify_invalid_runtime_config_exits_2(
+    hello_service: Path, tmp_path: Path, monkeypatch, capsys
+) -> None:
+    project = _make_project(
+        hello_service, tmp_path, (hello_service / "Dockerfile.good").read_text()
+    )
+    from deployer.runtime import RuntimeConfigError
+
+    def boom(tool_arg=None, host_arg=None, env=None):
+        raise RuntimeConfigError("--container-host must be an ssh:// URL")
+
+    monkeypatch.setattr("deployer.cli.resolve_runtime", boom)
+    code = cli.main(["verify", str(project), "--container-host", "tcp://h:1"])
+    assert code == 2
+    assert "ssh://" in capsys.readouterr().err
+
+
+def test_author_no_docker_skips_runtime_resolution(
+    hello_service: Path, tmp_path: Path, monkeypatch
+) -> None:
+    project = _make_project(
+        hello_service, tmp_path, (hello_service / "Dockerfile.good").read_text()
+    )
+
+    def fail_resolve(*args, **kwargs):
+        pytest.fail("resolve_runtime must not be called")
+
+    monkeypatch.setattr("deployer.cli.resolve_runtime", fail_resolve)
+
+    good = (hello_service / "Dockerfile.good").read_text()
+
+    class FakeAuthor:
+        def generate(self, facts, target):
+            return good
+
+        def repair(self, facts, target, dockerfile, report):
+            return good
+
+    monkeypatch.setattr("deployer.cli.AnthropicAuthor", lambda: FakeAuthor())
+    exit_code = cli.main(["author", str(project), "--no-docker"])
+    assert exit_code == 0
+
+
 def test_author_report_write_failure_warns_not_crashes(
     hello_service: Path, tmp_path: Path, monkeypatch, capsys
 ) -> None:

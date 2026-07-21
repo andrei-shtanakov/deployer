@@ -18,16 +18,33 @@ Design: `docs/superpowers/specs/2026-07-04-deployer-mvp-design.md`.
 
 ```sh
 uv run deployer author <project-path> [--target target.json] [--no-docker] \
+    [--container-tool docker|podman] [--container-host ssh://user@host] \
     [--build-timeout 600] [--health-timeout 30]
-uv run deployer verify <project-path> [--build-timeout 600] [--health-timeout 30]
+uv run deployer verify <project-path> [same flags]
 # verify checks <project-path>/Dockerfile; --health-timeout is ignored for
 # non-service targets. Slow source builds (e.g. llama-cpp-python) need
 # --build-timeout well above the 600s default.
 ```
 
+Remote verification (the L2 sandbox on another machine over SSH):
+
+```sh
+DEPLOYER_CONTAINER_TOOL=docker \
+DEPLOYER_CONTAINER_HOST=ssh://user@host \
+uv run pytest -m docker
+```
+
+`--container-host` / `DEPLOYER_CONTAINER_HOST` accept `ssh://` URLs only;
+a pre-existing `DOCKER_HOST`/`CONTAINER_HOST` is honored and recorded in
+reports as `host_source: "native_env"`. The build context is copied to a
+temp dir minus `.git`, `.venv`, `.deployer`, `.env*`, caches — secrets
+never reach the daemon, local or remote. Invalid runtime configuration
+(missing requested tool, non-ssh host) exits 2.
+
 Exit codes: `0` success; `1` verification/authoring failed (including a
 missing `Dockerfile` for `verify`); `2` invalid invocation (bad flag
-values, project path not a directory, unreadable or invalid `--target`).
+values, project path not a directory, unreadable or invalid `--target`,
+invalid runtime configuration).
 `verify` writes its full report to `<project>/.deployer/verify-report.json`
 (latest run only).
 
