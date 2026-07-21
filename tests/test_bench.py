@@ -25,6 +25,7 @@ from deployer.models import (
     DeployTarget,
     ExpectedOutcome,
     ExternalTarget,
+    FailureKind,
     IterationRecord,
     ProjectFacts,
     VerificationReport,
@@ -237,6 +238,68 @@ def test_run_case_runs_in_scratch_and_writes_artifacts(
     assert (out / "authoring-run.json").is_file()
     assert (out / "Dockerfile").read_text() == "FROM x:1\n\n"
     assert not (case.project_dir / ".deployer").exists()  # corpus untouched
+
+
+def test_run_case_aggregates_sorted_deduped_failure_kinds(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _make_case(
+        tmp_path,
+        "svc",
+        expected={"requires_l2": False, "expected_success": False},
+    )
+    case = load_corpus(tmp_path)[0]
+    iteration_one = IterationRecord(
+        index=0,
+        dockerfile="FROM x:1\n",
+        report=VerificationReport(
+            results=[
+                CheckResult(
+                    check_id="build",
+                    status=CheckStatus.FAILED,
+                    failure_kind="authoring",
+                ),
+                CheckResult(
+                    check_id="runtime_check",
+                    status=CheckStatus.FAILED,
+                    failure_kind="environment",
+                ),
+            ]
+        ),
+        duration_s=0.1,
+    )
+    iteration_two = IterationRecord(
+        index=1,
+        dockerfile="FROM x:1\n",
+        report=VerificationReport(
+            results=[
+                CheckResult(
+                    check_id="build",
+                    status=CheckStatus.FAILED,
+                    failure_kind="authoring",
+                ),
+            ]
+        ),
+        duration_s=0.1,
+    )
+    fake_run = AuthoringRun(
+        project="x",
+        target=DeployTarget(),
+        iterations=[iteration_one, iteration_two],
+        stopped_reason="no_progress",
+        success=False,
+    )
+    monkeypatch.setattr("deployer.bench.author_dockerfile", lambda *a, **k: fake_run)
+    result = run_case(
+        case,
+        FixtureAuthor("FROM x:1\n"),
+        None,
+        tmp_path / "out",
+        build_timeout=600,
+        health_timeout=30,
+    )
+    assert result.outcome == "matched"
+    assert result.failure_kinds == [FailureKind.AUTHORING, FailureKind.ENVIRONMENT]
 
 
 def test_run_case_mismatch_when_expectation_violated(
