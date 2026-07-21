@@ -26,6 +26,7 @@ from deployer.models import (
     BenchCaseResult,
     BenchReport,
     CheckStatus,
+    CompareFinding,
     ContainerRuntime,
     DeployTarget,
     ExpectedOutcome,
@@ -220,6 +221,12 @@ def run_case(
             if r.failure_kind is not None
         }
     )
+    hadolint_status: CheckStatus | None = None
+    if last is not None:
+        for r in last.report.results:
+            if r.check_id == "hadolint":
+                hadolint_status = r.status
+                break
     achieved_level = run.success or (
         not case.expected.requires_l2
         and run.stopped_reason == "static_only"
@@ -240,6 +247,7 @@ def run_case(
         stopped_reason=run.stopped_reason,
         iterations=len(run.iterations),
         image_size_bytes=last.report.image_size_bytes if last else None,
+        hadolint_status=hadolint_status,
         wall_time_s=round(wall, 3),
         failure_kinds=failure_kinds,
         expected=case.expected,
@@ -437,7 +445,6 @@ def _normalize_from_report(report: BenchReport, run_dir: Path) -> GoldenReport:
         if result.outcome == "skipped":
             continue
         checks: list[GoldenCheck] = []
-        hadolint_status: CheckStatus | None = None
         run_file = run_dir / "cases" / result.case / "authoring-run.json"
         if run_file.is_file():
             authoring = AuthoringRun.model_validate_json(run_file.read_text())
@@ -451,9 +458,6 @@ def _normalize_from_report(report: BenchReport, run_dir: Path) -> GoldenReport:
                     )
                     for r in last_report.results
                 ]
-                for r in last_report.results:
-                    if r.check_id == "hadolint":
-                        hadolint_status = r.status
         golden_cases.append(
             GoldenCase(
                 case=result.case,
@@ -462,7 +466,7 @@ def _normalize_from_report(report: BenchReport, run_dir: Path) -> GoldenReport:
                 iterations=result.iterations,
                 failure_kinds=result.failure_kinds,
                 image_size_bytes=result.image_size_bytes,
-                hadolint_status=hadolint_status,
+                hadolint_status=result.hadolint_status,
                 checks=checks,
                 expected=result.expected,
                 external_url=result.external_url,
@@ -525,6 +529,139 @@ def promote_run(run_dir: Path, corpus_root: Path, *, force: bool = False) -> Pat
             dest.mkdir(parents=True)
             shutil.copyfile(src, dest / "Dockerfile")
     return golden_dir
+
+
+_LEVEL_ORDER = {"hard": 0, "important": 1, "advisory": 2}
+
+
+def load_baseline(source: Path | str, corpus_root: Path) -> BenchReport | GoldenReport:
+    """Load a comparison baseline: the literal 'golden' or a raw run dir."""
+    if source == "golden":
+        golden_file = corpus_root / "golden" / "golden.json"
+        if not golden_file.is_file():
+            raise ValueError(f"no golden baseline at {golden_file}")
+        return GoldenReport.model_validate_json(golden_file.read_text())
+    return _load_bench_report(Path(source))
+
+
+def _baseline_cases(
+    baseline: BenchReport | GoldenReport,
+) -> dict[str, BenchCaseResult | GoldenCase]:
+    """Map case name -> baseline case, dropping skipped raw-run cases."""
+    if isinstance(baseline, BenchReport):
+        return {c.case: c for c in baseline.cases if c.outcome != "skipped"}
+    return {c.case: c for c in baseline.cases}
+
+
+def compare_runs(
+    candidate: BenchReport,
+    baseline: BenchReport | GoldenReport,
+    *,
+    image_threshold_pct: float = 10.0,
+    wall_threshold_pct: float = 25.0,
+    iteration_threshold: int = 0,
+) -> list[CompareFinding]:
+    """Regressions of `candidate` measured against `baseline`, by level."""
+    findings: list[CompareFinding] = []
+    base = _baseline_cases(baseline)
+    cand = {c.case: c for c in candidate.cases if c.outcome != "skipped"}
+    raw_baseline = isinstance(baseline, BenchReport)
+
+    for name, b in base.items():
+        c = cand.get(name)
+        if c is None:
+            findings.append(
+                CompareFinding(
+                    level="important",
+                    case=name,
+                    metric="missing_case",
+                    detail="present in baseline but absent or skipped in candidate",
+                )
+            )
+            continue
+        if b.success and not c.success:
+            findings.append(
+                CompareFinding(
+                    level="hard",
+                    case=name,
+                    metric="success",
+                    detail=f"green in baseline, now {c.stopped_reason}",
+                )
+            )
+        if c.iterations - b.iterations > iteration_threshold:
+            findings.append(
+                CompareFinding(
+                    level="important",
+                    case=name,
+                    metric="iterations",
+                    detail=f"{b.iterations} -> {c.iterations}",
+                )
+            )
+        b_kinds, c_kinds = set(b.failure_kinds), set(c.failure_kinds)
+        if b_kinds and c_kinds and b_kinds != c_kinds:
+            findings.append(
+                CompareFinding(
+                    level="important",
+                    case=name,
+                    metric="failure_kind",
+                    detail=f"{sorted(k.value for k in b_kinds)} -> "
+                    f"{sorted(k.value for k in c_kinds)}",
+                )
+            )
+        if (
+            b.image_size_bytes
+            and c.image_size_bytes
+            and c.image_size_bytes
+            > b.image_size_bytes * (1 + image_threshold_pct / 100)
+        ):
+            findings.append(
+                CompareFinding(
+                    level="advisory",
+                    case=name,
+                    metric="image_size",
+                    detail=f"{b.image_size_bytes} -> {c.image_size_bytes} bytes "
+                    f"(>{image_threshold_pct:g}%)",
+                )
+            )
+        if b.hadolint_status is CheckStatus.PASSED and c.hadolint_status not in (
+            None,
+            CheckStatus.PASSED,
+        ):
+            findings.append(
+                CompareFinding(
+                    level="advisory",
+                    case=name,
+                    metric="hadolint",
+                    detail="hadolint status worsened vs baseline",
+                )
+            )
+        if (
+            raw_baseline
+            and isinstance(b, BenchCaseResult)
+            and b.wall_time_s > 0
+            and c.wall_time_s > b.wall_time_s * (1 + wall_threshold_pct / 100)
+        ):
+            findings.append(
+                CompareFinding(
+                    level="advisory",
+                    case=name,
+                    metric="wall_time",
+                    detail=f"{b.wall_time_s:.1f}s -> {c.wall_time_s:.1f}s "
+                    f"(>{wall_threshold_pct:g}%)",
+                )
+            )
+
+    for name in sorted(set(cand) - set(base)):
+        findings.append(
+            CompareFinding(
+                level="advisory",
+                case=name,
+                metric="new_case",
+                detail="present in candidate but not in baseline",
+            )
+        )
+    findings.sort(key=lambda f: (_LEVEL_ORDER[f.level], f.case, f.metric))
+    return findings
 
 
 def render_markdown(report: BenchReport) -> str:

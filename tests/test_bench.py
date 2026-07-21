@@ -3,6 +3,7 @@
 import json
 import subprocess
 from pathlib import Path
+from typing import Any
 
 import pytest
 from pydantic import ValidationError
@@ -11,6 +12,8 @@ from deployer.bench import (
     FixtureAuthor,
     _create_run_dir,
     clone_external,
+    compare_runs,
+    load_baseline,
     load_corpus,
     load_external,
     normalize_run,
@@ -25,11 +28,13 @@ from deployer.models import (
     BenchReport,
     CheckResult,
     CheckStatus,
+    CompareFinding,
     ContainerRuntime,
     DeployTarget,
     ExpectedOutcome,
     ExternalTarget,
     FailureKind,
+    GoldenCase,
     GoldenReport,
     IterationRecord,
     ProjectFacts,
@@ -705,6 +710,9 @@ def _bench_run_on_disk(tmp_path: Path, monkeypatch) -> Path:
 
 def test_normalize_run_strips_noise(tmp_path: Path, monkeypatch) -> None:
     run_dir = _bench_run_on_disk(tmp_path, monkeypatch)
+    report = BenchReport.model_validate_json(
+        (run_dir / "bench-report.json").read_text()
+    )
     golden = normalize_run(run_dir)
     assert golden.promoted_from_label == "norm"
     assert [c.case for c in golden.cases] == ["a-ok"]  # skipped excluded
@@ -715,6 +723,8 @@ def test_normalize_run_strips_noise(tmp_path: Path, monkeypatch) -> None:
     assert "wall_time_s" not in payload
     assert str(tmp_path) not in payload  # no absolute paths anywhere
     assert "message" not in payload  # check messages stripped
+    raw_case = next(c for c in report.cases if c.case == "a-ok")
+    assert case.hadolint_status == raw_case.hadolint_status  # both sources agree
 
 
 def test_normalize_run_requires_report(tmp_path: Path) -> None:
@@ -781,3 +791,101 @@ def test_promote_replaces_previous_golden(tmp_path: Path, monkeypatch) -> None:
     stale.write_text("FROM ghost:1\n")
     promote_run(run_dir, tmp_path)
     assert not stale.exists()
+
+
+def _golden(*cases: GoldenCase) -> GoldenReport:
+    return GoldenReport(
+        promoted_from_label="base",
+        author_backend="fixture",
+        build_timeout_s=600,
+        health_timeout_s=30,
+        cases=list(cases),
+    )
+
+
+def _gcase(name: str, **overrides: Any) -> GoldenCase:
+    defaults: dict[str, Any] = dict(
+        case=name,
+        success=True,
+        stopped_reason="success",
+        iterations=1,
+        image_size_bytes=100_000_000,
+    )
+    defaults.update(overrides)
+    return GoldenCase(**defaults)
+
+
+def _rcase(name: str, **overrides: Any) -> BenchCaseResult:
+    defaults: dict[str, Any] = dict(
+        case=name,
+        outcome="matched",
+        success=True,
+        stopped_reason="success",
+        iterations=1,
+        image_size_bytes=100_000_000,
+        wall_time_s=10.0,
+    )
+    defaults.update(overrides)
+    return BenchCaseResult(**defaults)
+
+
+def test_compare_green_to_red_is_hard() -> None:
+    findings = compare_runs(
+        _report(
+            _rcase(
+                "a", outcome="mismatched", success=False, stopped_reason="no_progress"
+            )
+        ),
+        _golden(_gcase("a")),
+    )
+    assert [f.level for f in findings][0] == "hard"
+    assert findings[0].case == "a"
+    assert isinstance(findings[0], CompareFinding)
+
+
+def test_compare_iteration_growth_is_important() -> None:
+    findings = compare_runs(_report(_rcase("a", iterations=3)), _golden(_gcase("a")))
+    assert any(f.level == "important" and f.metric == "iterations" for f in findings)
+
+
+def test_compare_missing_case_is_important_new_case_advisory() -> None:
+    findings = compare_runs(_report(_rcase("b")), _golden(_gcase("a")))
+    levels = {(f.level, f.metric, f.case) for f in findings}
+    assert ("important", "missing_case", "a") in levels
+    assert ("advisory", "new_case", "b") in levels
+
+
+def test_compare_image_growth_threshold() -> None:
+    grown = _report(_rcase("a", image_size_bytes=115_000_000))
+    assert any(
+        f.level == "advisory" and f.metric == "image_size"
+        for f in compare_runs(grown, _golden(_gcase("a")))
+    )
+    small = _report(_rcase("a", image_size_bytes=105_000_000))
+    assert not any(
+        f.metric == "image_size" for f in compare_runs(small, _golden(_gcase("a")))
+    )
+
+
+def test_compare_wall_time_raw_vs_raw_only() -> None:
+    slow = _report(_rcase("a", wall_time_s=20.0))
+    raw_baseline = _report(_rcase("a", wall_time_s=10.0))
+    assert any(f.metric == "wall_time" for f in compare_runs(slow, raw_baseline))
+    assert not any(
+        f.metric == "wall_time" for f in compare_runs(slow, _golden(_gcase("a")))
+    )
+
+
+def test_compare_clean_run_has_no_findings() -> None:
+    assert compare_runs(_report(_rcase("a")), _golden(_gcase("a"))) == []
+
+
+def test_load_baseline_golden_and_raw(tmp_path: Path, monkeypatch) -> None:
+    run_dir = _bench_run_on_disk(tmp_path, monkeypatch)
+    promote_run(run_dir, tmp_path)
+    golden = load_baseline("golden", tmp_path)
+    assert isinstance(golden, GoldenReport)
+    raw = load_baseline(run_dir, tmp_path)
+    assert isinstance(raw, BenchReport)
+    with pytest.raises(ValueError):
+        load_baseline("golden", tmp_path / "nowhere")

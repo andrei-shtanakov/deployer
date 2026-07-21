@@ -243,6 +243,7 @@ class BenchCaseResult(BaseModel):
     stopped_reason: StopReason | None = None
     iterations: int = 0
     image_size_bytes: int | None = None
+    hadolint_status: CheckStatus | None = None
     wall_time_s: float = 0.0
     skip_reason: str = ""
     failure_kinds: list[FailureKind] = Field(default_factory=list)
@@ -313,3 +314,12 @@ class GoldenReport(BaseModel):
     build_timeout_s: int
     health_timeout_s: int
     cases: list[GoldenCase] = Field(default_factory=list)
+
+
+class CompareFinding(BaseModel):
+    """One regression (or notice) from comparing two bench runs."""
+
+    level: Literal["hard", "important", "advisory"]
+    case: str
+    metric: str
+    detail: str
