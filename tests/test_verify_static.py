@@ -1,13 +1,16 @@
 from pathlib import Path
 
+import pytest
+
 from deployer.models import (
     CheckResult,
     CheckStatus,
     ContainerRuntime,
     DeployTarget,
+    FailureKind,
     ProjectFacts,
 )
-from deployer.verify import parse_dockerfile, verify, verify_static
+from deployer.verify import _classify, parse_dockerfile, verify, verify_static
 
 GOOD = """\
 FROM python:3.12-slim
@@ -295,3 +298,30 @@ def test_verify_defaults_match_module_constants(
     }
     assert DEFAULT_BUILD_TIMEOUT == 600
     assert DEFAULT_HEALTH_TIMEOUT == 30
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "u@host: Permission denied (publickey).",
+        "Host key verification failed.",
+        "ssh: Could not resolve hostname bench: nodename nor servname known",
+        "ssh: connect to host 10.0.0.5 port 22: Operation timed out",
+        "ssh: connect to host bench port 22: Connection refused",
+        "Cannot connect to the Docker daemon at ssh://u@host. Is it running?",
+        'error during connect: Get "http://docker.example": EOF',
+        "Error: context deadline exceeded",
+        "connection timed out",
+    ],
+)
+def test_ssh_and_daemon_errors_are_environment(line: str) -> None:
+    assert _classify(line) is FailureKind.ENVIRONMENT
+
+
+def test_classify_sees_stdout_side_of_combined_output() -> None:
+    combined = "error during connect: dial tcp: timeout\n" + ""
+    assert _classify(combined) is FailureKind.ENVIRONMENT
+
+
+def test_ordinary_build_error_stays_authoring() -> None:
+    assert _classify("E: Unable to locate package libfoo") is FailureKind.AUTHORING

@@ -298,11 +298,19 @@ ENVIRONMENT_MARKERS = (
     "network is unreachable",
     "no route to host",
     "service unavailable",
+    "permission denied (publickey)",
+    "host key verification failed",
+    "could not resolve hostname",
+    "ssh: connect to host",
+    "connection timed out",
+    "cannot connect to the docker daemon",
+    "error during connect",
+    "context deadline exceeded",
 )
 
 
-def _classify(stderr: str) -> FailureKind:
-    lowered = stderr.lower()
+def _classify(output: str) -> FailureKind:
+    lowered = output.lower()
     if any(marker in lowered for marker in ENVIRONMENT_MARKERS):
         return FailureKind.ENVIRONMENT
     return FailureKind.AUTHORING
@@ -349,8 +357,8 @@ def _build(
         return CheckResult(
             check_id="build",
             status=CheckStatus.FAILED,
-            failure_kind=_classify(proc.stderr),
-            message=_tail(proc.stderr),
+            failure_kind=_classify(proc.stdout + "\n" + proc.stderr),
+            message=_tail(proc.stderr or proc.stdout),
         )
     return CheckResult(check_id="build", status=CheckStatus.PASSED)
 
@@ -403,8 +411,8 @@ def _run_healthcheck(
             return CheckResult(
                 check_id="run_healthcheck",
                 status=CheckStatus.FAILED,
-                failure_kind=_classify(started.stderr),
-                message=_tail(started.stderr),
+                failure_kind=_classify(started.stdout + "\n" + started.stderr),
+                message=_tail(started.stderr or started.stdout),
             )
         deadline = time.monotonic() + timeout
         last_error = ""
