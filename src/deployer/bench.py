@@ -523,7 +523,12 @@ def promote_run(run_dir: Path, corpus_root: Path, *, force: bool = False) -> Pat
         )
     golden_dir = corpus_root / "golden"
     if golden_dir.exists():
-        shutil.rmtree(golden_dir)
+        if not golden_dir.is_dir():
+            raise ValueError(f"golden path {golden_dir} exists and is not a directory")
+        try:
+            shutil.rmtree(golden_dir)
+        except OSError as exc:
+            raise ValueError(f"cannot replace golden dir {golden_dir}: {exc}") from exc
     golden_dir.mkdir(parents=True)
     (golden_dir / "golden.json").write_text(golden.model_dump_json(indent=2) + "\n")
     for case in golden.cases:
@@ -640,7 +645,7 @@ def compare_runs(
                 )
             )
         b_kinds, c_kinds = set(b.failure_kinds), set(c.failure_kinds)
-        if b_kinds and c_kinds and b_kinds != c_kinds:
+        if c_kinds and b_kinds != c_kinds:
             findings.append(
                 CompareFinding(
                     level="important",

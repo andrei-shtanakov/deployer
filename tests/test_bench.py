@@ -945,3 +945,35 @@ def test_load_baseline_golden_and_raw(tmp_path: Path, monkeypatch) -> None:
     assert isinstance(raw, BenchReport)
     with pytest.raises(ValueError):
         load_baseline("golden", tmp_path / "nowhere")
+
+
+def test_compare_failure_kind_appearing_from_empty_baseline() -> None:
+    """Candidate failure kinds appearing from empty baseline is a finding."""
+    findings = compare_runs(
+        _report(_rcase("a", failure_kinds=[FailureKind.AUTHORING])),
+        _golden(_gcase("a", failure_kinds=[])),
+    )
+    failure_kind_findings = [f for f in findings if f.metric == "failure_kind"]
+    assert len(failure_kind_findings) == 1
+    assert failure_kind_findings[0].level == "important"
+    assert "[] -> " in failure_kind_findings[0].detail
+
+
+def test_compare_no_failure_kind_finding_when_baseline_improves() -> None:
+    """Candidate with no failure kinds is not a regression, no finding."""
+    findings = compare_runs(
+        _report(_rcase("a", failure_kinds=[])),
+        _golden(_gcase("a", failure_kinds=[FailureKind.AUTHORING])),
+    )
+    assert not any(f.metric == "failure_kind" for f in findings)
+
+
+def test_promote_golden_path_is_file_raises_value_error(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """promote_run raises ValueError if golden path exists as a file."""
+    run_dir = _bench_run_on_disk(tmp_path, monkeypatch)
+    golden_file = tmp_path / "golden"
+    golden_file.write_text("not a directory\n")
+    with pytest.raises(ValueError, match="golden path .* exists and is not"):
+        promote_run(run_dir, tmp_path)
