@@ -425,13 +425,13 @@ def _load_bench_report(run_dir: Path) -> BenchReport:
     return BenchReport.model_validate_json(report_file.read_text())
 
 
-def normalize_run(run_dir: Path) -> GoldenReport:
-    """Normalize a raw bench run into a committable golden baseline.
+def _normalize_from_report(report: BenchReport, run_dir: Path) -> GoldenReport:
+    """Pure function: normalize a bench report into a golden baseline.
 
     Strips wall-clock data, absolute paths, hostnames and check messages;
     skipped cases are excluded (a golden only asserts about cases that ran).
+    Reads per-case authoring-run.json files from run_dir.
     """
-    report = _load_bench_report(run_dir)
     golden_cases: list[GoldenCase] = []
     for result in report.cases:
         if result.outcome == "skipped":
@@ -489,16 +489,25 @@ def normalize_run(run_dir: Path) -> GoldenReport:
     )
 
 
+def normalize_run(run_dir: Path) -> GoldenReport:
+    """Normalize a raw bench run into a committable golden baseline.
+
+    Strips wall-clock data, absolute paths, hostnames and check messages;
+    skipped cases are excluded (a golden only asserts about cases that ran).
+    """
+    report = _load_bench_report(run_dir)
+    return _normalize_from_report(report, run_dir)
+
+
 def promote_run(run_dir: Path, corpus_root: Path, *, force: bool = False) -> Path:
     """Promote a raw run to the committed golden baseline in corpus/golden.
 
     Refuses (raises `PromoteRefusedError`) when any case is `mismatched`
     unless `force` is set. Replaces any existing `golden/` tree wholesale.
     """
-    golden = normalize_run(run_dir)
-    mismatched = [
-        c.case for c in _load_bench_report(run_dir).cases if c.outcome == "mismatched"
-    ]
+    report = _load_bench_report(run_dir)
+    golden = _normalize_from_report(report, run_dir)
+    mismatched = [c.case for c in report.cases if c.outcome == "mismatched"]
     if mismatched and not force:
         raise PromoteRefusedError(
             "refusing to promote a run with mismatched cases "

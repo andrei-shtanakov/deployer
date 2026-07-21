@@ -553,3 +553,27 @@ def test_bench_promote_cli(tmp_path, monkeypatch, capsys):
 
 def test_bench_promote_missing_run_dir_exits_2(tmp_path, capsys):
     assert main(["bench", "promote", str(tmp_path / "nope")]) == 2
+
+
+def test_bench_promote_force_overrides_mismatch(tmp_path, monkeypatch, capsys):
+    corpus = _make_corpus(tmp_path)
+    monkeypatch.setattr("deployer.cli.resolve_runtime", lambda *a, **k: None)
+    monkeypatch.chdir(tmp_path)
+    # Run bench to create a run
+    assert main(["bench", "run", "--corpus", str(corpus), "--label", "t"]) == 0
+    run_dir = next((tmp_path / ".deployer-runs").iterdir())
+    # Corrupt bench-report.json to mark one case as mismatched
+    report_file = run_dir / "bench-report.json"
+    report_data = json.loads(report_file.read_text())
+    if report_data.get("cases"):
+        report_data["cases"][0]["outcome"] = "mismatched"
+        report_file.write_text(json.dumps(report_data, indent=2))
+    # Promote without --force should fail with exit code 1
+    code = main(["bench", "promote", str(run_dir), "--corpus", str(corpus)])
+    assert code == 1
+    assert "mismatched" in capsys.readouterr().err
+    # Promote with --force should succeed
+    code = main(["bench", "promote", str(run_dir), "--corpus", str(corpus), "--force"])
+    assert code == 0
+    assert (corpus / "golden" / "golden.json").is_file()
+    assert "golden" in capsys.readouterr().out
