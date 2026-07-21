@@ -22,12 +22,17 @@ from deployer.author import (
 from deployer.facts import analyze_project
 from deployer.models import (
     AuthorInfo,
+    AuthoringRun,
     BenchCaseResult,
     BenchReport,
+    CheckStatus,
     ContainerRuntime,
     DeployTarget,
     ExpectedOutcome,
     ExternalTarget,
+    GoldenCase,
+    GoldenCheck,
+    GoldenReport,
     ProjectFacts,
     VerificationReport,
 )
@@ -174,12 +179,14 @@ def run_case(
             case=case.name,
             outcome="skipped",
             skip_reason="case requires L2 but no container runtime resolved",
+            expected=case.expected,
         )
     if author is None:
         return BenchCaseResult(
             case=case.name,
             outcome="skipped",
             skip_reason="no fixture.Dockerfile for the offline fixture author",
+            expected=case.expected,
         )
     started = time.monotonic()
     with tempfile.TemporaryDirectory(prefix=f"deployer-bench-{case.name}-") as tmp:
@@ -235,6 +242,7 @@ def run_case(
         image_size_bytes=last.report.image_size_bytes if last else None,
         wall_time_s=round(wall, 3),
         failure_kinds=failure_kinds,
+        expected=case.expected,
         external_url=case.external_url,
         external_commit=case.external_commit,
     )
@@ -403,6 +411,73 @@ def verify_corpus(
         )
         results.append((case.name, report))
     return results
+
+
+def normalize_run(run_dir: Path) -> GoldenReport:
+    """Normalize a raw bench run into a committable golden baseline.
+
+    Strips wall-clock data, absolute paths, hostnames and check messages;
+    skipped cases are excluded (a golden only asserts about cases that ran).
+    """
+    report_file = run_dir / "bench-report.json"
+    if not report_file.is_file():
+        raise ValueError(f"not a bench run dir: missing {report_file}")
+    report = BenchReport.model_validate_json(report_file.read_text())
+    golden_cases: list[GoldenCase] = []
+    for result in report.cases:
+        if result.outcome == "skipped":
+            continue
+        checks: list[GoldenCheck] = []
+        hadolint_status: CheckStatus | None = None
+        run_file = run_dir / "cases" / result.case / "authoring-run.json"
+        if run_file.is_file():
+            authoring = AuthoringRun.model_validate_json(run_file.read_text())
+            if authoring.iterations:
+                last_report = authoring.iterations[-1].report
+                checks = [
+                    GoldenCheck(
+                        check_id=r.check_id,
+                        status=r.status,
+                        failure_kind=r.failure_kind,
+                    )
+                    for r in last_report.results
+                ]
+                for r in last_report.results:
+                    if r.check_id == "hadolint":
+                        hadolint_status = r.status
+        golden_cases.append(
+            GoldenCase(
+                case=result.case,
+                success=result.success,
+                stopped_reason=result.stopped_reason,
+                iterations=result.iterations,
+                failure_kinds=result.failure_kinds,
+                image_size_bytes=result.image_size_bytes,
+                hadolint_status=hadolint_status,
+                checks=checks,
+                expected=result.expected,
+                external_url=result.external_url,
+                external_commit=result.external_commit,
+            )
+        )
+    runtime = report.runtime
+    platform = (
+        report.runtime_versions.platform
+        if report.runtime_versions is not None
+        else None
+    )
+    return GoldenReport(
+        promoted_from_label=report.label,
+        corpus_commit=report.corpus_commit,
+        deployer_version=report.deployer_version,
+        author_backend=report.author_backend,
+        runtime_tool=runtime.tool if runtime is not None else None,
+        runtime_remote=runtime.remote if runtime is not None else False,
+        runtime_platform=platform,
+        build_timeout_s=report.build_timeout_s,
+        health_timeout_s=report.health_timeout_s,
+        cases=golden_cases,
+    )
 
 
 def render_markdown(report: BenchReport) -> str:

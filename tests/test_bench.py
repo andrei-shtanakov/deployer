@@ -13,6 +13,7 @@ from deployer.bench import (
     clone_external,
     load_corpus,
     load_external,
+    normalize_run,
     render_markdown,
     run_bench,
     run_case,
@@ -635,6 +636,7 @@ def test_run_case_records_external_identity(tmp_path: Path, monkeypatch) -> None
     )
     assert result.external_url == "https://x/y.git"
     assert result.external_commit == "a" * 40
+    assert result.expected == case.expected
 
 
 def test_corpus_commit_dirty_suffix(monkeypatch) -> None:
@@ -679,3 +681,57 @@ def test_markdown_includes_failure_kinds_column() -> None:
     md = render_markdown(report)
     assert "| failure kinds |" in md.splitlines()[-3] or "failure kinds" in md
     assert "authoring" in md
+
+
+def _bench_run_on_disk(tmp_path: Path, monkeypatch) -> Path:
+    """Produce a real raw run dir via run_bench with a mocked author loop."""
+    _make_case(tmp_path, "a-ok", expected={"requires_l2": False})
+    _make_case(tmp_path, "b-skip")  # requires_l2 True -> skipped offline
+    monkeypatch.setattr(
+        "deployer.bench.author_dockerfile", lambda *a, **k: _fake_run(True)
+    )
+    _, run_dir = run_bench(
+        tmp_path,
+        lambda case: FixtureAuthor("FROM x:1\n"),
+        None,
+        label="norm",
+        author_backend="fixture",
+        runs_root=tmp_path / "runs",
+    )
+    return run_dir
+
+
+def test_normalize_run_strips_noise(tmp_path: Path, monkeypatch) -> None:
+    run_dir = _bench_run_on_disk(tmp_path, monkeypatch)
+    golden = normalize_run(run_dir)
+    assert golden.promoted_from_label == "norm"
+    assert [c.case for c in golden.cases] == ["a-ok"]  # skipped excluded
+    case = golden.cases[0]
+    assert case.success is True
+    assert case.checks and case.checks[0].check_id == "parses"
+    payload = golden.model_dump_json()
+    assert "wall_time_s" not in payload
+    assert str(tmp_path) not in payload  # no absolute paths anywhere
+    assert "message" not in payload  # check messages stripped
+
+
+def test_normalize_run_requires_report(tmp_path: Path) -> None:
+    (tmp_path / "empty").mkdir()
+    with pytest.raises(ValueError, match="bench-report.json"):
+        normalize_run(tmp_path / "empty")
+
+
+def test_normalize_run_records_runtime_facts_without_host(
+    tmp_path: Path, monkeypatch
+) -> None:
+    run_dir = _bench_run_on_disk(tmp_path, monkeypatch)
+    report_file = run_dir / "bench-report.json"
+    report = BenchReport.model_validate_json(report_file.read_text())
+    report.runtime = ContainerRuntime(
+        tool="docker", host="ssh://secret-host", host_source="cli"
+    )
+    report_file.write_text(report.model_dump_json(indent=2))
+    golden = normalize_run(run_dir)
+    assert golden.runtime_tool == "docker"
+    assert golden.runtime_remote is True
+    assert "secret-host" not in golden.model_dump_json()
