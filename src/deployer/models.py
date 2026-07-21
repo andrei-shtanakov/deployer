@@ -246,6 +246,8 @@ class BenchCaseResult(BaseModel):
     wall_time_s: float = 0.0
     skip_reason: str = ""
     failure_kinds: list[FailureKind] = Field(default_factory=list)
+    external_url: str | None = None
+    external_commit: str | None = None
 
 
 class BenchReport(BaseModel):

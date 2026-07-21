@@ -79,6 +79,8 @@ class BenchCase(BaseModel):
     target: DeployTarget = Field(default_factory=DeployTarget)
     expected: ExpectedOutcome = Field(default_factory=ExpectedOutcome)
     fixture_dockerfile: Path | None = None
+    external_url: str | None = None
+    external_commit: str | None = None
 
 
 def load_corpus(corpus_root: Path, pattern: str = "*") -> list[BenchCase]:
@@ -152,6 +154,8 @@ def clone_external(ext: ExternalTarget, dest_root: Path) -> BenchCase:
         target=ext.target,
         expected=ext.expected,
         fixture_dockerfile=None,
+        external_url=ext.url,
+        external_commit=ext.commit,
     )
 
 
@@ -209,18 +213,56 @@ def run_case(
             if r.failure_kind is not None
         }
     )
+    achieved_level = run.success or (
+        not case.expected.requires_l2
+        and run.stopped_reason == "static_only"
+        and bool(run.iterations)
+        and run.iterations[-1].report.passed
+    )
+    matched = achieved_level == case.expected.expected_success
+    if (
+        matched
+        and not case.expected.expected_success
+        and case.expected.expected_failure_kind is not None
+    ):
+        matched = case.expected.expected_failure_kind in failure_kinds
     return BenchCaseResult(
         case=case.name,
-        outcome="matched"
-        if run.success == case.expected.expected_success
-        else "mismatched",
-        success=run.success,
+        outcome="matched" if matched else "mismatched",
+        success=achieved_level,
         stopped_reason=run.stopped_reason,
         iterations=len(run.iterations),
         image_size_bytes=last.report.image_size_bytes if last else None,
         wall_time_s=round(wall, 3),
         failure_kinds=failure_kinds,
+        external_url=case.external_url,
+        external_commit=case.external_commit,
     )
+
+
+def _corpus_commit() -> str | None:
+    """Deployer repo sha, '-dirty'-suffixed when the working tree has changes."""
+    sha = _deployer_git_sha()
+    if sha is None:
+        return None
+    try:
+        proc = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(Path(__file__).resolve().parent),
+                "status",
+                "--porcelain",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return sha
+    if proc.returncode == 0 and proc.stdout.strip():
+        return f"{sha}-dirty"
+    return sha
 
 
 def _run_bench_cases(
@@ -249,7 +291,7 @@ def _run_bench_cases(
     report = BenchReport(
         label=label,
         author_backend=author_backend,
-        corpus_commit=_deployer_git_sha(),
+        corpus_commit=_corpus_commit(),
         deployer_version=_deployer_version(),
         runtime=runtime,
         runtime_versions=(
@@ -382,13 +424,14 @@ def render_markdown(report: BenchReport) -> str:
         f"- timeouts: build {report.build_timeout_s}s / health {report.health_timeout_s}s",
         f"- success rate: {rate if rate is not None else 'n/a'}",
         "",
-        "| case | outcome | stop reason | iters | image MB | wall s |",
-        "|---|---|---|---:|---:|---:|",
+        "| case | outcome | stop reason | iters | image MB | wall s | failure kinds |",
+        "|---|---|---|---:|---:|---:|---|",
     ]
     for c in report.cases:
         size = f"{c.image_size_bytes / 1e6:.1f}" if c.image_size_bytes else "-"
+        kinds = ", ".join(k.value for k in c.failure_kinds) or "-"
         lines.append(
             f"| {c.case} | {c.outcome} | {c.stopped_reason or '-'} "
-            f"| {c.iterations} | {size} | {c.wall_time_s:.1f} |"
+            f"| {c.iterations} | {size} | {c.wall_time_s:.1f} | {kinds} |"
         )
     return "\n".join(lines) + "\n"

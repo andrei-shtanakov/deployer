@@ -461,16 +461,7 @@ def _make_corpus(tmp_path, name="case-one", requires_l2=False):
     case = tmp_path / "corpus" / "synthetic" / name
     (case / "project").mkdir(parents=True)
     (case / "project" / "main.py").write_text("print('hi')\n")
-    # `success` (in AuthoringRun) is only True when a runtime actually ran
-    # the container (see author.py: stopped_reason "success" vs
-    # "static_only"); without a runtime the achievable outcome is
-    # "static_only", i.e. success=False. expected_success mirrors
-    # requires_l2 here so the offline/no-runtime tests below express an
-    # achievable expectation (skipped cases never compare success, so this
-    # is a no-op for requires_l2=True corpora).
-    (case / "expected.json").write_text(
-        _json.dumps({"requires_l2": requires_l2, "expected_success": requires_l2})
-    )
+    (case / "expected.json").write_text(_json.dumps({"requires_l2": requires_l2}))
     (case / "fixture.Dockerfile").write_text("FROM python:3.12-slim\n")
     return tmp_path / "corpus"
 

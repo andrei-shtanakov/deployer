@@ -513,3 +513,169 @@ def test_create_run_dir_retries_past_same_second_collision(tmp_path: Path) -> No
     run_dir = _create_run_dir(tmp_path, stamp, label)
     assert run_dir == tmp_path / f"{stamp}-{label}-3"
     assert run_dir.is_dir()
+
+
+def _failed_run(kinds: list[FailureKind]) -> AuthoringRun:
+    results = [
+        CheckResult(check_id=f"c{i}", status=CheckStatus.FAILED, failure_kind=kind)
+        for i, kind in enumerate(kinds)
+    ]
+    report = VerificationReport(results=results)
+    return AuthoringRun(
+        project="x",
+        target=DeployTarget(),
+        iterations=[
+            IterationRecord(
+                index=0, dockerfile="FROM x:1\n", report=report, duration_s=0.1
+            )
+        ],
+        stopped_reason="no_progress",
+        success=False,
+    )
+
+
+def test_expected_failure_kind_must_match(tmp_path: Path, monkeypatch) -> None:
+    _make_case(
+        tmp_path,
+        "svc",
+        expected={
+            "requires_l2": False,
+            "expected_success": False,
+            "expected_failure_kind": "authoring",
+        },
+    )
+    case = load_corpus(tmp_path)[0]
+    monkeypatch.setattr(
+        "deployer.bench.author_dockerfile",
+        lambda *a, **k: _failed_run([FailureKind.ENVIRONMENT]),
+    )
+    result = run_case(
+        case,
+        FixtureAuthor("FROM x:1\n"),
+        None,
+        tmp_path / "out",
+        build_timeout=600,
+        health_timeout=30,
+    )
+    assert result.outcome == "mismatched"  # failed, but with the wrong kind
+
+    monkeypatch.setattr(
+        "deployer.bench.author_dockerfile",
+        lambda *a, **k: _failed_run([FailureKind.AUTHORING]),
+    )
+    result = run_case(
+        case,
+        FixtureAuthor("FROM x:1\n"),
+        None,
+        tmp_path / "out2",
+        build_timeout=600,
+        health_timeout=30,
+    )
+    assert result.outcome == "matched"
+
+
+def test_static_only_counts_as_success_when_l2_not_required(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _make_case(tmp_path, "svc", expected={"requires_l2": False})
+    case = load_corpus(tmp_path)[0]
+
+    def static_only_run(*a, **k) -> AuthoringRun:
+        report = VerificationReport(
+            results=[CheckResult(check_id="parses", status=CheckStatus.PASSED)]
+        )
+        return AuthoringRun(
+            project="x",
+            target=DeployTarget(),
+            iterations=[
+                IterationRecord(
+                    index=0, dockerfile="FROM x:1\n", report=report, duration_s=0.1
+                )
+            ],
+            stopped_reason="static_only",
+            success=False,
+        )
+
+    monkeypatch.setattr("deployer.bench.author_dockerfile", static_only_run)
+    result = run_case(
+        case,
+        FixtureAuthor("FROM x:1\n"),
+        None,
+        tmp_path / "out",
+        build_timeout=600,
+        health_timeout=30,
+    )
+    assert result.success is True  # achieved its expected verification level
+    assert result.outcome == "matched"  # expected_success default True now holds
+
+
+def test_clone_external_carries_url_and_commit(tmp_path: Path) -> None:
+    url, pinned = _make_local_git_repo(tmp_path)
+    ext = ExternalTarget(name="demo", url=url, commit=pinned)
+    case = clone_external(ext, tmp_path / "scratch")
+    assert case.external_url == url
+    assert case.external_commit == pinned
+
+
+def test_run_case_records_external_identity(tmp_path: Path, monkeypatch) -> None:
+    _make_case(tmp_path, "svc", expected={"requires_l2": False})
+    case = load_corpus(tmp_path)[0].model_copy(
+        update={"external_url": "https://x/y.git", "external_commit": "a" * 40}
+    )
+    monkeypatch.setattr(
+        "deployer.bench.author_dockerfile", lambda *a, **k: _fake_run(True)
+    )
+    result = run_case(
+        case,
+        FixtureAuthor("FROM x:1\n"),
+        None,
+        tmp_path / "out",
+        build_timeout=600,
+        health_timeout=30,
+    )
+    assert result.external_url == "https://x/y.git"
+    assert result.external_commit == "a" * 40
+
+
+def test_corpus_commit_dirty_suffix(monkeypatch) -> None:
+    from deployer.bench import _corpus_commit
+
+    monkeypatch.setattr("deployer.bench._deployer_git_sha", lambda: "abc123")
+
+    def _fake_proc(returncode: int, stdout: str = "", stderr: str = ""):
+        class P:
+            returncode: int
+            stdout: str
+            stderr: str
+
+        p = P()
+        p.returncode, p.stdout, p.stderr = returncode, stdout, stderr
+        return p
+
+    def fake_run_clean(cmd, **kwargs):
+        return _fake_proc(0, stdout="")
+
+    def fake_run_dirty(cmd, **kwargs):
+        return _fake_proc(0, stdout=" M src/deployer/bench.py\n")
+
+    monkeypatch.setattr("deployer.bench.subprocess.run", fake_run_clean)
+    assert _corpus_commit() == "abc123"
+    monkeypatch.setattr("deployer.bench.subprocess.run", fake_run_dirty)
+    assert _corpus_commit() == "abc123-dirty"
+
+
+def test_markdown_includes_failure_kinds_column() -> None:
+    report = _report(
+        BenchCaseResult(
+            case="a",
+            outcome="mismatched",
+            success=False,
+            stopped_reason="no_progress",
+            iterations=3,
+            failure_kinds=[FailureKind.AUTHORING],
+            wall_time_s=1.0,
+        )
+    )
+    md = render_markdown(report)
+    assert "| failure kinds |" in md.splitlines()[-3] or "failure kinds" in md
+    assert "authoring" in md
