@@ -17,6 +17,7 @@ from deployer.author import (
     _deployer_version,
     author_dockerfile,
 )
+from deployer.facts import analyze_project
 from deployer.models import (
     AuthorInfo,
     BenchCaseResult,
@@ -32,6 +33,7 @@ from deployer.verify import (
     CONTEXT_IGNORE,
     DEFAULT_BUILD_TIMEOUT,
     DEFAULT_HEALTH_TIMEOUT,
+    verify,
 )
 
 
@@ -227,6 +229,32 @@ def run_bench(
     (run_dir / "bench-report.json").write_text(report.model_dump_json(indent=2))
     (run_dir / "bench-report.md").write_text(render_markdown(report))
     return report, run_dir
+
+
+def verify_corpus(
+    corpus_root: Path,
+    runtime: ContainerRuntime | None,
+    *,
+    pattern: str = "*",
+    build_timeout: int = DEFAULT_BUILD_TIMEOUT,
+    health_timeout: int = DEFAULT_HEALTH_TIMEOUT,
+) -> list[tuple[str, VerificationReport]]:
+    """Verify each case's committed fixture.Dockerfile. No LLM, no authoring."""
+    results: list[tuple[str, VerificationReport]] = []
+    for case in load_corpus(corpus_root, pattern):
+        if case.fixture_dockerfile is None:
+            raise ValueError(f"corpus case {case.name} has no fixture.Dockerfile")
+        report = verify(
+            case.fixture_dockerfile.read_text(),
+            case.project_dir,
+            case.target,
+            runtime,
+            analyze_project(case.project_dir),
+            build_timeout=build_timeout,
+            health_timeout=health_timeout,
+        )
+        results.append((case.name, report))
+    return results
 
 
 def render_markdown(report: BenchReport) -> str:

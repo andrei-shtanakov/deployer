@@ -1,12 +1,14 @@
 """Thin argparse CLI over the deployer library."""
 
 import argparse
+import re
 import sys
 from pathlib import Path
 
 from pydantic import ValidationError
 
 from deployer.author import author_dockerfile
+from deployer.bench import FixtureAuthor, run_bench, verify_corpus
 from deployer.facts import analyze_project
 from deployer.llm import AnthropicAuthor
 from deployer.models import (
@@ -21,6 +23,8 @@ from deployer.runtime import (
     resolve_runtime,
 )
 from deployer.verify import DEFAULT_BUILD_TIMEOUT, DEFAULT_HEALTH_TIMEOUT, verify
+
+_LABEL_RE = re.compile(r"[A-Za-z0-9._-]+")
 
 _STATUS_ICONS = {
     CheckStatus.PASSED: "ok",
@@ -203,6 +207,91 @@ def _cmd_author(args: argparse.Namespace) -> int:
     return 0 if run.stopped_reason in accepted else 1
 
 
+def _cmd_bench_run(args: argparse.Namespace) -> int:
+    corpus = Path(args.corpus)
+    if not corpus.is_dir():
+        print(f"error: {corpus} is not a directory", file=sys.stderr)
+        return 2
+    if not _LABEL_RE.fullmatch(args.label):
+        print("error: --label must match [A-Za-z0-9._-]+", file=sys.stderr)
+        return 2
+    error = _timeout_error(args)
+    if error:
+        print(f"error: {error}", file=sys.stderr)
+        return 2
+    runtime = _resolve_runtime_or_error(args)
+    if isinstance(runtime, str):
+        print(f"error: {runtime}", file=sys.stderr)
+        return 2
+    if args.author == "anthropic":
+        shared = AnthropicAuthor()
+        make_author = lambda case: shared  # noqa: E731
+    else:
+        make_author = lambda case: (  # noqa: E731
+            FixtureAuthor(case.fixture_dockerfile.read_text())
+            if case.fixture_dockerfile is not None
+            else None
+        )
+    try:
+        report, run_dir = run_bench(
+            corpus,
+            make_author,
+            runtime,
+            label=args.label,
+            author_backend=args.author,
+            pattern=args.filter_pattern,
+            build_timeout=args.build_timeout,
+            health_timeout=args.health_timeout,
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    for case in report.cases:
+        line = f"[{case.outcome:>10}] {case.case}"
+        if case.skip_reason:
+            line += f": {case.skip_reason}"
+        print(line)
+    rate = report.success_rate
+    print(f"success rate: {rate if rate is not None else 'n/a'}")
+    print(f"bench-report: {run_dir / 'bench-report.json'}")
+    print(f"markdown: {run_dir / 'bench-report.md'}")
+    return 0 if report.all_matched else 1
+
+
+def _cmd_bench_verify(args: argparse.Namespace) -> int:
+    corpus = Path(args.corpus)
+    if not corpus.is_dir():
+        print(f"error: {corpus} is not a directory", file=sys.stderr)
+        return 2
+    error = _timeout_error(args)
+    if error:
+        print(f"error: {error}", file=sys.stderr)
+        return 2
+    runtime = _resolve_runtime_or_error(args)
+    if isinstance(runtime, str):
+        print(f"error: {runtime}", file=sys.stderr)
+        return 2
+    try:
+        results = verify_corpus(
+            corpus,
+            runtime,
+            pattern=args.filter_pattern,
+            build_timeout=args.build_timeout,
+            health_timeout=args.health_timeout,
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    failed = False
+    for name, report in results:
+        status = "ok" if report.passed else "FAIL"
+        print(f"[{status:>4}] {name}")
+        if not report.passed:
+            failed = True
+            _print_report(report)
+    return 1 if failed else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """Entry point for the `deployer` CLI."""
     parser = argparse.ArgumentParser(prog="deployer")
@@ -225,6 +314,38 @@ def main(argv: list[str] | None = None) -> int:
     _add_timeout_flags(p_author)
     _add_runtime_flags(p_author)
     p_author.set_defaults(func=_cmd_author)
+
+    p_bench = sub.add_parser("bench", help="corpus bench operations")
+    bench_sub = p_bench.add_subparsers(dest="bench_command", required=True)
+
+    p_bench_run = bench_sub.add_parser(
+        "run", help="author every corpus case and aggregate metrics"
+    )
+    p_bench_run.add_argument("--corpus", default="corpus")
+    p_bench_run.add_argument(
+        "--filter", default="*", dest="filter_pattern", metavar="GLOB"
+    )
+    p_bench_run.add_argument("--label", default="run")
+    p_bench_run.add_argument(
+        "--author",
+        choices=("fixture", "anthropic"),
+        default="fixture",
+        help="fixture (offline, default) or anthropic (real LLM, costs money)",
+    )
+    _add_runtime_flags(p_bench_run)
+    _add_timeout_flags(p_bench_run)
+    p_bench_run.set_defaults(func=_cmd_bench_run)
+
+    p_bench_verify = bench_sub.add_parser(
+        "verify", help="verify each case's committed fixture.Dockerfile"
+    )
+    p_bench_verify.add_argument("--corpus", default="corpus")
+    p_bench_verify.add_argument(
+        "--filter", default="*", dest="filter_pattern", metavar="GLOB"
+    )
+    _add_runtime_flags(p_bench_verify)
+    _add_timeout_flags(p_bench_verify)
+    p_bench_verify.set_defaults(func=_cmd_bench_verify)
 
     args = parser.parse_args(argv)
     return args.func(args)

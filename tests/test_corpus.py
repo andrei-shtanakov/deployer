@@ -63,3 +63,28 @@ def test_corpus_fixture_verifies_end_to_end(name: str, runtime) -> None:
         analyze_project(case.project_dir),
     )
     assert report.passed, f"{name}: {report.model_dump_json(indent=2)}"
+
+
+@pytest.mark.docker
+def test_bench_run_offline_single_case_end_to_end(
+    runtime, tmp_path: Path, monkeypatch
+) -> None:
+    from deployer.cli import main
+
+    monkeypatch.chdir(tmp_path)
+    code = main(
+        [
+            "bench",
+            "run",
+            "--corpus",
+            str(CORPUS),
+            "--filter",
+            "service-healthcheck",
+            "--label",
+            "smoke",
+        ]
+    )
+    assert code == 0
+    runs = list((tmp_path / ".deployer-runs").iterdir())
+    assert len(runs) == 1
+    assert (runs[0] / "cases" / "service-healthcheck" / "authoring-run.json").is_file()
