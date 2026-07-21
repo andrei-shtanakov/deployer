@@ -43,4 +43,5 @@ project-includes = [
 ]
 project-excludes = [
     "tests/fixtures/**",
+    "corpus/**",
 ]

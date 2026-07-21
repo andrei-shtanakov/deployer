@@ -1,0 +1,1 @@
+{"capabilities": ["uv"], "notes": "uv.lock + build-system; build-only target (no service)"}
