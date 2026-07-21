@@ -9,12 +9,15 @@ from deployer.models import (
     DeployTarget,
     FailureKind,
     ProjectFacts,
+    ServiceSpec,
 )
 from deployer.verify import (
     _classify,
     _isolated_context,
+    _run_healthcheck,
     parse_dockerfile,
     verify,
+    verify_docker,
     verify_static,
 )
 
@@ -351,3 +354,120 @@ def test_isolated_context_excludes_secrets_and_junk(tmp_path: Path) -> None:
         for junk_dir in (".git", ".venv", ".deployer", "__pycache__"):
             assert not (ctx / junk_dir).exists()
     assert not ctx.exists()  # cleaned up on exit
+
+
+def test_isolated_context_copies_dangling_symlink_as_link(tmp_path: Path) -> None:
+    (tmp_path / "app.py").write_text("print('hi')\n")
+    (tmp_path / "dangling").symlink_to(tmp_path / "nope")
+    with _isolated_context(tmp_path) as ctx:
+        assert (ctx / "app.py").exists()
+        assert (ctx / "dangling").is_symlink()
+        assert not (ctx / "dangling").exists()  # target never resolves
+
+
+# -- Fix 1: cleanup calls in `finally` must never clobber the return value --
+
+
+def _fake_container_run(responses: dict):
+    """container_run replacement dispatching on the CLI subcommand (args[0])."""
+
+    def _run(runtime, args, **kwargs):
+        head = args[0]
+        if head not in responses:
+            raise AssertionError(f"unexpected container_run call: {args}")
+        behavior = responses[head]
+        if isinstance(behavior, BaseException):
+            raise behavior
+        return behavior
+
+    return _run
+
+
+def test_run_healthcheck_cleanup_timeout_does_not_clobber_result(
+    monkeypatch,
+) -> None:
+    import subprocess
+
+    responses = {
+        "run": subprocess.CompletedProcess(["run"], 0, stdout="", stderr=""),
+        "exec": subprocess.CompletedProcess(["exec"], 0, stdout="", stderr=""),
+        "rm": subprocess.TimeoutExpired("rm", 1),
+    }
+    monkeypatch.setattr("deployer.verify.container_run", _fake_container_run(responses))
+    target = DeployTarget(service=ServiceSpec(port=8000))
+    result = _run_healthcheck(target, ContainerRuntime(tool="podman"), "tag", 5)
+    assert result.status is CheckStatus.PASSED
+
+
+def test_verify_docker_cleanup_timeout_does_not_clobber_result(
+    hello_service: Path, monkeypatch
+) -> None:
+    import subprocess
+
+    responses = {
+        "build": subprocess.CompletedProcess(["build"], 0, stdout="", stderr=""),
+        "image": subprocess.CompletedProcess(["image"], 0, stdout="1234", stderr=""),
+        "rmi": subprocess.TimeoutExpired("rmi", 1),
+    }
+    monkeypatch.setattr("deployer.verify.container_run", _fake_container_run(responses))
+    results, image_size = verify_docker(
+        GOOD, hello_service, DeployTarget(), ContainerRuntime(tool="podman")
+    )
+    assert results[0].check_id == "build"
+    assert results[0].status is CheckStatus.PASSED
+    assert image_size == 1234
+
+
+# -- Fix 2: mid-run transport loss during the healthcheck poll --
+
+
+def _one_shot_clock(monkeypatch) -> None:
+    """Make _run_healthcheck's poll loop run exactly one iteration, instantly."""
+    import itertools
+
+    values = itertools.chain([0.0, 0.0, 0.0], itertools.repeat(1000.0))
+    monkeypatch.setattr("deployer.verify.time.monotonic", lambda: next(values))
+    monkeypatch.setattr("deployer.verify.time.sleep", lambda _: None)
+
+
+def test_transport_loss_during_poll_classifies_as_environment(monkeypatch) -> None:
+    import subprocess
+
+    _one_shot_clock(monkeypatch)
+    responses = {
+        "run": subprocess.CompletedProcess(["run"], 0, stdout="", stderr=""),
+        "exec": subprocess.CompletedProcess(
+            ["exec"], 1, stdout="", stderr="error during connect: EOF"
+        ),
+        "logs": subprocess.CompletedProcess(["logs"], 0, stdout="", stderr=""),
+        "rm": subprocess.CompletedProcess(["rm"], 0, stdout="", stderr=""),
+    }
+    monkeypatch.setattr("deployer.verify.container_run", _fake_container_run(responses))
+    target = DeployTarget(service=ServiceSpec(port=8000))
+    result = _run_healthcheck(target, ContainerRuntime(tool="podman"), "tag", 5)
+    assert result.status is CheckStatus.FAILED
+    assert result.failure_kind is FailureKind.ENVIRONMENT
+
+
+def test_in_container_traceback_stays_authoring(monkeypatch) -> None:
+    import subprocess
+
+    _one_shot_clock(monkeypatch)
+    traceback_stderr = (
+        "Traceback (most recent call last):\n"
+        '  File "<string>", line 1, in <module>\n'
+        "ConnectionRefusedError: [Errno 111] Connection refused"
+    )
+    responses = {
+        "run": subprocess.CompletedProcess(["run"], 0, stdout="", stderr=""),
+        "exec": subprocess.CompletedProcess(
+            ["exec"], 1, stdout="", stderr=traceback_stderr
+        ),
+        "logs": subprocess.CompletedProcess(["logs"], 0, stdout="", stderr=""),
+        "rm": subprocess.CompletedProcess(["rm"], 0, stdout="", stderr=""),
+    }
+    monkeypatch.setattr("deployer.verify.container_run", _fake_container_run(responses))
+    target = DeployTarget(service=ServiceSpec(port=8000))
+    result = _run_healthcheck(target, ContainerRuntime(tool="podman"), "tag", 5)
+    assert result.status is CheckStatus.FAILED
+    assert result.failure_kind is FailureKind.AUTHORING

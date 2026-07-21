@@ -134,6 +134,7 @@ def probe_runtime_versions(runtime: ContainerRuntime) -> RuntimeVersions:
         subprocess.TimeoutExpired,
         OSError,
         json.JSONDecodeError,
+        UnicodeDecodeError,
         AttributeError,
     ) as exc:
         return RuntimeVersions(probe_warning=f"{exc.__class__.__name__}: {exc}")

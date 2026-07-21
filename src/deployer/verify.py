@@ -54,7 +54,10 @@ def _isolated_context(project_path: Path) -> Iterator[Path]:
     with tempfile.TemporaryDirectory(prefix="deployer-context-") as tmp:
         context = Path(tmp) / "context"
         shutil.copytree(
-            project_path, context, ignore=shutil.ignore_patterns(*CONTEXT_IGNORE)
+            project_path,
+            context,
+            ignore=shutil.ignore_patterns(*CONTEXT_IGNORE),
+            symlinks=True,
         )
         yield context
 
@@ -345,6 +348,26 @@ def _classify(output: str) -> FailureKind:
     return FailureKind.AUTHORING
 
 
+_TRANSPORT_MARKERS = (
+    "error during connect",
+    "cannot connect to the docker daemon",
+    "ssh: ",
+    "context deadline exceeded",
+)
+
+
+def _is_transport_failure(output: str) -> bool:
+    """Narrow marker check for daemon/SSH-transport loss during a probe loop.
+
+    Deliberately narrower than `_classify`: a legitimately failing
+    in-container probe can print a Python traceback containing phrases
+    like "connection refused" (the app refusing its own port), which
+    would otherwise flip a real authoring failure to ENVIRONMENT.
+    """
+    lowered = output.lower()
+    return any(marker in lowered for marker in _TRANSPORT_MARKERS)
+
+
 def _tail(text: str, lines: int = 15) -> str:
     return "\n".join(text.strip().splitlines()[-lines:])
 
@@ -468,6 +491,16 @@ def _run_healthcheck(
             runtime, ["logs", container], capture_output=True, text=True, timeout=10
         )
         log_text = (logs.stdout + "\n" + logs.stderr).strip()
+        if _is_transport_failure(last_error):
+            return CheckResult(
+                check_id="run_healthcheck",
+                status=CheckStatus.FAILED,
+                failure_kind=FailureKind.ENVIRONMENT,
+                message=(
+                    f"healthcheck {url}: container daemon became unreachable "
+                    f"mid-poll: {_tail(last_error, 3)}"
+                ),
+            )
         return CheckResult(
             check_id="run_healthcheck",
             status=CheckStatus.FAILED,
@@ -485,7 +518,12 @@ def _run_healthcheck(
             message="container runtime command timed out",
         )
     finally:
-        container_run(runtime, ["rm", "-f", container], capture_output=True, timeout=30)
+        try:
+            container_run(
+                runtime, ["rm", "-f", container], capture_output=True, timeout=30
+            )
+        except (subprocess.TimeoutExpired, OSError):
+            pass  # best-effort cleanup; must never clobber the return value
 
 
 def verify_docker(
@@ -517,7 +555,10 @@ def verify_docker(
             if target.service is not None:
                 results.append(_run_healthcheck(target, runtime, tag, health_timeout))
     finally:
-        container_run(runtime, ["rmi", "-f", tag], capture_output=True, timeout=60)
+        try:
+            container_run(runtime, ["rmi", "-f", tag], capture_output=True, timeout=60)
+        except (subprocess.TimeoutExpired, OSError):
+            pass  # best-effort cleanup; must never clobber the return value
     return results, image_size
 
 

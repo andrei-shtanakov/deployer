@@ -314,3 +314,38 @@ def test_run_records_effective_config(hello_service: Path) -> None:
     assert run.max_iterations == 2
     assert run.author_info is None  # stub has no .info()
     assert run.deployer_version  # installed package metadata
+
+
+def test_run_with_runtime_survives_json_round_trip(
+    hello_service: Path, monkeypatch
+) -> None:
+    from deployer.models import AuthoringRun, RuntimeVersions
+
+    def passing_verify(
+        dockerfile,
+        project_path,
+        target,
+        runtime,
+        facts=None,
+        *,
+        build_timeout,
+        health_timeout,
+    ):
+        return VerificationReport(
+            results=[CheckResult(check_id="parses", status=CheckStatus.PASSED)]
+        )
+
+    monkeypatch.setattr("deployer.author.verify", passing_verify)
+    # Avoid a real subprocess/SSH probe against the fake host below.
+    monkeypatch.setattr(
+        "deployer.author.probe_runtime_versions",
+        lambda runtime: RuntimeVersions(client_version="1.0"),
+    )
+    run = author_dockerfile(
+        hello_service,
+        DeployTarget(),
+        ScriptedAuthor(GOOD),
+        runtime=ContainerRuntime(tool="docker", host="ssh://u@h", host_source="cli"),
+    )
+    round_tripped = AuthoringRun.model_validate_json(run.model_dump_json())
+    assert round_tripped == run
