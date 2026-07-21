@@ -249,8 +249,10 @@ corpus/
 `deployer bench run [--corpus PATH] [--filter GLOB] [--label NAME]
 [--author fixture|anthropic]`:
 
-- copies each case's project to scratch (ignoring `.git`, `.venv`,
-  `.deployer`, `__pycache__`) — the corpus is never mutated;
+- copies each case's project to scratch with the same `CONTEXT_IGNORE`
+  list as the Phase 1 build context (`.git`, `.venv`, `.deployer`, `.env`,
+  `.env.*`, `__pycache__`, `.pytest_cache`, `.ruff_cache`) — the corpus is
+  never mutated;
 - runs the author loop in the copy; per-case `authoring-run.json`;
 - aggregates `bench-report.json` + a Markdown table: success rate,
   iterations-to-green, failure taxonomy, image size, wall time;
@@ -306,22 +308,35 @@ Each expansion adds its corpus case *first* (target before capability):
 
 ## Phase 4a addendum (2026-07-21): script-entrypoint fact + repair feedback
 
-Scope of the first Phase-4 PR, driven by the llm-baseline run
-(`.deployer-runs/20260721-191555-llm-baseline`): both failures shared one
-root cause — requirements-only projects carry no entrypoint fact, so the
-model invents a CMD (`python -m http.server` / bare `python3`) and the
+**Status: spec accepted, implementation pending** (this section describes
+the first Phase-4 PR; Phase 4 deliberately starts by closing the Phase-2
+`slow-build` debt before new capability expansion).
+
+Scope is driven by the llm-baseline research run
+(`.deployer-runs/20260721-191555-llm-baseline`, local artifact — evidence
+reproduced here): both failures shared one root cause — requirements-only
+projects carry no entrypoint fact, so the model invents a CMD and the
 repair loop cannot converge because the healthcheck failure never names
-the command. Externally reviewed:
+the command.
+
+| case | authored CMD | failure | why no convergence |
+|---|---|---|---|
+| pip-requirements | `["python", "-m", "http.server", "8000"]` | file server answers `/health` with 404 → healthcheck HTTPError | error shows urllib traceback, never the CMD; 2 identical signatures → no_progress |
+| system-deps-psycopg2 | `["python3"]` | bare REPL exits instantly → "container state improper", empty logs | no logs, no CMD in message; same → no_progress |
+
+Both builds (incl. the psycopg2 apt build/runtime split) were correct —
+only the CMD was invented. Spec recommendations externally reviewed:
 `../../../../_cowork_output/deployer-script-entrypoint-addendum-review-2026-07-21.md`
-(all recommendations incorporated).
+(recommendations incorporated into this text).
 
 ### script_entrypoint fact
 
 `ProjectFacts.script_entrypoint: str | None = None`. Deterministic scan
 (variant A — never guesses):
 
-- candidates: root-level `*.py` files containing an
-  `if __name__ == "__main__":` guard (single or double quotes);
+- candidates: root-level `*.py` files containing a `__main__` guard,
+  matched as `if\s+__name__\s*==\s*["']__main__["']\s*:` (whitespace- and
+  quote-tolerant, still a cheap text scan);
 - `main.py` among candidates → `"main.py"`;
 - else exactly one candidate → that filename;
 - else `None`. No recursion into `src/`; no filename-convention fallback
