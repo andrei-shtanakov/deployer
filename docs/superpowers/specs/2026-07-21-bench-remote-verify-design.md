@@ -337,6 +337,10 @@ only the CMD was invented. Spec recommendations externally reviewed:
 - candidates: root-level `*.py` files containing a `__main__` guard,
   matched as `if\s+__name__\s*==\s*["']__main__["']\s*:` (whitespace- and
   quote-tolerant, still a cheap text scan);
+- denylist first: `setup.py`, `conftest.py`, `manage.py` are never
+  candidates — they carry `__main__` guards in the wild but are not app
+  entrypoints, and a wrong authoritative fact is worse than no fact
+  (amendment from the whole-branch review);
 - `main.py` among candidates → `"main.py"`;
 - else exactly one candidate → that filename;
 - else `None`. No recursion into `src/`; no filename-convention fallback

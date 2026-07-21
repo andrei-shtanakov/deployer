@@ -594,3 +594,33 @@ def test_healthcheck_command_feedback_is_best_effort(monkeypatch) -> None:
     assert result.status is CheckStatus.FAILED
     assert result.failure_kind is FailureKind.AUTHORING  # not flipped
     assert "container command:" not in result.message
+
+
+# -- Fix (review): ENVIRONMENT start failure must never reach image inspect --
+
+
+def test_environment_start_failure_never_calls_image_inspect(monkeypatch) -> None:
+    """run -d failing with a daemon-unreachable error classifies as
+    ENVIRONMENT and must short-circuit before the command-feedback path,
+    which would otherwise call `image inspect`.
+    """
+
+    def fake(runtime, args, **kwargs):
+        if args[0] == "run":
+            return _fake_proc(1, stderr="cannot connect to the docker daemon")
+        if args[:2] == ["image", "inspect"]:
+            raise AssertionError("image inspect must not be called")
+        if args[0] == "rm":
+            return _fake_proc(0)
+        raise AssertionError(f"unexpected container command: {args}")
+
+    monkeypatch.setattr("deployer.verify.container_run", fake)
+    result = _run_healthcheck(
+        DeployTarget(service=ServiceSpec(port=8000)),
+        ContainerRuntime(tool="docker"),
+        "tag",
+        timeout=1,
+    )
+    assert result.status is CheckStatus.FAILED
+    assert result.failure_kind is FailureKind.ENVIRONMENT
+    assert "container command:" not in result.message

@@ -1,1 +1,1 @@
-{"capabilities": ["pip", "service", "slow-build", "no-hint-system-deps"], "notes": "sdist C build with NO hints: the model must derive gcc from the build error"}
+{"capabilities": ["pip", "service", "slow-build", "no-hint-system-deps"], "notes": "sdist C build with no curated hint: the model must supply a C toolchain unprompted (a capable model may preempt the repair loop)"}

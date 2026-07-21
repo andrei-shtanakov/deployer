@@ -10,6 +10,7 @@ from deployer.models import ProjectFacts
 _REQ_NAME_SPLIT = re.compile(r"[=<>!~;\[\s]")
 _VALID_NAME = re.compile(r"^[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?$")
 _MAIN_GUARD = re.compile(r"if\s+__name__\s*==\s*[\"']__main__[\"']\s*:")
+_ENTRYPOINT_DENYLIST = frozenset({"setup.py", "conftest.py", "manage.py"})
 
 
 def _normalize_requirement_name(raw: str) -> str:
@@ -43,9 +44,15 @@ def _scan_script_entrypoint(path: Path) -> str | None:
 
     main.py wins among candidates; otherwise the fact exists only when
     exactly one candidate does. Ambiguity or absence -> None.
+
+    Denylisted files (setup.py, conftest.py, manage.py) are never
+    candidates: they carry __main__ guards in the wild but are not app
+    entrypoints, and a wrong authoritative fact is worse than no fact.
     """
     candidates: list[str] = []
     for file in sorted(path.glob("*.py")):
+        if file.name in _ENTRYPOINT_DENYLIST:
+            continue
         try:
             text = file.read_text(encoding="utf-8", errors="replace")
         except OSError:

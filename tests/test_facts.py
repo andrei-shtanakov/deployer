@@ -145,6 +145,28 @@ def test_script_entrypoint_single_quotes_and_spacing(tmp_path: Path) -> None:
     assert analyze_project(tmp_path).script_entrypoint == "main.py"
 
 
+def test_script_entrypoint_denylisted_setup_py_alone_is_none(
+    tmp_path: Path,
+) -> None:
+    _py(tmp_path, "setup.py", GUARD)
+    assert analyze_project(tmp_path).script_entrypoint is None
+
+
+def test_script_entrypoint_denylist_does_not_create_ambiguity(
+    tmp_path: Path,
+) -> None:
+    _py(tmp_path, "setup.py", GUARD)
+    _py(tmp_path, "worker.py", GUARD)
+    assert analyze_project(tmp_path).script_entrypoint == "worker.py"
+
+
+def test_script_entrypoint_denylisted_manage_py_alone_is_none(
+    tmp_path: Path,
+) -> None:
+    _py(tmp_path, "manage.py", GUARD)
+    assert analyze_project(tmp_path).script_entrypoint is None
+
+
 def test_unreadable_requirements_degrades_to_empty(tmp_path: Path) -> None:
     (tmp_path / "requirements.txt").write_bytes(b"\xff\xfe\x00bad")
     facts = analyze_project(tmp_path)

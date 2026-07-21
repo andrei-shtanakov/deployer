@@ -121,4 +121,4 @@ def test_system_prompt_carries_entrypoint_rule() -> None:
     from deployer.llm import SYSTEM_PROMPT
 
     assert "script_entrypoint" in SYSTEM_PROMPT
-    assert "[project.scripts]" in SYSTEM_PROMPT or "entrypoints" in SYSTEM_PROMPT
+    assert "[project.scripts]" in SYSTEM_PROMPT
