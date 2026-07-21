@@ -1,6 +1,6 @@
 # Pinned real-world targets for `deployer bench run --include-external`.
-# No entries yet: candidates (locallogai) enter after Phase 4 system-deps
-# hardening. Format:
+# Curated list; entries may use machine-specific local paths when the
+# upstream remote is private. Format:
 #
 # [[targets]]
 # name = "some-project"
