@@ -51,6 +51,23 @@ class SystemDepHint(BaseModel):
     runtime_packages: list[str] = Field(default_factory=list)
 
 
+class ContainerRuntime(BaseModel):
+    """Where and with which CLI the L2 sandbox runs.
+
+    `host_source` records how the host was chosen so reports never lie
+    about where a run happened (a pre-set DOCKER_HOST is captured, not
+    silently inherited).
+    """
+
+    tool: Literal["docker", "podman"]
+    host: str | None = None
+    host_source: Literal["cli", "deployer_env", "native_env", "local"] = "local"
+
+    @property
+    def remote(self) -> bool:
+        return self.host is not None
+
+
 class CheckStatus(StrEnum):
     """Outcome status of a verification check."""
 
@@ -91,6 +108,7 @@ class VerificationReport(BaseModel):
     hadolint_available: bool = False
     docker_available: bool = False
     image_size_bytes: int | None = None
+    runtime: ContainerRuntime | None = None
 
     @property
     def passed(self) -> bool:
@@ -147,3 +165,4 @@ class AuthoringRun(BaseModel):
     success: bool
     llm_error: str | None = None
     hints_offered: list[SystemDepHint] = Field(default_factory=list)
+    runtime: ContainerRuntime | None = None
