@@ -20,7 +20,9 @@ Design: `docs/superpowers/specs/2026-07-04-deployer-mvp-design.md`.
 uv run deployer author <project-path> [--target target.json] [--no-docker] \
     [--container-tool docker|podman] [--container-host ssh://user@host] \
     [--build-timeout 600] [--health-timeout 30]
-uv run deployer verify <project-path> [same flags]
+uv run deployer verify <project-path> [--target target.json] \
+    [--container-tool docker|podman] [--container-host ssh://user@host] \
+    [--build-timeout 600] [--health-timeout 30]
 # verify checks <project-path>/Dockerfile; --health-timeout is ignored for
 # non-service targets. Slow source builds (e.g. llama-cpp-python) need
 # --build-timeout well above the 600s default.

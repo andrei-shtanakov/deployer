@@ -389,6 +389,23 @@ def test_verify_invalid_runtime_config_exits_2(
     assert "ssh://" in capsys.readouterr().err
 
 
+def test_author_invalid_runtime_config_exits_2(
+    hello_service: Path, tmp_path: Path, monkeypatch, capsys
+) -> None:
+    project = _make_project(
+        hello_service, tmp_path, (hello_service / "Dockerfile.good").read_text()
+    )
+    from deployer.runtime import RuntimeConfigError
+
+    def boom(tool_arg=None, host_arg=None, env=None):
+        raise RuntimeConfigError("--container-host must be an ssh:// URL")
+
+    monkeypatch.setattr("deployer.cli.resolve_runtime", boom)
+    code = cli.main(["author", str(project), "--container-host", "tcp://h:1"])
+    assert code == 2
+    assert "ssh://" in capsys.readouterr().err
+
+
 def test_author_no_docker_skips_runtime_resolution(
     hello_service: Path, tmp_path: Path, monkeypatch
 ) -> None:
