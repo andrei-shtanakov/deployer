@@ -322,8 +322,11 @@ def verify_corpus(
     health_timeout: int = DEFAULT_HEALTH_TIMEOUT,
 ) -> list[tuple[str, VerificationReport]]:
     """Verify each case's committed fixture.Dockerfile. No LLM, no authoring."""
+    cases = load_corpus(corpus_root, pattern)
+    if not cases:
+        raise ValueError(f"no corpus cases match pattern {pattern!r}")
     results: list[tuple[str, VerificationReport]] = []
-    for case in load_corpus(corpus_root, pattern):
+    for case in cases:
         if case.fixture_dockerfile is None:
             raise ValueError(f"corpus case {case.name} has no fixture.Dockerfile")
         report = verify(

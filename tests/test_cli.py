@@ -514,3 +514,12 @@ def test_bench_verify_static_only_pass_exits_0(tmp_path, monkeypatch, capsys):
     code = cli.main(["bench", "verify", "--corpus", str(corpus)])
     assert code == 0
     assert "case-one" in capsys.readouterr().out
+
+
+def test_bench_verify_no_matching_cases_exits_2(tmp_path, monkeypatch, capsys):
+    corpus = _make_corpus(tmp_path)
+    monkeypatch.setattr("deployer.cli.resolve_runtime", lambda *a, **k: None)
+    code = cli.main(["bench", "verify", "--corpus", str(corpus), "--filter", "zzz"])
+    assert code == 2
+    assert "zzz" in capsys.readouterr().err
+
