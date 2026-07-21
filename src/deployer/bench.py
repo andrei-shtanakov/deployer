@@ -3,8 +3,10 @@
 import fnmatch
 import hashlib
 import shutil
+import subprocess
 import tempfile
 import time
+import tomllib
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
@@ -25,6 +27,7 @@ from deployer.models import (
     ContainerRuntime,
     DeployTarget,
     ExpectedOutcome,
+    ExternalTarget,
     ProjectFacts,
     VerificationReport,
 )
@@ -115,6 +118,43 @@ def load_corpus(corpus_root: Path, pattern: str = "*") -> list[BenchCase]:
     return cases
 
 
+def load_external(corpus_root: Path) -> list[ExternalTarget]:
+    """Parse corpus/external.toml; a missing file means no external targets."""
+    manifest = corpus_root / "external.toml"
+    if not manifest.is_file():
+        return []
+    data = tomllib.loads(manifest.read_text())
+    return [ExternalTarget.model_validate(t) for t in data.get("targets", [])]
+
+
+def clone_external(ext: ExternalTarget, dest_root: Path) -> BenchCase:
+    """Clone an external target at its pinned commit into dest_root/<name>."""
+    dest = dest_root / ext.name
+    dest.mkdir(parents=True, exist_ok=True)
+    commands = [
+        ["git", "init", "-q"],
+        ["git", "remote", "add", "origin", ext.url],
+        ["git", "fetch", "-q", "--depth", "1", "origin", ext.commit],
+        ["git", "checkout", "-q", "FETCH_HEAD"],
+    ]
+    for command in commands:
+        proc = subprocess.run(
+            command, cwd=dest, capture_output=True, text=True, timeout=300
+        )
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"cloning external target {ext.name} failed at "
+                f"{' '.join(command)}: {proc.stderr.strip()}"
+            )
+    return BenchCase(
+        name=ext.name,
+        project_dir=dest,
+        target=ext.target,
+        expected=ext.expected,
+        fixture_dockerfile=None,
+    )
+
+
 def run_case(
     case: BenchCase,
     author: DockerfileAuthor | None,
@@ -183,25 +223,18 @@ def run_case(
     )
 
 
-def run_bench(
-    corpus_root: Path,
+def _run_bench_cases(
+    cases: list[BenchCase],
     make_author: Callable[[BenchCase], DockerfileAuthor | None],
     runtime: ContainerRuntime | None,
     *,
     label: str,
     author_backend: str,
-    pattern: str = "*",
-    runs_root: Path = Path(".deployer-runs"),
-    build_timeout: int = DEFAULT_BUILD_TIMEOUT,
-    health_timeout: int = DEFAULT_HEALTH_TIMEOUT,
-) -> tuple[BenchReport, Path]:
-    """Run the authoring loop over every matching corpus case and aggregate."""
-    cases = load_corpus(corpus_root, pattern)
-    if not cases:
-        raise ValueError(f"no corpus cases match pattern {pattern!r}")
-    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    run_dir = runs_root / f"{stamp}-{label}"
-    run_dir.mkdir(parents=True, exist_ok=False)
+    run_dir: Path,
+    build_timeout: int,
+    health_timeout: int,
+) -> BenchReport:
+    """Run the authoring loop over `cases` and write the aggregated report."""
     results = [
         run_case(
             case,
@@ -228,7 +261,56 @@ def run_bench(
     )
     (run_dir / "bench-report.json").write_text(report.model_dump_json(indent=2))
     (run_dir / "bench-report.md").write_text(render_markdown(report))
-    return report, run_dir
+    return report
+
+
+def run_bench(
+    corpus_root: Path,
+    make_author: Callable[[BenchCase], DockerfileAuthor | None],
+    runtime: ContainerRuntime | None,
+    *,
+    label: str,
+    author_backend: str,
+    pattern: str = "*",
+    runs_root: Path = Path(".deployer-runs"),
+    build_timeout: int = DEFAULT_BUILD_TIMEOUT,
+    health_timeout: int = DEFAULT_HEALTH_TIMEOUT,
+    include_external: bool = False,
+) -> tuple[BenchReport, Path]:
+    """Run the authoring loop over every matching corpus case and aggregate."""
+    cases = load_corpus(corpus_root, pattern)
+    if not cases:
+        raise ValueError(f"no corpus cases match pattern {pattern!r}")
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    run_dir = runs_root / f"{stamp}-{label}"
+    run_dir.mkdir(parents=True, exist_ok=False)
+    if not include_external:
+        report = _run_bench_cases(
+            cases,
+            make_author,
+            runtime,
+            label=label,
+            author_backend=author_backend,
+            run_dir=run_dir,
+            build_timeout=build_timeout,
+            health_timeout=health_timeout,
+        )
+        return report, run_dir
+    with tempfile.TemporaryDirectory(prefix="deployer-external-") as ext_tmp:
+        cases = cases + [
+            clone_external(ext, Path(ext_tmp)) for ext in load_external(corpus_root)
+        ]
+        report = _run_bench_cases(
+            cases,
+            make_author,
+            runtime,
+            label=label,
+            author_backend=author_backend,
+            run_dir=run_dir,
+            build_timeout=build_timeout,
+            health_timeout=health_timeout,
+        )
+        return report, run_dir
 
 
 def verify_corpus(

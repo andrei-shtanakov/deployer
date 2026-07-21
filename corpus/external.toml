@@ -1,0 +1,11 @@
+# Pinned real-world targets for `deployer bench run --include-external`.
+# No entries yet: candidates (locallogai) enter after Phase 4 system-deps
+# hardening. Format:
+#
+# [[targets]]
+# name = "some-project"
+# url = "https://github.com/owner/repo.git"
+# commit = "<full sha>"
+# [targets.target]        # optional DeployTarget fields
+# [targets.expected]      # optional ExpectedOutcome fields
+# expected_success = false

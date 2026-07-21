@@ -242,6 +242,7 @@ def _cmd_bench_run(args: argparse.Namespace) -> int:
             pattern=args.filter_pattern,
             build_timeout=args.build_timeout,
             health_timeout=args.health_timeout,
+            include_external=args.include_external,
         )
     except (FileNotFoundError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -331,6 +332,11 @@ def main(argv: list[str] | None = None) -> int:
         choices=("fixture", "anthropic"),
         default="fixture",
         help="fixture (offline, default) or anthropic (real LLM, costs money)",
+    )
+    p_bench_run.add_argument(
+        "--include-external",
+        action="store_true",
+        help="also clone and run corpus/external.toml targets",
     )
     _add_runtime_flags(p_bench_run)
     _add_timeout_flags(p_bench_run)

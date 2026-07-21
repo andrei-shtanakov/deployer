@@ -98,6 +98,16 @@ class ExpectedOutcome(BaseModel):
     notes: str = ""
 
 
+class ExternalTarget(BaseModel):
+    """A pinned real-world project consumed by the bench via cloning."""
+
+    name: str
+    url: str
+    commit: str
+    target: DeployTarget = Field(default_factory=DeployTarget)
+    expected: ExpectedOutcome = Field(default_factory=ExpectedOutcome)
+
+
 class CheckStatus(StrEnum):
     """Outcome status of a verification check."""
 

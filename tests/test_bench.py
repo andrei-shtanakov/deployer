@@ -1,13 +1,16 @@
 """Bench: models, offline fixture author, corpus loading, orchestration."""
 
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
 
 from deployer.bench import (
     FixtureAuthor,
+    clone_external,
     load_corpus,
+    load_external,
     render_markdown,
     run_bench,
     run_case,
@@ -21,6 +24,7 @@ from deployer.models import (
     ContainerRuntime,
     DeployTarget,
     ExpectedOutcome,
+    ExternalTarget,
     IterationRecord,
     ProjectFacts,
     VerificationReport,
@@ -307,3 +311,64 @@ def test_render_markdown_has_table_and_metadata() -> None:
     md = render_markdown(report)
     assert "| a | matched | success | 2 | 45.6 | 12.5 |" in md
     assert "author: fixture" in md
+
+
+def _make_local_git_repo(root: Path) -> tuple[str, str]:
+    repo = root / "upstream"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(
+        ["git", "config", "uploadpack.allowAnySHA1InWant", "true"],
+        cwd=repo,
+        check=True,
+    )
+    (repo / "main.py").write_text("print('v1')\n")
+    subprocess.run(["git", "add", "."], cwd=repo, check=True)
+    env_commit = ["-c", "user.email=t@t", "-c", "user.name=t"]
+    subprocess.run(["git", *env_commit, "commit", "-qm", "v1"], cwd=repo, check=True)
+    pinned = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    (repo / "main.py").write_text("print('v2')\n")
+    subprocess.run(["git", "add", "."], cwd=repo, check=True)
+    subprocess.run(["git", *env_commit, "commit", "-qm", "v2"], cwd=repo, check=True)
+    return str(repo), pinned
+
+
+def test_load_external_missing_file_is_empty(tmp_path: Path) -> None:
+    assert load_external(tmp_path) == []
+
+
+def test_load_external_parses_entries(tmp_path: Path) -> None:
+    (tmp_path / "external.toml").write_text(
+        "[[targets]]\n"
+        'name = "demo"\n'
+        'url = "https://example.invalid/demo.git"\n'
+        'commit = "abc123"\n'
+        "[targets.expected]\n"
+        "expected_success = false\n"
+    )
+    targets = load_external(tmp_path)
+    assert len(targets) == 1
+    assert targets[0].name == "demo"
+    assert targets[0].expected.expected_success is False
+
+
+def test_clone_external_checks_out_pinned_commit(tmp_path: Path) -> None:
+    url, pinned = _make_local_git_repo(tmp_path)
+    ext = ExternalTarget(name="demo", url=url, commit=pinned)
+    case = clone_external(ext, tmp_path / "scratch")
+    assert case.name == "demo"
+    assert (case.project_dir / "main.py").read_text() == "print('v1')\n"
+    assert case.fixture_dockerfile is None
+
+
+def test_clone_external_bad_commit_raises(tmp_path: Path) -> None:
+    url, _ = _make_local_git_repo(tmp_path)
+    ext = ExternalTarget(name="demo", url=url, commit="0" * 40)
+    with pytest.raises(RuntimeError, match="demo"):
+        clone_external(ext, tmp_path / "scratch")
