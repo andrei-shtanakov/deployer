@@ -329,6 +329,13 @@ def _cmd_bench_promote(args: argparse.Namespace) -> int:
 
 
 def _cmd_bench_compare(args: argparse.Namespace) -> int:
+    if args.candidate == "golden":
+        print(
+            "error: candidate must be a raw run dir "
+            "(the golden can only be a baseline)",
+            file=sys.stderr,
+        )
+        return 2
     candidate_dir = Path(args.candidate)
     try:
         candidate = load_baseline(candidate_dir, Path(args.corpus))

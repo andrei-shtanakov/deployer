@@ -623,5 +623,37 @@ def test_bench_compare_clean_exits_0(tmp_path, monkeypatch, capsys):
     assert "no regressions" in capsys.readouterr().out
 
 
-def test_bench_compare_bad_baseline_exits_2(tmp_path, capsys):
-    assert main(["bench", "compare", str(tmp_path), str(tmp_path / "nope")]) == 2
+def test_bench_compare_bad_baseline_exits_2(tmp_path, monkeypatch, capsys):
+    corpus = _make_corpus(tmp_path)
+    monkeypatch.setattr("deployer.cli.resolve_runtime", lambda *a, **k: None)
+    monkeypatch.chdir(tmp_path)
+    assert main(["bench", "run", "--corpus", str(corpus), "--label", "t"]) == 0
+    run_dir = next((tmp_path / ".deployer-runs").iterdir())
+    code = main(
+        [
+            "bench",
+            "compare",
+            str(run_dir),
+            str(tmp_path / "nope"),
+            "--corpus",
+            str(corpus),
+        ]
+    )
+    assert code == 2
+    assert "nope" in capsys.readouterr().err
+
+
+def test_bench_compare_golden_as_candidate_exits_2_with_message(
+    tmp_path, monkeypatch, capsys
+):
+    corpus = _make_corpus(tmp_path)
+    monkeypatch.setattr("deployer.cli.resolve_runtime", lambda *a, **k: None)
+    monkeypatch.chdir(tmp_path)
+    assert main(["bench", "run", "--corpus", str(corpus), "--label", "t"]) == 0
+    run_dir = next((tmp_path / ".deployer-runs").iterdir())
+    code = main(["bench", "compare", "golden", str(run_dir), "--corpus", str(corpus)])
+    assert code == 2
+    assert (
+        "candidate must be a raw run dir (the golden can only be a baseline)"
+        in capsys.readouterr().err
+    )

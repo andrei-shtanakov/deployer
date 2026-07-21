@@ -525,7 +525,7 @@ def promote_run(run_dir: Path, corpus_root: Path, *, force: bool = False) -> Pat
     if golden_dir.exists():
         shutil.rmtree(golden_dir)
     golden_dir.mkdir(parents=True)
-    (golden_dir / "golden.json").write_text(golden.model_dump_json(indent=2))
+    (golden_dir / "golden.json").write_text(golden.model_dump_json(indent=2) + "\n")
     for case in golden.cases:
         src = run_dir / "cases" / case.case / "Dockerfile"
         if src.is_file():
@@ -557,6 +557,44 @@ def _baseline_cases(
     return {c.case: c for c in baseline.cases}
 
 
+def _comparability_findings(
+    candidate: BenchReport, baseline: BenchReport | GoldenReport
+) -> list[CompareFinding]:
+    """Advisory findings when run-level metadata makes results non-comparable.
+
+    These are warnings, not blockers: two runs with different backends,
+    runtimes or timeouts can still be diffed, but the reader should know
+    the comparison isn't apples-to-apples.
+    """
+    findings: list[CompareFinding] = []
+    candidate_runtime_tool = candidate.runtime.tool if candidate.runtime else None
+    candidate_runtime_remote = candidate.runtime.remote if candidate.runtime else False
+    if isinstance(baseline, GoldenReport):
+        baseline_runtime_tool = baseline.runtime_tool
+        baseline_runtime_remote = baseline.runtime_remote
+    else:
+        baseline_runtime_tool = baseline.runtime.tool if baseline.runtime else None
+        baseline_runtime_remote = baseline.runtime.remote if baseline.runtime else False
+    comparability_fields = (
+        ("author_backend", baseline.author_backend, candidate.author_backend),
+        ("runtime_tool", baseline_runtime_tool, candidate_runtime_tool),
+        ("runtime_remote", baseline_runtime_remote, candidate_runtime_remote),
+        ("build_timeout_s", baseline.build_timeout_s, candidate.build_timeout_s),
+        ("health_timeout_s", baseline.health_timeout_s, candidate.health_timeout_s),
+    )
+    for field, base_value, cand_value in comparability_fields:
+        if base_value != cand_value:
+            findings.append(
+                CompareFinding(
+                    level="advisory",
+                    case="-",
+                    metric="comparability",
+                    detail=f"{field}: {base_value} vs {cand_value}",
+                )
+            )
+    return findings
+
+
 def compare_runs(
     candidate: BenchReport,
     baseline: BenchReport | GoldenReport,
@@ -566,7 +604,7 @@ def compare_runs(
     iteration_threshold: int = 0,
 ) -> list[CompareFinding]:
     """Regressions of `candidate` measured against `baseline`, by level."""
-    findings: list[CompareFinding] = []
+    findings: list[CompareFinding] = _comparability_findings(candidate, baseline)
     base = _baseline_cases(baseline)
     cand = {c.case: c for c in candidate.cases if c.outcome != "skipped"}
     raw_baseline = isinstance(baseline, BenchReport)
@@ -627,9 +665,9 @@ def compare_runs(
                     f"(>{image_threshold_pct:g}%)",
                 )
             )
-        if b.hadolint_status is CheckStatus.PASSED and c.hadolint_status not in (
-            None,
-            CheckStatus.PASSED,
+        if b.hadolint_status is CheckStatus.PASSED and c.hadolint_status in (
+            CheckStatus.WARNING,
+            CheckStatus.FAILED,
         ):
             findings.append(
                 CompareFinding(

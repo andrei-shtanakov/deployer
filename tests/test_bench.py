@@ -695,7 +695,8 @@ def test_markdown_includes_failure_kinds_column() -> None:
         )
     )
     md = render_markdown(report)
-    assert "| failure kinds |" in md.splitlines()[-3] or "failure kinds" in md
+    header_row = next(line for line in md.splitlines() if line.startswith("| case "))
+    assert "| failure kinds |" in header_row
     assert "authoring" in md
 
 
@@ -864,6 +865,35 @@ def test_compare_missing_case_is_important_new_case_advisory() -> None:
     assert ("advisory", "new_case", "b") in levels
 
 
+def test_compare_skipped_candidate_case_is_missing() -> None:
+    """A case present in the candidate but skipped there is as good as absent."""
+    findings = compare_runs(
+        _report(_rcase("a", outcome="skipped", success=False)), _golden(_gcase("a"))
+    )
+    assert ("important", "missing_case", "a") in {
+        (f.level, f.metric, f.case) for f in findings
+    }
+
+
+def test_compare_backend_mismatch_is_comparability_advisory() -> None:
+    candidate = _report(_rcase("a"))
+    candidate.author_backend = "anthropic"
+    findings = compare_runs(candidate, _golden(_gcase("a")))
+    comparability = [f for f in findings if f.metric == "comparability"]
+    assert len(comparability) == 1
+    assert comparability[0].level == "advisory"
+    assert comparability[0].case == "-"
+    assert "author_backend" in comparability[0].detail
+    assert (
+        "fixture" in comparability[0].detail and "anthropic" in comparability[0].detail
+    )
+
+
+def test_compare_identical_metadata_has_no_comparability_findings() -> None:
+    findings = compare_runs(_report(_rcase("a")), _golden(_gcase("a")))
+    assert not any(f.metric == "comparability" for f in findings)
+
+
 def test_compare_image_growth_threshold() -> None:
     grown = _report(_rcase("a", image_size_bytes=115_000_000))
     assert any(
@@ -874,6 +904,23 @@ def test_compare_image_growth_threshold() -> None:
     assert not any(
         f.metric == "image_size" for f in compare_runs(small, _golden(_gcase("a")))
     )
+
+
+def test_compare_hadolint_skipped_candidate_has_no_finding() -> None:
+    """Skipped/absent hadolint on the candidate is not a worsening."""
+    findings = compare_runs(
+        _report(_rcase("a", hadolint_status=CheckStatus.SKIPPED)),
+        _golden(_gcase("a", hadolint_status=CheckStatus.PASSED)),
+    )
+    assert not any(f.metric == "hadolint" for f in findings)
+
+
+def test_compare_hadolint_warning_candidate_has_finding() -> None:
+    findings = compare_runs(
+        _report(_rcase("a", hadolint_status=CheckStatus.WARNING)),
+        _golden(_gcase("a", hadolint_status=CheckStatus.PASSED)),
+    )
+    assert any(f.level == "advisory" and f.metric == "hadolint" for f in findings)
 
 
 def test_compare_wall_time_raw_vs_raw_only() -> None:
