@@ -333,7 +333,7 @@ def test_ordinary_build_error_stays_authoring() -> None:
     assert _classify("E: Unable to locate package libfoo") is FailureKind.AUTHORING
 
 
-def test_isolated_context_excludes_secrets_and_junk(tmp_path) -> None:
+def test_isolated_context_excludes_secrets_and_junk(tmp_path: Path) -> None:
     (tmp_path / "app.py").write_text("print('hi')\n")
     (tmp_path / "nested").mkdir()
     (tmp_path / "nested" / "mod.py").write_text("x = 1\n")

@@ -149,8 +149,9 @@ def test_build_context_excludes_dotenv(
     project = tmp_path / "proj"
     _shutil.copytree(hello_service, project)
     (project / ".env").write_text("SECRET=do-not-ship\n")
+    base_from = (project / "Dockerfile.good").read_text().splitlines()[0]
     dockerfile = (
-        project / "Dockerfile.good"
-    ).read_text() + "\nRUN test ! -e /app/.env\nRUN test ! -e .env\n"
-    report = verify(dockerfile, project, TARGET, runtime)
+        f"{base_from}\nCOPY . /ctx\nRUN test ! -e /ctx/.env\nRUN test -e /ctx/main.py\n"
+    )
+    report = verify(dockerfile, project, DeployTarget(), runtime)
     assert _by_id(report, "build").status is CheckStatus.PASSED
