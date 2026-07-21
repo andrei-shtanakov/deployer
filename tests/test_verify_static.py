@@ -471,3 +471,63 @@ def test_in_container_traceback_stays_authoring(monkeypatch) -> None:
     result = _run_healthcheck(target, ContainerRuntime(tool="podman"), "tag", 5)
     assert result.status is CheckStatus.FAILED
     assert result.failure_kind is FailureKind.AUTHORING
+
+
+def test_transport_loss_via_stdout_during_poll_classifies_as_environment(
+    monkeypatch,
+) -> None:
+    """Container CLIs may write transport errors to stdout, not just stderr."""
+    import subprocess
+
+    _one_shot_clock(monkeypatch)
+    responses = {
+        "run": subprocess.CompletedProcess(["run"], 0, stdout="", stderr=""),
+        "exec": subprocess.CompletedProcess(
+            ["exec"], 1, stdout="error during connect: EOF", stderr=""
+        ),
+        "logs": subprocess.CompletedProcess(["logs"], 0, stdout="", stderr=""),
+        "rm": subprocess.CompletedProcess(["rm"], 0, stdout="", stderr=""),
+    }
+    monkeypatch.setattr("deployer.verify.container_run", _fake_container_run(responses))
+    target = DeployTarget(service=ServiceSpec(port=8000))
+    result = _run_healthcheck(target, ContainerRuntime(tool="podman"), "tag", 5)
+    assert result.status is CheckStatus.FAILED
+    assert result.failure_kind is FailureKind.ENVIRONMENT
+
+
+# -- Fix 3: OSError from the container CLI must classify as ENVIRONMENT --
+
+
+def test_run_healthcheck_oserror_classifies_as_environment(monkeypatch) -> None:
+    import subprocess
+
+    responses = {
+        "run": OSError("docker: command not found"),
+        "rm": subprocess.CompletedProcess(["rm"], 0, stdout="", stderr=""),
+    }
+    monkeypatch.setattr("deployer.verify.container_run", _fake_container_run(responses))
+    target = DeployTarget(service=ServiceSpec(port=8000))
+    result = _run_healthcheck(target, ContainerRuntime(tool="podman"), "tag", 5)
+    assert result.status is CheckStatus.FAILED
+    assert result.failure_kind is FailureKind.ENVIRONMENT
+    assert "docker: command not found" in result.message
+
+
+def test_build_oserror_classifies_as_environment(
+    hello_service: Path, monkeypatch
+) -> None:
+    import subprocess
+
+    responses = {
+        "build": OSError("no such file or directory: 'docker'"),
+        "rmi": subprocess.CompletedProcess(["rmi"], 0, stdout="", stderr=""),
+    }
+    monkeypatch.setattr("deployer.verify.container_run", _fake_container_run(responses))
+    results, image_size = verify_docker(
+        GOOD, hello_service, DeployTarget(), ContainerRuntime(tool="podman")
+    )
+    assert results[0].check_id == "build"
+    assert results[0].status is CheckStatus.FAILED
+    assert results[0].failure_kind is FailureKind.ENVIRONMENT
+    assert "no such file or directory" in results[0].message
+    assert image_size is None

@@ -63,7 +63,7 @@ def author_dockerfile(
     author: DockerfileAuthor,
     *,
     max_iterations: int = 3,
-    runtime: ContainerRuntime | None = None,
+    runtime: ContainerRuntime | None,
     build_timeout: int = DEFAULT_BUILD_TIMEOUT,
     health_timeout: int = DEFAULT_HEALTH_TIMEOUT,
 ) -> AuthoringRun:
@@ -72,6 +72,12 @@ def author_dockerfile(
     The LLM (author) only ever sees facts and reports and returns text;
     this function owns files, subprocesses, and control flow. The timeouts
     bound each iteration's L2 build/healthcheck subprocesses (seconds).
+
+    `runtime` is keyword-only and required (though it may be `None`): callers
+    must explicitly decide whether to run L2 build/healthcheck verification.
+    Pass `runtime=None` to opt into static-only (L1) verification; passing a
+    `ContainerRuntime` opts into full L2 verification. There is no default,
+    so a caller can never silently downgrade to static-only by omission.
     """
     facts = analyze_project(project_path)
     hints = collect_hints(facts)

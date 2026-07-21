@@ -398,12 +398,17 @@ def _build(
             text=True,
             timeout=timeout,
         )
-    except subprocess.TimeoutExpired:
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        message = (
+            f"build timed out after {timeout}s"
+            if isinstance(exc, subprocess.TimeoutExpired)
+            else f"container runtime command failed: {exc}"
+        )
         return CheckResult(
             check_id="build",
             status=CheckStatus.FAILED,
             failure_kind=FailureKind.ENVIRONMENT,
-            message=f"build timed out after {timeout}s",
+            message=message,
         )
     if proc.returncode != 0:
         return CheckResult(
@@ -482,7 +487,7 @@ def _run_healthcheck(
                     return CheckResult(
                         check_id="run_healthcheck", status=CheckStatus.PASSED
                     )
-                last_error = probe_proc.stderr
+                last_error = probe_proc.stdout + "\n" + probe_proc.stderr
             except subprocess.TimeoutExpired:
                 # Probe timed out; treat as loop exhaustion
                 break
@@ -510,12 +515,17 @@ def _run_healthcheck(
                 f"{_tail(last_error, 3)}\ncontainer logs:\n{_tail(log_text)}"
             ),
         )
-    except subprocess.TimeoutExpired:
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        message = (
+            "container runtime command timed out"
+            if isinstance(exc, subprocess.TimeoutExpired)
+            else f"container runtime command failed: {exc}"
+        )
         return CheckResult(
             check_id="run_healthcheck",
             status=CheckStatus.FAILED,
             failure_kind=FailureKind.ENVIRONMENT,
-            message="container runtime command timed out",
+            message=message,
         )
     finally:
         try:
