@@ -10,7 +10,13 @@ from deployer.models import (
     FailureKind,
     ProjectFacts,
 )
-from deployer.verify import _classify, parse_dockerfile, verify, verify_static
+from deployer.verify import (
+    _classify,
+    _isolated_context,
+    parse_dockerfile,
+    verify,
+    verify_static,
+)
 
 GOOD = """\
 FROM python:3.12-slim
@@ -325,3 +331,23 @@ def test_classify_sees_stdout_side_of_combined_output() -> None:
 
 def test_ordinary_build_error_stays_authoring() -> None:
     assert _classify("E: Unable to locate package libfoo") is FailureKind.AUTHORING
+
+
+def test_isolated_context_excludes_secrets_and_junk(tmp_path) -> None:
+    (tmp_path / "app.py").write_text("print('hi')\n")
+    (tmp_path / "nested").mkdir()
+    (tmp_path / "nested" / "mod.py").write_text("x = 1\n")
+    for junk in (".env", ".env.local"):
+        (tmp_path / junk).write_text("SECRET=1\n")
+    for junk_dir in (".git", ".venv", ".deployer", "__pycache__"):
+        (tmp_path / junk_dir).mkdir()
+        (tmp_path / junk_dir / "f").write_text("x")
+    with _isolated_context(tmp_path) as ctx:
+        assert ctx != tmp_path
+        assert (ctx / "app.py").read_text() == "print('hi')\n"
+        assert (ctx / "nested" / "mod.py").exists()
+        assert not (ctx / ".env").exists()
+        assert not (ctx / ".env.local").exists()
+        for junk_dir in (".git", ".venv", ".deployer", "__pycache__"):
+            assert not (ctx / junk_dir).exists()
+    assert not ctx.exists()  # cleaned up on exit

@@ -8,8 +8,11 @@ import json
 import re
 import shutil
 import subprocess
+import tempfile
 import time
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 from deployer.models import (
@@ -28,6 +31,32 @@ DEFAULT_BUILD_TIMEOUT = 600
 DEFAULT_HEALTH_TIMEOUT = 30
 _ENV_ASSIGNMENT = re.compile(r"^(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)+")
 _PYTHON_M_PIP = re.compile(r"^\S*python[\d.]*\s+-m\s+pip\s+install\b")
+
+CONTEXT_IGNORE = (
+    ".git",
+    ".venv",
+    ".deployer",
+    ".env",
+    ".env.*",
+    "__pycache__",
+    ".pytest_cache",
+    ".ruff_cache",
+)
+
+
+@contextmanager
+def _isolated_context(project_path: Path) -> Iterator[Path]:
+    """Deterministic temp build context: the project minus CONTEXT_IGNORE.
+
+    Restores the MVP invariant "no secrets in the build context, ever" —
+    with a remote daemon the context leaves the machine entirely.
+    """
+    with tempfile.TemporaryDirectory(prefix="deployer-context-") as tmp:
+        context = Path(tmp) / "context"
+        shutil.copytree(
+            project_path, context, ignore=shutil.ignore_patterns(*CONTEXT_IGNORE)
+        )
+        yield context
 
 
 def parse_dockerfile(text: str) -> list[tuple[str, str]]:
@@ -478,9 +507,10 @@ def verify_docker(
     results: list[CheckResult] = []
     image_size: int | None = None
     try:
-        build_result = _build(
-            dockerfile, project_path, target, runtime, tag, build_timeout
-        )
+        with _isolated_context(project_path) as context:
+            build_result = _build(
+                dockerfile, context, target, runtime, tag, build_timeout
+            )
         results.append(build_result)
         if build_result.status is CheckStatus.PASSED:
             image_size = _image_size(runtime, tag)

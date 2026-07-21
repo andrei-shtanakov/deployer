@@ -139,3 +139,18 @@ def test_sysdep_service_apt_layers_build_and_healthcheck(
     assert report.passed, report.error_signature()
     assert _by_id(report, "run_healthcheck").status is CheckStatus.PASSED
     assert report.image_size_bytes is not None and report.image_size_bytes > 0
+
+
+def test_build_context_excludes_dotenv(
+    hello_service: Path, runtime, tmp_path: Path
+) -> None:
+    import shutil as _shutil
+
+    project = tmp_path / "proj"
+    _shutil.copytree(hello_service, project)
+    (project / ".env").write_text("SECRET=do-not-ship\n")
+    dockerfile = (
+        project / "Dockerfile.good"
+    ).read_text() + "\nRUN test ! -e /app/.env\nRUN test ! -e .env\n"
+    report = verify(dockerfile, project, TARGET, runtime)
+    assert _by_id(report, "build").status is CheckStatus.PASSED
