@@ -15,6 +15,7 @@ EXPECTED_CASES = [
     "no-build-system",
     "pip-requirements",
     "service-healthcheck",
+    "slow-build",
     "system-deps-psycopg2",
     "uv-minimal",
 ]

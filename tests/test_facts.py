@@ -163,3 +163,12 @@ def test_vcs_and_url_requirements_are_skipped(tmp_path: Path) -> None:
     )
     facts = analyze_project(tmp_path)
     assert facts.requirements_files["requirements.txt"] == ["flask"]
+
+
+def test_slow_build_corpus_case_has_entrypoint_fact() -> None:
+    corpus_case = (
+        Path(__file__).parent.parent / "corpus" / "synthetic" / "slow-build" / "project"
+    )
+    facts = analyze_project(corpus_case)
+    assert facts.script_entrypoint == "main.py"
+    assert facts.package_manager == "pip"
