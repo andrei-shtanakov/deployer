@@ -5,9 +5,11 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from deployer.bench import (
     FixtureAuthor,
+    _create_run_dir,
     clone_external,
     load_corpus,
     load_external,
@@ -473,3 +475,41 @@ def test_run_bench_include_external_appends_and_skips_without_fixture(
     assert synthetic.outcome == "matched"
     assert external.outcome == "skipped"
     assert "fixture" in external.skip_reason
+
+
+def test_external_target_rejects_path_traversal_name() -> None:
+    with pytest.raises(ValidationError):
+        ExternalTarget(name="../x", url="https://example.invalid/x.git", commit="a")
+
+
+def test_external_target_rejects_bare_dotdot_name() -> None:
+    with pytest.raises(ValidationError):
+        ExternalTarget(name="..", url="https://example.invalid/x.git", commit="a")
+
+
+def test_external_target_accepts_normal_name() -> None:
+    ext = ExternalTarget(
+        name="demo-1.2", url="https://example.invalid/x.git", commit="a"
+    )
+    assert ext.name == "demo-1.2"
+
+
+def test_load_external_rejects_traversal_name(tmp_path: Path) -> None:
+    (tmp_path / "external.toml").write_text(
+        "[[targets]]\n"
+        'name = "../escape"\n'
+        'url = "https://example.invalid/demo.git"\n'
+        'commit = "abc123"\n'
+    )
+    with pytest.raises(ValueError):
+        load_external(tmp_path)
+
+
+def test_create_run_dir_retries_past_same_second_collision(tmp_path: Path) -> None:
+    stamp = "20260721-120000"
+    label = "unit"
+    (tmp_path / f"{stamp}-{label}").mkdir(parents=True)
+    (tmp_path / f"{stamp}-{label}-2").mkdir(parents=True)
+    run_dir = _create_run_dir(tmp_path, stamp, label)
+    assert run_dir == tmp_path / f"{stamp}-{label}-3"
+    assert run_dir.is_dir()

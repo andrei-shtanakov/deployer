@@ -264,6 +264,28 @@ def _run_bench_cases(
     return report
 
 
+def _create_run_dir(runs_root: Path, stamp: str, label: str) -> Path:
+    """Create `<runs_root>/<stamp>-<label>`, retrying on same-second collisions.
+
+    `mkdir(exist_ok=False)` raises `FileExistsError` when two runs land in
+    the same wall-clock second (the stamp has no microseconds, kept that
+    way for readability). Retry with a `-2`, `-3`, ... suffix instead of
+    failing the whole bench run.
+    """
+    base = runs_root / f"{stamp}-{label}"
+    for suffix in range(1, 101):
+        candidate = base if suffix == 1 else runs_root / f"{stamp}-{label}-{suffix}"
+        try:
+            candidate.mkdir(parents=True, exist_ok=False)
+        except FileExistsError:
+            continue
+        return candidate
+    raise FileExistsError(
+        f"could not create a unique run dir under {runs_root} for "
+        f"{stamp}-{label} after 100 attempts"
+    )
+
+
 def run_bench(
     corpus_root: Path,
     make_author: Callable[[BenchCase], DockerfileAuthor | None],
@@ -282,8 +304,7 @@ def run_bench(
     if not cases:
         raise ValueError(f"no corpus cases match pattern {pattern!r}")
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    run_dir = runs_root / f"{stamp}-{label}"
-    run_dir.mkdir(parents=True, exist_ok=False)
+    run_dir = _create_run_dir(runs_root, stamp, label)
     if not include_external:
         report = _run_bench_cases(
             cases,

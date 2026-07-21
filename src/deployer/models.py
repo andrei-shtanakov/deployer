@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import re
 from enum import StrEnum
 from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+_SAFE_NAME_RE = re.compile(r"[A-Za-z0-9._-]+")
 
 
 class ServiceSpec(BaseModel):
@@ -106,6 +109,21 @@ class ExternalTarget(BaseModel):
     commit: str
     target: DeployTarget = Field(default_factory=DeployTarget)
     expected: ExpectedOutcome = Field(default_factory=ExpectedOutcome)
+
+    @field_validator("name")
+    @classmethod
+    def _reject_path_traversal(cls, value: str) -> str:
+        """Keep `name` a bare path segment: no traversal, no separators.
+
+        The regex alone would still admit ".." (every char is in the
+        allowed set), so it must be rejected explicitly alongside ".".
+        """
+        if not _SAFE_NAME_RE.fullmatch(value) or value in (".", ".."):
+            raise ValueError(
+                "ExternalTarget.name must match [A-Za-z0-9._-]+ and must "
+                f'not be "." or "..": {value!r}'
+            )
+        return value
 
 
 class CheckStatus(StrEnum):
