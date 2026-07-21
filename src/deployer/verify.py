@@ -15,11 +15,13 @@ from pathlib import Path
 from deployer.models import (
     CheckResult,
     CheckStatus,
+    ContainerRuntime,
     DeployTarget,
     FailureKind,
     ProjectFacts,
     VerificationReport,
 )
+from deployer.runtime import container_run
 
 HADOLINT_VERSION = "2.12.0"
 DEFAULT_BUILD_TIMEOUT = 600
@@ -299,14 +301,6 @@ ENVIRONMENT_MARKERS = (
 )
 
 
-def detect_container_tool() -> str | None:
-    """Prefer rootless-friendly podman; fall back to docker."""
-    for tool in ("podman", "docker"):
-        if shutil.which(tool):
-            return tool
-    return None
-
-
 def _classify(stderr: str) -> FailureKind:
     lowered = stderr.lower()
     if any(marker in lowered for marker in ENVIRONMENT_MARKERS):
@@ -320,16 +314,16 @@ def _tail(text: str, lines: int = 15) -> str:
 
 def _build(
     dockerfile: str,
-    project_path: Path,
+    context_path: Path,
     target: DeployTarget,
-    tool: str,
+    runtime: ContainerRuntime,
     tag: str,
     timeout: int,
 ) -> CheckResult:
     try:
-        proc = subprocess.run(
+        proc = container_run(
+            runtime,
             [
-                tool,
                 "build",
                 "--memory",
                 target.memory_limit,
@@ -337,7 +331,7 @@ def _build(
                 tag,
                 "-f",
                 "-",
-                str(project_path),
+                str(context_path),
             ],
             input=dockerfile,
             capture_output=True,
@@ -361,11 +355,12 @@ def _build(
     return CheckResult(check_id="build", status=CheckStatus.PASSED)
 
 
-def _image_size(tool: str, tag: str) -> int | None:
+def _image_size(runtime: ContainerRuntime, tag: str) -> int | None:
     """Size of a built image in bytes; None when inspection fails."""
     try:
-        proc = subprocess.run(
-            [tool, "image", "inspect", "--format", "{{.Size}}", tag],
+        proc = container_run(
+            runtime,
+            ["image", "inspect", "--format", "{{.Size}}", tag],
             capture_output=True,
             text=True,
             timeout=30,
@@ -381,16 +376,16 @@ def _image_size(tool: str, tag: str) -> int | None:
 
 
 def _run_healthcheck(
-    target: DeployTarget, tool: str, tag: str, timeout: int
+    target: DeployTarget, runtime: ContainerRuntime, tag: str, timeout: int
 ) -> CheckResult:
     assert target.service is not None
     container = f"deployer-check-{uuid.uuid4().hex[:8]}"
     url = f"http://127.0.0.1:{target.service.port}{target.service.healthcheck_path}"
     probe = f"import urllib.request; urllib.request.urlopen('{url}', timeout=2)"
     try:
-        started = subprocess.run(
+        started = container_run(
+            runtime,
             [
-                tool,
                 "run",
                 "-d",
                 "--name",
@@ -416,8 +411,9 @@ def _run_healthcheck(
         while time.monotonic() < deadline:
             remaining = deadline - time.monotonic()
             try:
-                probe_proc = subprocess.run(
-                    [tool, "exec", container, "python", "-c", probe],
+                probe_proc = container_run(
+                    runtime,
+                    ["exec", container, "python", "-c", probe],
                     capture_output=True,
                     text=True,
                     timeout=max(1.0, remaining),
@@ -431,8 +427,8 @@ def _run_healthcheck(
                 # Probe timed out; treat as loop exhaustion
                 break
             time.sleep(1)
-        logs = subprocess.run(
-            [tool, "logs", container], capture_output=True, text=True, timeout=10
+        logs = container_run(
+            runtime, ["logs", container], capture_output=True, text=True, timeout=10
         )
         log_text = (logs.stdout + "\n" + logs.stderr).strip()
         return CheckResult(
@@ -452,14 +448,14 @@ def _run_healthcheck(
             message="container runtime command timed out",
         )
     finally:
-        subprocess.run([tool, "rm", "-f", container], capture_output=True, timeout=30)
+        container_run(runtime, ["rm", "-f", container], capture_output=True, timeout=30)
 
 
 def verify_docker(
     dockerfile: str,
     project_path: Path,
     target: DeployTarget,
-    tool: str,
+    runtime: ContainerRuntime,
     *,
     build_timeout: int = DEFAULT_BUILD_TIMEOUT,
     health_timeout: int = DEFAULT_HEALTH_TIMEOUT,
@@ -475,15 +471,15 @@ def verify_docker(
     image_size: int | None = None
     try:
         build_result = _build(
-            dockerfile, project_path, target, tool, tag, build_timeout
+            dockerfile, project_path, target, runtime, tag, build_timeout
         )
         results.append(build_result)
         if build_result.status is CheckStatus.PASSED:
-            image_size = _image_size(tool, tag)
+            image_size = _image_size(runtime, tag)
             if target.service is not None:
-                results.append(_run_healthcheck(target, tool, tag, health_timeout))
+                results.append(_run_healthcheck(target, runtime, tag, health_timeout))
     finally:
-        subprocess.run([tool, "rmi", "-f", tag], capture_output=True, timeout=60)
+        container_run(runtime, ["rmi", "-f", tag], capture_output=True, timeout=60)
     return results, image_size
 
 
@@ -491,7 +487,7 @@ def verify(
     dockerfile: str,
     project_path: Path,
     target: DeployTarget,
-    tool: str | None,
+    runtime: ContainerRuntime | None,
     facts: ProjectFacts | None = None,
     *,
     build_timeout: int = DEFAULT_BUILD_TIMEOUT,
@@ -502,7 +498,8 @@ def verify(
     The timeouts bound the L2 build and healthcheck subprocesses (seconds).
     """
     report = verify_static(dockerfile, project_path, facts)
-    if tool is None:
+    report.runtime = runtime
+    if runtime is None:
         return report
     report.docker_available = True
     if report.passed:
@@ -510,7 +507,7 @@ def verify(
             dockerfile,
             project_path,
             target,
-            tool,
+            runtime,
             build_timeout=build_timeout,
             health_timeout=health_timeout,
         )

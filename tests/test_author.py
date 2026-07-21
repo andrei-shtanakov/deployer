@@ -6,6 +6,7 @@ from deployer.author import author_dockerfile
 from deployer.models import (
     CheckResult,
     CheckStatus,
+    ContainerRuntime,
     DeployTarget,
     ProjectFacts,
     VerificationReport,
@@ -52,7 +53,7 @@ class ScriptedAuthor:
 
 def test_success_on_first_iteration(hello_service: Path) -> None:
     run = author_dockerfile(
-        hello_service, DeployTarget(), ScriptedAuthor(GOOD), run_docker=False
+        hello_service, DeployTarget(), ScriptedAuthor(GOOD), runtime=None
     )
     assert run.stopped_reason == "static_only"
     assert run.success is False  # static-only never counts as full success
@@ -62,7 +63,7 @@ def test_success_on_first_iteration(hello_service: Path) -> None:
 
 def test_repair_path_fixes_bad_copy(hello_service: Path) -> None:
     author = ScriptedAuthor(BAD_COPY, GOOD)
-    run = author_dockerfile(hello_service, DeployTarget(), author, run_docker=False)
+    run = author_dockerfile(hello_service, DeployTarget(), author, runtime=None)
     assert author.repair_calls == 1
     assert len(run.iterations) == 2
     assert run.stopped_reason == "static_only"
@@ -71,7 +72,7 @@ def test_repair_path_fixes_bad_copy(hello_service: Path) -> None:
 def test_no_progress_early_stop(hello_service: Path) -> None:
     author = ScriptedAuthor(BAD_COPY, BAD_COPY, GOOD)
     run = author_dockerfile(
-        hello_service, DeployTarget(), author, max_iterations=5, run_docker=False
+        hello_service, DeployTarget(), author, max_iterations=5, runtime=None
     )
     assert run.stopped_reason == "no_progress"
     assert len(run.iterations) == 2  # third (good) candidate never attempted
@@ -80,7 +81,7 @@ def test_no_progress_early_stop(hello_service: Path) -> None:
 def test_budget_exhausted_returns_failed_run(hello_service: Path) -> None:
     author = ScriptedAuthor(NO_FROM, BAD_COPY, NO_FROM)
     run = author_dockerfile(
-        hello_service, DeployTarget(), author, max_iterations=3, run_docker=False
+        hello_service, DeployTarget(), author, max_iterations=3, runtime=None
     )
     assert run.stopped_reason == "budget_exhausted"
     assert run.success is False
@@ -110,7 +111,7 @@ class ExplodingAuthor:
 
 def test_generate_error_yields_llm_error_run(hello_service: Path) -> None:
     run = author_dockerfile(
-        hello_service, DeployTarget(), ExplodingAuthor("generate"), run_docker=False
+        hello_service, DeployTarget(), ExplodingAuthor("generate"), runtime=None
     )
     assert run.stopped_reason == "llm_error"
     assert run.iterations == []
@@ -120,7 +121,7 @@ def test_generate_error_yields_llm_error_run(hello_service: Path) -> None:
 
 def test_repair_error_preserves_completed_iterations(hello_service: Path) -> None:
     run = author_dockerfile(
-        hello_service, DeployTarget(), ExplodingAuthor("repair"), run_docker=False
+        hello_service, DeployTarget(), ExplodingAuthor("repair"), runtime=None
     )
     assert run.stopped_reason == "llm_error"
     assert len(run.iterations) == 1  # the failed BAD_COPY iteration is preserved
@@ -138,7 +139,7 @@ def test_environment_failure_retries_once_without_consuming_iteration(
         dockerfile,
         project_path,
         target,
-        tool,
+        runtime,
         facts=None,
         *,
         build_timeout,
@@ -162,8 +163,12 @@ def test_environment_failure_retries_once_without_consuming_iteration(
         )
 
     monkeypatch.setattr("deployer.author.verify", flaky_verify)
-    monkeypatch.setattr("deployer.author.detect_container_tool", lambda: "docker")
-    run = author_dockerfile(hello_service, DeployTarget(), ScriptedAuthor(GOOD))
+    run = author_dockerfile(
+        hello_service,
+        DeployTarget(),
+        ScriptedAuthor(GOOD),
+        runtime=ContainerRuntime(tool="docker"),
+    )
     assert run.environment_retries == 1
     assert len(run.iterations) == 1
     assert run.stopped_reason == "success"
@@ -186,7 +191,7 @@ def test_hints_offered_recorded_and_facts_passed(
         dockerfile,
         project_path,
         target,
-        tool,
+        runtime,
         facts=None,
         *,
         build_timeout,
@@ -198,9 +203,7 @@ def test_hints_offered_recorded_and_facts_passed(
         )
 
     monkeypatch.setattr("deployer.author.verify", spy_verify)
-    run = author_dockerfile(
-        project, DeployTarget(), ScriptedAuthor(GOOD), run_docker=False
-    )
+    run = author_dockerfile(project, DeployTarget(), ScriptedAuthor(GOOD), runtime=None)
     assert captured["facts"] is not None
     assert captured["facts"].package_manager == "pip"
     assert [h.python_package for h in run.hints_offered] == ["psycopg2"]
@@ -216,7 +219,7 @@ def test_second_environment_failure_stops_run(hello_service: Path, monkeypatch) 
         dockerfile,
         project_path,
         target,
-        tool,
+        runtime,
         facts=None,
         *,
         build_timeout,
@@ -235,8 +238,12 @@ def test_second_environment_failure_stops_run(hello_service: Path, monkeypatch) 
         )
 
     monkeypatch.setattr("deployer.author.verify", env_fail_verify)
-    monkeypatch.setattr("deployer.author.detect_container_tool", lambda: "docker")
-    run = author_dockerfile(hello_service, DeployTarget(), ScriptedAuthor(GOOD))
+    run = author_dockerfile(
+        hello_service,
+        DeployTarget(),
+        ScriptedAuthor(GOOD),
+        runtime=ContainerRuntime(tool="docker"),
+    )
     assert run.stopped_reason == "environment_failure"
     assert run.environment_retries == 1
     assert run.success is False
@@ -254,7 +261,7 @@ def test_author_forwards_timeouts_to_both_verify_calls(
         dockerfile,
         project_path,
         target,
-        tool,
+        runtime,
         facts=None,
         *,
         build_timeout,
@@ -279,11 +286,11 @@ def test_author_forwards_timeouts_to_both_verify_calls(
         )
 
     monkeypatch.setattr("deployer.author.verify", spy_verify)
-    monkeypatch.setattr("deployer.author.detect_container_tool", lambda: "podman")
     run = author_dockerfile(
         hello_service,
         DeployTarget(),
         ScriptedAuthor(GOOD),
+        runtime=ContainerRuntime(tool="podman"),
         build_timeout=1200,
         health_timeout=45,
     )

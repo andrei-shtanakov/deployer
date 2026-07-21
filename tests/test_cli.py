@@ -26,7 +26,7 @@ def test_verify_command_passes_on_good_dockerfile(
     for name in ("pyproject.toml", "main.py"):
         (project / name).write_text((hello_service / name).read_text())
     (project / "Dockerfile").write_text((hello_service / "Dockerfile.good").read_text())
-    monkeypatch.setattr("deployer.cli.detect_container_tool", lambda: None)
+    monkeypatch.setattr("deployer.cli.resolve_runtime", lambda *a, **k: None)
     assert cli.main(["verify", str(project)]) == 0
 
 
@@ -115,7 +115,7 @@ def test_verify_flags_reach_library(
         dockerfile,
         project_path,
         target,
-        tool,
+        runtime,
         facts=None,
         *,
         build_timeout,
@@ -152,7 +152,7 @@ def test_author_flags_reach_library(tmp_path: Path, monkeypatch) -> None:
         author,
         *,
         max_iterations,
-        run_docker,
+        runtime,
         build_timeout,
         health_timeout,
     ):
@@ -221,7 +221,7 @@ def test_verify_writes_report_json_on_pass(
     project = _make_project(
         hello_service, tmp_path, (hello_service / "Dockerfile.good").read_text()
     )
-    monkeypatch.setattr("deployer.cli.detect_container_tool", lambda: None)
+    monkeypatch.setattr("deployer.cli.resolve_runtime", lambda *a, **k: None)
     assert cli.main(["verify", str(project)]) == 0
     report_path = project / ".deployer" / "verify-report.json"
     report = VerificationReport.model_validate_json(report_path.read_text())
@@ -234,7 +234,7 @@ def test_verify_writes_report_json_on_fail(
     project = _make_project(
         hello_service, tmp_path, "FROM python:3.12-slim\nCOPY nope.py .\n"
     )
-    monkeypatch.setattr("deployer.cli.detect_container_tool", lambda: None)
+    monkeypatch.setattr("deployer.cli.resolve_runtime", lambda *a, **k: None)
     assert cli.main(["verify", str(project)]) == 1
     report_path = project / ".deployer" / "verify-report.json"
     report = VerificationReport.model_validate_json(report_path.read_text())
@@ -339,7 +339,7 @@ def test_verify_report_write_failure_warns_not_crashes(
         hello_service, tmp_path, (hello_service / "Dockerfile.good").read_text()
     )
     (project / ".deployer").write_text("a file where a dir must go")
-    monkeypatch.setattr("deployer.cli.detect_container_tool", lambda: None)
+    monkeypatch.setattr("deployer.cli.resolve_runtime", lambda *a, **k: None)
     assert cli.main(["verify", str(project)]) == 0  # exit reflects checks
     captured = capsys.readouterr()
     assert "warning: could not write verify-report.json" in captured.err

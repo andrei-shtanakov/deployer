@@ -10,12 +10,8 @@ from deployer.author import author_dockerfile
 from deployer.facts import analyze_project
 from deployer.llm import AnthropicAuthor
 from deployer.models import CheckStatus, DeployTarget, VerificationReport
-from deployer.verify import (
-    DEFAULT_BUILD_TIMEOUT,
-    DEFAULT_HEALTH_TIMEOUT,
-    detect_container_tool,
-    verify,
-)
+from deployer.runtime import RuntimeConfigError, resolve_runtime
+from deployer.verify import DEFAULT_BUILD_TIMEOUT, DEFAULT_HEALTH_TIMEOUT, verify
 
 _STATUS_ICONS = {
     CheckStatus.PASSED: "ok",
@@ -104,11 +100,16 @@ def _cmd_verify(args: argparse.Namespace) -> int:
     if not dockerfile_path.is_file():
         print(f"error: {dockerfile_path} not found", file=sys.stderr)
         return 1
+    try:
+        runtime = resolve_runtime()
+    except RuntimeConfigError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
     report = verify(
         dockerfile_path.read_text(),
         project,
         target,
-        detect_container_tool(),
+        runtime,
         analyze_project(project),
         build_timeout=args.build_timeout,
         health_timeout=args.health_timeout,
@@ -138,12 +139,17 @@ def _cmd_author(args: argparse.Namespace) -> int:
     if isinstance(target, str):
         print(f"error: {target}", file=sys.stderr)
         return 2
+    try:
+        runtime = resolve_runtime()
+    except RuntimeConfigError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
     run = author_dockerfile(
         project,
         target,
         AnthropicAuthor(),
         max_iterations=args.max_iterations,
-        run_docker=not args.no_docker,
+        runtime=None if args.no_docker else runtime,
         build_timeout=args.build_timeout,
         health_timeout=args.health_timeout,
     )

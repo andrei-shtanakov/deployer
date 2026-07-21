@@ -8,18 +8,14 @@ from deployer.facts import analyze_project
 from deployer.hints import collect_hints
 from deployer.models import (
     AuthoringRun,
+    ContainerRuntime,
     DeployTarget,
     IterationRecord,
     ProjectFacts,
     StopReason,
     VerificationReport,
 )
-from deployer.verify import (
-    DEFAULT_BUILD_TIMEOUT,
-    DEFAULT_HEALTH_TIMEOUT,
-    detect_container_tool,
-    verify,
-)
+from deployer.verify import DEFAULT_BUILD_TIMEOUT, DEFAULT_HEALTH_TIMEOUT, verify
 
 
 class DockerfileAuthor(Protocol):
@@ -42,7 +38,7 @@ def author_dockerfile(
     author: DockerfileAuthor,
     *,
     max_iterations: int = 3,
-    run_docker: bool = True,
+    runtime: ContainerRuntime | None = None,
     build_timeout: int = DEFAULT_BUILD_TIMEOUT,
     health_timeout: int = DEFAULT_HEALTH_TIMEOUT,
 ) -> AuthoringRun:
@@ -54,7 +50,6 @@ def author_dockerfile(
     """
     facts = analyze_project(project_path)
     hints = collect_hints(facts)
-    tool = detect_container_tool() if run_docker else None
 
     iterations: list[IterationRecord] = []
     environment_retries = 0
@@ -78,7 +73,7 @@ def author_dockerfile(
                 dockerfile,
                 project_path,
                 target,
-                tool,
+                runtime,
                 facts,
                 build_timeout=build_timeout,
                 health_timeout=health_timeout,
@@ -89,7 +84,7 @@ def author_dockerfile(
                     dockerfile,
                     project_path,
                     target,
-                    tool,
+                    runtime,
                     facts,
                     build_timeout=build_timeout,
                     health_timeout=health_timeout,
@@ -108,7 +103,7 @@ def author_dockerfile(
                 stopped_reason = "environment_failure"
                 break
             if report.passed:
-                stopped_reason = "success" if tool is not None else "static_only"
+                stopped_reason = "success" if runtime is not None else "static_only"
                 break
             signature = report.error_signature()
             if signature == prev_signature:
@@ -128,10 +123,11 @@ def author_dockerfile(
         target=target,
         iterations=iterations,
         environment_retries=environment_retries,
-        docker_available=tool is not None,
+        docker_available=runtime is not None,
         hadolint_available=hadolint_available,
         stopped_reason=stopped_reason,
         success=stopped_reason == "success",
         llm_error=llm_error,
         hints_offered=hints,
+        runtime=runtime,
     )

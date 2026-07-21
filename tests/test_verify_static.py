@@ -1,6 +1,12 @@
 from pathlib import Path
 
-from deployer.models import CheckResult, CheckStatus, DeployTarget, ProjectFacts
+from deployer.models import (
+    CheckResult,
+    CheckStatus,
+    ContainerRuntime,
+    DeployTarget,
+    ProjectFacts,
+)
 from deployer.verify import parse_dockerfile, verify, verify_static
 
 GOOD = """\
@@ -236,7 +242,9 @@ def test_echoed_python_m_pip_does_not_trigger(hello_service: Path) -> None:
 def _spy_docker(captured: dict):
     """verify_docker replacement that records the timeout kwargs it got."""
 
-    def spy(dockerfile, project_path, target, tool, *, build_timeout, health_timeout):
+    def spy(
+        dockerfile, project_path, target, runtime, *, build_timeout, health_timeout
+    ):
         captured["build_timeout"] = build_timeout
         captured["health_timeout"] = health_timeout
         return [CheckResult(check_id="build", status=CheckStatus.PASSED)], None
@@ -264,7 +272,7 @@ def test_verify_forwards_timeouts_to_verify_docker(
         GOOD,
         hello_service,
         DeployTarget(),
-        "podman",
+        ContainerRuntime(tool="podman"),
         build_timeout=1200,
         health_timeout=45,
     )
@@ -280,7 +288,7 @@ def test_verify_defaults_match_module_constants(
     _skip_hadolint(monkeypatch)
     captured: dict = {}
     monkeypatch.setattr("deployer.verify.verify_docker", _spy_docker(captured))
-    verify(GOOD, hello_service, DeployTarget(), "podman")
+    verify(GOOD, hello_service, DeployTarget(), ContainerRuntime(tool="podman"))
     assert captured == {
         "build_timeout": DEFAULT_BUILD_TIMEOUT,
         "health_timeout": DEFAULT_HEALTH_TIMEOUT,
