@@ -14,6 +14,7 @@ from deployer.bench import (
     load_corpus,
     load_external,
     normalize_run,
+    promote_run,
     render_markdown,
     run_bench,
     run_case,
@@ -29,6 +30,7 @@ from deployer.models import (
     ExpectedOutcome,
     ExternalTarget,
     FailureKind,
+    GoldenReport,
     IterationRecord,
     ProjectFacts,
     VerificationReport,
@@ -735,3 +737,47 @@ def test_normalize_run_records_runtime_facts_without_host(
     assert golden.runtime_tool == "docker"
     assert golden.runtime_remote is True
     assert "secret-host" not in golden.model_dump_json()
+
+
+def test_promote_writes_golden_tree(tmp_path: Path, monkeypatch) -> None:
+    run_dir = _bench_run_on_disk(tmp_path, monkeypatch)
+    golden_dir = promote_run(run_dir, tmp_path)
+    assert golden_dir == tmp_path / "golden"
+    golden = GoldenReport.model_validate_json((golden_dir / "golden.json").read_text())
+    assert golden.promoted_from_label == "norm"
+    assert (
+        (golden_dir / "cases" / "a-ok" / "Dockerfile")
+        .read_text()
+        .startswith("FROM x:1")
+    )
+
+
+def test_promote_refuses_mismatch_without_force(tmp_path: Path, monkeypatch) -> None:
+    _make_case(
+        tmp_path, "bad", expected={"requires_l2": False, "expected_success": False}
+    )
+    monkeypatch.setattr(
+        "deployer.bench.author_dockerfile", lambda *a, **k: _fake_run(True)
+    )
+    _, run_dir = run_bench(
+        tmp_path,
+        lambda c: FixtureAuthor("FROM x:1\n"),
+        None,
+        label="bad",
+        author_backend="fixture",
+        runs_root=tmp_path / "runs",
+    )
+    with pytest.raises(ValueError, match="mismatch"):
+        promote_run(run_dir, tmp_path)
+    promote_run(run_dir, tmp_path, force=True)  # force overrides
+    assert (tmp_path / "golden" / "golden.json").is_file()
+
+
+def test_promote_replaces_previous_golden(tmp_path: Path, monkeypatch) -> None:
+    run_dir = _bench_run_on_disk(tmp_path, monkeypatch)
+    promote_run(run_dir, tmp_path)
+    stale = tmp_path / "golden" / "cases" / "ghost" / "Dockerfile"
+    stale.parent.mkdir(parents=True)
+    stale.write_text("FROM ghost:1\n")
+    promote_run(run_dir, tmp_path)
+    assert not stale.exists()

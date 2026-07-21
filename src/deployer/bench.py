@@ -413,16 +413,25 @@ def verify_corpus(
     return results
 
 
+class PromoteRefusedError(ValueError):
+    """Raised when `promote_run` refuses to promote a mismatched run."""
+
+
+def _load_bench_report(run_dir: Path) -> BenchReport:
+    """Parse `<run_dir>/bench-report.json`; raise if the run dir is bogus."""
+    report_file = run_dir / "bench-report.json"
+    if not report_file.is_file():
+        raise ValueError(f"not a bench run dir: missing {report_file}")
+    return BenchReport.model_validate_json(report_file.read_text())
+
+
 def normalize_run(run_dir: Path) -> GoldenReport:
     """Normalize a raw bench run into a committable golden baseline.
 
     Strips wall-clock data, absolute paths, hostnames and check messages;
     skipped cases are excluded (a golden only asserts about cases that ran).
     """
-    report_file = run_dir / "bench-report.json"
-    if not report_file.is_file():
-        raise ValueError(f"not a bench run dir: missing {report_file}")
-    report = BenchReport.model_validate_json(report_file.read_text())
+    report = _load_bench_report(run_dir)
     golden_cases: list[GoldenCase] = []
     for result in report.cases:
         if result.outcome == "skipped":
@@ -478,6 +487,35 @@ def normalize_run(run_dir: Path) -> GoldenReport:
         health_timeout_s=report.health_timeout_s,
         cases=golden_cases,
     )
+
+
+def promote_run(run_dir: Path, corpus_root: Path, *, force: bool = False) -> Path:
+    """Promote a raw run to the committed golden baseline in corpus/golden.
+
+    Refuses (raises `PromoteRefusedError`) when any case is `mismatched`
+    unless `force` is set. Replaces any existing `golden/` tree wholesale.
+    """
+    golden = normalize_run(run_dir)
+    mismatched = [
+        c.case for c in _load_bench_report(run_dir).cases if c.outcome == "mismatched"
+    ]
+    if mismatched and not force:
+        raise PromoteRefusedError(
+            "refusing to promote a run with mismatched cases "
+            f"({', '.join(mismatched)}); use --force to override"
+        )
+    golden_dir = corpus_root / "golden"
+    if golden_dir.exists():
+        shutil.rmtree(golden_dir)
+    golden_dir.mkdir(parents=True)
+    (golden_dir / "golden.json").write_text(golden.model_dump_json(indent=2))
+    for case in golden.cases:
+        src = run_dir / "cases" / case.case / "Dockerfile"
+        if src.is_file():
+            dest = golden_dir / "cases" / case.case
+            dest.mkdir(parents=True)
+            shutil.copyfile(src, dest / "Dockerfile")
+    return golden_dir
 
 
 def render_markdown(report: BenchReport) -> str:

@@ -9,7 +9,13 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from deployer.author import author_dockerfile
-from deployer.bench import FixtureAuthor, run_bench, verify_corpus
+from deployer.bench import (
+    FixtureAuthor,
+    PromoteRefusedError,
+    promote_run,
+    run_bench,
+    verify_corpus,
+)
 from deployer.facts import analyze_project
 from deployer.llm import AnthropicAuthor
 from deployer.models import (
@@ -299,6 +305,23 @@ def _cmd_bench_verify(args: argparse.Namespace) -> int:
     return 1 if failed else 0
 
 
+def _cmd_bench_promote(args: argparse.Namespace) -> int:
+    run_dir = Path(args.run_dir)
+    if not run_dir.is_dir():
+        print(f"error: {run_dir} is not a directory", file=sys.stderr)
+        return 2
+    try:
+        golden_dir = promote_run(run_dir, Path(args.corpus), force=args.force)
+    except PromoteRefusedError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    except (FileNotFoundError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    print(f"golden: {golden_dir}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """Entry point for the `deployer` CLI."""
     parser = argparse.ArgumentParser(prog="deployer")
@@ -358,6 +381,14 @@ def main(argv: list[str] | None = None) -> int:
     _add_runtime_flags(p_bench_verify)
     _add_timeout_flags(p_bench_verify)
     p_bench_verify.set_defaults(func=_cmd_bench_verify)
+
+    p_bench_promote = bench_sub.add_parser(
+        "promote", help="promote a raw run to corpus/golden"
+    )
+    p_bench_promote.add_argument("run_dir")
+    p_bench_promote.add_argument("--corpus", default="corpus")
+    p_bench_promote.add_argument("--force", action="store_true")
+    p_bench_promote.set_defaults(func=_cmd_bench_promote)
 
     args = parser.parse_args(argv)
     return args.func(args)
