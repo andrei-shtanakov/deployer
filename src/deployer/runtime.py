@@ -24,6 +24,10 @@ def _resolve_tool(
     tool_arg: str | None, env: Mapping[str, str]
 ) -> Literal["docker", "podman"] | None:
     if tool_arg is not None:
+        if tool_arg not in NATIVE_HOST_ENV:
+            raise RuntimeConfigError(
+                f"--container-tool must be 'docker' or 'podman', got {tool_arg!r}"
+            )
         if shutil.which(tool_arg) is None:
             raise RuntimeConfigError(f"--container-tool {tool_arg}: not found on PATH")
         return cast(Literal["docker", "podman"], tool_arg)

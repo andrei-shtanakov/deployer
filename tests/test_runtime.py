@@ -87,6 +87,11 @@ def test_env_tool_invalid_value_raises(all_tools) -> None:
         resolve_runtime(env={"DEPLOYER_CONTAINER_TOOL": "nerdctl"})
 
 
+def test_cli_tool_invalid_value_raises(all_tools) -> None:
+    with pytest.raises(RuntimeConfigError):
+        resolve_runtime("nerdctl", env={})
+
+
 def test_cli_host_must_be_ssh(all_tools) -> None:
     with pytest.raises(RuntimeConfigError):
         resolve_runtime("docker", "tcp://h:2375", env={})
