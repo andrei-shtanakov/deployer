@@ -435,3 +435,41 @@ def test_clone_external_bad_commit_raises(tmp_path: Path) -> None:
     ext = ExternalTarget(name="demo", url=url, commit="0" * 40)
     with pytest.raises(RuntimeError, match="demo"):
         clone_external(ext, tmp_path / "scratch")
+
+
+def test_run_bench_include_external_appends_and_skips_without_fixture(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _make_case(tmp_path, "a-ok", expected={"requires_l2": False})
+    url, pinned = _make_local_git_repo(tmp_path)
+    (tmp_path / "external.toml").write_text(
+        "[[targets]]\n"
+        'name = "ext-demo"\n'
+        f'url = "{url}"\n'
+        f'commit = "{pinned}"\n'
+        "[targets.expected]\n"
+        "requires_l2 = false\n"
+    )
+    monkeypatch.setattr(
+        "deployer.bench.author_dockerfile", lambda *a, **k: _fake_run(True)
+    )
+
+    def make_author(case):
+        if case.fixture_dockerfile is None:
+            return None
+        return FixtureAuthor(case.fixture_dockerfile.read_text())
+
+    report, run_dir = run_bench(
+        tmp_path,
+        make_author,
+        None,
+        label="ext",
+        author_backend="fixture",
+        runs_root=tmp_path / "runs",
+        include_external=True,
+    )
+    assert [c.case for c in report.cases] == ["a-ok", "ext-demo"]
+    synthetic, external = report.cases
+    assert synthetic.outcome == "matched"
+    assert external.outcome == "skipped"
+    assert "fixture" in external.skip_reason
