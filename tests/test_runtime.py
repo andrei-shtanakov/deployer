@@ -3,7 +3,12 @@
 import pytest
 
 from deployer.models import ContainerRuntime
-from deployer.runtime import RuntimeConfigError, resolve_runtime
+from deployer.runtime import (
+    RuntimeConfigError,
+    container_run,
+    resolve_runtime,
+    runtime_env,
+)
 
 
 @pytest.fixture()
@@ -110,3 +115,44 @@ def test_explicit_host_without_any_tool_raises(no_tools) -> None:
 def test_runtime_round_trips_json() -> None:
     rt = ContainerRuntime(tool="docker", host="ssh://u@h", host_source="cli")
     assert ContainerRuntime.model_validate_json(rt.model_dump_json()) == rt
+
+
+def test_runtime_env_overlays_docker_host_for_cli_source(monkeypatch) -> None:
+    monkeypatch.setenv("PATH", "/usr/bin")
+    monkeypatch.setenv("DOCKER_HOST", "tcp://stale:2375")
+    rt = ContainerRuntime(tool="docker", host="ssh://u@h", host_source="cli")
+    env = runtime_env(rt)
+    assert env["DOCKER_HOST"] == "ssh://u@h"
+    assert env["PATH"] == "/usr/bin"  # full os.environ copy, not a minimal dict
+
+
+def test_runtime_env_overlays_container_host_for_podman(monkeypatch) -> None:
+    rt = ContainerRuntime(tool="podman", host="ssh://u@h", host_source="deployer_env")
+    assert runtime_env(rt)["CONTAINER_HOST"] == "ssh://u@h"
+
+
+def test_runtime_env_untouched_for_native_and_local(monkeypatch) -> None:
+    monkeypatch.setenv("DOCKER_HOST", "ssh://pre@set")
+    native = ContainerRuntime(
+        tool="docker", host="ssh://pre@set", host_source="native_env"
+    )
+    assert runtime_env(native)["DOCKER_HOST"] == "ssh://pre@set"
+    monkeypatch.delenv("DOCKER_HOST")
+    local = ContainerRuntime(tool="docker")
+    assert "DOCKER_HOST" not in runtime_env(local)
+
+
+def test_container_run_prepends_tool_and_injects_env(monkeypatch) -> None:
+    seen: dict = {}
+
+    def fake_run(cmd, **kwargs):
+        seen["cmd"] = cmd
+        seen["env"] = kwargs.get("env")
+        return "sentinel"
+
+    monkeypatch.setattr("deployer.runtime.subprocess.run", fake_run)
+    rt = ContainerRuntime(tool="docker", host="ssh://u@h", host_source="cli")
+    result = container_run(rt, ["build", "-t", "x", "."], capture_output=True)
+    assert result == "sentinel"
+    assert seen["cmd"] == ["docker", "build", "-t", "x", "."]
+    assert seen["env"]["DOCKER_HOST"] == "ssh://u@h"

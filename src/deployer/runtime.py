@@ -2,8 +2,9 @@
 
 import os
 import shutil
+import subprocess
 from collections.abc import Mapping
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
 from deployer.models import ContainerRuntime
 
@@ -81,3 +82,23 @@ def resolve_runtime(
     if native_host:
         return ContainerRuntime(tool=tool, host=native_host, host_source="native_env")
     return ContainerRuntime(tool=tool)
+
+
+def runtime_env(runtime: ContainerRuntime) -> dict[str, str]:
+    """Process env for container CLI calls. Never log the result.
+
+    Starts from a full os.environ copy (PATH, HOME, SSH_AUTH_SOCK and
+    docker/podman config vars must survive or SSH agent auth breaks) and
+    overlays the tool-native host var only for deployer-chosen hosts.
+    """
+    env = os.environ.copy()
+    if runtime.host_source in ("cli", "deployer_env") and runtime.host is not None:
+        env[NATIVE_HOST_ENV[runtime.tool]] = runtime.host
+    return env
+
+
+def container_run(
+    runtime: ContainerRuntime, args: list[str], **kwargs: Any
+) -> subprocess.CompletedProcess[Any]:
+    """The single chokepoint for every container CLI invocation."""
+    return subprocess.run([runtime.tool, *args], env=runtime_env(runtime), **kwargs)
