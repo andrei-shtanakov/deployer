@@ -5,7 +5,9 @@ bench (corpus, metrics, golden runs) and unblock real Docker verification by
 running the L2 sandbox on a remote SSH host (the local machine is podman-only).
 
 Externally reviewed: `../../../../_cowork_output/deployer-roadmap-design-review-2026-07-21.md`
-(review accepted with two deviations, noted inline below).
+(review accepted with two deviations, noted inline below) and
+`../../../../_cowork_output/deployer-bench-remote-verify-spec-review-2026-07-21.md`
+(all seven must-fixes incorporated).
 
 ## Non-goals
 
@@ -33,8 +35,23 @@ comparable, so it must land before the first bench numbers.
 ## Phase 1 — Remote verify over SSH
 
 Mechanism: docker and podman CLIs already speak to a remote engine via
-`DOCKER_HOST=ssh://user@host` / `CONTAINER_HOST=ssh://user@host`. No asyncssh,
-no manual context copying — the CLI ships the build context itself.
+`DOCKER_HOST=ssh://user@host` / `CONTAINER_HOST=ssh://user@host`. No asyncssh —
+the CLI ships the build context itself.
+
+### Build context hygiene / remote trust boundary
+
+The MVP spec requires an isolated build context ("only the target project is
+copied in; no secrets in the environment or context, ever"), but today's
+`_build()` passes `project_path` directly — any `.env` in the project would
+ship to the daemon, and with a remote daemon it would leave the machine.
+
+Phase 1 therefore builds from a **deterministic temporary context**: the
+project is copied to scratch minus an ignore-list (`.git`, `.venv`,
+`.deployer`, `.env`, `.env.*`, `__pycache__`, `.pytest_cache`,
+`.ruff_cache`), for local and remote L2 alike. Same ignore logic is reused
+by `bench run` in Phase 2. The remote host itself must be trusted — it runs
+LLM-authored `RUN` instructions under the same sandbox rules as the MVP
+(rootless daemon preferred, resource limits, `--network=none` at run stage).
 
 ### ContainerRuntime
 
@@ -55,22 +72,35 @@ Deviation from review: `remote` is a derived property, not a stored field —
 a stored bool can desync from `host` on deserialization.
 
 `detect_container_tool()` evolves into
-`resolve_runtime(tool_arg, host_arg) -> ContainerRuntime | None`.
+`resolve_runtime(tool_arg, host_arg) -> ContainerRuntime | None`, which
+**raises `RuntimeConfigError`** for explicitly-invalid configuration
+(requested tool not on PATH, malformed host URL) — the CLI maps it to
+exit 2. `None` means only one thing: no runtime found implicitly ⇒
+static-only, matching existing behavior.
 
-Resolution precedence:
+Tool precedence:
 
-1. `--container-tool` if given (else current podman-then-docker detection).
-2. `--container-host` if given (`host_source="cli"`).
-3. `DEPLOYER_CONTAINER_HOST` env (`host_source="deployer_env"`).
-4. Tool-native env already set by the user (`DOCKER_HOST` for docker,
+1. `--container-tool` if given.
+2. `DEPLOYER_CONTAINER_TOOL` env.
+3. Current podman-then-docker detection. (Without an env default, a
+   docker-remote host plus podman-first local detection would pick the
+   wrong CLI for every test run.)
+
+Host precedence:
+
+1. `--container-host` if given (`host_source="cli"`).
+2. `DEPLOYER_CONTAINER_HOST` env (`host_source="deployer_env"`).
+3. Tool-native env already set by the user (`DOCKER_HOST` for docker,
    `CONTAINER_HOST` for podman): **captured and recorded** as
    `host_source="native_env"`, not scrubbed. Today's code silently inherits
    these (no subprocess passes `env=`), which would make reports lie about
    where a run happened.
-5. Otherwise local (`host=None`, `host_source="local"`).
+4. Otherwise local (`host=None`, `host_source="local"`).
 
-An explicitly requested tool that is not on PATH is a usage error (exit 2),
-not a silent fall-back to static-only.
+Deployer-provided hosts (`cli`, `deployer_env`) accept **`ssh://` only** in
+this phase — `tcp://` is a different threat model. Invalid scheme ⇒
+`RuntimeConfigError` (exit 2). Native env values are captured as-is: they
+are the user's own preconfiguration.
 
 ### Single subprocess wrapper
 
@@ -87,6 +117,16 @@ cleanup and inspect hit the local one — polluting the remote host and
 reporting garbage sizes. `verify()`, `verify_docker()`, `_build`,
 `_image_size`, `_run_healthcheck` take `runtime: ContainerRuntime` instead of
 `tool: str`.
+
+`_runtime_env(runtime)` is precisely defined:
+
+- starts from `os.environ.copy()` — never a minimal dict (`PATH`, `HOME`,
+  `SSH_AUTH_SOCK` and docker/podman config vars must survive, or SSH agent
+  auth and CLI lookup break);
+- overlays `DOCKER_HOST` (docker) / `CONTAINER_HOST` (podman) when
+  `host_source` is `cli` or `deployer_env`, overriding any native value for
+  the selected tool; leaves env untouched for `native_env`/`local`;
+- is never logged (env may carry secrets).
 
 The healthcheck needs no change: the container runs with `--network=none`
 and the probe is `tool exec ... python -c urlopen(127.0.0.1:...)` inside the
@@ -112,12 +152,21 @@ and must not "repair" the Dockerfile for them.
 
 `VerificationReport` gains `runtime: ContainerRuntime | None = None`.
 `docker_available` stays as-is (backward-compatible JSON; deviation from
-review's optional rename).
+review's optional rename). Its semantics with podman/remote are really
+"container L2 runtime available" — a `container_runtime_available` alias may
+be added later, `docker_available` then deprecated; not in this phase.
 
 ### CLI
 
 `verify` and `author` gain `--container-host URL` and
-`--container-tool {docker,podman}`. Env default: `DEPLOYER_CONTAINER_HOST`.
+`--container-tool {docker,podman}`. Env defaults: `DEPLOYER_CONTAINER_HOST`,
+`DEPLOYER_CONTAINER_TOOL`. Canonical remote test invocation:
+
+```sh
+DEPLOYER_CONTAINER_TOOL=docker \
+DEPLOYER_CONTAINER_HOST=ssh://user@host \
+uv run pytest -m docker
+```
 
 ### Known risks
 
@@ -134,12 +183,18 @@ review's optional rename).
 1. `deployer verify --container-host ssh://user@host --container-tool docker <p>`
    drives build/run/exec/logs/rm/rmi with `DOCKER_HOST` set.
 2. `deployer author ...` uses the same resolved runtime on every iteration.
-3. `VerificationReport.runtime` round-trips JSON.
-4. `AuthoringRun.runtime` and effective timeouts round-trip JSON (see 1.5).
+3. `VerificationReport.runtime` and `AuthoringRun.runtime` round-trip JSON
+   (runtime recording lands here; effective *timeouts* recording is
+   Phase 1.5 — acceptance must not depend on a later phase).
+4. L2 build context excludes the ignore-list (`.env` never reaches the
+   daemon, local or remote).
 5. Unreachable SSH host ⇒ `FailureKind.ENVIRONMENT`.
 6. Docker-marked test suite runs both locally and with
-   `DEPLOYER_CONTAINER_HOST` pointing at a remote host, unchanged.
+   `DEPLOYER_CONTAINER_TOOL`/`DEPLOYER_CONTAINER_HOST` pointing at a remote
+   host, unchanged.
 7. Existing unit suite still needs neither Docker nor SSH.
+8. Explicitly-invalid runtime config (missing requested tool, non-`ssh://`
+   deployer-provided host) ⇒ exit 2, not silent static-only.
 
 ## Phase 1.5 — Run-metadata hardening
 
@@ -153,6 +208,10 @@ Everything that affects comparability gets recorded in `VerificationReport`
   `max_iterations`;
 - hadolint availability/version (exists), deployer version/git sha.
 
+Version/platform probing is **best-effort and non-fatal**: a misconfigured
+remote engine records a metadata warning; verification outcome depends only
+on the actual L2 checks.
+
 ## Phase 2 — Corpus + bench
 
 Layout:
@@ -164,6 +223,8 @@ corpus/
       project/...
       target.json
       expected.json
+      fixture.Dockerfile   # known-good, for the offline author; outside
+                           # project/ so it never enters the build context
     pip-requirements/
     service-healthcheck/
     no-build-system/
@@ -195,8 +256,8 @@ corpus/
   iterations-to-green, failure taxonomy, image size, wall time;
 - stores the raw run under `.deployer-runs/<timestamp>-<label>/`.
 
-**Offline path is the default**: `--author fixture` replays known-good
-Dockerfiles (and `bench verify` checks committed Dockerfiles) with no API
+**Offline path is the default**: `--author fixture` replays each case's
+`fixture.Dockerfile` (and `bench verify` checks committed Dockerfiles) with no API
 key and no spend — CI-friendly. The LLM author must be selected explicitly.
 This requires an author seam in the CLI (today `_cmd_author` constructs
 `AnthropicAuthor` unconditionally).
@@ -211,7 +272,9 @@ version/commit and external target URL+commit.
   `corpus/golden/` (committed): normalized `authoring-run.json` (no absolute
   paths), final Dockerfile per case, selected metrics, per-case verification
   summary. No wall-clock durations, host paths, or remote host names —
-  those made a raw copy churn on every promote.
+  those made a raw copy churn on every promote. Golden keeps only
+  comparability-relevant runtime facts: `remote` flag, tool,
+  platform/arch — never the hostname (raw runs keep the exact host).
 - `deployer bench compare <runA> <runB|golden>` reports regressions by
   level:
 
@@ -219,7 +282,11 @@ version/commit and external target URL+commit.
 |---|---|
 | Hard | case green → red |
 | Important | iterations above threshold; failure kind flipped authoring↔environment |
-| Advisory | image size +N%; wall time +N%; hadolint warnings up |
+| Advisory | image size +N%; hadolint warnings up |
+| Advisory (raw-vs-raw only) | wall time +N% |
+
+Wall-time comparison exists only between raw runs — golden intentionally
+stores no durations, so `run vs golden` never reports it.
 
 - External-project goldens store pinned URL/commit + normalized outputs
   only — never a source snapshot or build artifacts.
@@ -239,9 +306,10 @@ Each expansion adds its corpus case *first* (target before capability):
 
 ## Testing strategy
 
-- Unit: runtime resolution matrix (flag/env/native/local precedence), env
-  injection into every container call (mocked subprocess), classification
-  markers, bench aggregation, promote normalization (no absolute paths, no
+- Unit: runtime resolution matrix (flag/env/native/local precedence,
+  `RuntimeConfigError` cases), env injection into every container call
+  (mocked subprocess), build-context ignore-list, classification markers,
+  bench aggregation, promote normalization (no absolute paths, no
   timestamps in golden), compare regression levels.
 - Docker-marked: existing suite parametrized by `DEPLOYER_CONTAINER_HOST`;
   corpus smoke via `bench verify` (no LLM).
