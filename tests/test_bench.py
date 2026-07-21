@@ -5,13 +5,25 @@ from pathlib import Path
 
 import pytest
 
-from deployer.bench import FixtureAuthor, load_corpus
+from deployer.bench import (
+    FixtureAuthor,
+    load_corpus,
+    render_markdown,
+    run_bench,
+    run_case,
+)
 from deployer.models import (
+    AuthoringRun,
     BenchCaseResult,
     BenchReport,
+    CheckResult,
+    CheckStatus,
+    ContainerRuntime,
     DeployTarget,
     ExpectedOutcome,
+    IterationRecord,
     ProjectFacts,
+    VerificationReport,
 )
 
 
@@ -138,3 +150,160 @@ def test_load_corpus_case_without_project_raises(tmp_path: Path) -> None:
     (tmp_path / "synthetic" / "broken").mkdir(parents=True)
     with pytest.raises(ValueError, match="broken"):
         load_corpus(tmp_path)
+
+
+def _fake_run(success: bool) -> AuthoringRun:
+    report = VerificationReport(
+        results=[CheckResult(check_id="parses", status=CheckStatus.PASSED)],
+        image_size_bytes=123_000_000 if success else None,
+    )
+    return AuthoringRun(
+        project="x",
+        target=DeployTarget(),
+        iterations=[
+            IterationRecord(
+                index=0, dockerfile="FROM x:1\n", report=report, duration_s=0.1
+            )
+        ],
+        stopped_reason="success" if success else "no_progress",
+        success=success,
+    )
+
+
+def test_run_case_skips_l2_case_without_runtime(tmp_path: Path) -> None:
+    _make_case(tmp_path, "svc")
+    case = load_corpus(tmp_path)[0]
+    result = run_case(
+        case,
+        FixtureAuthor("FROM x:1\n"),
+        None,
+        tmp_path / "out",
+        build_timeout=600,
+        health_timeout=30,
+    )
+    assert result.outcome == "skipped"
+    assert "runtime" in result.skip_reason
+
+
+def test_run_case_skips_when_author_missing(tmp_path: Path) -> None:
+    _make_case(tmp_path, "svc", fixture=None)
+    case = load_corpus(tmp_path)[0]
+    result = run_case(
+        case,
+        None,
+        ContainerRuntime(tool="docker"),
+        tmp_path / "out",
+        build_timeout=600,
+        health_timeout=30,
+    )
+    assert result.outcome == "skipped"
+    assert "fixture" in result.skip_reason
+
+
+def test_run_case_runs_in_scratch_and_writes_artifacts(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _make_case(tmp_path, "svc", expected={"requires_l2": False})
+    (tmp_path / "synthetic" / "svc" / "project" / ".env").write_text("S=1\n")
+    case = load_corpus(tmp_path)[0]
+    seen: dict = {}
+
+    def fake_author_dockerfile(project_path, target, author, **kwargs):
+        seen["project_path"] = Path(project_path)
+        seen["kwargs"] = kwargs
+        return _fake_run(True)
+
+    monkeypatch.setattr("deployer.bench.author_dockerfile", fake_author_dockerfile)
+    out = tmp_path / "out"
+    result = run_case(
+        case,
+        FixtureAuthor("FROM x:1\n"),
+        None,
+        out,
+        build_timeout=99,
+        health_timeout=9,
+    )
+    assert seen["project_path"] != case.project_dir  # scratch copy, not corpus
+    assert not (seen["project_path"] / ".env").exists()  # CONTEXT_IGNORE applied
+    assert seen["kwargs"]["max_iterations"] == case.expected.max_iterations
+    assert seen["kwargs"]["build_timeout"] == 99
+    assert result.outcome == "matched" and result.success
+    assert result.iterations == 1
+    assert result.image_size_bytes == 123_000_000
+    assert (out / "authoring-run.json").is_file()
+    assert (out / "Dockerfile").read_text() == "FROM x:1\n\n"
+    assert not (case.project_dir / ".deployer").exists()  # corpus untouched
+
+
+def test_run_case_mismatch_when_expectation_violated(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _make_case(tmp_path, "svc", expected={"requires_l2": False})
+    case = load_corpus(tmp_path)[0]
+    monkeypatch.setattr(
+        "deployer.bench.author_dockerfile",
+        lambda *a, **k: _fake_run(False),
+    )
+    result = run_case(
+        case,
+        FixtureAuthor("FROM x:1\n"),
+        None,
+        tmp_path / "out",
+        build_timeout=600,
+        health_timeout=30,
+    )
+    assert result.outcome == "mismatched"
+    assert result.stopped_reason == "no_progress"
+
+
+def test_run_bench_aggregates_and_writes_reports(tmp_path: Path, monkeypatch) -> None:
+    _make_case(tmp_path, "a-ok", expected={"requires_l2": False})
+    _make_case(tmp_path, "b-l2")  # requires_l2 default True -> skipped (no runtime)
+    monkeypatch.setattr(
+        "deployer.bench.author_dockerfile", lambda *a, **k: _fake_run(True)
+    )
+    report, run_dir = run_bench(
+        tmp_path,
+        lambda case: FixtureAuthor("FROM x:1\n"),
+        None,
+        label="unit",
+        author_backend="fixture",
+        runs_root=tmp_path / "runs",
+    )
+    assert [c.outcome for c in report.cases] == ["matched", "skipped"]
+    assert report.label == "unit"
+    assert run_dir.name.endswith("-unit")
+    assert (run_dir / "bench-report.json").is_file()
+    md = (run_dir / "bench-report.md").read_text()
+    assert "a-ok" in md and "skipped" in md
+
+
+def test_run_bench_no_matching_cases_raises(tmp_path: Path) -> None:
+    _make_case(tmp_path, "only")
+    with pytest.raises(ValueError, match="no corpus cases"):
+        run_bench(
+            tmp_path,
+            lambda c: None,
+            None,
+            label="x",
+            author_backend="fixture",
+            pattern="zzz*",
+            runs_root=tmp_path / "runs",
+        )
+
+
+def test_render_markdown_has_table_and_metadata() -> None:
+    report = _report(
+        BenchCaseResult(
+            case="a",
+            outcome="matched",
+            success=True,
+            stopped_reason="success",
+            iterations=2,
+            image_size_bytes=45_600_000,
+            wall_time_s=12.5,
+        )
+    )
+    md = render_markdown(report)
+    assert "| a | matched | success | 2 | 45.6 | 12.5 |" in md
+    assert "author: fixture" in md

@@ -2,16 +2,36 @@
 
 import fnmatch
 import hashlib
+import shutil
+import tempfile
+import time
+from collections.abc import Callable
+from datetime import datetime
 from pathlib import Path
 
 from pydantic import BaseModel, Field
 
+from deployer.author import (
+    DockerfileAuthor,
+    _deployer_git_sha,
+    _deployer_version,
+    author_dockerfile,
+)
 from deployer.models import (
     AuthorInfo,
+    BenchCaseResult,
+    BenchReport,
+    ContainerRuntime,
     DeployTarget,
     ExpectedOutcome,
     ProjectFacts,
     VerificationReport,
+)
+from deployer.runtime import probe_runtime_versions
+from deployer.verify import (
+    CONTEXT_IGNORE,
+    DEFAULT_BUILD_TIMEOUT,
+    DEFAULT_HEALTH_TIMEOUT,
 )
 
 
@@ -91,3 +111,150 @@ def load_corpus(corpus_root: Path, pattern: str = "*") -> list[BenchCase]:
             )
         )
     return cases
+
+
+def run_case(
+    case: BenchCase,
+    author: DockerfileAuthor | None,
+    runtime: ContainerRuntime | None,
+    case_out_dir: Path,
+    *,
+    build_timeout: int,
+    health_timeout: int,
+) -> BenchCaseResult:
+    """Author one corpus case in a scratch copy; never mutates the corpus."""
+    if case.expected.requires_l2 and runtime is None:
+        return BenchCaseResult(
+            case=case.name,
+            outcome="skipped",
+            skip_reason="case requires L2 but no container runtime resolved",
+        )
+    if author is None:
+        return BenchCaseResult(
+            case=case.name,
+            outcome="skipped",
+            skip_reason="no fixture.Dockerfile for the offline fixture author",
+        )
+    started = time.monotonic()
+    with tempfile.TemporaryDirectory(prefix=f"deployer-bench-{case.name}-") as tmp:
+        scratch = Path(tmp) / "project"
+        shutil.copytree(
+            case.project_dir,
+            scratch,
+            symlinks=True,
+            ignore=shutil.ignore_patterns(*CONTEXT_IGNORE),
+        )
+        run = author_dockerfile(
+            scratch,
+            case.target,
+            author,
+            max_iterations=case.expected.max_iterations,
+            runtime=runtime,
+            build_timeout=build_timeout,
+            health_timeout=health_timeout,
+        )
+    wall = time.monotonic() - started
+    case_out_dir.mkdir(parents=True, exist_ok=True)
+    (case_out_dir / "authoring-run.json").write_text(run.model_dump_json(indent=2))
+    last = run.iterations[-1] if run.iterations else None
+    if last is not None:
+        (case_out_dir / "Dockerfile").write_text(last.dockerfile + "\n")
+    failure_kinds = sorted(
+        {
+            r.failure_kind
+            for it in run.iterations
+            for r in it.report.results
+            if r.failure_kind is not None
+        }
+    )
+    return BenchCaseResult(
+        case=case.name,
+        outcome="matched"
+        if run.success == case.expected.expected_success
+        else "mismatched",
+        success=run.success,
+        stopped_reason=run.stopped_reason,
+        iterations=len(run.iterations),
+        image_size_bytes=last.report.image_size_bytes if last else None,
+        wall_time_s=round(wall, 3),
+        failure_kinds=failure_kinds,
+    )
+
+
+def run_bench(
+    corpus_root: Path,
+    make_author: Callable[[BenchCase], DockerfileAuthor | None],
+    runtime: ContainerRuntime | None,
+    *,
+    label: str,
+    author_backend: str,
+    pattern: str = "*",
+    runs_root: Path = Path(".deployer-runs"),
+    build_timeout: int = DEFAULT_BUILD_TIMEOUT,
+    health_timeout: int = DEFAULT_HEALTH_TIMEOUT,
+) -> tuple[BenchReport, Path]:
+    """Run the authoring loop over every matching corpus case and aggregate."""
+    cases = load_corpus(corpus_root, pattern)
+    if not cases:
+        raise ValueError(f"no corpus cases match pattern {pattern!r}")
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    run_dir = runs_root / f"{stamp}-{label}"
+    run_dir.mkdir(parents=True, exist_ok=False)
+    results = [
+        run_case(
+            case,
+            make_author(case),
+            runtime,
+            run_dir / "cases" / case.name,
+            build_timeout=build_timeout,
+            health_timeout=health_timeout,
+        )
+        for case in cases
+    ]
+    report = BenchReport(
+        label=label,
+        author_backend=author_backend,
+        corpus_commit=_deployer_git_sha(),
+        deployer_version=_deployer_version(),
+        runtime=runtime,
+        runtime_versions=(
+            probe_runtime_versions(runtime) if runtime is not None else None
+        ),
+        build_timeout_s=build_timeout,
+        health_timeout_s=health_timeout,
+        cases=results,
+    )
+    (run_dir / "bench-report.json").write_text(report.model_dump_json(indent=2))
+    (run_dir / "bench-report.md").write_text(render_markdown(report))
+    return report, run_dir
+
+
+def render_markdown(report: BenchReport) -> str:
+    """Human-readable summary table for one bench run."""
+    if report.runtime is None:
+        runtime_line = "static-only"
+    elif report.runtime.host:
+        runtime_line = f"{report.runtime.tool} @ {report.runtime.host}"
+    else:
+        runtime_line = f"{report.runtime.tool} (local)"
+    rate = report.success_rate
+    lines = [
+        f"# Bench run: {report.label}",
+        "",
+        f"- author: {report.author_backend}",
+        f"- corpus commit: {report.corpus_commit or 'unknown'}",
+        f"- deployer: {report.deployer_version or 'unknown'}",
+        f"- runtime: {runtime_line}",
+        f"- timeouts: build {report.build_timeout_s}s / health {report.health_timeout_s}s",
+        f"- success rate: {rate if rate is not None else 'n/a'}",
+        "",
+        "| case | outcome | stop reason | iters | image MB | wall s |",
+        "|---|---|---|---:|---:|---:|",
+    ]
+    for c in report.cases:
+        size = f"{c.image_size_bytes / 1e6:.1f}" if c.image_size_bytes else "-"
+        lines.append(
+            f"| {c.case} | {c.outcome} | {c.stopped_reason or '-'} "
+            f"| {c.iterations} | {size} | {c.wall_time_s:.1f} |"
+        )
+    return "\n".join(lines) + "\n"
