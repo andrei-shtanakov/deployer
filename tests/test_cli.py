@@ -577,3 +577,42 @@ def test_bench_promote_force_overrides_mismatch(tmp_path, monkeypatch, capsys):
     assert code == 0
     assert (corpus / "golden" / "golden.json").is_file()
     assert "golden" in capsys.readouterr().out
+
+
+def test_bench_compare_cli_regression_exits_1(tmp_path, monkeypatch, capsys):
+    corpus = _make_corpus(tmp_path)
+    monkeypatch.setattr("deployer.cli.resolve_runtime", lambda *a, **k: None)
+    monkeypatch.chdir(tmp_path)
+    assert main(["bench", "run", "--corpus", str(corpus), "--label", "base"]) == 0
+    run_dir = next((tmp_path / ".deployer-runs").iterdir())
+    assert main(["bench", "promote", str(run_dir), "--corpus", str(corpus)]) == 0
+
+    import json as _json
+
+    report_file = run_dir / "bench-report.json"
+    data = _json.loads(report_file.read_text())
+    data["cases"][0]["success"] = False
+    data["cases"][0]["outcome"] = "mismatched"
+    data["cases"][0]["stopped_reason"] = "no_progress"
+    report_file.write_text(_json.dumps(data))
+
+    code = main(["bench", "compare", str(run_dir), "golden", "--corpus", str(corpus)])
+    assert code == 1
+    out = capsys.readouterr().out
+    assert "hard" in out and "case-one" in out
+
+
+def test_bench_compare_clean_exits_0(tmp_path, monkeypatch, capsys):
+    corpus = _make_corpus(tmp_path)
+    monkeypatch.setattr("deployer.cli.resolve_runtime", lambda *a, **k: None)
+    monkeypatch.chdir(tmp_path)
+    assert main(["bench", "run", "--corpus", str(corpus), "--label", "base"]) == 0
+    run_dir = next((tmp_path / ".deployer-runs").iterdir())
+    assert main(["bench", "promote", str(run_dir), "--corpus", str(corpus)]) == 0
+    code = main(["bench", "compare", str(run_dir), "golden", "--corpus", str(corpus)])
+    assert code == 0
+    assert "no regressions" in capsys.readouterr().out
+
+
+def test_bench_compare_bad_baseline_exits_2(tmp_path, capsys):
+    assert main(["bench", "compare", str(tmp_path), str(tmp_path / "nope")]) == 2

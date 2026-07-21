@@ -12,6 +12,8 @@ from deployer.author import author_dockerfile
 from deployer.bench import (
     FixtureAuthor,
     PromoteRefusedError,
+    compare_runs,
+    load_baseline,
     promote_run,
     run_bench,
     verify_corpus,
@@ -19,6 +21,7 @@ from deployer.bench import (
 from deployer.facts import analyze_project
 from deployer.llm import AnthropicAuthor
 from deployer.models import (
+    BenchReport,
     CheckStatus,
     ContainerRuntime,
     DeployTarget,
@@ -322,6 +325,38 @@ def _cmd_bench_promote(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_bench_compare(args: argparse.Namespace) -> int:
+    candidate_dir = Path(args.candidate)
+    try:
+        candidate = load_baseline(candidate_dir, Path(args.corpus))
+        baseline = load_baseline(
+            args.baseline if args.baseline == "golden" else Path(args.baseline),
+            Path(args.corpus),
+        )
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    if not isinstance(candidate, BenchReport):
+        print("error: candidate must be a raw run dir", file=sys.stderr)
+        return 2
+    findings = compare_runs(
+        candidate,
+        baseline,
+        image_threshold_pct=args.image_threshold,
+        wall_threshold_pct=args.wall_threshold,
+        iteration_threshold=args.iteration_threshold,
+    )
+    if not findings:
+        print("no regressions")
+        return 0
+    for finding in findings:
+        print(
+            f"[{finding.level:>9}] {finding.case}: {finding.metric} — {finding.detail}"
+        )
+    blocking = any(f.level in ("hard", "important") for f in findings)
+    return 1 if blocking else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """Entry point for the `deployer` CLI."""
     parser = argparse.ArgumentParser(prog="deployer")
@@ -389,6 +424,23 @@ def main(argv: list[str] | None = None) -> int:
     p_bench_promote.add_argument("--corpus", default="corpus")
     p_bench_promote.add_argument("--force", action="store_true")
     p_bench_promote.set_defaults(func=_cmd_bench_promote)
+
+    p_bench_compare = bench_sub.add_parser(
+        "compare", help="compare a raw run against another run or the golden"
+    )
+    p_bench_compare.add_argument("candidate")
+    p_bench_compare.add_argument("baseline", help="raw run dir or 'golden'")
+    p_bench_compare.add_argument("--corpus", default="corpus")
+    p_bench_compare.add_argument(
+        "--image-threshold", type=float, default=10.0, metavar="PCT"
+    )
+    p_bench_compare.add_argument(
+        "--wall-threshold", type=float, default=25.0, metavar="PCT"
+    )
+    p_bench_compare.add_argument(
+        "--iteration-threshold", type=int, default=0, metavar="N"
+    )
+    p_bench_compare.set_defaults(func=_cmd_bench_compare)
 
     args = parser.parse_args(argv)
     return args.func(args)
