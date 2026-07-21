@@ -243,9 +243,13 @@ class BenchCaseResult(BaseModel):
     stopped_reason: StopReason | None = None
     iterations: int = 0
     image_size_bytes: int | None = None
+    hadolint_status: CheckStatus | None = None
     wall_time_s: float = 0.0
     skip_reason: str = ""
     failure_kinds: list[FailureKind] = Field(default_factory=list)
+    expected: ExpectedOutcome = Field(default_factory=ExpectedOutcome)
+    external_url: str | None = None
+    external_commit: str | None = None
 
 
 class BenchReport(BaseModel):
@@ -271,3 +275,51 @@ class BenchReport(BaseModel):
     @property
     def all_matched(self) -> bool:
         return all(c.outcome != "mismatched" for c in self.cases)
+
+
+class GoldenCheck(BaseModel):
+    """One check outcome in a golden baseline; messages are stripped as noise."""
+
+    check_id: str
+    status: CheckStatus
+    failure_kind: FailureKind | None = None
+
+
+class GoldenCase(BaseModel):
+    """Normalized per-case baseline: comparable facts only, no noise."""
+
+    case: str
+    success: bool
+    stopped_reason: StopReason | None = None
+    iterations: int = 0
+    failure_kinds: list[FailureKind] = Field(default_factory=list)
+    image_size_bytes: int | None = None
+    hadolint_status: CheckStatus | None = None
+    checks: list[GoldenCheck] = Field(default_factory=list)
+    expected: ExpectedOutcome = Field(default_factory=ExpectedOutcome)
+    external_url: str | None = None
+    external_commit: str | None = None
+
+
+class GoldenReport(BaseModel):
+    """Committed golden baseline. Never stores hostnames or wall-clock data."""
+
+    promoted_from_label: str
+    corpus_commit: str | None = None
+    deployer_version: str | None = None
+    author_backend: str
+    runtime_tool: str | None = None
+    runtime_remote: bool = False
+    runtime_platform: str | None = None
+    build_timeout_s: int
+    health_timeout_s: int
+    cases: list[GoldenCase] = Field(default_factory=list)
+
+
+class CompareFinding(BaseModel):
+    """One regression (or notice) from comparing two bench runs."""
+
+    level: Literal["hard", "important", "advisory"]
+    case: str
+    metric: str
+    detail: str

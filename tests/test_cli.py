@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from deployer import cli
+from deployer.cli import main
 from deployer.models import CheckResult, CheckStatus, FailureKind, VerificationReport
 
 
@@ -461,16 +462,7 @@ def _make_corpus(tmp_path, name="case-one", requires_l2=False):
     case = tmp_path / "corpus" / "synthetic" / name
     (case / "project").mkdir(parents=True)
     (case / "project" / "main.py").write_text("print('hi')\n")
-    # `success` (in AuthoringRun) is only True when a runtime actually ran
-    # the container (see author.py: stopped_reason "success" vs
-    # "static_only"); without a runtime the achievable outcome is
-    # "static_only", i.e. success=False. expected_success mirrors
-    # requires_l2 here so the offline/no-runtime tests below express an
-    # achievable expectation (skipped cases never compare success, so this
-    # is a no-op for requires_l2=True corpora).
-    (case / "expected.json").write_text(
-        _json.dumps({"requires_l2": requires_l2, "expected_success": requires_l2})
-    )
+    (case / "expected.json").write_text(_json.dumps({"requires_l2": requires_l2}))
     (case / "fixture.Dockerfile").write_text("FROM python:3.12-slim\n")
     return tmp_path / "corpus"
 
@@ -516,6 +508,13 @@ def test_bench_verify_static_only_pass_exits_0(tmp_path, monkeypatch, capsys):
     assert "case-one" in capsys.readouterr().out
 
 
+def test_bench_verify_static_only_prints_note(tmp_path, monkeypatch, capsys):
+    corpus = _make_corpus(tmp_path)
+    monkeypatch.setattr("deployer.cli.resolve_runtime", lambda *a, **k: None)
+    assert main(["bench", "verify", "--corpus", str(corpus)]) == 0
+    assert "static-only" in capsys.readouterr().out
+
+
 def test_bench_verify_no_matching_cases_exits_2(tmp_path, monkeypatch, capsys):
     corpus = _make_corpus(tmp_path)
     monkeypatch.setattr("deployer.cli.resolve_runtime", lambda *a, **k: None)
@@ -525,11 +524,13 @@ def test_bench_verify_no_matching_cases_exits_2(tmp_path, monkeypatch, capsys):
 
 
 def test_bench_run_clone_failure_exits_2(tmp_path, monkeypatch, capsys):
+    from deployer.bench import CloneError
+
     corpus = _make_corpus(tmp_path)
     monkeypatch.setattr("deployer.cli.resolve_runtime", lambda *a, **k: None)
 
     def boom(*args, **kwargs):
-        raise RuntimeError("cloning external target demo failed")
+        raise CloneError("cloning external target demo failed")
 
     monkeypatch.setattr("deployer.cli.run_bench", boom)
     code = cli.main(
@@ -545,3 +546,114 @@ def test_bench_run_clone_failure_exits_2(tmp_path, monkeypatch, capsys):
     )
     assert code == 2
     assert "demo" in capsys.readouterr().err
+
+
+def test_bench_promote_cli(tmp_path, monkeypatch, capsys):
+    corpus = _make_corpus(tmp_path)
+    monkeypatch.setattr("deployer.cli.resolve_runtime", lambda *a, **k: None)
+    monkeypatch.chdir(tmp_path)
+    assert main(["bench", "run", "--corpus", str(corpus), "--label", "t"]) == 0
+    run_dir = next((tmp_path / ".deployer-runs").iterdir())
+    code = main(["bench", "promote", str(run_dir), "--corpus", str(corpus)])
+    assert code == 0
+    assert (corpus / "golden" / "golden.json").is_file()
+    assert "golden" in capsys.readouterr().out
+
+
+def test_bench_promote_missing_run_dir_exits_2(tmp_path, capsys):
+    assert main(["bench", "promote", str(tmp_path / "nope")]) == 2
+
+
+def test_bench_promote_force_overrides_mismatch(tmp_path, monkeypatch, capsys):
+    corpus = _make_corpus(tmp_path)
+    monkeypatch.setattr("deployer.cli.resolve_runtime", lambda *a, **k: None)
+    monkeypatch.chdir(tmp_path)
+    # Run bench to create a run
+    assert main(["bench", "run", "--corpus", str(corpus), "--label", "t"]) == 0
+    run_dir = next((tmp_path / ".deployer-runs").iterdir())
+    # Corrupt bench-report.json to mark one case as mismatched
+    report_file = run_dir / "bench-report.json"
+    report_data = json.loads(report_file.read_text())
+    if report_data.get("cases"):
+        report_data["cases"][0]["outcome"] = "mismatched"
+        report_file.write_text(json.dumps(report_data, indent=2))
+    # Promote without --force should fail with exit code 1
+    code = main(["bench", "promote", str(run_dir), "--corpus", str(corpus)])
+    assert code == 1
+    assert "mismatched" in capsys.readouterr().err
+    # Promote with --force should succeed
+    code = main(["bench", "promote", str(run_dir), "--corpus", str(corpus), "--force"])
+    assert code == 0
+    assert (corpus / "golden" / "golden.json").is_file()
+    assert "golden" in capsys.readouterr().out
+
+
+def test_bench_compare_cli_regression_exits_1(tmp_path, monkeypatch, capsys):
+    corpus = _make_corpus(tmp_path)
+    monkeypatch.setattr("deployer.cli.resolve_runtime", lambda *a, **k: None)
+    monkeypatch.chdir(tmp_path)
+    assert main(["bench", "run", "--corpus", str(corpus), "--label", "base"]) == 0
+    run_dir = next((tmp_path / ".deployer-runs").iterdir())
+    assert main(["bench", "promote", str(run_dir), "--corpus", str(corpus)]) == 0
+
+    import json as _json
+
+    report_file = run_dir / "bench-report.json"
+    data = _json.loads(report_file.read_text())
+    data["cases"][0]["success"] = False
+    data["cases"][0]["outcome"] = "mismatched"
+    data["cases"][0]["stopped_reason"] = "no_progress"
+    report_file.write_text(_json.dumps(data))
+
+    code = main(["bench", "compare", str(run_dir), "golden", "--corpus", str(corpus)])
+    assert code == 1
+    out = capsys.readouterr().out
+    assert "hard" in out and "case-one" in out
+
+
+def test_bench_compare_clean_exits_0(tmp_path, monkeypatch, capsys):
+    corpus = _make_corpus(tmp_path)
+    monkeypatch.setattr("deployer.cli.resolve_runtime", lambda *a, **k: None)
+    monkeypatch.chdir(tmp_path)
+    assert main(["bench", "run", "--corpus", str(corpus), "--label", "base"]) == 0
+    run_dir = next((tmp_path / ".deployer-runs").iterdir())
+    assert main(["bench", "promote", str(run_dir), "--corpus", str(corpus)]) == 0
+    code = main(["bench", "compare", str(run_dir), "golden", "--corpus", str(corpus)])
+    assert code == 0
+    assert "no regressions" in capsys.readouterr().out
+
+
+def test_bench_compare_bad_baseline_exits_2(tmp_path, monkeypatch, capsys):
+    corpus = _make_corpus(tmp_path)
+    monkeypatch.setattr("deployer.cli.resolve_runtime", lambda *a, **k: None)
+    monkeypatch.chdir(tmp_path)
+    assert main(["bench", "run", "--corpus", str(corpus), "--label", "t"]) == 0
+    run_dir = next((tmp_path / ".deployer-runs").iterdir())
+    code = main(
+        [
+            "bench",
+            "compare",
+            str(run_dir),
+            str(tmp_path / "nope"),
+            "--corpus",
+            str(corpus),
+        ]
+    )
+    assert code == 2
+    assert "nope" in capsys.readouterr().err
+
+
+def test_bench_compare_golden_as_candidate_exits_2_with_message(
+    tmp_path, monkeypatch, capsys
+):
+    corpus = _make_corpus(tmp_path)
+    monkeypatch.setattr("deployer.cli.resolve_runtime", lambda *a, **k: None)
+    monkeypatch.chdir(tmp_path)
+    assert main(["bench", "run", "--corpus", str(corpus), "--label", "t"]) == 0
+    run_dir = next((tmp_path / ".deployer-runs").iterdir())
+    code = main(["bench", "compare", "golden", str(run_dir), "--corpus", str(corpus)])
+    assert code == 2
+    assert (
+        "candidate must be a raw run dir (the golden can only be a baseline)"
+        in capsys.readouterr().err
+    )

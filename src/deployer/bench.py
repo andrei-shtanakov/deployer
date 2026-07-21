@@ -22,12 +22,18 @@ from deployer.author import (
 from deployer.facts import analyze_project
 from deployer.models import (
     AuthorInfo,
+    AuthoringRun,
     BenchCaseResult,
     BenchReport,
+    CheckStatus,
+    CompareFinding,
     ContainerRuntime,
     DeployTarget,
     ExpectedOutcome,
     ExternalTarget,
+    GoldenCase,
+    GoldenCheck,
+    GoldenReport,
     ProjectFacts,
     VerificationReport,
 )
@@ -38,6 +44,10 @@ from deployer.verify import (
     DEFAULT_HEALTH_TIMEOUT,
     verify,
 )
+
+
+class CloneError(RuntimeError):
+    """Cloning an external target failed."""
 
 
 class FixtureAuthor:
@@ -79,6 +89,8 @@ class BenchCase(BaseModel):
     target: DeployTarget = Field(default_factory=DeployTarget)
     expected: ExpectedOutcome = Field(default_factory=ExpectedOutcome)
     fixture_dockerfile: Path | None = None
+    external_url: str | None = None
+    external_commit: str | None = None
 
 
 def load_corpus(corpus_root: Path, pattern: str = "*") -> list[BenchCase]:
@@ -142,7 +154,7 @@ def clone_external(ext: ExternalTarget, dest_root: Path) -> BenchCase:
             command, cwd=dest, capture_output=True, text=True, timeout=300
         )
         if proc.returncode != 0:
-            raise RuntimeError(
+            raise CloneError(
                 f"cloning external target {ext.name} failed at "
                 f"{' '.join(command)}: {proc.stderr.strip()}"
             )
@@ -152,6 +164,8 @@ def clone_external(ext: ExternalTarget, dest_root: Path) -> BenchCase:
         target=ext.target,
         expected=ext.expected,
         fixture_dockerfile=None,
+        external_url=ext.url,
+        external_commit=ext.commit,
     )
 
 
@@ -170,12 +184,14 @@ def run_case(
             case=case.name,
             outcome="skipped",
             skip_reason="case requires L2 but no container runtime resolved",
+            expected=case.expected,
         )
     if author is None:
         return BenchCaseResult(
             case=case.name,
             outcome="skipped",
             skip_reason="no fixture.Dockerfile for the offline fixture author",
+            expected=case.expected,
         )
     started = time.monotonic()
     with tempfile.TemporaryDirectory(prefix=f"deployer-bench-{case.name}-") as tmp:
@@ -209,18 +225,64 @@ def run_case(
             if r.failure_kind is not None
         }
     )
+    hadolint_status: CheckStatus | None = None
+    if last is not None:
+        for r in last.report.results:
+            if r.check_id == "hadolint":
+                hadolint_status = r.status
+                break
+    achieved_level = run.success or (
+        not case.expected.requires_l2
+        and run.stopped_reason == "static_only"
+        and bool(run.iterations)
+        and run.iterations[-1].report.passed
+    )
+    matched = achieved_level == case.expected.expected_success
+    if (
+        matched
+        and not case.expected.expected_success
+        and case.expected.expected_failure_kind is not None
+    ):
+        matched = case.expected.expected_failure_kind in failure_kinds
     return BenchCaseResult(
         case=case.name,
-        outcome="matched"
-        if run.success == case.expected.expected_success
-        else "mismatched",
-        success=run.success,
+        outcome="matched" if matched else "mismatched",
+        success=achieved_level,
         stopped_reason=run.stopped_reason,
         iterations=len(run.iterations),
         image_size_bytes=last.report.image_size_bytes if last else None,
+        hadolint_status=hadolint_status,
         wall_time_s=round(wall, 3),
         failure_kinds=failure_kinds,
+        expected=case.expected,
+        external_url=case.external_url,
+        external_commit=case.external_commit,
     )
+
+
+def _corpus_commit() -> str | None:
+    """Deployer repo sha, '-dirty'-suffixed when the working tree has changes."""
+    sha = _deployer_git_sha()
+    if sha is None:
+        return None
+    try:
+        proc = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(Path(__file__).resolve().parent),
+                "status",
+                "--porcelain",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return sha
+    if proc.returncode == 0 and proc.stdout.strip():
+        return f"{sha}-dirty"
+    return sha
 
 
 def _run_bench_cases(
@@ -249,7 +311,7 @@ def _run_bench_cases(
     report = BenchReport(
         label=label,
         author_backend=author_backend,
-        corpus_commit=_deployer_git_sha(),
+        corpus_commit=_corpus_commit(),
         deployer_version=_deployer_version(),
         runtime=runtime,
         runtime_versions=(
@@ -363,6 +425,292 @@ def verify_corpus(
     return results
 
 
+class PromoteRefusedError(ValueError):
+    """Raised when `promote_run` refuses to promote a mismatched run."""
+
+
+def _load_bench_report(run_dir: Path) -> BenchReport:
+    """Parse `<run_dir>/bench-report.json`; raise if the run dir is bogus."""
+    report_file = run_dir / "bench-report.json"
+    if not report_file.is_file():
+        raise ValueError(f"not a bench run dir: missing {report_file}")
+    return BenchReport.model_validate_json(report_file.read_text())
+
+
+def _normalize_from_report(report: BenchReport, run_dir: Path) -> GoldenReport:
+    """Pure function: normalize a bench report into a golden baseline.
+
+    Strips wall-clock data, absolute paths, hostnames and check messages;
+    skipped cases are excluded (a golden only asserts about cases that ran).
+    Reads per-case authoring-run.json files from run_dir.
+    """
+    golden_cases: list[GoldenCase] = []
+    for result in report.cases:
+        if result.outcome == "skipped":
+            continue
+        checks: list[GoldenCheck] = []
+        run_file = run_dir / "cases" / result.case / "authoring-run.json"
+        if run_file.is_file():
+            authoring = AuthoringRun.model_validate_json(run_file.read_text())
+            if authoring.iterations:
+                last_report = authoring.iterations[-1].report
+                checks = [
+                    GoldenCheck(
+                        check_id=r.check_id,
+                        status=r.status,
+                        failure_kind=r.failure_kind,
+                    )
+                    for r in last_report.results
+                ]
+        golden_cases.append(
+            GoldenCase(
+                case=result.case,
+                success=result.success,
+                stopped_reason=result.stopped_reason,
+                iterations=result.iterations,
+                failure_kinds=result.failure_kinds,
+                image_size_bytes=result.image_size_bytes,
+                hadolint_status=result.hadolint_status,
+                checks=checks,
+                expected=result.expected,
+                external_url=result.external_url,
+                external_commit=result.external_commit,
+            )
+        )
+    runtime = report.runtime
+    platform = (
+        report.runtime_versions.platform
+        if report.runtime_versions is not None
+        else None
+    )
+    return GoldenReport(
+        promoted_from_label=report.label,
+        corpus_commit=report.corpus_commit,
+        deployer_version=report.deployer_version,
+        author_backend=report.author_backend,
+        runtime_tool=runtime.tool if runtime is not None else None,
+        runtime_remote=runtime.remote if runtime is not None else False,
+        runtime_platform=platform,
+        build_timeout_s=report.build_timeout_s,
+        health_timeout_s=report.health_timeout_s,
+        cases=golden_cases,
+    )
+
+
+def normalize_run(run_dir: Path) -> GoldenReport:
+    """Normalize a raw bench run into a committable golden baseline.
+
+    Strips wall-clock data, absolute paths, hostnames and check messages;
+    skipped cases are excluded (a golden only asserts about cases that ran).
+    """
+    report = _load_bench_report(run_dir)
+    return _normalize_from_report(report, run_dir)
+
+
+def promote_run(run_dir: Path, corpus_root: Path, *, force: bool = False) -> Path:
+    """Promote a raw run to the committed golden baseline in corpus/golden.
+
+    Refuses (raises `PromoteRefusedError`) when any case is `mismatched`
+    unless `force` is set. Replaces any existing `golden/` tree wholesale.
+    """
+    report = _load_bench_report(run_dir)
+    golden = _normalize_from_report(report, run_dir)
+    mismatched = [c.case for c in report.cases if c.outcome == "mismatched"]
+    if mismatched and not force:
+        raise PromoteRefusedError(
+            "refusing to promote a run with mismatched cases "
+            f"({', '.join(mismatched)}); use --force to override"
+        )
+    golden_dir = corpus_root / "golden"
+    if golden_dir.exists():
+        if not golden_dir.is_dir():
+            raise ValueError(f"golden path {golden_dir} exists and is not a directory")
+        try:
+            shutil.rmtree(golden_dir)
+        except OSError as exc:
+            raise ValueError(f"cannot replace golden dir {golden_dir}: {exc}") from exc
+    golden_dir.mkdir(parents=True)
+    (golden_dir / "golden.json").write_text(golden.model_dump_json(indent=2) + "\n")
+    for case in golden.cases:
+        src = run_dir / "cases" / case.case / "Dockerfile"
+        if src.is_file():
+            dest = golden_dir / "cases" / case.case
+            dest.mkdir(parents=True)
+            shutil.copyfile(src, dest / "Dockerfile")
+    return golden_dir
+
+
+_LEVEL_ORDER = {"hard": 0, "important": 1, "advisory": 2}
+
+
+def load_baseline(source: Path | str, corpus_root: Path) -> BenchReport | GoldenReport:
+    """Load a comparison baseline: the literal 'golden' or a raw run dir."""
+    if source == "golden":
+        golden_file = corpus_root / "golden" / "golden.json"
+        if not golden_file.is_file():
+            raise ValueError(f"no golden baseline at {golden_file}")
+        return GoldenReport.model_validate_json(golden_file.read_text())
+    return _load_bench_report(Path(source))
+
+
+def _baseline_cases(
+    baseline: BenchReport | GoldenReport,
+) -> dict[str, BenchCaseResult | GoldenCase]:
+    """Map case name -> baseline case, dropping skipped raw-run cases."""
+    if isinstance(baseline, BenchReport):
+        return {c.case: c for c in baseline.cases if c.outcome != "skipped"}
+    return {c.case: c for c in baseline.cases}
+
+
+def _comparability_findings(
+    candidate: BenchReport, baseline: BenchReport | GoldenReport
+) -> list[CompareFinding]:
+    """Advisory findings when run-level metadata makes results non-comparable.
+
+    These are warnings, not blockers: two runs with different backends,
+    runtimes or timeouts can still be diffed, but the reader should know
+    the comparison isn't apples-to-apples.
+    """
+    findings: list[CompareFinding] = []
+    candidate_runtime_tool = candidate.runtime.tool if candidate.runtime else None
+    candidate_runtime_remote = candidate.runtime.remote if candidate.runtime else False
+    if isinstance(baseline, GoldenReport):
+        baseline_runtime_tool = baseline.runtime_tool
+        baseline_runtime_remote = baseline.runtime_remote
+    else:
+        baseline_runtime_tool = baseline.runtime.tool if baseline.runtime else None
+        baseline_runtime_remote = baseline.runtime.remote if baseline.runtime else False
+    comparability_fields = (
+        ("author_backend", baseline.author_backend, candidate.author_backend),
+        ("runtime_tool", baseline_runtime_tool, candidate_runtime_tool),
+        ("runtime_remote", baseline_runtime_remote, candidate_runtime_remote),
+        ("build_timeout_s", baseline.build_timeout_s, candidate.build_timeout_s),
+        ("health_timeout_s", baseline.health_timeout_s, candidate.health_timeout_s),
+    )
+    for field, base_value, cand_value in comparability_fields:
+        if base_value != cand_value:
+            findings.append(
+                CompareFinding(
+                    level="advisory",
+                    case="-",
+                    metric="comparability",
+                    detail=f"{field}: {base_value} vs {cand_value}",
+                )
+            )
+    return findings
+
+
+def compare_runs(
+    candidate: BenchReport,
+    baseline: BenchReport | GoldenReport,
+    *,
+    image_threshold_pct: float = 10.0,
+    wall_threshold_pct: float = 25.0,
+    iteration_threshold: int = 0,
+) -> list[CompareFinding]:
+    """Regressions of `candidate` measured against `baseline`, by level."""
+    findings: list[CompareFinding] = _comparability_findings(candidate, baseline)
+    base = _baseline_cases(baseline)
+    cand = {c.case: c for c in candidate.cases if c.outcome != "skipped"}
+    raw_baseline = isinstance(baseline, BenchReport)
+
+    for name, b in base.items():
+        c = cand.get(name)
+        if c is None:
+            findings.append(
+                CompareFinding(
+                    level="important",
+                    case=name,
+                    metric="missing_case",
+                    detail="present in baseline but absent or skipped in candidate",
+                )
+            )
+            continue
+        if b.success and not c.success:
+            findings.append(
+                CompareFinding(
+                    level="hard",
+                    case=name,
+                    metric="success",
+                    detail=f"green in baseline, now {c.stopped_reason}",
+                )
+            )
+        if c.iterations - b.iterations > iteration_threshold:
+            findings.append(
+                CompareFinding(
+                    level="important",
+                    case=name,
+                    metric="iterations",
+                    detail=f"{b.iterations} -> {c.iterations}",
+                )
+            )
+        b_kinds, c_kinds = set(b.failure_kinds), set(c.failure_kinds)
+        if c_kinds and b_kinds != c_kinds:
+            findings.append(
+                CompareFinding(
+                    level="important",
+                    case=name,
+                    metric="failure_kind",
+                    detail=f"{sorted(k.value for k in b_kinds)} -> "
+                    f"{sorted(k.value for k in c_kinds)}",
+                )
+            )
+        if (
+            b.image_size_bytes
+            and c.image_size_bytes
+            and c.image_size_bytes
+            > b.image_size_bytes * (1 + image_threshold_pct / 100)
+        ):
+            findings.append(
+                CompareFinding(
+                    level="advisory",
+                    case=name,
+                    metric="image_size",
+                    detail=f"{b.image_size_bytes} -> {c.image_size_bytes} bytes "
+                    f"(>{image_threshold_pct:g}%)",
+                )
+            )
+        if b.hadolint_status is CheckStatus.PASSED and c.hadolint_status in (
+            CheckStatus.WARNING,
+            CheckStatus.FAILED,
+        ):
+            findings.append(
+                CompareFinding(
+                    level="advisory",
+                    case=name,
+                    metric="hadolint",
+                    detail="hadolint status worsened vs baseline",
+                )
+            )
+        if (
+            raw_baseline
+            and isinstance(b, BenchCaseResult)
+            and b.wall_time_s > 0
+            and c.wall_time_s > b.wall_time_s * (1 + wall_threshold_pct / 100)
+        ):
+            findings.append(
+                CompareFinding(
+                    level="advisory",
+                    case=name,
+                    metric="wall_time",
+                    detail=f"{b.wall_time_s:.1f}s -> {c.wall_time_s:.1f}s "
+                    f"(>{wall_threshold_pct:g}%)",
+                )
+            )
+
+    for name in sorted(set(cand) - set(base)):
+        findings.append(
+            CompareFinding(
+                level="advisory",
+                case=name,
+                metric="new_case",
+                detail="present in candidate but not in baseline",
+            )
+        )
+    findings.sort(key=lambda f: (_LEVEL_ORDER[f.level], f.case, f.metric))
+    return findings
+
+
 def render_markdown(report: BenchReport) -> str:
     """Human-readable summary table for one bench run."""
     if report.runtime is None:
@@ -382,13 +730,14 @@ def render_markdown(report: BenchReport) -> str:
         f"- timeouts: build {report.build_timeout_s}s / health {report.health_timeout_s}s",
         f"- success rate: {rate if rate is not None else 'n/a'}",
         "",
-        "| case | outcome | stop reason | iters | image MB | wall s |",
-        "|---|---|---|---:|---:|---:|",
+        "| case | outcome | stop reason | iters | image MB | wall s | failure kinds |",
+        "|---|---|---|---:|---:|---:|---|",
     ]
     for c in report.cases:
         size = f"{c.image_size_bytes / 1e6:.1f}" if c.image_size_bytes else "-"
+        kinds = ", ".join(k.value for k in c.failure_kinds) or "-"
         lines.append(
             f"| {c.case} | {c.outcome} | {c.stopped_reason or '-'} "
-            f"| {c.iterations} | {size} | {c.wall_time_s:.1f} |"
+            f"| {c.iterations} | {size} | {c.wall_time_s:.1f} | {kinds} |"
         )
     return "\n".join(lines) + "\n"

@@ -76,7 +76,21 @@ verification pipeline. `--author anthropic` runs the real LLM and spends
 money; select it explicitly. `bench verify` just verifies the committed
 fixtures (corpus smoke). Exit codes: 0 all matched/passed, 1 mismatch/fail,
 2 invalid invocation. Cases with `requires_l2: true` are skipped (not
-failed) when no container runtime is available.
+failed) when no container runtime is available. `--filter` applies to synthetic
+cases only; external targets are included wholesale via `--include-external`.
+
+### Golden baseline
+
+    uv run deployer bench promote .deployer-runs/<ts>-<label> [--corpus corpus] [--force]
+    uv run deployer bench compare .deployer-runs/<ts>-<label> golden
+    uv run deployer bench compare <runA> <runB>   # raw-vs-raw
+
+`promote` normalizes a raw run (no wall times, paths, hostnames, or check
+messages) into `corpus/golden/` (committed) and refuses runs with
+mismatched cases unless `--force`. `compare` reports regressions by level:
+hard (green→red), important (iteration growth, failure-kind flip, missing
+case), advisory (image size, hadolint status, new case; wall time only for
+raw-vs-raw). Exit 1 on hard/important findings, 0 otherwise.
 
 ## Development
 

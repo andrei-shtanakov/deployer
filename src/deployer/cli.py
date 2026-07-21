@@ -9,10 +9,20 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from deployer.author import author_dockerfile
-from deployer.bench import FixtureAuthor, run_bench, verify_corpus
+from deployer.bench import (
+    CloneError,
+    FixtureAuthor,
+    PromoteRefusedError,
+    compare_runs,
+    load_baseline,
+    promote_run,
+    run_bench,
+    verify_corpus,
+)
 from deployer.facts import analyze_project
 from deployer.llm import AnthropicAuthor
 from deployer.models import (
+    BenchReport,
     CheckStatus,
     ContainerRuntime,
     DeployTarget,
@@ -248,7 +258,7 @@ def _cmd_bench_run(args: argparse.Namespace) -> int:
     except (
         FileNotFoundError,
         ValueError,
-        RuntimeError,
+        CloneError,
         subprocess.TimeoutExpired,
     ) as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -296,7 +306,65 @@ def _cmd_bench_verify(args: argparse.Namespace) -> int:
         if not report.passed:
             failed = True
             _print_report(report)
+    if runtime is None:
+        print("note: no container runtime found; static-only verification")
     return 1 if failed else 0
+
+
+def _cmd_bench_promote(args: argparse.Namespace) -> int:
+    run_dir = Path(args.run_dir)
+    if not run_dir.is_dir():
+        print(f"error: {run_dir} is not a directory", file=sys.stderr)
+        return 2
+    try:
+        golden_dir = promote_run(run_dir, Path(args.corpus), force=args.force)
+    except PromoteRefusedError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    except (FileNotFoundError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    print(f"golden: {golden_dir}")
+    return 0
+
+
+def _cmd_bench_compare(args: argparse.Namespace) -> int:
+    if args.candidate == "golden":
+        print(
+            "error: candidate must be a raw run dir "
+            "(the golden can only be a baseline)",
+            file=sys.stderr,
+        )
+        return 2
+    candidate_dir = Path(args.candidate)
+    try:
+        candidate = load_baseline(candidate_dir, Path(args.corpus))
+        baseline = load_baseline(
+            args.baseline if args.baseline == "golden" else Path(args.baseline),
+            Path(args.corpus),
+        )
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    if not isinstance(candidate, BenchReport):
+        print("error: candidate must be a raw run dir", file=sys.stderr)
+        return 2
+    findings = compare_runs(
+        candidate,
+        baseline,
+        image_threshold_pct=args.image_threshold,
+        wall_threshold_pct=args.wall_threshold,
+        iteration_threshold=args.iteration_threshold,
+    )
+    if not findings:
+        print("no regressions")
+        return 0
+    for finding in findings:
+        print(
+            f"[{finding.level:>9}] {finding.case}: {finding.metric} — {finding.detail}"
+        )
+    blocking = any(f.level in ("hard", "important") for f in findings)
+    return 1 if blocking else 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -358,6 +426,31 @@ def main(argv: list[str] | None = None) -> int:
     _add_runtime_flags(p_bench_verify)
     _add_timeout_flags(p_bench_verify)
     p_bench_verify.set_defaults(func=_cmd_bench_verify)
+
+    p_bench_promote = bench_sub.add_parser(
+        "promote", help="promote a raw run to corpus/golden"
+    )
+    p_bench_promote.add_argument("run_dir")
+    p_bench_promote.add_argument("--corpus", default="corpus")
+    p_bench_promote.add_argument("--force", action="store_true")
+    p_bench_promote.set_defaults(func=_cmd_bench_promote)
+
+    p_bench_compare = bench_sub.add_parser(
+        "compare", help="compare a raw run against another run or the golden"
+    )
+    p_bench_compare.add_argument("candidate")
+    p_bench_compare.add_argument("baseline", help="raw run dir or 'golden'")
+    p_bench_compare.add_argument("--corpus", default="corpus")
+    p_bench_compare.add_argument(
+        "--image-threshold", type=float, default=10.0, metavar="PCT"
+    )
+    p_bench_compare.add_argument(
+        "--wall-threshold", type=float, default=25.0, metavar="PCT"
+    )
+    p_bench_compare.add_argument(
+        "--iteration-threshold", type=int, default=0, metavar="N"
+    )
+    p_bench_compare.set_defaults(func=_cmd_bench_compare)
 
     args = parser.parse_args(argv)
     return args.func(args)
