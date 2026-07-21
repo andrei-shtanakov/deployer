@@ -1,5 +1,7 @@
 """The authoring control loop: deterministic pipeline, LLM inside one step."""
 
+import importlib.metadata
+import subprocess
 import time
 from pathlib import Path
 from typing import Protocol
@@ -8,18 +10,37 @@ from deployer.facts import analyze_project
 from deployer.hints import collect_hints
 from deployer.models import (
     AuthoringRun,
+    ContainerRuntime,
     DeployTarget,
     IterationRecord,
     ProjectFacts,
     StopReason,
     VerificationReport,
 )
-from deployer.verify import (
-    DEFAULT_BUILD_TIMEOUT,
-    DEFAULT_HEALTH_TIMEOUT,
-    detect_container_tool,
-    verify,
-)
+from deployer.runtime import probe_runtime_versions
+from deployer.verify import DEFAULT_BUILD_TIMEOUT, DEFAULT_HEALTH_TIMEOUT, verify
+
+
+def _deployer_version() -> str | None:
+    try:
+        return importlib.metadata.version("deployer")
+    except importlib.metadata.PackageNotFoundError:
+        return None
+
+
+def _deployer_git_sha() -> str | None:
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(Path(__file__).resolve().parent), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0:
+        return None
+    return proc.stdout.strip() or None
 
 
 class DockerfileAuthor(Protocol):
@@ -42,7 +63,7 @@ def author_dockerfile(
     author: DockerfileAuthor,
     *,
     max_iterations: int = 3,
-    run_docker: bool = True,
+    runtime: ContainerRuntime | None,
     build_timeout: int = DEFAULT_BUILD_TIMEOUT,
     health_timeout: int = DEFAULT_HEALTH_TIMEOUT,
 ) -> AuthoringRun:
@@ -51,10 +72,15 @@ def author_dockerfile(
     The LLM (author) only ever sees facts and reports and returns text;
     this function owns files, subprocesses, and control flow. The timeouts
     bound each iteration's L2 build/healthcheck subprocesses (seconds).
+
+    `runtime` is keyword-only and required (though it may be `None`): callers
+    must explicitly decide whether to run L2 build/healthcheck verification.
+    Pass `runtime=None` to opt into static-only (L1) verification; passing a
+    `ContainerRuntime` opts into full L2 verification. There is no default,
+    so a caller can never silently downgrade to static-only by omission.
     """
     facts = analyze_project(project_path)
     hints = collect_hints(facts)
-    tool = detect_container_tool() if run_docker else None
 
     iterations: list[IterationRecord] = []
     environment_retries = 0
@@ -78,7 +104,7 @@ def author_dockerfile(
                 dockerfile,
                 project_path,
                 target,
-                tool,
+                runtime,
                 facts,
                 build_timeout=build_timeout,
                 health_timeout=health_timeout,
@@ -89,7 +115,7 @@ def author_dockerfile(
                     dockerfile,
                     project_path,
                     target,
-                    tool,
+                    runtime,
                     facts,
                     build_timeout=build_timeout,
                     health_timeout=health_timeout,
@@ -108,7 +134,7 @@ def author_dockerfile(
                 stopped_reason = "environment_failure"
                 break
             if report.passed:
-                stopped_reason = "success" if tool is not None else "static_only"
+                stopped_reason = "success" if runtime is not None else "static_only"
                 break
             signature = report.error_signature()
             if signature == prev_signature:
@@ -123,15 +149,27 @@ def author_dockerfile(
                     stopped_reason = "llm_error"
                     break
 
+    runtime_versions = probe_runtime_versions(runtime) if runtime is not None else None
+    info_method = getattr(author, "info", None)
+    author_info = info_method() if callable(info_method) else None
+
     return AuthoringRun(
         project=facts.name or project_path.name,
         target=target,
         iterations=iterations,
         environment_retries=environment_retries,
-        docker_available=tool is not None,
+        docker_available=runtime is not None,
         hadolint_available=hadolint_available,
         stopped_reason=stopped_reason,
         success=stopped_reason == "success",
         llm_error=llm_error,
         hints_offered=hints,
+        runtime=runtime,
+        build_timeout_s=build_timeout,
+        health_timeout_s=health_timeout,
+        max_iterations=max_iterations,
+        runtime_versions=runtime_versions,
+        author_info=author_info,
+        deployer_version=_deployer_version(),
+        deployer_git_sha=_deployer_git_sha(),
     )

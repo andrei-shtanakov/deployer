@@ -1,11 +1,12 @@
 """Thin Anthropic SDK wrapper implementing the DockerfileAuthor protocol."""
 
+import hashlib
 from typing import Any
 
 import anthropic
 
 from deployer.hints import collect_hints
-from deployer.models import DeployTarget, ProjectFacts, VerificationReport
+from deployer.models import AuthorInfo, DeployTarget, ProjectFacts, VerificationReport
 
 DEFAULT_MODEL = "claude-opus-4-8"
 MAX_TOKENS = 8192
@@ -83,6 +84,14 @@ class AnthropicAuthor:
     def __init__(self, client: Any | None = None, model: str = DEFAULT_MODEL) -> None:
         self._client = client if client is not None else anthropic.Anthropic()
         self._model = model
+
+    def info(self) -> AuthorInfo:
+        """Comparability metadata for run reports."""
+        return AuthorInfo(
+            backend="anthropic",
+            model_id=self._model,
+            prompt_sha256=hashlib.sha256(SYSTEM_PROMPT.encode()).hexdigest(),
+        )
 
     def _complete(self, prompt: str) -> str:
         response = self._client.messages.create(

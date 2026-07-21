@@ -26,7 +26,7 @@ def test_verify_command_passes_on_good_dockerfile(
     for name in ("pyproject.toml", "main.py"):
         (project / name).write_text((hello_service / name).read_text())
     (project / "Dockerfile").write_text((hello_service / "Dockerfile.good").read_text())
-    monkeypatch.setattr("deployer.cli.detect_container_tool", lambda: None)
+    monkeypatch.setattr("deployer.cli.resolve_runtime", lambda *a, **k: None)
     assert cli.main(["verify", str(project)]) == 0
 
 
@@ -115,7 +115,7 @@ def test_verify_flags_reach_library(
         dockerfile,
         project_path,
         target,
-        tool,
+        runtime,
         facts=None,
         *,
         build_timeout,
@@ -152,7 +152,7 @@ def test_author_flags_reach_library(tmp_path: Path, monkeypatch) -> None:
         author,
         *,
         max_iterations,
-        run_docker,
+        runtime,
         build_timeout,
         health_timeout,
     ):
@@ -221,7 +221,7 @@ def test_verify_writes_report_json_on_pass(
     project = _make_project(
         hello_service, tmp_path, (hello_service / "Dockerfile.good").read_text()
     )
-    monkeypatch.setattr("deployer.cli.detect_container_tool", lambda: None)
+    monkeypatch.setattr("deployer.cli.resolve_runtime", lambda *a, **k: None)
     assert cli.main(["verify", str(project)]) == 0
     report_path = project / ".deployer" / "verify-report.json"
     report = VerificationReport.model_validate_json(report_path.read_text())
@@ -234,7 +234,7 @@ def test_verify_writes_report_json_on_fail(
     project = _make_project(
         hello_service, tmp_path, "FROM python:3.12-slim\nCOPY nope.py .\n"
     )
-    monkeypatch.setattr("deployer.cli.detect_container_tool", lambda: None)
+    monkeypatch.setattr("deployer.cli.resolve_runtime", lambda *a, **k: None)
     assert cli.main(["verify", str(project)]) == 1
     report_path = project / ".deployer" / "verify-report.json"
     report = VerificationReport.model_validate_json(report_path.read_text())
@@ -339,11 +339,97 @@ def test_verify_report_write_failure_warns_not_crashes(
         hello_service, tmp_path, (hello_service / "Dockerfile.good").read_text()
     )
     (project / ".deployer").write_text("a file where a dir must go")
-    monkeypatch.setattr("deployer.cli.detect_container_tool", lambda: None)
+    monkeypatch.setattr("deployer.cli.resolve_runtime", lambda *a, **k: None)
     assert cli.main(["verify", str(project)]) == 0  # exit reflects checks
     captured = capsys.readouterr()
     assert "warning: could not write verify-report.json" in captured.err
     assert "report:" not in captured.out
+
+
+def test_verify_passes_cli_runtime_flags_through(
+    hello_service: Path, tmp_path: Path, monkeypatch, capsys
+) -> None:
+    project = _make_project(
+        hello_service, tmp_path, (hello_service / "Dockerfile.good").read_text()
+    )
+    seen: dict = {}
+
+    def fake_resolve(tool_arg=None, host_arg=None, env=None):
+        seen["args"] = (tool_arg, host_arg)
+        return None  # static-only keeps the test docker-free
+
+    monkeypatch.setattr("deployer.cli.resolve_runtime", fake_resolve)
+    cli.main(
+        [
+            "verify",
+            str(project),
+            "--container-tool",
+            "docker",
+            "--container-host",
+            "ssh://u@h",
+        ]
+    )
+    assert seen["args"] == ("docker", "ssh://u@h")
+
+
+def test_verify_invalid_runtime_config_exits_2(
+    hello_service: Path, tmp_path: Path, monkeypatch, capsys
+) -> None:
+    project = _make_project(
+        hello_service, tmp_path, (hello_service / "Dockerfile.good").read_text()
+    )
+    from deployer.runtime import RuntimeConfigError
+
+    def boom(tool_arg=None, host_arg=None, env=None):
+        raise RuntimeConfigError("--container-host must be an ssh:// URL")
+
+    monkeypatch.setattr("deployer.cli.resolve_runtime", boom)
+    code = cli.main(["verify", str(project), "--container-host", "tcp://h:1"])
+    assert code == 2
+    assert "ssh://" in capsys.readouterr().err
+
+
+def test_author_invalid_runtime_config_exits_2(
+    hello_service: Path, tmp_path: Path, monkeypatch, capsys
+) -> None:
+    project = _make_project(
+        hello_service, tmp_path, (hello_service / "Dockerfile.good").read_text()
+    )
+    from deployer.runtime import RuntimeConfigError
+
+    def boom(tool_arg=None, host_arg=None, env=None):
+        raise RuntimeConfigError("--container-host must be an ssh:// URL")
+
+    monkeypatch.setattr("deployer.cli.resolve_runtime", boom)
+    code = cli.main(["author", str(project), "--container-host", "tcp://h:1"])
+    assert code == 2
+    assert "ssh://" in capsys.readouterr().err
+
+
+def test_author_no_docker_skips_runtime_resolution(
+    hello_service: Path, tmp_path: Path, monkeypatch
+) -> None:
+    project = _make_project(
+        hello_service, tmp_path, (hello_service / "Dockerfile.good").read_text()
+    )
+
+    def fail_resolve(*args, **kwargs):
+        pytest.fail("resolve_runtime must not be called")
+
+    monkeypatch.setattr("deployer.cli.resolve_runtime", fail_resolve)
+
+    good = (hello_service / "Dockerfile.good").read_text()
+
+    class FakeAuthor:
+        def generate(self, facts, target):
+            return good
+
+        def repair(self, facts, target, dockerfile, report):
+            return good
+
+    monkeypatch.setattr("deployer.cli.AnthropicAuthor", lambda: FakeAuthor())
+    exit_code = cli.main(["author", str(project), "--no-docker"])
+    assert exit_code == 0
 
 
 def test_author_report_write_failure_warns_not_crashes(

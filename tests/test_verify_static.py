@@ -1,7 +1,25 @@
 from pathlib import Path
 
-from deployer.models import CheckResult, CheckStatus, DeployTarget, ProjectFacts
-from deployer.verify import parse_dockerfile, verify, verify_static
+import pytest
+
+from deployer.models import (
+    CheckResult,
+    CheckStatus,
+    ContainerRuntime,
+    DeployTarget,
+    FailureKind,
+    ProjectFacts,
+    ServiceSpec,
+)
+from deployer.verify import (
+    _classify,
+    _isolated_context,
+    _run_healthcheck,
+    parse_dockerfile,
+    verify,
+    verify_docker,
+    verify_static,
+)
 
 GOOD = """\
 FROM python:3.12-slim
@@ -236,7 +254,9 @@ def test_echoed_python_m_pip_does_not_trigger(hello_service: Path) -> None:
 def _spy_docker(captured: dict):
     """verify_docker replacement that records the timeout kwargs it got."""
 
-    def spy(dockerfile, project_path, target, tool, *, build_timeout, health_timeout):
+    def spy(
+        dockerfile, project_path, target, runtime, *, build_timeout, health_timeout
+    ):
         captured["build_timeout"] = build_timeout
         captured["health_timeout"] = health_timeout
         return [CheckResult(check_id="build", status=CheckStatus.PASSED)], None
@@ -264,7 +284,7 @@ def test_verify_forwards_timeouts_to_verify_docker(
         GOOD,
         hello_service,
         DeployTarget(),
-        "podman",
+        ContainerRuntime(tool="podman"),
         build_timeout=1200,
         health_timeout=45,
     )
@@ -280,10 +300,234 @@ def test_verify_defaults_match_module_constants(
     _skip_hadolint(monkeypatch)
     captured: dict = {}
     monkeypatch.setattr("deployer.verify.verify_docker", _spy_docker(captured))
-    verify(GOOD, hello_service, DeployTarget(), "podman")
+    verify(GOOD, hello_service, DeployTarget(), ContainerRuntime(tool="podman"))
     assert captured == {
         "build_timeout": DEFAULT_BUILD_TIMEOUT,
         "health_timeout": DEFAULT_HEALTH_TIMEOUT,
     }
     assert DEFAULT_BUILD_TIMEOUT == 600
     assert DEFAULT_HEALTH_TIMEOUT == 30
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "u@host: Permission denied (publickey).",
+        "Host key verification failed.",
+        "ssh: Could not resolve hostname bench: nodename nor servname known",
+        "ssh: connect to host 10.0.0.5 port 22: Operation timed out",
+        "ssh: connect to host bench port 22: Connection refused",
+        "Cannot connect to the Docker daemon at ssh://u@host. Is it running?",
+        'error during connect: Get "http://docker.example": EOF',
+        "Error: context deadline exceeded",
+        "connection timed out",
+    ],
+)
+def test_ssh_and_daemon_errors_are_environment(line: str) -> None:
+    assert _classify(line) is FailureKind.ENVIRONMENT
+
+
+def test_classify_sees_stdout_side_of_combined_output() -> None:
+    combined = "error during connect: dial tcp: timeout\n" + ""
+    assert _classify(combined) is FailureKind.ENVIRONMENT
+
+
+def test_ordinary_build_error_stays_authoring() -> None:
+    assert _classify("E: Unable to locate package libfoo") is FailureKind.AUTHORING
+
+
+def test_isolated_context_excludes_secrets_and_junk(tmp_path: Path) -> None:
+    (tmp_path / "app.py").write_text("print('hi')\n")
+    (tmp_path / "nested").mkdir()
+    (tmp_path / "nested" / "mod.py").write_text("x = 1\n")
+    for junk in (".env", ".env.local"):
+        (tmp_path / junk).write_text("SECRET=1\n")
+    for junk_dir in (".git", ".venv", ".deployer", "__pycache__"):
+        (tmp_path / junk_dir).mkdir()
+        (tmp_path / junk_dir / "f").write_text("x")
+    with _isolated_context(tmp_path) as ctx:
+        assert ctx != tmp_path
+        assert (ctx / "app.py").read_text() == "print('hi')\n"
+        assert (ctx / "nested" / "mod.py").exists()
+        assert not (ctx / ".env").exists()
+        assert not (ctx / ".env.local").exists()
+        for junk_dir in (".git", ".venv", ".deployer", "__pycache__"):
+            assert not (ctx / junk_dir).exists()
+    assert not ctx.exists()  # cleaned up on exit
+
+
+def test_isolated_context_copies_dangling_symlink_as_link(tmp_path: Path) -> None:
+    (tmp_path / "app.py").write_text("print('hi')\n")
+    (tmp_path / "dangling").symlink_to(tmp_path / "nope")
+    with _isolated_context(tmp_path) as ctx:
+        assert (ctx / "app.py").exists()
+        assert (ctx / "dangling").is_symlink()
+        assert not (ctx / "dangling").exists()  # target never resolves
+
+
+# -- Fix 1: cleanup calls in `finally` must never clobber the return value --
+
+
+def _fake_container_run(responses: dict):
+    """container_run replacement dispatching on the CLI subcommand (args[0])."""
+
+    def _run(runtime, args, **kwargs):
+        head = args[0]
+        if head not in responses:
+            raise AssertionError(f"unexpected container_run call: {args}")
+        behavior = responses[head]
+        if isinstance(behavior, BaseException):
+            raise behavior
+        return behavior
+
+    return _run
+
+
+def test_run_healthcheck_cleanup_timeout_does_not_clobber_result(
+    monkeypatch,
+) -> None:
+    import subprocess
+
+    responses = {
+        "run": subprocess.CompletedProcess(["run"], 0, stdout="", stderr=""),
+        "exec": subprocess.CompletedProcess(["exec"], 0, stdout="", stderr=""),
+        "rm": subprocess.TimeoutExpired("rm", 1),
+    }
+    monkeypatch.setattr("deployer.verify.container_run", _fake_container_run(responses))
+    target = DeployTarget(service=ServiceSpec(port=8000))
+    result = _run_healthcheck(target, ContainerRuntime(tool="podman"), "tag", 5)
+    assert result.status is CheckStatus.PASSED
+
+
+def test_verify_docker_cleanup_timeout_does_not_clobber_result(
+    hello_service: Path, monkeypatch
+) -> None:
+    import subprocess
+
+    responses = {
+        "build": subprocess.CompletedProcess(["build"], 0, stdout="", stderr=""),
+        "image": subprocess.CompletedProcess(["image"], 0, stdout="1234", stderr=""),
+        "rmi": subprocess.TimeoutExpired("rmi", 1),
+    }
+    monkeypatch.setattr("deployer.verify.container_run", _fake_container_run(responses))
+    results, image_size = verify_docker(
+        GOOD, hello_service, DeployTarget(), ContainerRuntime(tool="podman")
+    )
+    assert results[0].check_id == "build"
+    assert results[0].status is CheckStatus.PASSED
+    assert image_size == 1234
+
+
+# -- Fix 2: mid-run transport loss during the healthcheck poll --
+
+
+def _one_shot_clock(monkeypatch) -> None:
+    """Make _run_healthcheck's poll loop run exactly one iteration, instantly."""
+    import itertools
+
+    values = itertools.chain([0.0, 0.0, 0.0], itertools.repeat(1000.0))
+    monkeypatch.setattr("deployer.verify.time.monotonic", lambda: next(values))
+    monkeypatch.setattr("deployer.verify.time.sleep", lambda _: None)
+
+
+def test_transport_loss_during_poll_classifies_as_environment(monkeypatch) -> None:
+    import subprocess
+
+    _one_shot_clock(monkeypatch)
+    responses = {
+        "run": subprocess.CompletedProcess(["run"], 0, stdout="", stderr=""),
+        "exec": subprocess.CompletedProcess(
+            ["exec"], 1, stdout="", stderr="error during connect: EOF"
+        ),
+        "logs": subprocess.CompletedProcess(["logs"], 0, stdout="", stderr=""),
+        "rm": subprocess.CompletedProcess(["rm"], 0, stdout="", stderr=""),
+    }
+    monkeypatch.setattr("deployer.verify.container_run", _fake_container_run(responses))
+    target = DeployTarget(service=ServiceSpec(port=8000))
+    result = _run_healthcheck(target, ContainerRuntime(tool="podman"), "tag", 5)
+    assert result.status is CheckStatus.FAILED
+    assert result.failure_kind is FailureKind.ENVIRONMENT
+
+
+def test_in_container_traceback_stays_authoring(monkeypatch) -> None:
+    import subprocess
+
+    _one_shot_clock(monkeypatch)
+    traceback_stderr = (
+        "Traceback (most recent call last):\n"
+        '  File "<string>", line 1, in <module>\n'
+        "ConnectionRefusedError: [Errno 111] Connection refused"
+    )
+    responses = {
+        "run": subprocess.CompletedProcess(["run"], 0, stdout="", stderr=""),
+        "exec": subprocess.CompletedProcess(
+            ["exec"], 1, stdout="", stderr=traceback_stderr
+        ),
+        "logs": subprocess.CompletedProcess(["logs"], 0, stdout="", stderr=""),
+        "rm": subprocess.CompletedProcess(["rm"], 0, stdout="", stderr=""),
+    }
+    monkeypatch.setattr("deployer.verify.container_run", _fake_container_run(responses))
+    target = DeployTarget(service=ServiceSpec(port=8000))
+    result = _run_healthcheck(target, ContainerRuntime(tool="podman"), "tag", 5)
+    assert result.status is CheckStatus.FAILED
+    assert result.failure_kind is FailureKind.AUTHORING
+
+
+def test_transport_loss_via_stdout_during_poll_classifies_as_environment(
+    monkeypatch,
+) -> None:
+    """Container CLIs may write transport errors to stdout, not just stderr."""
+    import subprocess
+
+    _one_shot_clock(monkeypatch)
+    responses = {
+        "run": subprocess.CompletedProcess(["run"], 0, stdout="", stderr=""),
+        "exec": subprocess.CompletedProcess(
+            ["exec"], 1, stdout="error during connect: EOF", stderr=""
+        ),
+        "logs": subprocess.CompletedProcess(["logs"], 0, stdout="", stderr=""),
+        "rm": subprocess.CompletedProcess(["rm"], 0, stdout="", stderr=""),
+    }
+    monkeypatch.setattr("deployer.verify.container_run", _fake_container_run(responses))
+    target = DeployTarget(service=ServiceSpec(port=8000))
+    result = _run_healthcheck(target, ContainerRuntime(tool="podman"), "tag", 5)
+    assert result.status is CheckStatus.FAILED
+    assert result.failure_kind is FailureKind.ENVIRONMENT
+
+
+# -- Fix 3: OSError from the container CLI must classify as ENVIRONMENT --
+
+
+def test_run_healthcheck_oserror_classifies_as_environment(monkeypatch) -> None:
+    import subprocess
+
+    responses = {
+        "run": OSError("docker: command not found"),
+        "rm": subprocess.CompletedProcess(["rm"], 0, stdout="", stderr=""),
+    }
+    monkeypatch.setattr("deployer.verify.container_run", _fake_container_run(responses))
+    target = DeployTarget(service=ServiceSpec(port=8000))
+    result = _run_healthcheck(target, ContainerRuntime(tool="podman"), "tag", 5)
+    assert result.status is CheckStatus.FAILED
+    assert result.failure_kind is FailureKind.ENVIRONMENT
+    assert "docker: command not found" in result.message
+
+
+def test_build_oserror_classifies_as_environment(
+    hello_service: Path, monkeypatch
+) -> None:
+    import subprocess
+
+    responses = {
+        "build": OSError("no such file or directory: 'docker'"),
+        "rmi": subprocess.CompletedProcess(["rmi"], 0, stdout="", stderr=""),
+    }
+    monkeypatch.setattr("deployer.verify.container_run", _fake_container_run(responses))
+    results, image_size = verify_docker(
+        GOOD, hello_service, DeployTarget(), ContainerRuntime(tool="podman")
+    )
+    assert results[0].check_id == "build"
+    assert results[0].status is CheckStatus.FAILED
+    assert results[0].failure_kind is FailureKind.ENVIRONMENT
+    assert "no such file or directory" in results[0].message
+    assert image_size is None

@@ -8,24 +8,58 @@ import json
 import re
 import shutil
 import subprocess
+import tempfile
 import time
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 from deployer.models import (
     CheckResult,
     CheckStatus,
+    ContainerRuntime,
     DeployTarget,
     FailureKind,
     ProjectFacts,
     VerificationReport,
 )
+from deployer.runtime import container_run
 
 HADOLINT_VERSION = "2.12.0"
 DEFAULT_BUILD_TIMEOUT = 600
 DEFAULT_HEALTH_TIMEOUT = 30
 _ENV_ASSIGNMENT = re.compile(r"^(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)+")
 _PYTHON_M_PIP = re.compile(r"^\S*python[\d.]*\s+-m\s+pip\s+install\b")
+
+CONTEXT_IGNORE = (
+    ".git",
+    ".venv",
+    ".deployer",
+    ".env",
+    ".env.*",
+    "__pycache__",
+    ".pytest_cache",
+    ".ruff_cache",
+)
+
+
+@contextmanager
+def _isolated_context(project_path: Path) -> Iterator[Path]:
+    """Deterministic temp build context: the project minus CONTEXT_IGNORE.
+
+    Restores the MVP invariant "no secrets in the build context, ever" —
+    with a remote daemon the context leaves the machine entirely.
+    """
+    with tempfile.TemporaryDirectory(prefix="deployer-context-") as tmp:
+        context = Path(tmp) / "context"
+        shutil.copytree(
+            project_path,
+            context,
+            ignore=shutil.ignore_patterns(*CONTEXT_IGNORE),
+            symlinks=True,
+        )
+        yield context
 
 
 def parse_dockerfile(text: str) -> list[tuple[str, str]]:
@@ -296,22 +330,42 @@ ENVIRONMENT_MARKERS = (
     "network is unreachable",
     "no route to host",
     "service unavailable",
+    "permission denied (publickey)",
+    "host key verification failed",
+    "could not resolve hostname",
+    "ssh: connect to host",
+    "connection timed out",
+    "cannot connect to the docker daemon",
+    "error during connect",
+    "context deadline exceeded",
 )
 
 
-def detect_container_tool() -> str | None:
-    """Prefer rootless-friendly podman; fall back to docker."""
-    for tool in ("podman", "docker"):
-        if shutil.which(tool):
-            return tool
-    return None
-
-
-def _classify(stderr: str) -> FailureKind:
-    lowered = stderr.lower()
+def _classify(output: str) -> FailureKind:
+    lowered = output.lower()
     if any(marker in lowered for marker in ENVIRONMENT_MARKERS):
         return FailureKind.ENVIRONMENT
     return FailureKind.AUTHORING
+
+
+_TRANSPORT_MARKERS = (
+    "error during connect",
+    "cannot connect to the docker daemon",
+    "ssh: ",
+    "context deadline exceeded",
+)
+
+
+def _is_transport_failure(output: str) -> bool:
+    """Narrow marker check for daemon/SSH-transport loss during a probe loop.
+
+    Deliberately narrower than `_classify`: a legitimately failing
+    in-container probe can print a Python traceback containing phrases
+    like "connection refused" (the app refusing its own port), which
+    would otherwise flip a real authoring failure to ENVIRONMENT.
+    """
+    lowered = output.lower()
+    return any(marker in lowered for marker in _TRANSPORT_MARKERS)
 
 
 def _tail(text: str, lines: int = 15) -> str:
@@ -320,16 +374,16 @@ def _tail(text: str, lines: int = 15) -> str:
 
 def _build(
     dockerfile: str,
-    project_path: Path,
+    context_path: Path,
     target: DeployTarget,
-    tool: str,
+    runtime: ContainerRuntime,
     tag: str,
     timeout: int,
 ) -> CheckResult:
     try:
-        proc = subprocess.run(
+        proc = container_run(
+            runtime,
             [
-                tool,
                 "build",
                 "--memory",
                 target.memory_limit,
@@ -337,35 +391,41 @@ def _build(
                 tag,
                 "-f",
                 "-",
-                str(project_path),
+                str(context_path),
             ],
             input=dockerfile,
             capture_output=True,
             text=True,
             timeout=timeout,
         )
-    except subprocess.TimeoutExpired:
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        message = (
+            f"build timed out after {timeout}s"
+            if isinstance(exc, subprocess.TimeoutExpired)
+            else f"container runtime command failed: {exc}"
+        )
         return CheckResult(
             check_id="build",
             status=CheckStatus.FAILED,
             failure_kind=FailureKind.ENVIRONMENT,
-            message=f"build timed out after {timeout}s",
+            message=message,
         )
     if proc.returncode != 0:
         return CheckResult(
             check_id="build",
             status=CheckStatus.FAILED,
-            failure_kind=_classify(proc.stderr),
-            message=_tail(proc.stderr),
+            failure_kind=_classify(proc.stdout + "\n" + proc.stderr),
+            message=_tail(proc.stderr or proc.stdout),
         )
     return CheckResult(check_id="build", status=CheckStatus.PASSED)
 
 
-def _image_size(tool: str, tag: str) -> int | None:
+def _image_size(runtime: ContainerRuntime, tag: str) -> int | None:
     """Size of a built image in bytes; None when inspection fails."""
     try:
-        proc = subprocess.run(
-            [tool, "image", "inspect", "--format", "{{.Size}}", tag],
+        proc = container_run(
+            runtime,
+            ["image", "inspect", "--format", "{{.Size}}", tag],
             capture_output=True,
             text=True,
             timeout=30,
@@ -381,16 +441,16 @@ def _image_size(tool: str, tag: str) -> int | None:
 
 
 def _run_healthcheck(
-    target: DeployTarget, tool: str, tag: str, timeout: int
+    target: DeployTarget, runtime: ContainerRuntime, tag: str, timeout: int
 ) -> CheckResult:
     assert target.service is not None
     container = f"deployer-check-{uuid.uuid4().hex[:8]}"
     url = f"http://127.0.0.1:{target.service.port}{target.service.healthcheck_path}"
     probe = f"import urllib.request; urllib.request.urlopen('{url}', timeout=2)"
     try:
-        started = subprocess.run(
+        started = container_run(
+            runtime,
             [
-                tool,
                 "run",
                 "-d",
                 "--name",
@@ -408,16 +468,17 @@ def _run_healthcheck(
             return CheckResult(
                 check_id="run_healthcheck",
                 status=CheckStatus.FAILED,
-                failure_kind=_classify(started.stderr),
-                message=_tail(started.stderr),
+                failure_kind=_classify(started.stdout + "\n" + started.stderr),
+                message=_tail(started.stderr or started.stdout),
             )
         deadline = time.monotonic() + timeout
         last_error = ""
         while time.monotonic() < deadline:
             remaining = deadline - time.monotonic()
             try:
-                probe_proc = subprocess.run(
-                    [tool, "exec", container, "python", "-c", probe],
+                probe_proc = container_run(
+                    runtime,
+                    ["exec", container, "python", "-c", probe],
                     capture_output=True,
                     text=True,
                     timeout=max(1.0, remaining),
@@ -426,15 +487,25 @@ def _run_healthcheck(
                     return CheckResult(
                         check_id="run_healthcheck", status=CheckStatus.PASSED
                     )
-                last_error = probe_proc.stderr
+                last_error = probe_proc.stdout + "\n" + probe_proc.stderr
             except subprocess.TimeoutExpired:
                 # Probe timed out; treat as loop exhaustion
                 break
             time.sleep(1)
-        logs = subprocess.run(
-            [tool, "logs", container], capture_output=True, text=True, timeout=10
+        logs = container_run(
+            runtime, ["logs", container], capture_output=True, text=True, timeout=10
         )
         log_text = (logs.stdout + "\n" + logs.stderr).strip()
+        if _is_transport_failure(last_error):
+            return CheckResult(
+                check_id="run_healthcheck",
+                status=CheckStatus.FAILED,
+                failure_kind=FailureKind.ENVIRONMENT,
+                message=(
+                    f"healthcheck {url}: container daemon became unreachable "
+                    f"mid-poll: {_tail(last_error, 3)}"
+                ),
+            )
         return CheckResult(
             check_id="run_healthcheck",
             status=CheckStatus.FAILED,
@@ -444,22 +515,32 @@ def _run_healthcheck(
                 f"{_tail(last_error, 3)}\ncontainer logs:\n{_tail(log_text)}"
             ),
         )
-    except subprocess.TimeoutExpired:
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        message = (
+            "container runtime command timed out"
+            if isinstance(exc, subprocess.TimeoutExpired)
+            else f"container runtime command failed: {exc}"
+        )
         return CheckResult(
             check_id="run_healthcheck",
             status=CheckStatus.FAILED,
             failure_kind=FailureKind.ENVIRONMENT,
-            message="container runtime command timed out",
+            message=message,
         )
     finally:
-        subprocess.run([tool, "rm", "-f", container], capture_output=True, timeout=30)
+        try:
+            container_run(
+                runtime, ["rm", "-f", container], capture_output=True, timeout=30
+            )
+        except (subprocess.TimeoutExpired, OSError):
+            pass  # best-effort cleanup; must never clobber the return value
 
 
 def verify_docker(
     dockerfile: str,
     project_path: Path,
     target: DeployTarget,
-    tool: str,
+    runtime: ContainerRuntime,
     *,
     build_timeout: int = DEFAULT_BUILD_TIMEOUT,
     health_timeout: int = DEFAULT_HEALTH_TIMEOUT,
@@ -474,16 +555,20 @@ def verify_docker(
     results: list[CheckResult] = []
     image_size: int | None = None
     try:
-        build_result = _build(
-            dockerfile, project_path, target, tool, tag, build_timeout
-        )
+        with _isolated_context(project_path) as context:
+            build_result = _build(
+                dockerfile, context, target, runtime, tag, build_timeout
+            )
         results.append(build_result)
         if build_result.status is CheckStatus.PASSED:
-            image_size = _image_size(tool, tag)
+            image_size = _image_size(runtime, tag)
             if target.service is not None:
-                results.append(_run_healthcheck(target, tool, tag, health_timeout))
+                results.append(_run_healthcheck(target, runtime, tag, health_timeout))
     finally:
-        subprocess.run([tool, "rmi", "-f", tag], capture_output=True, timeout=60)
+        try:
+            container_run(runtime, ["rmi", "-f", tag], capture_output=True, timeout=60)
+        except (subprocess.TimeoutExpired, OSError):
+            pass  # best-effort cleanup; must never clobber the return value
     return results, image_size
 
 
@@ -491,7 +576,7 @@ def verify(
     dockerfile: str,
     project_path: Path,
     target: DeployTarget,
-    tool: str | None,
+    runtime: ContainerRuntime | None,
     facts: ProjectFacts | None = None,
     *,
     build_timeout: int = DEFAULT_BUILD_TIMEOUT,
@@ -502,7 +587,8 @@ def verify(
     The timeouts bound the L2 build and healthcheck subprocesses (seconds).
     """
     report = verify_static(dockerfile, project_path, facts)
-    if tool is None:
+    report.runtime = runtime
+    if runtime is None:
         return report
     report.docker_available = True
     if report.passed:
@@ -510,7 +596,7 @@ def verify(
             dockerfile,
             project_path,
             target,
-            tool,
+            runtime,
             build_timeout=build_timeout,
             health_timeout=health_timeout,
         )

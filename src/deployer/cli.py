@@ -9,13 +9,18 @@ from pydantic import ValidationError
 from deployer.author import author_dockerfile
 from deployer.facts import analyze_project
 from deployer.llm import AnthropicAuthor
-from deployer.models import CheckStatus, DeployTarget, VerificationReport
-from deployer.verify import (
-    DEFAULT_BUILD_TIMEOUT,
-    DEFAULT_HEALTH_TIMEOUT,
-    detect_container_tool,
-    verify,
+from deployer.models import (
+    CheckStatus,
+    ContainerRuntime,
+    DeployTarget,
+    VerificationReport,
 )
+from deployer.runtime import (
+    RuntimeConfigError,
+    probe_runtime_versions,
+    resolve_runtime,
+)
+from deployer.verify import DEFAULT_BUILD_TIMEOUT, DEFAULT_HEALTH_TIMEOUT, verify
 
 _STATUS_ICONS = {
     CheckStatus.PASSED: "ok",
@@ -58,6 +63,31 @@ def _timeout_error(args: argparse.Namespace) -> str | None:
     if args.health_timeout < 1:
         return "--health-timeout must be >= 1"
     return None
+
+
+def _add_runtime_flags(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--container-tool",
+        choices=("docker", "podman"),
+        default=None,
+        help="container CLI to use (default: DEPLOYER_CONTAINER_TOOL or detection)",
+    )
+    parser.add_argument(
+        "--container-host",
+        default=None,
+        metavar="ssh://user@host",
+        help="remote engine over SSH (default: DEPLOYER_CONTAINER_HOST or local)",
+    )
+
+
+def _resolve_runtime_or_error(
+    args: argparse.Namespace,
+) -> ContainerRuntime | None | str:
+    """Resolve the runtime from CLI flags; return an error string on failure."""
+    try:
+        return resolve_runtime(args.container_tool, args.container_host)
+    except RuntimeConfigError as exc:
+        return f"{exc}"
 
 
 def _write_report(project: Path, name: str, payload: str) -> Path | None:
@@ -104,15 +134,21 @@ def _cmd_verify(args: argparse.Namespace) -> int:
     if not dockerfile_path.is_file():
         print(f"error: {dockerfile_path} not found", file=sys.stderr)
         return 1
+    runtime = _resolve_runtime_or_error(args)
+    if isinstance(runtime, str):
+        print(f"error: {runtime}", file=sys.stderr)
+        return 2
     report = verify(
         dockerfile_path.read_text(),
         project,
         target,
-        detect_container_tool(),
+        runtime,
         analyze_project(project),
         build_timeout=args.build_timeout,
         health_timeout=args.health_timeout,
     )
+    if runtime is not None:
+        report.runtime_versions = probe_runtime_versions(runtime)
     _print_report(report)
     report_path = _write_report(
         project, "verify-report.json", report.model_dump_json(indent=2)
@@ -138,12 +174,18 @@ def _cmd_author(args: argparse.Namespace) -> int:
     if isinstance(target, str):
         print(f"error: {target}", file=sys.stderr)
         return 2
+    runtime = None
+    if not args.no_docker:
+        runtime = _resolve_runtime_or_error(args)
+        if isinstance(runtime, str):
+            print(f"error: {runtime}", file=sys.stderr)
+            return 2
     run = author_dockerfile(
         project,
         target,
         AnthropicAuthor(),
         max_iterations=args.max_iterations,
-        run_docker=not args.no_docker,
+        runtime=runtime,
         build_timeout=args.build_timeout,
         health_timeout=args.health_timeout,
     )
@@ -170,6 +212,7 @@ def main(argv: list[str] | None = None) -> int:
     p_verify.add_argument("path")
     p_verify.add_argument("--target", default=None, help="DeployTarget JSON file")
     _add_timeout_flags(p_verify)
+    _add_runtime_flags(p_verify)
     p_verify.set_defaults(func=_cmd_verify)
 
     p_author = sub.add_parser("author", help="author a Dockerfile with the LLM")
@@ -180,6 +223,7 @@ def main(argv: list[str] | None = None) -> int:
         "--no-docker", action="store_true", help="static-only verification"
     )
     _add_timeout_flags(p_author)
+    _add_runtime_flags(p_author)
     p_author.set_defaults(func=_cmd_author)
 
     args = parser.parse_args(argv)
