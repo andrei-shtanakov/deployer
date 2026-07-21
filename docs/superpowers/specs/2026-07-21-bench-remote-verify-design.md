@@ -308,7 +308,7 @@ Each expansion adds its corpus case *first* (target before capability):
 
 ## Phase 4a addendum (2026-07-21): script-entrypoint fact + repair feedback
 
-**Status: spec accepted, implementation pending** (this section describes
+**Status: implemented (PR #13)** (this section describes
 the first Phase-4 PR; Phase 4 deliberately starts by closing the Phase-2
 `slow-build` debt before new capability expansion).
 

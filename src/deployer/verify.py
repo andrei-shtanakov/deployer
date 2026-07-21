@@ -459,7 +459,7 @@ def _image_command(runtime: ContainerRuntime, tag: str) -> str | None:
             text=True,
             timeout=30,
         )
-    except (subprocess.TimeoutExpired, OSError):
+    except (subprocess.TimeoutExpired, OSError, UnicodeDecodeError):
         return None
     if proc.returncode != 0 or not proc.stdout.strip():
         return None

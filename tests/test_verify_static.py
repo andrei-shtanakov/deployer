@@ -624,3 +624,32 @@ def test_environment_start_failure_never_calls_image_inspect(monkeypatch) -> Non
     assert result.status is CheckStatus.FAILED
     assert result.failure_kind is FailureKind.ENVIRONMENT
     assert "container command:" not in result.message
+
+
+# -- Fix 5: UnicodeDecodeError in image-command feedback --
+
+
+def test_image_command_unicode_decode_error_swallowed(monkeypatch) -> None:
+    """UnicodeDecodeError during image inspect must be swallowed, not escape."""
+
+    def fake(runtime, args, **kwargs):
+        if args[0] == "run":
+            return _fake_proc(0, stdout="cid")
+        if args[0] == "exec":
+            return _fake_proc(1, stderr="probe refused")
+        if args[:2] == ["image", "inspect"]:
+            raise UnicodeDecodeError("utf-8", b"", 0, 1, "x")
+        if args[0] in ("logs", "rm"):
+            return _fake_proc(0)
+        raise AssertionError(f"unexpected container command: {args}")
+
+    monkeypatch.setattr("deployer.verify.container_run", fake)
+    result = _run_healthcheck(
+        DeployTarget(service=ServiceSpec(port=8000)),
+        ContainerRuntime(tool="docker"),
+        "tag",
+        timeout=1,
+    )
+    assert result.status is CheckStatus.FAILED
+    assert result.failure_kind is FailureKind.AUTHORING
+    assert "container command:" not in result.message
