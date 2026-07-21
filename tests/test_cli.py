@@ -523,3 +523,25 @@ def test_bench_verify_no_matching_cases_exits_2(tmp_path, monkeypatch, capsys):
     assert code == 2
     assert "zzz" in capsys.readouterr().err
 
+
+def test_bench_run_clone_failure_exits_2(tmp_path, monkeypatch, capsys):
+    corpus = _make_corpus(tmp_path)
+    monkeypatch.setattr("deployer.cli.resolve_runtime", lambda *a, **k: None)
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("cloning external target demo failed")
+
+    monkeypatch.setattr("deployer.cli.run_bench", boom)
+    code = cli.main(
+        [
+            "bench",
+            "run",
+            "--corpus",
+            str(corpus),
+            "--label",
+            "t",
+            "--include-external",
+        ]
+    )
+    assert code == 2
+    assert "demo" in capsys.readouterr().err

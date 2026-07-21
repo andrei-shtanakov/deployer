@@ -2,6 +2,7 @@
 
 import argparse
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -244,7 +245,12 @@ def _cmd_bench_run(args: argparse.Namespace) -> int:
             health_timeout=args.health_timeout,
             include_external=args.include_external,
         )
-    except (FileNotFoundError, ValueError) as exc:
+    except (
+        FileNotFoundError,
+        ValueError,
+        RuntimeError,
+        subprocess.TimeoutExpired,
+    ) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
     for case in report.cases:
