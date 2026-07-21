@@ -58,6 +58,26 @@ Every `author` run writes `.deployer/authoring-run.json` — iteration count,
 per-check outcomes, authoring-vs-environment failure taxonomy. That file is
 the research output.
 
+## Bench
+
+The corpus (`corpus/synthetic/`) is a set of small target projects with
+declared intent (`target.json`) and expectations (`expected.json`).
+
+    uv run deployer bench run [--corpus corpus] [--filter GLOB] [--label NAME] \
+        [--author fixture|anthropic] [runtime/timeout flags]
+    uv run deployer bench verify [--corpus corpus] [--filter GLOB]
+
+`bench run` authors every case in a scratch copy and writes the raw run
+(per-case `authoring-run.json` + final Dockerfile, aggregate
+`bench-report.json` + `bench-report.md`) under `.deployer-runs/<ts>-<label>/`
+(gitignored). The default author is `fixture` — it replays each case's
+committed `fixture.Dockerfile`, needs no API key, and measures the
+verification pipeline. `--author anthropic` runs the real LLM and spends
+money; select it explicitly. `bench verify` just verifies the committed
+fixtures (corpus smoke). Exit codes: 0 all matched/passed, 1 mismatch/fail,
+2 invalid invocation. Cases with `requires_l2: true` are skipped (not
+failed) when no container runtime is available.
+
 ## Development
 
 ```sh

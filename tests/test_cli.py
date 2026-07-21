@@ -453,3 +453,95 @@ def test_author_report_write_failure_warns_not_crashes(
     captured = capsys.readouterr()
     assert "warning: could not write authoring-run.json" in captured.err
     assert "stopped: static_only" in captured.out
+
+
+def _make_corpus(tmp_path, name="case-one", requires_l2=False):
+    import json as _json
+
+    case = tmp_path / "corpus" / "synthetic" / name
+    (case / "project").mkdir(parents=True)
+    (case / "project" / "main.py").write_text("print('hi')\n")
+    # `success` (in AuthoringRun) is only True when a runtime actually ran
+    # the container (see author.py: stopped_reason "success" vs
+    # "static_only"); without a runtime the achievable outcome is
+    # "static_only", i.e. success=False. expected_success mirrors
+    # requires_l2 here so the offline/no-runtime tests below express an
+    # achievable expectation (skipped cases never compare success, so this
+    # is a no-op for requires_l2=True corpora).
+    (case / "expected.json").write_text(
+        _json.dumps({"requires_l2": requires_l2, "expected_success": requires_l2})
+    )
+    (case / "fixture.Dockerfile").write_text("FROM python:3.12-slim\n")
+    return tmp_path / "corpus"
+
+
+def test_bench_run_offline_exits_0_on_match(tmp_path, monkeypatch, capsys):
+    corpus = _make_corpus(tmp_path)
+    monkeypatch.setattr("deployer.cli.resolve_runtime", lambda *a, **k: None)
+    monkeypatch.chdir(tmp_path)
+    code = cli.main(["bench", "run", "--corpus", str(corpus), "--label", "t"])
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "case-one" in out and "bench-report" in out
+
+
+def test_bench_run_bad_label_exits_2(tmp_path, monkeypatch, capsys):
+    corpus = _make_corpus(tmp_path)
+    code = cli.main(["bench", "run", "--corpus", str(corpus), "--label", "a/b"])
+    assert code == 2
+    assert "label" in capsys.readouterr().err
+
+
+def test_bench_run_missing_corpus_exits_2(tmp_path, capsys):
+    code = cli.main(["bench", "run", "--corpus", str(tmp_path / "nope")])
+    assert code == 2
+
+
+def test_bench_run_anthropic_requires_explicit_flag(tmp_path, monkeypatch):
+    corpus = _make_corpus(tmp_path)
+    monkeypatch.setattr("deployer.cli.resolve_runtime", lambda *a, **k: None)
+    monkeypatch.setattr(
+        "deployer.cli.AnthropicAuthor",
+        lambda: pytest.fail("AnthropicAuthor must not be constructed by default"),
+    )
+    monkeypatch.chdir(tmp_path)
+    assert cli.main(["bench", "run", "--corpus", str(corpus), "--label", "t"]) == 0
+
+
+def test_bench_verify_static_only_pass_exits_0(tmp_path, monkeypatch, capsys):
+    corpus = _make_corpus(tmp_path)
+    monkeypatch.setattr("deployer.cli.resolve_runtime", lambda *a, **k: None)
+    code = cli.main(["bench", "verify", "--corpus", str(corpus)])
+    assert code == 0
+    assert "case-one" in capsys.readouterr().out
+
+
+def test_bench_verify_no_matching_cases_exits_2(tmp_path, monkeypatch, capsys):
+    corpus = _make_corpus(tmp_path)
+    monkeypatch.setattr("deployer.cli.resolve_runtime", lambda *a, **k: None)
+    code = cli.main(["bench", "verify", "--corpus", str(corpus), "--filter", "zzz"])
+    assert code == 2
+    assert "zzz" in capsys.readouterr().err
+
+
+def test_bench_run_clone_failure_exits_2(tmp_path, monkeypatch, capsys):
+    corpus = _make_corpus(tmp_path)
+    monkeypatch.setattr("deployer.cli.resolve_runtime", lambda *a, **k: None)
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("cloning external target demo failed")
+
+    monkeypatch.setattr("deployer.cli.run_bench", boom)
+    code = cli.main(
+        [
+            "bench",
+            "run",
+            "--corpus",
+            str(corpus),
+            "--label",
+            "t",
+            "--include-external",
+        ]
+    )
+    assert code == 2
+    assert "demo" in capsys.readouterr().err

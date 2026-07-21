@@ -1,9 +1,14 @@
 """Pydantic contracts shared across the deployer pipeline."""
 
+from __future__ import annotations
+
+import re
 from enum import StrEnum
 from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+_SAFE_NAME_RE = re.compile(r"[A-Za-z0-9._-]+")
 
 
 class ServiceSpec(BaseModel):
@@ -83,6 +88,42 @@ class AuthorInfo(BaseModel):
     backend: str
     model_id: str | None = None
     prompt_sha256: str | None = None
+
+
+class ExpectedOutcome(BaseModel):
+    """What a corpus case is expected to do under the authoring loop."""
+
+    expected_success: bool = True
+    max_iterations: int = 3
+    requires_l2: bool = True
+    expected_failure_kind: FailureKind | None = None
+    capabilities: list[str] = Field(default_factory=list)
+    notes: str = ""
+
+
+class ExternalTarget(BaseModel):
+    """A pinned real-world project consumed by the bench via cloning."""
+
+    name: str
+    url: str
+    commit: str
+    target: DeployTarget = Field(default_factory=DeployTarget)
+    expected: ExpectedOutcome = Field(default_factory=ExpectedOutcome)
+
+    @field_validator("name")
+    @classmethod
+    def _reject_path_traversal(cls, value: str) -> str:
+        """Keep `name` a bare path segment: no traversal, no separators.
+
+        The regex alone would still admit ".." (every char is in the
+        allowed set), so it must be rejected explicitly alongside ".".
+        """
+        if not _SAFE_NAME_RE.fullmatch(value) or value in (".", ".."):
+            raise ValueError(
+                "ExternalTarget.name must match [A-Za-z0-9._-]+ and must "
+                f'not be "." or "..": {value!r}'
+            )
+        return value
 
 
 class CheckStatus(StrEnum):
@@ -191,3 +232,42 @@ class AuthoringRun(BaseModel):
     author_info: AuthorInfo | None = None
     deployer_version: str | None = None
     deployer_git_sha: str | None = None
+
+
+class BenchCaseResult(BaseModel):
+    """One corpus case's outcome within a bench run."""
+
+    case: str
+    outcome: Literal["matched", "mismatched", "skipped"]
+    success: bool = False
+    stopped_reason: StopReason | None = None
+    iterations: int = 0
+    image_size_bytes: int | None = None
+    wall_time_s: float = 0.0
+    skip_reason: str = ""
+    failure_kinds: list[FailureKind] = Field(default_factory=list)
+
+
+class BenchReport(BaseModel):
+    """Aggregate research artifact for one bench run over the corpus."""
+
+    label: str
+    author_backend: str
+    corpus_commit: str | None = None
+    deployer_version: str | None = None
+    runtime: ContainerRuntime | None = None
+    runtime_versions: RuntimeVersions | None = None
+    build_timeout_s: int
+    health_timeout_s: int
+    cases: list[BenchCaseResult] = Field(default_factory=list)
+
+    @property
+    def success_rate(self) -> float | None:
+        ran = [c for c in self.cases if c.outcome != "skipped"]
+        if not ran:
+            return None
+        return round(sum(1 for c in ran if c.success) / len(ran), 3)
+
+    @property
+    def all_matched(self) -> bool:
+        return all(c.outcome != "mismatched" for c in self.cases)

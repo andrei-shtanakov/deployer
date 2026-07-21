@@ -1,0 +1,1 @@
+{"capabilities": ["pip", "service", "system-deps"], "notes": "psycopg2 source build; needs apt build+runtime packages from the hints table"}
