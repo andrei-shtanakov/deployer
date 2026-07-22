@@ -712,6 +712,15 @@ def test_author_unknown_entrypoint_exits_2(
     )
     target = tmp_path / "target.json"
     target.write_text('{"entrypoint": "app.py"}')
+
+    class FakeAuthor:
+        def generate(self, facts, target):
+            raise AssertionError("generate must not be called")
+
+        def repair(self, facts, target, dockerfile, report):
+            raise AssertionError("repair must not be called")
+
+    monkeypatch.setattr("deployer.cli.AnthropicAuthor", lambda: FakeAuthor())
     assert (
         cli.main(["author", str(tmp_path), "--target", str(target), "--no-docker"]) == 2
     )

@@ -53,8 +53,10 @@ invalid runtime configuration).
 
 `target.json` is a `DeployTarget`: e.g.
 `{"service": {"port": 8000, "healthcheck_path": "/health"}}`.
-`{"system_packages": ["libpq5"]}` in the target requires apt packages
-unconditionally. Design: `docs/superpowers/specs/2026-07-04-facts-v2-design.md`.
+`{"system_packages": ["libpq5"]}` in the target requires apt packages unconditionally.
+`{"extras": ["gui"]}` installs optional-dependency groups.
+`{"entrypoint": "app.py"}` specifies the bare filename or [project.scripts] name to run.
+Design: `docs/superpowers/specs/2026-07-04-facts-v2-design.md`.
 Every `author` run writes `.deployer/authoring-run.json` — iteration count,
 per-check outcomes, authoring-vs-environment failure taxonomy. That file is
 the research output.

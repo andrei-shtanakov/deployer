@@ -203,3 +203,8 @@ def test_entrypoint_default_none_and_roundtrip() -> None:
     target = DeployTarget(entrypoint="app.py")
     parsed = DeployTarget.model_validate_json(target.model_dump_json())
     assert parsed.entrypoint == "app.py"
+
+
+def test_entrypoint_rejects_empty_string() -> None:
+    with pytest.raises(ValidationError):
+        DeployTarget(entrypoint="")

@@ -48,9 +48,10 @@ Rules:
   copy whatever sources the entrypoint requires.
 - Container-command precedence:
   1. If the deploy intent sets "entrypoint", the CMD MUST execute it in
-     exec form (e.g. CMD ["python", "app.py"] or the package-manager
-     equivalent). Never override a DeployTarget.entrypoint. It is
-     operator intent.
+     exec form: a filename runs via the interpreter (e.g.
+     CMD ["python", "app.py"] or the package-manager equivalent); a
+     [project.scripts] name runs as its console script. Never override
+     a DeployTarget.entrypoint. It is operator intent.
   2. Otherwise, when entrypoints ([project.scripts]) is non-empty, it
      wins: run the named console script.
   3. Otherwise script_entrypoint is deterministic ground truth. If it is
