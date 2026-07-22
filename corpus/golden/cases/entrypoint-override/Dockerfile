@@ -8,6 +8,4 @@ COPY app.py main.py ./
 
 USER appuser
 
-EXPOSE 8000
-
 CMD ["python", "app.py"]

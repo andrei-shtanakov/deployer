@@ -10,4 +10,6 @@ COPY main.py ./
 RUN useradd --create-home appuser
 USER appuser
 
+ENV REDIS_URL=redis://cache:6379/0
+
 CMD ["python", "main.py"]
