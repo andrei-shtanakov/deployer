@@ -23,8 +23,9 @@ uv run deployer author <project-path> [--target target.json] [--no-docker] \
 uv run deployer verify <project-path> [--target target.json] \
     [--container-tool docker|podman] [--container-host ssh://user@host] \
     [--build-timeout 600] [--health-timeout 30]
-# verify checks <project-path>/Dockerfile; --health-timeout is ignored for
-# non-service targets. Slow source builds (e.g. llama-cpp-python) need
+# verify checks <project-path>/Dockerfile; --health-timeout bounds runtime
+# checks (service healthcheck or run intent) and is ignored for build-only
+# targets. Slow source builds (e.g. llama-cpp-python) need
 # --build-timeout well above the 600s default.
 ```
 

@@ -68,7 +68,10 @@ def _add_timeout_flags(parser: argparse.ArgumentParser) -> None:
         "--health-timeout",
         type=int,
         default=DEFAULT_HEALTH_TIMEOUT,
-        help="seconds allowed for the healthcheck; ignored for non-service targets",
+        help=(
+            "seconds allowed for runtime checks (service healthcheck or "
+            "run intent); ignored for build-only targets"
+        ),
     )
 
 
