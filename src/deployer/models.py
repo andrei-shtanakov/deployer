@@ -65,10 +65,15 @@ class ServiceDependency(BaseModel):
     @field_validator("image")
     @classmethod
     def _pinned_image(cls, value: str) -> str:
-        """Same rule as base images: tag allowed, digest preferred."""
+        """Same rule as base images: tag allowed, digest preferred.
+
+        The tag lives in the reference's LAST path segment: splitting
+        the whole value on its first colon would mistake a registry
+        port (localhost:5000/redis) for a tag.
+        """
         if "@sha256:" in value:
             return value
-        _, _, tag = value.partition(":")
+        _, _, tag = value.rsplit("/", 1)[-1].partition(":")
         if not tag or tag == "latest":
             raise ValueError(
                 "ServiceDependency.image must be pinned (a tag or digest, "

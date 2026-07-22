@@ -217,7 +217,8 @@ def test_service_dependency_requires_pinned_image() -> None:
     ServiceDependency(name="cache", image="redis:7-alpine")
     ServiceDependency(name="db", image="postgres:16-alpine")
     ServiceDependency(name="cache", image="redis@sha256:" + "a" * 64)
-    for image in ("redis", "redis:latest"):
+    ServiceDependency(name="cache", image="localhost:5000/redis:7-alpine")
+    for image in ("redis", "redis:latest", "localhost:5000/redis"):
         with pytest.raises(ValidationError):
             ServiceDependency(name="cache", image=image)
 

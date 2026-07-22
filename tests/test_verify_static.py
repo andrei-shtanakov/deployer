@@ -1104,6 +1104,11 @@ def test_verify_compose_up_probe_down_sequence(monkeypatch, tmp_path: Path) -> N
     project = next(iter(project_flags))
     assert project.startswith("deployer-verify-")
     _assert_both_compose_files(calls)
+    exec_call = next(c for c in calls if "exec" in c)
+    url = "http://127.0.0.1:8000/health"
+    assert exec_call[-1] == (
+        f"import urllib.request; urllib.request.urlopen({url!r}, timeout=2)"
+    )
     down_call, image_rm_call = calls[-2], calls[-1]
     assert down_call[:1] == ["compose"] and "down" in down_call  # teardown
     assert "-v" in down_call

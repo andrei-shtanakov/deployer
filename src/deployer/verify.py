@@ -758,7 +758,7 @@ def _run_healthcheck(
     assert target.service is not None
     container = f"deployer-check-{uuid.uuid4().hex[:8]}"
     url = f"http://127.0.0.1:{target.service.port}{target.service.healthcheck_path}"
-    probe = f"import urllib.request; urllib.request.urlopen('{url}', timeout=2)"
+    probe = f"import urllib.request; urllib.request.urlopen({url!r}, timeout=2)"
     try:
         started = container_run(
             runtime,
@@ -992,7 +992,7 @@ def _verify_compose(
     assert target.service is not None
     project = f"deployer-verify-{uuid.uuid4().hex[:8]}"
     url = f"http://127.0.0.1:{target.service.port}{target.service.healthcheck_path}"
-    probe = f"import urllib.request; urllib.request.urlopen('{url}', timeout=2)"
+    probe = f"import urllib.request; urllib.request.urlopen({url!r}, timeout=2)"
     results: list[CheckResult] = []
     with _isolated_context(project_path) as context:
         (context / "Dockerfile").write_text(dockerfile + "\n")
