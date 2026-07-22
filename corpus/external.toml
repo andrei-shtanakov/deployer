@@ -19,12 +19,13 @@ url = "/Users/Andrei_Shtanakov/lab_aist/locallogai-backend"
 commit = "a8309d71b93598a402f7c1f0cd92af8fa2626667"
 [targets.target]
 extras = ["gui"]
+entrypoint = "app.py"
 [targets.target.service]
 port = 7860
 healthcheck_path = "/"
 [targets.expected]
-expected_success = false
+expected_success = true
 max_iterations = 3
 requires_l2 = true
-capabilities = ["uv", "external", "service", "extras", "python-3.13"]
-notes = "service entrypoint disambiguation missing: script_entrypoint resolves to the main.py stub and the prompt rule makes it binding, while the real Gradio app is app.py — success requires violating an authoring contract. Flip to true when a service-entrypoint fact/intent lands (see 2026-07-22 spec, Deferred)."
+capabilities = ["uv", "external", "service", "extras", "python-3.13", "entrypoint"]
+notes = "full-service target: gui extra + explicit entrypoint intent (app.py) — the service-entrypoint disambiguation blocker from the 4b-2 run is closed by DeployTarget.entrypoint; healthcheck '/' relies on Gradio's root-200"

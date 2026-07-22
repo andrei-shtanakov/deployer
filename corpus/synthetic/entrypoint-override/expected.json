@@ -1,0 +1,1 @@
+{"capabilities": ["entrypoint", "service"], "notes": "miniature of the locallogai shape: script_entrypoint picks the main.py decoy, the intent names app.py; without the entrypoint intent the rules force the stub and the healthcheck fails"}
