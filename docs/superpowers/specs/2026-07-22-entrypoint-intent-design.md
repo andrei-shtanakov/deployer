@@ -1,7 +1,11 @@
 # Entrypoint intent (Phase 4b-3)
 
 Date: 2026-07-22
-Status: approved (brainstorm 2026-07-22)
+Status: approved (brainstorm 2026-07-22; dependency note and
+unsupported-shapes deferred added in review)
+Builds on: `2026-07-22-extras-source-layout-design.md` (merged, PR #17) —
+root-module validation depends on `ProjectFacts.root_modules`; this
+feature is unimplementable on the older facts model.
 
 ## Motivation
 
@@ -141,6 +145,11 @@ reason, record the evidence and adjust honestly — do not pre-weaken.
 
 ## Deferred
 
+- **Module/path entrypoint forms** — `src/foo.py`, dotted module refs
+  (`pkg.module:main`), ASGI/WSGI app references: deliberately out of
+  scope (a scope cut, not an oversight) until a concrete corpus case
+  needs them. Today's contract is bare names only: a root-module
+  filename or a `[project.scripts]` key.
 - Bench `--filter` does not match external targets (today a synthetic
   carrier case is needed to run one external — quirk observed
   2026-07-22); separate small fix.
