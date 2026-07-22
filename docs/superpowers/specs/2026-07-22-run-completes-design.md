@@ -107,6 +107,34 @@ returned, the verifier redacts `target.run.expect_stdout` from the
 (e.g. build the full message, then `_redact_oracle(message, marker)`
 before constructing the `CheckResult`).
 
+This redaction is applied twice, deliberately:
+
+- **Raw output, before tailing.** `_tail` is line-based and truncates;
+  a multi-line marker split by truncation can leave an unmatched
+  fragment (e.g. only the second line survives) for a later
+  `str.replace` on the already-tailed text. `_run_completes` therefore
+  calls `_redact_oracle` on `proc.stdout` / the combined
+  stdout+stderr *before* passing it to `_tail`, then redacts the
+  assembled message again in `_failed` as a second, belt-and-braces
+  pass.
+- **Report-wide, not just `run_completes`.** The marker can also leak
+  through a *different* check's message: the model can author a
+  Dockerfile step that prints the marker (e.g. `RUN python main.py`
+  as a build step, not just the final CMD), and if that step fails,
+  the marker lands in the `build` check's message. `verify()` accounts
+  for this: whenever `target.run is not None and
+  target.run.expect_stdout`, every `CheckResult.message` in the
+  assembled `VerificationReport` — build included, static checks
+  included — is passed through `_redact_oracle` before the report is
+  returned (status/failure_kind/check_id are untouched). The
+  in-`_run_completes` redaction above stays as-is; this is a second,
+  independent gate over the whole report.
+
+Related: `RunSpec.expect_stdout` requires a non-empty string
+(`Field(min_length=1)`). An empty marker would make `marker not in
+stdout` always `False`, so the check would look armed while actually
+being disarmed — rejected at the model level instead.
+
 ## Prompt: intent visible, oracle hidden
 
 `llm.py` renders the target into both the generate and repair prompts via

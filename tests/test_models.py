@@ -155,3 +155,15 @@ def test_build_only_target_still_valid() -> None:
     target = DeployTarget()
     assert target.service is None
     assert target.run is None
+
+
+def test_run_spec_rejects_empty_oracle() -> None:
+    """Finding 2: an empty marker would silently disarm the check
+    (`"" not in stdout` is always False), so it must be rejected up front."""
+    with pytest.raises(ValidationError):
+        RunSpec(expect_stdout="")
+
+
+def test_run_spec_none_and_nonempty_oracle_remain_valid() -> None:
+    assert RunSpec().expect_stdout is None
+    assert RunSpec(expect_stdout="x").expect_stdout == "x"

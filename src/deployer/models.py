@@ -25,7 +25,7 @@ class RunSpec(BaseModel):
     never shown to the authoring model.
     """
 
-    expect_stdout: str | None = None
+    expect_stdout: str | None = Field(default=None, min_length=1)
 
 
 class DeployTarget(BaseModel):

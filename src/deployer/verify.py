@@ -651,14 +651,15 @@ def _run_completes(
 
     if proc.returncode == 0:
         if marker is not None and marker not in proc.stdout:
+            redacted_stdout = _redact_oracle(proc.stdout, marker)
             return _failed(
                 FailureKind.AUTHORING,
                 "container exited 0 but stdout did not contain the expected "
-                f"output\nstdout tail:\n{_tail(proc.stdout)}",
+                f"output\nstdout tail:\n{_tail(redacted_stdout)}",
             )
         return CheckResult(check_id="run_completes", status=CheckStatus.PASSED)
 
-    output = proc.stdout + "\n" + proc.stderr
+    output = _redact_oracle(proc.stdout + "\n" + proc.stderr, marker)
     if proc.returncode in (125, 126) and _is_transport_failure(output):
         return _failed(
             FailureKind.ENVIRONMENT,
@@ -738,4 +739,10 @@ def verify(
         )
         report.results.extend(docker_results)
         report.image_size_bytes = image_size
+    if target.run is not None and target.run.expect_stdout:
+        marker = target.run.expect_stdout
+        report.results = [
+            r.model_copy(update={"message": _redact_oracle(r.message, marker)})
+            for r in report.results
+        ]
     return report

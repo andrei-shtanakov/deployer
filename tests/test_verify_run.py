@@ -14,7 +14,7 @@ from deployer.models import (
     FailureKind,
     RunSpec,
 )
-from deployer.verify import _redact_oracle, _run_completes
+from deployer.verify import _redact_oracle, _run_completes, verify
 
 RUNTIME = ContainerRuntime(tool="docker")
 MARKER = "hello from job"
@@ -195,3 +195,50 @@ def test_verify_docker_dispatches_run_completes(
     )
     assert [r.check_id for r in results] == ["build", "run_completes"]
     assert all(r.status is CheckStatus.PASSED for r in results)
+
+
+def test_report_wide_redaction_covers_build_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Finding 1: the marker can leak through a *different* check's message.
+
+    The model can author `RUN python main.py` in the Dockerfile itself; if
+    that RUN step fails during build, the marker lands in the build-log
+    tail. `verify()` must redact every check's message, not just
+    `run_completes`'s, before returning the report.
+    """
+    (tmp_path / "main.py").write_text("print('hi')\n")
+    dockerfile = 'FROM python:3.12-slim\nCOPY main.py .\nCMD ["python", "main.py"]\n'
+
+    def fake(runtime: ContainerRuntime, args: list[str], **kwargs: Any) -> Any:
+        if args[0] == "build":
+            return _proc(1, stderr=f"Step 3/3 : RUN python main.py\n{MARKER}\nfail")
+        return _proc(0)
+
+    monkeypatch.setattr(verify_mod, "container_run", fake)
+    report = verify(dockerfile, tmp_path, _target(), RUNTIME)
+
+    build = next(r for r in report.results if r.check_id == "build")
+    assert build.status is CheckStatus.FAILED
+    assert MARKER not in build.message
+    assert "<redacted>" in build.message
+
+
+def test_multiline_marker_redacted_before_tail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Finding 3: redaction must happen before `_tail` truncates output.
+
+    `_tail` is line-based; if a multi-line marker gets split by
+    truncation, replacing the whole marker string *after* tailing can
+    leave an unmatched fragment (e.g. just "line-two") behind. Redacting
+    the raw output first avoids that regardless of where truncation lands.
+    """
+    marker = "line-one\nline-two"
+    filler = "\n".join(f"noise {i}" for i in range(30))
+    stdout = f"{marker}\n{filler}\ncrash\n"
+    _patch_container_run(monkeypatch, _proc(1, stdout=stdout))
+    result = _run_completes(_target(marker=marker), RUNTIME, "tag", 30)
+    assert result.status is CheckStatus.FAILED
+    assert "line-one" not in result.message
+    assert "line-two" not in result.message
