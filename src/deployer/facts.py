@@ -129,13 +129,13 @@ def _package_dirs_in(base: Path, prefix: str) -> list[str]:
             continue
         if entry.name in _DIR_DENYLIST or entry.name.startswith("."):
             continue
-        if (entry / "__init__.py").is_file():
+        if any(f.suffix == ".py" for f in entry.glob("*.py")):
             found.append(f"{prefix}{entry.name}")
     return found
 
 
 def _scan_package_dirs(path: Path) -> list[str]:
-    """Package dirs (with __init__.py) at root and one level under src/."""
+    """Source-unit dirs (>=1 root-level *.py) at root and one level under src/."""
     dirs = _package_dirs_in(path, prefix="")
     src = path / "src"
     if src.is_dir():

@@ -239,12 +239,17 @@ def test_package_dirs_root_src_and_denylist(tmp_path: Path) -> None:
     for pkg in ("agents", "tests", ".hidden"):
         (tmp_path / pkg).mkdir()
         (tmp_path / pkg / "__init__.py").write_text("")
-    (tmp_path / "data").mkdir()  # no __init__.py -> not a package
+    ns_pkg = tmp_path / "nsapp"
+    ns_pkg.mkdir()
+    (ns_pkg / "handlers.py").write_text("x = 1\n")  # namespace pkg, no __init__
+    (tmp_path / "data").mkdir()  # denylisted anyway
+    (tmp_path / "assets").mkdir()  # no .py files -> not a source unit
+    (tmp_path / "assets" / "logo.txt").write_text("")
     src_pkg = tmp_path / "src" / "foo"
     src_pkg.mkdir(parents=True)
     (src_pkg / "__init__.py").write_text("")
     facts = analyze_project(tmp_path)
-    assert facts.package_dirs == ["agents", "src/foo"]
+    assert facts.package_dirs == ["agents", "nsapp", "src/foo"]
 
 
 def test_validate_extras_ok_and_noop() -> None:
