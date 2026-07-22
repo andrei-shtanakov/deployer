@@ -688,3 +688,30 @@ def test_author_unknown_extra_exits_2(tmp_path: Path, monkeypatch) -> None:
     assert (
         cli.main(["author", str(tmp_path), "--target", str(target), "--no-docker"]) == 2
     )
+
+
+def test_verify_unknown_entrypoint_exits_2(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(cli, "resolve_runtime", lambda *a, **k: None)
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "x"\nversion = "0"\ndependencies = []\n'
+    )
+    (tmp_path / "main.py").write_text("print('hi')\n")
+    (tmp_path / "Dockerfile").write_text("FROM python:3.12-slim\n")
+    target = tmp_path / "target.json"
+    target.write_text('{"entrypoint": "app.py"}')
+    assert cli.main(["verify", str(tmp_path), "--target", str(target)]) == 2
+
+
+def test_author_unknown_entrypoint_exits_2(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "x"\nversion = "0"\ndependencies = []\n'
+    )
+    target = tmp_path / "target.json"
+    target.write_text('{"entrypoint": "app.py"}')
+    assert (
+        cli.main(["author", str(tmp_path), "--target", str(target), "--no-docker"]) == 2
+    )

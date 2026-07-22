@@ -196,3 +196,10 @@ def test_extras_full_pep503_separator_collapse() -> None:
 def test_extras_reject_empty_entries() -> None:
     with pytest.raises(ValidationError, match="non-empty"):
         DeployTarget(extras=["gui", "  "])
+
+
+def test_entrypoint_default_none_and_roundtrip() -> None:
+    assert DeployTarget().entrypoint is None
+    target = DeployTarget(entrypoint="app.py")
+    parsed = DeployTarget.model_validate_json(target.model_dump_json())
+    assert parsed.entrypoint == "app.py"

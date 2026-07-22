@@ -254,3 +254,18 @@ def test_multiline_marker_fragment_redacted_in_other_checks() -> None:
     assert "line-two" not in redacted
     assert "<redacted>" in redacted
     assert "error: boom" in redacted
+
+
+def test_verify_entrypoint_without_facts_is_config_error(
+    tmp_path: Path,
+) -> None:
+    from deployer.facts import TargetConfigError
+
+    with pytest.raises(TargetConfigError, match="no project facts"):
+        verify_mod.verify(
+            "FROM python:3.12-slim",
+            tmp_path,
+            DeployTarget(entrypoint="app.py"),
+            None,
+            None,
+        )
