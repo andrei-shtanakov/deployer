@@ -1,6 +1,7 @@
 """Thin argparse CLI over the deployer library."""
 
 import argparse
+import os
 import re
 import subprocess
 import sys
@@ -37,12 +38,41 @@ from deployer.verify import DEFAULT_BUILD_TIMEOUT, DEFAULT_HEALTH_TIMEOUT, verif
 
 _LABEL_RE = re.compile(r"[A-Za-z0-9._-]+")
 
+_DOTENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
 _STATUS_ICONS = {
     CheckStatus.PASSED: "ok",
     CheckStatus.FAILED: "FAIL",
     CheckStatus.WARNING: "warn",
     CheckStatus.SKIPPED: "skip",
 }
+
+
+def _load_dotenv(path: Path = Path(".env")) -> None:
+    """Narrow KEY=VALUE loader for Anthropic author auth; env always wins.
+
+    Intentionally not a general dotenv: no `export`, no interpolation,
+    no escapes, no multiline. Quotes are stripped only when the whole
+    value is wrapped in matching quotes. Runtime env defaults
+    (DEPLOYER_CONTAINER_*) are resolved before the author is
+    constructed and never come from this file.
+    """
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, _, value = stripped.partition("=")
+        key = key.strip()
+        if not _DOTENV_KEY_RE.fullmatch(key):
+            continue
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        os.environ.setdefault(key, value)
 
 
 def _load_target(path: str | None) -> DeployTarget | str:
@@ -202,6 +232,7 @@ def _cmd_author(args: argparse.Namespace) -> int:
         if isinstance(runtime, str):
             print(f"error: {runtime}", file=sys.stderr)
             return 2
+    _load_dotenv()
     try:
         run = author_dockerfile(
             project,
@@ -246,6 +277,7 @@ def _cmd_bench_run(args: argparse.Namespace) -> int:
         print(f"error: {runtime}", file=sys.stderr)
         return 2
     if args.author == "anthropic":
+        _load_dotenv()
         shared = AnthropicAuthor()
         make_author = lambda case: shared  # noqa: E731
     else:

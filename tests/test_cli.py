@@ -724,3 +724,37 @@ def test_author_unknown_entrypoint_exits_2(
     assert (
         cli.main(["author", str(tmp_path), "--target", str(target), "--no-docker"]) == 2
     )
+
+
+def test_load_dotenv_sets_missing_and_env_wins(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake_env: dict[str, str] = {"EXISTING": "env-value"}
+    monkeypatch.setattr(cli.os, "environ", fake_env)
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "# comment\n"
+        "\n"
+        "ANTHROPIC_API_KEY=from-file\n"
+        "QUOTED='q-value'\n"
+        'DOUBLE="d-value"\n'
+        "HALF='not-stripped\n"
+        "BAD KEY=skipped\n"
+        "export EXPORTED=skipped\n"
+        "1BAD=skipped\n"
+        "EXISTING=file-value\n"
+        "NOEQUALS\n"
+    )
+    cli._load_dotenv(env_file)
+    assert fake_env["ANTHROPIC_API_KEY"] == "from-file"
+    assert fake_env["QUOTED"] == "q-value"
+    assert fake_env["DOUBLE"] == "d-value"
+    assert fake_env["HALF"] == "'not-stripped"
+    assert fake_env["EXISTING"] == "env-value"
+    assert "EXPORTED" not in fake_env
+    assert "1BAD" not in fake_env
+    assert "BAD KEY" not in fake_env
+
+
+def test_load_dotenv_missing_file_is_noop(tmp_path: Path) -> None:
+    cli._load_dotenv(tmp_path / "absent.env")

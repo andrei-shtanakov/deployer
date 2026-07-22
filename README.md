@@ -51,6 +51,11 @@ invalid runtime configuration).
 `verify` writes its full report to `<project>/.deployer/verify-report.json`
 (latest run only).
 
+`author` and `bench run --author anthropic` auto-load `./.env`
+(KEY=VALUE lines) for the Anthropic API key; real environment variables
+always win, and runtime flags (`DEPLOYER_CONTAINER_*`) are NOT read
+from `.env`.
+
 `target.json` is a `DeployTarget`: e.g.
 `{"service": {"port": 8000, "healthcheck_path": "/health"}}`.
 `{"system_packages": ["libpq5"]}` in the target requires apt packages unconditionally.
