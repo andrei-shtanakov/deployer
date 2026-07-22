@@ -134,13 +134,20 @@ bootstrap exception applies to all of these forms as well.
 For `package_manager="poetry"`:
 
 - FAILED: `uv sync` / `uv pip` present;
-- FAILED: pip invocation with `-r ...`;
-- FAILED: pip invocation installing `.`;
-- ALLOWED: pip invocation installing `poetry==<version>` — the builder
-  bootstrap. Recognized **before** the general pip rules, otherwise the
-  checker would forbid its own recommended pattern;
-- WARNING: pip invocation installing `poetry` without `==` — unpinned
-  installer version partially defeats lock reproducibility.
+- FAILED: **any** pip invocation that installs runtime/project
+  dependencies directly — `-r ...`, `.`, or named packages
+  (`pip install flask`). `poetry.lock` is the only dependency source;
+  a direct pip install bypasses it;
+- ALLOWED: a pip invocation whose install payload is **only** the
+  Poetry bootstrap — pinned `poetry==<version>` plus pip flags.
+  Recognized **before** the general pip rules, otherwise the checker
+  would forbid its own recommended pattern;
+- WARNING: a pip invocation whose payload is only Poetry but not
+  pinned exactly with `==` (`pip install poetry`,
+  `pip install poetry>=1.8`) — unpinned installer version partially
+  defeats lock reproducibility;
+- FAILED: mixed bootstrap + dependency payload, e.g.
+  `pip install poetry==1.8.5 flask`.
 
 For `package_manager != "poetry"`:
 
@@ -151,11 +158,13 @@ For `package_manager != "poetry"`:
 
 Test matrix:
 
-- poetry + `pip install poetry==1.8.5` + `poetry install --no-root
-  --only main` → pass
-- poetry + `pip install poetry` → warning
+- poetry + `pip install --no-cache-dir poetry==1.8.5` + `poetry
+  install --no-root --only main` → pass
+- poetry + `pip install poetry` / `pip install poetry>=1.8` → warning
 - poetry + `pip install -r requirements.txt` → fail
 - poetry + `pip install .` → fail
+- poetry + `pip install flask` → fail
+- poetry + `pip install poetry==1.8.5 flask` → fail
 - poetry + `uv sync` / `uv pip` → fail
 - same outcomes for `pip3` / `python -m pip` / `python3 -m pip` forms
 - uv/pip project + `poetry install` → fail
@@ -198,6 +207,13 @@ complexity) would be conflated.
 - `test_llm.py`: prompt contains the Poetry install rules and the
   Poetry extras rule.
 - `test_corpus.py` / fixture bench: 9/9 fixture-authored cases green.
+- Pin-drift test: the fixture Dockerfile pins the same
+  `poetry==<PINNED>` as the `llm.py` constant, so prompt, fixture and
+  golden cannot drift silently.
+- README updated: facts/install strategy mention uv, pip **and**
+  poetry (today it still says facts cover uv and pip).
+- Gates (per repo rules): `uv run pytest`, `uv run pytest -m docker`,
+  `uv run ruff check .`, `uv run pyrefly check`.
 - LLM golden: re-promote after a green LLM bench run (separate chore
   commit, as with PR #19).
 
