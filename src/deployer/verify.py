@@ -725,20 +725,19 @@ def verify(
     """
     report = verify_static(dockerfile, project_path, facts)
     report.runtime = runtime
-    if runtime is None:
-        return report
-    report.docker_available = True
-    if report.passed:
-        docker_results, image_size = verify_docker(
-            dockerfile,
-            project_path,
-            target,
-            runtime,
-            build_timeout=build_timeout,
-            health_timeout=health_timeout,
-        )
-        report.results.extend(docker_results)
-        report.image_size_bytes = image_size
+    if runtime is not None:
+        report.docker_available = True
+        if report.passed:
+            docker_results, image_size = verify_docker(
+                dockerfile,
+                project_path,
+                target,
+                runtime,
+                build_timeout=build_timeout,
+                health_timeout=health_timeout,
+            )
+            report.results.extend(docker_results)
+            report.image_size_bytes = image_size
     if target.run is not None and target.run.expect_stdout:
         marker = target.run.expect_stdout
         report.results = [
