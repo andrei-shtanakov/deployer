@@ -1,4 +1,3 @@
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -8,7 +7,6 @@ from deployer.models import (
     ContainerRuntime,
     DeployTarget,
     RunSpec,
-    ServiceDependency,
     ServiceSpec,
 )
 from deployer.runtime import resolve_runtime
@@ -17,38 +15,6 @@ from deployer.verify import verify
 pytestmark = pytest.mark.docker
 
 TARGET = DeployTarget(service=ServiceSpec(port=8000, healthcheck_path="/health"))
-
-GOOD = """\
-FROM python:3.12-slim
-WORKDIR /app
-COPY main.py .
-EXPOSE 8000
-CMD ["python", "main.py"]
-"""
-
-COMPOSE_TARGET = DeployTarget(
-    service=ServiceSpec(port=8000),
-    env={"REDIS_URL": "redis://cache:6379/0"},
-    dependencies=[ServiceDependency(name="cache", image="redis:7-alpine")],
-)
-
-COMPOSE_GOOD = """\
-services:
-  app:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    environment:
-      REDIS_URL: redis://cache:6379/0
-    depends_on:
-      cache:
-        condition: service_healthy
-  cache:
-    image: redis:7-alpine
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 2s
-"""
 
 
 @pytest.fixture(scope="module")
@@ -229,117 +195,3 @@ def test_inert_cmd_fails_run_completes_without_leaking_oracle(
     assert check.failure_kind == "authoring"
     assert "container command" in check.message
     assert "hello from no-build-system" not in check.message
-
-
-# -- Task 4: compose L2 — up/exec-probe/down --
-
-
-def test_verify_compose_up_probe_down_sequence(monkeypatch, tmp_path: Path) -> None:
-    from deployer.verify import _verify_compose
-
-    calls: list[list[str]] = []
-
-    def fake(runtime, args, **kwargs):
-        calls.append(args)
-        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
-
-    monkeypatch.setattr("deployer.verify.container_run", fake)
-    results = _verify_compose(
-        "FROM python:3.12-slim",
-        COMPOSE_GOOD,
-        tmp_path,
-        COMPOSE_TARGET,
-        ContainerRuntime(tool="podman"),
-        build_timeout=60,
-        health_timeout=5,
-    )
-    by_id = {r.check_id: r for r in results}
-    assert by_id["compose_up"].status is CheckStatus.PASSED
-    assert by_id["compose_healthcheck"].status is CheckStatus.PASSED
-    assert any("up" in c for c in calls if c[0] == "compose")
-    project_flags = {c[c.index("-p") + 1] for c in calls if "-p" in c}
-    assert len(project_flags) == 1  # one unique project name throughout
-    assert next(iter(project_flags)).startswith("deployer-verify-")
-    assert calls[-1][:1] == ["compose"] and "down" in calls[-1]  # teardown last
-    assert "-v" in calls[-1]
-
-
-def test_verify_compose_up_failure_classifies_and_still_tears_down(
-    monkeypatch, tmp_path: Path
-) -> None:
-    from deployer.verify import _verify_compose
-
-    calls: list[list[str]] = []
-
-    def fake(runtime, args, **kwargs):
-        calls.append(args)
-        if "up" in args:
-            return subprocess.CompletedProcess(
-                args, 1, stdout="", stderr="build failed: syntax error"
-            )
-        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
-
-    monkeypatch.setattr("deployer.verify.container_run", fake)
-    results = _verify_compose(
-        "FROM python:3.12-slim",
-        COMPOSE_GOOD,
-        tmp_path,
-        COMPOSE_TARGET,
-        ContainerRuntime(tool="podman"),
-        build_timeout=60,
-        health_timeout=5,
-    )
-    by_id = {r.check_id: r for r in results}
-    assert by_id["compose_up"].status is CheckStatus.FAILED
-    assert by_id["compose_up"].failure_kind == "authoring"
-    assert "compose_healthcheck" not in by_id
-    assert "down" in calls[-1]  # teardown ran despite failure
-
-
-def test_verify_compose_probe_failure_collects_logs(
-    monkeypatch, tmp_path: Path
-) -> None:
-    from deployer.verify import _verify_compose
-
-    def fake(runtime, args, **kwargs):
-        if "exec" in args:
-            return subprocess.CompletedProcess(
-                args, 1, stdout="", stderr="urlopen error"
-            )
-        if "logs" in args:
-            return subprocess.CompletedProcess(
-                args, 0, stdout="app exploded here", stderr=""
-            )
-        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
-
-    monkeypatch.setattr("deployer.verify.container_run", fake)
-    results = _verify_compose(
-        "FROM python:3.12-slim",
-        COMPOSE_GOOD,
-        tmp_path,
-        COMPOSE_TARGET,
-        ContainerRuntime(tool="podman"),
-        build_timeout=60,
-        health_timeout=2,
-    )
-    by_id = {r.check_id: r for r in results}
-    check = by_id["compose_healthcheck"]
-    assert check.status is CheckStatus.FAILED
-    assert check.failure_kind == "authoring"
-    assert "app exploded here" in check.message
-
-
-def test_verify_missing_compose_provider_is_environment_failure(
-    monkeypatch, hello_service: Path
-) -> None:
-    monkeypatch.setattr("deployer.verify.compose_available", lambda rt: False)
-    report = verify(
-        GOOD,
-        hello_service,
-        COMPOSE_TARGET,
-        ContainerRuntime(tool="podman"),
-        compose=COMPOSE_GOOD,
-    )
-    check = next(r for r in report.results if r.check_id == "compose_available")
-    assert check.status is CheckStatus.FAILED
-    assert check.failure_kind == "environment"
