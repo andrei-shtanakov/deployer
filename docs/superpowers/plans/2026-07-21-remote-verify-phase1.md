@@ -1258,3 +1258,38 @@ git commit -m "chore: record phase-1 remote acceptance results"
 ```
 
 If no remote host is reachable yet, record Steps 2–3 as pending in progress.md — the PR can still go up with local validation, and remote acceptance completes before merge.
+
+### Remote acceptance results (2026-07-22, post-merge)
+
+Host: `ssh://user@host` ("homelab", LAN address redacted; Ubuntu 24.04, docker server
+29.6.1; local client 29.6.2 via `brew install docker` — the dev machine is
+podman-only). All steps PASSED:
+
+- **Task 0 spike**: `DOCKER_HOST=ssh://…` version + `alpine:3.20 run` OK.
+  Podman branch not exercised — no podman on the host; the
+  podman-remote transport-marker watch item stays open.
+- **Step 2**: 16 docker-marked tests (verify + corpus smoke) passed
+  against the remote engine in 148s, unchanged. CLI acceptance: exit 0,
+  report round-trips `runtime` (`host_source: "cli"`) and
+  `runtime_versions` with **non-null platform** `linux/amd64` (the
+  podman-machine null-platform limitation is absent on remote docker).
+  Note: the verbatim command fails earlier with "Dockerfile not found" —
+  the fixture ships `Dockerfile.good`; run it on a copy renamed to
+  `Dockerfile`.
+- **Step 3**: exact error + exit 2. Caveat: project-path validation runs
+  before host validation, so the fixture-as-shipped hits the Dockerfile
+  error (exit 1) first — cosmetic ordering.
+- **Watch items**: `build --memory` accepted without warnings *because
+  the remote daemon runs the legacy builder* (BuildKit disabled);
+  BuildKit `--memory` behavior remains unexercised. Legacy-builder litter
+  confirmed: the failed-RUN test leaves an intermediate container +
+  dangling intermediate images that deployer's own rm/rmi cannot track —
+  bench hosts want periodic `docker system prune`. Remote cleaned back to
+  baseline after the run.
+- **Local prereq gotcha**: a stale `~/.docker/config.json`
+  (`credsStore: "desktop"` from a removed Docker Desktop) breaks pulls;
+  worked around with a clean `DOCKER_CONFIG` dir.
+
+Detailed record: `.superpowers/sdd/progress.md` (local ledger; this
+section is the tracked summary — the ledger itself is gitignored, so
+Step 4's verbatim `git add` does not apply).
