@@ -8,6 +8,7 @@ from deployer.models import (
     DeployTarget,
     FailureKind,
     ProjectFacts,
+    RunSpec,
     ServiceSpec,
     SystemDepHint,
     VerificationReport,
@@ -130,3 +131,27 @@ def test_authoring_run_records_hints() -> None:
 
 def test_report_image_size_default_none() -> None:
     assert VerificationReport().image_size_bytes is None
+
+
+def test_run_spec_defaults_and_roundtrip() -> None:
+    target = DeployTarget(run=RunSpec(expect_stdout="ok"))
+    parsed = DeployTarget.model_validate_json(target.model_dump_json())
+    assert parsed.run is not None
+    assert parsed.run.expect_stdout == "ok"
+
+
+def test_bare_run_spec_has_no_oracle() -> None:
+    target = DeployTarget.model_validate_json('{"run": {}}')
+    assert target.run is not None
+    assert target.run.expect_stdout is None
+
+
+def test_service_and_run_mutually_exclusive() -> None:
+    with pytest.raises(ValidationError, match="mutually exclusive"):
+        DeployTarget(service=ServiceSpec(port=8000), run=RunSpec(expect_stdout="x"))
+
+
+def test_build_only_target_still_valid() -> None:
+    target = DeployTarget()
+    assert target.service is None
+    assert target.run is None
