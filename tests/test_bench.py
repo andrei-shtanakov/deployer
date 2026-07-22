@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
+import deployer.bench as bench
 from deployer.bench import (
     FixtureAuthor,
     _create_run_dir,
@@ -1041,3 +1042,81 @@ def test_entrypoint_override_facts() -> None:
     facts = analyze_project(project)
     assert facts.script_entrypoint == "main.py"  # the decoy wins the fact
     assert "app.py" in facts.root_modules
+
+
+def _write_external_toml(root: Path, names: list[str]) -> None:
+    """Write external.toml with one entry per name, all clonable.
+
+    Every entry points at the same local upstream repo (only its `name`
+    differs), mirroring `test_run_bench_include_external_appends_...`.
+    """
+    url, pinned = _make_local_git_repo(root)
+    entries = "".join(
+        "[[targets]]\n"
+        f'name = "{name}"\n'
+        f'url = "{url}"\n'
+        f'commit = "{pinned}"\n'
+        "[targets.expected]\n"
+        "requires_l2 = false\n"
+        for name in names
+    )
+    (root / "external.toml").write_text(entries)
+
+
+def test_bench_filter_skips_nonmatching_external_without_cloning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _make_case(tmp_path, "case-a", expected={"requires_l2": False})
+    _write_external_toml(tmp_path, ["ext-match", "ext-other"])
+
+    cloned: list[str] = []
+    real_clone = bench.clone_external
+
+    def tracking_clone(ext, dest_root):
+        cloned.append(ext.name)
+        return real_clone(ext, dest_root)
+
+    monkeypatch.setattr(bench, "clone_external", tracking_clone)
+    report, _ = bench.run_bench(
+        tmp_path,
+        make_author=lambda case: None,  # every case skips (no fixture author)
+        runtime=None,
+        label="t",
+        author_backend="fixture",
+        pattern="ext-match",
+        runs_root=tmp_path / "runs",
+        include_external=True,
+    )
+    assert cloned == ["ext-match"]
+    assert [c.case for c in report.cases] == ["ext-match"]
+
+
+def test_bench_filter_no_match_anywhere_raises(tmp_path: Path) -> None:
+    _make_case(tmp_path, "case-a", expected={"requires_l2": False})
+    _write_external_toml(tmp_path, ["ext-a"])
+    with pytest.raises(ValueError, match="no corpus cases match"):
+        bench.run_bench(
+            tmp_path,
+            make_author=lambda case: None,
+            runtime=None,
+            label="t",
+            author_backend="fixture",
+            pattern="zzz-*",
+            runs_root=tmp_path / "runs",
+            include_external=True,
+        )
+
+
+def test_bench_filter_synthetic_only_still_raises(tmp_path: Path) -> None:
+    _make_case(tmp_path, "case-a", expected={"requires_l2": False})
+    with pytest.raises(ValueError, match="no corpus cases match"):
+        bench.run_bench(
+            tmp_path,
+            make_author=lambda case: None,
+            runtime=None,
+            label="t",
+            author_backend="fixture",
+            pattern="zzz-*",
+            runs_root=tmp_path / "runs",
+            include_external=False,
+        )

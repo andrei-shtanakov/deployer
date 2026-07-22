@@ -363,11 +363,16 @@ def run_bench(
 ) -> tuple[BenchReport, Path]:
     """Run the authoring loop over every matching corpus case and aggregate."""
     cases = load_corpus(corpus_root, pattern)
-    if not cases:
+    externals: list[ExternalTarget] = []
+    if include_external:
+        externals = [
+            e for e in load_external(corpus_root) if fnmatch.fnmatch(e.name, pattern)
+        ]
+    if not cases and not externals:
         raise ValueError(f"no corpus cases match pattern {pattern!r}")
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     run_dir = _create_run_dir(runs_root, stamp, label)
-    if not include_external:
+    if not externals:
         report = _run_bench_cases(
             cases,
             make_author,
@@ -380,9 +385,7 @@ def run_bench(
         )
         return report, run_dir
     with tempfile.TemporaryDirectory(prefix="deployer-external-") as ext_tmp:
-        cases = cases + [
-            clone_external(ext, Path(ext_tmp)) for ext in load_external(corpus_root)
-        ]
+        cases = cases + [clone_external(ext, Path(ext_tmp)) for ext in externals]
         report = _run_bench_cases(
             cases,
             make_author,

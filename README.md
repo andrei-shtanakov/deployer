@@ -85,7 +85,8 @@ money; select it explicitly. `bench verify` just verifies the committed
 fixtures (corpus smoke). Exit codes: 0 all matched/passed, 1 mismatch/fail,
 2 invalid invocation. Cases with `requires_l2: true` are skipped (not
 failed) when no container runtime is available. `--filter` applies to synthetic
-cases only; external targets are included wholesale via `--include-external`.
+and (with `--include-external`) external targets alike; non-matching
+externals are not even cloned.
 
 ### Golden baseline
 
