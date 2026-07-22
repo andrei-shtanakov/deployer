@@ -194,3 +194,54 @@ def test_slow_build_corpus_case_has_entrypoint_fact() -> None:
     facts = analyze_project(corpus_case)
     assert facts.script_entrypoint == "main.py"
     assert facts.package_manager == "pip"
+
+
+def test_optional_dependencies_scanned_and_normalized(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "x"\nversion = "0"\n'
+        "[project.optional-dependencies]\n"
+        'My_GUI = ["gradio>=6.0"]\n'
+        'inference = ["llama-cpp-python>=0.2"]\n'
+    )
+    facts = analyze_project(tmp_path)
+    assert facts.optional_dependencies == {
+        "my-gui": ["gradio>=6.0"],
+        "inference": ["llama-cpp-python>=0.2"],
+    }
+
+
+def test_optional_dependencies_collision_yields_no_fact(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "x"\nversion = "0"\n'
+        "[project.optional-dependencies]\n"
+        'my_extra = ["a"]\n'
+        'my-extra = ["b"]\n'
+    )
+    assert analyze_project(tmp_path).optional_dependencies == {}
+
+
+def test_root_modules_respect_file_denylist(tmp_path: Path) -> None:
+    for name in ("app.py", "main.py", "setup.py", "conftest.py"):
+        (tmp_path / name).write_text("x = 1\n")
+    assert analyze_project(tmp_path).root_modules == ["app.py", "main.py"]
+
+
+def test_package_dirs_root_src_and_denylist(tmp_path: Path) -> None:
+    for pkg in ("agents", "tests", ".hidden"):
+        (tmp_path / pkg).mkdir()
+        (tmp_path / pkg / "__init__.py").write_text("")
+    (tmp_path / "data").mkdir()  # no __init__.py -> not a package
+    src_pkg = tmp_path / "src" / "foo"
+    src_pkg.mkdir(parents=True)
+    (src_pkg / "__init__.py").write_text("")
+    facts = analyze_project(tmp_path)
+    assert facts.package_dirs == ["agents", "src/foo"]
+
+
+def test_layout_facts_empty_without_pyproject(tmp_path: Path) -> None:
+    facts = analyze_project(tmp_path)
+    assert facts.optional_dependencies == {}
+    assert facts.root_modules == []
+    assert facts.package_dirs == []
