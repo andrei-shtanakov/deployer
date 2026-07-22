@@ -187,6 +187,10 @@ def test_system_prompt_copy_rule_has_empty_facts_escape() -> None:
 
 def test_system_prompt_entrypoint_precedence() -> None:
     assert "[project.scripts] name runs as its console script" in SYSTEM_PROMPT
+    unwrapped = " ".join(SYSTEM_PROMPT.split())
+    assert (
+        "Never override a DeployTarget.entrypoint. It is operator intent." in unwrapped
+    )
     first = SYSTEM_PROMPT.index('deploy intent sets "entrypoint"')
     second = SYSTEM_PROMPT.index("[project.scripts]) is non-empty")
     third = SYSTEM_PROMPT.index("script_entrypoint is deterministic")
