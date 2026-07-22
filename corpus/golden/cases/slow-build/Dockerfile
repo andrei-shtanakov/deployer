@@ -1,8 +1,6 @@
 FROM python:3.12-slim
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
-    && rm -rf /var/lib/apt/lists/*
+RUN groupadd --system app && useradd --system --gid app --create-home app
 
 WORKDIR /app
 
@@ -11,9 +9,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-RUN useradd --create-home appuser
-USER appuser
-
-EXPOSE 8000
+RUN chown -R app:app /app
+USER app
 
 CMD ["python", "main.py"]

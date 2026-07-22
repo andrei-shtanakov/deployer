@@ -1,6 +1,6 @@
 {
-  "promoted_from_label": "llm-entrypoint",
-  "corpus_commit": "c942ba623ea642974c3d80a55f7a83e1507c7808",
+  "promoted_from_label": "llm-run-completes",
+  "corpus_commit": "eda64421163d019bf9ff5d45d76bfc9543d3234d",
   "deployer_version": "0.1.0",
   "author_backend": "anthropic",
   "runtime_tool": "podman",
@@ -15,7 +15,7 @@
       "stopped_reason": "success",
       "iterations": 1,
       "failure_kinds": [],
-      "image_size_bytes": 177214579,
+      "image_size_bytes": 176795349,
       "hadolint_status": "skipped",
       "checks": [
         {
@@ -47,6 +47,11 @@
           "check_id": "build",
           "status": "passed",
           "failure_kind": null
+        },
+        {
+          "check_id": "run_completes",
+          "status": "passed",
+          "failure_kind": null
         }
       ],
       "expected": {
@@ -69,7 +74,7 @@
       "stopped_reason": "success",
       "iterations": 1,
       "failure_kinds": [],
-      "image_size_bytes": 157048464,
+      "image_size_bytes": 157048314,
       "hadolint_status": "skipped",
       "checks": [
         {
@@ -128,7 +133,7 @@
       "stopped_reason": "success",
       "iterations": 1,
       "failure_kinds": [],
-      "image_size_bytes": 148564610,
+      "image_size_bytes": 148561450,
       "hadolint_status": "skipped",
       "checks": [
         {
@@ -186,7 +191,7 @@
       "stopped_reason": "success",
       "iterations": 1,
       "failure_kinds": [],
-      "image_size_bytes": 324416199,
+      "image_size_bytes": 158561776,
       "hadolint_status": "skipped",
       "checks": [
         {
@@ -236,7 +241,7 @@
           "slow-build",
           "no-hint-system-deps"
         ],
-        "notes": "sdist C build with NO hints: the model must derive gcc from the build error"
+        "notes": "sdist C build with no curated hint: the model must supply a C toolchain unprompted (a capable model may preempt the repair loop)"
       },
       "external_url": null,
       "external_commit": null
@@ -247,7 +252,7 @@
       "stopped_reason": "success",
       "iterations": 1,
       "failure_kinds": [],
-      "image_size_bytes": 154852589,
+      "image_size_bytes": 154855484,
       "hadolint_status": "skipped",
       "checks": [
         {
@@ -307,7 +312,7 @@
       "stopped_reason": "success",
       "iterations": 1,
       "failure_kinds": [],
-      "image_size_bytes": 148620423,
+      "image_size_bytes": 148633745,
       "hadolint_status": "skipped",
       "checks": [
         {
