@@ -242,3 +242,15 @@ def test_multiline_marker_redacted_before_tail(
     assert result.status is CheckStatus.FAILED
     assert "line-one" not in result.message
     assert "line-two" not in result.message
+
+
+def test_multiline_marker_fragment_redacted_in_other_checks() -> None:
+    """A tailed message from another check (e.g. build) can carry only a
+    fragment of a multi-line marker; per-line redaction must still strip
+    it even though the full marker string is absent."""
+    marker = "line-one\nline-two"
+    message = "Step 2/3 : RUN python main.py\nline-two\nerror: boom"
+    redacted = _redact_oracle(message, marker)
+    assert "line-two" not in redacted
+    assert "<redacted>" in redacted
+    assert "error: boom" in redacted

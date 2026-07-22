@@ -583,10 +583,18 @@ def _redact_oracle(message: str, marker: str | None) -> str:
     Prompt-side redaction alone cannot stop a program that prints the
     marker and then crashes, or an echo-CMD that carries it into command
     feedback — so every FAILED run_completes message passes through here.
+
+    A multi-line marker is also redacted line by line: other checks
+    (e.g. build) tail their output before the report-wide pass runs, and
+    truncation can leave a fragment the full-string replace would miss.
     """
     if not marker:
         return message
-    return message.replace(marker, "<redacted>")
+    message = message.replace(marker, "<redacted>")
+    for line in marker.splitlines():
+        if line.strip():
+            message = message.replace(line, "<redacted>")
+    return message
 
 
 def _run_completes(
