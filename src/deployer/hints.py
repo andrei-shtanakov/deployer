@@ -7,6 +7,7 @@ fail silently (successful build, bloated image). Debian (bookworm/trixie) names.
 """
 
 import re
+from collections.abc import Sequence
 
 from deployer.models import ProjectFacts, SystemDepHint
 
@@ -59,12 +60,15 @@ def _normalize(raw: str) -> str:
     return name.lower().replace("_", "-")
 
 
-def collect_hints(facts: ProjectFacts) -> list[SystemDepHint]:
+def collect_hints(
+    facts: ProjectFacts, extras: Sequence[str] = ()
+) -> list[SystemDepHint]:
     """Match project dependencies against the curated table.
 
-    Top-level dependencies only (pyproject deps + requirements files);
-    transitive no-wheel packages stay invisible and fall through to the
-    repair loop — a documented limitation, not a bug.
+    Top-level dependencies only (pyproject deps + requirements files +
+    the dependencies of *requested* extras); transitive no-wheel packages
+    stay invisible and fall through to the repair loop — a documented
+    limitation, not a bug. Unrequested extras never fire hints.
     """
     candidates: set[str] = set()
     for dep in facts.dependencies:
@@ -74,6 +78,9 @@ def collect_hints(facts: ProjectFacts) -> list[SystemDepHint]:
             if entry.startswith("-"):
                 continue
             candidates.add(_normalize(entry))
+    for extra in extras:
+        for dep in facts.optional_dependencies.get(extra, []):
+            candidates.add(_normalize(dep))
     hints: list[SystemDepHint] = []
     for name in sorted(candidates):
         hint = KNOWN_SYSTEM_DEPS.get(name)

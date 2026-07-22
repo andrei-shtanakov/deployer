@@ -81,7 +81,7 @@ def author_dockerfile(
     """
     facts = analyze_project(project_path)
     validate_target_against_facts(target, facts)
-    hints = collect_hints(facts)
+    hints = collect_hints(facts, target.extras)
 
     iterations: list[IterationRecord] = []
     environment_retries = 0

@@ -33,6 +33,17 @@ Rules:
 - If has_build_system is false, do NOT install the project as a package
   (no `pip install .`; with uv always pass `--no-install-project`). Run the
   sources directly.
+- Extras listed in the deploy intent MUST be installed — and ONLY those
+  extras, never every group in optional_dependencies. Use the package
+  manager's mechanism: `uv sync --extra <name>` (adding
+  `--no-install-project` when has_build_system is false), or
+  `pip install ".[name]"` for installable pip projects.
+- When copying application source, use root_modules and package_dirs
+  from the facts; a package dir is copied whole. Do not COPY directories
+  outside these facts unless the deploy intent explicitly requires it.
+  This governs source code only — copy metadata and lockfiles
+  (pyproject.toml, uv.lock, requirements files) per the install
+  strategy above.
 - script_entrypoint is deterministic ground truth. If it is set and
   entrypoints ([project.scripts]) is empty, the Dockerfile CMD MUST execute
   that file in exec form (e.g. CMD ["python", "main.py"] or the
@@ -68,8 +79,17 @@ def _intent_json(target: DeployTarget) -> str:
 
 
 def _context_blocks(facts: ProjectFacts, target: DeployTarget) -> str:
+    facts_data = facts.model_dump()
+    if target.extras:
+        facts_data["optional_dependencies"] = {
+            k: v
+            for k, v in facts_data["optional_dependencies"].items()
+            if k in target.extras
+        }
+    else:
+        facts_data["optional_dependencies"] = {}
     blocks = [
-        f"Project facts (deterministic scan):\n{facts.model_dump_json(indent=2)}",
+        f"Project facts (deterministic scan):\n{json.dumps(facts_data, indent=2)}",
         f"Deploy intent:\n{_intent_json(target)}",
     ]
     if target.system_packages:
@@ -78,7 +98,7 @@ def _context_blocks(facts: ProjectFacts, target: DeployTarget) -> str:
             "Required system packages (operator intent, MUST install via "
             f"apt-get):\n{listed}"
         )
-    hints = collect_hints(facts)
+    hints = collect_hints(facts, target.extras)
     if hints:
         listed = "\n".join(
             f"- {h.python_package}: build={h.build_packages}, "
