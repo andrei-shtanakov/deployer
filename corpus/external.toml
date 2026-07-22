@@ -11,8 +11,8 @@
 # expected_success = false
 
 # Local research target (machine-specific path; private EPAM GitLab remote).
-# Extras are expressible via deploy_target now; the blocker is service-entrypoint
-# disambiguation (main.py stub vs. the real app.py Gradio app) — see notes below.
+# Full-service target: extras + explicit entrypoint intent (app.py) — the
+# service-entrypoint disambiguation blocker is closed; see notes below.
 [[targets]]
 name = "locallogai-backend"
 url = "/Users/Andrei_Shtanakov/lab_aist/locallogai-backend"
