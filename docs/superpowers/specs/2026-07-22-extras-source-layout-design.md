@@ -41,10 +41,21 @@ package_dirs: list[str] = Field(default_factory=list)   # ["agents", "src/foo"]
   target validation as unknown. This edge is unit-tested.
 - `root_modules`: root-level `*.py`, minus the existing file denylist
   (`setup.py`, `conftest.py`, `manage.py`), sorted.
-- `package_dirs`: directories containing `__init__.py`, scanned at the
-  project root and — when a `src/` directory exists — one level under
-  `src/` (recorded as `"src/<pkg>"`), minus the directory denylist,
-  sorted. A package dir is one *source unit*: it is copied whole.
+- `package_dirs`: directories containing **at least one root-level
+  `*.py` file**, scanned at the project root and — when a `src/`
+  directory exists — one level under `src/` (recorded as `"src/<pkg>"`),
+  minus the directory denylist, sorted. A package dir is one *source
+  unit*: it is copied whole.
+  - `__init__.py` is deliberately NOT required (amended 2026-07-22
+    against the real locallogai layout): the fact's purpose is "copyable
+    source unit for a Dockerfile COPY", not Python packaging semantics —
+    a PEP 420 namespace package like locallogai's `agents/` is exactly
+    as copyable as a classic package. Classic `__init__.py` packages
+    remain a subset (`__init__.py` is itself a root-level `*.py`).
+  - Dirs whose Python files are only in *nested* subdirectories are not
+    detected in this MVP — no full-tree recursion.
+  - The denylist is what keeps this honest: without it, `scripts/`,
+    `tests/`, `data/` would flood the fact.
 - Directory denylist (curated, same philosophy as the entrypoint
   denylist): `tests`, `test`, `scripts`, `docs`, `examples`, `data`,
   `db`, `migrations`, `.venv`, `.git`, `__pycache__`, `.deployer`, plus
