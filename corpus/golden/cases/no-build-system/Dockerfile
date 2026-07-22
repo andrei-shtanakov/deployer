@@ -4,13 +4,16 @@ COPY --from=ghcr.io/astral-sh/uv:0.5.11 /uv /bin/uv
 
 WORKDIR /app
 
-COPY pyproject.toml uv.lock ./
+ENV UV_LINK_MODE=copy \
+    UV_PROJECT_ENVIRONMENT=/app/.venv \
+    PATH="/app/.venv/bin:$PATH"
 
+COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-install-project
 
 COPY main.py ./
 
-RUN useradd --create-home appuser
+RUN useradd --create-home appuser && chown -R appuser:appuser /app
 USER appuser
 
 CMD ["uv", "run", "--no-sync", "python", "main.py"]

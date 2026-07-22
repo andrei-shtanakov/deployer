@@ -10,4 +10,6 @@ COPY main.py ./
 RUN useradd --create-home appuser
 USER appuser
 
+EXPOSE 8000
+
 CMD ["python", "main.py"]
