@@ -102,13 +102,12 @@ def _parse_requirements(path: Path) -> list[str]:
     return entries
 
 
-def _scan_optional_dependencies(project: dict[str, Any]) -> dict[str, list[str]]:
-    """Normalized [project.optional-dependencies]; key collision -> {}.
+def _normalize_extras(raw: Any) -> dict[str, list[str]]:
+    """Normalized extras mapping; wrong shape or key collision -> {}.
 
     Two raw keys normalizing to the same name (my_extra + my-extra) make
     the metadata ambiguous — ambiguous metadata is no fact.
     """
-    raw = project.get("optional-dependencies", {})
     if not isinstance(raw, dict):
         return {}
     result: dict[str, list[str]] = {}
@@ -120,6 +119,20 @@ def _scan_optional_dependencies(project: dict[str, Any]) -> dict[str, list[str]]
             return {}
         result[name] = [d for d in value if isinstance(d, str)]
     return result
+
+
+def _scan_optional_dependencies(
+    project: dict[str, Any], poetry_meta: dict[str, Any]
+) -> dict[str, list[str]]:
+    """[project.optional-dependencies], else legacy [tool.poetry.extras].
+
+    The fallback fires only when the PEP 621 key is absent: a present
+    but ambiguous field (e.g. a collision) resolves to {} and is not
+    papered over by legacy metadata.
+    """
+    if "optional-dependencies" in project:
+        return _normalize_extras(project["optional-dependencies"])
+    return _normalize_extras(poetry_meta.get("extras"))
 
 
 def _scan_root_modules(path: Path) -> list[str]:
@@ -200,6 +213,11 @@ def analyze_project(path: Path) -> ProjectFacts:
     if not isinstance(project, dict):
         project = {}
 
+    tool = pyproject.get("tool")
+    poetry_meta: dict[str, Any] = {}
+    if isinstance(tool, dict) and isinstance(tool.get("poetry"), dict):
+        poetry_meta = tool["poetry"]
+
     python_version: str | None = None
     pv_path = path / ".python-version"
     if pv_path.is_file():
@@ -208,6 +226,10 @@ def analyze_project(path: Path) -> ProjectFacts:
     name = project.get("name")
     if not isinstance(name, str):
         name = None
+    if "name" not in project:
+        legacy_name = poetry_meta.get("name")
+        if isinstance(legacy_name, str):
+            name = legacy_name
 
     requires_python = project.get("requires-python")
     if not isinstance(requires_python, str):
@@ -218,6 +240,18 @@ def analyze_project(path: Path) -> ProjectFacts:
         dependencies = [d for d in deps if isinstance(d, str)]
     else:
         dependencies = []
+    if "dependencies" not in project:
+        legacy_deps = poetry_meta.get("dependencies")
+        if isinstance(legacy_deps, dict):
+            # optional deps are exposed only via extras, never as base
+            # deps — otherwise hints would fire for unrequested extras
+            dependencies = [
+                k
+                for k, v in legacy_deps.items()
+                if isinstance(k, str)
+                and k != "python"
+                and not (isinstance(v, dict) and v.get("optional") is True)
+            ]
 
     scripts = project.get("scripts", {})
     if isinstance(scripts, dict):
@@ -228,6 +262,14 @@ def analyze_project(path: Path) -> ProjectFacts:
         }
     else:
         entrypoints = {}
+    if "scripts" not in project:
+        legacy_scripts = poetry_meta.get("scripts")
+        if isinstance(legacy_scripts, dict):
+            entrypoints = {
+                k: v
+                for k, v in legacy_scripts.items()
+                if isinstance(k, str) and isinstance(v, str)
+            }
 
     requirements_files = {
         req.name: _parse_requirements(req)
@@ -255,7 +297,7 @@ def analyze_project(path: Path) -> ProjectFacts:
         has_build_system=isinstance(pyproject.get("build-system"), dict),
         script_entrypoint=_scan_script_entrypoint(path),
         requirements_files=requirements_files,
-        optional_dependencies=_scan_optional_dependencies(project),
+        optional_dependencies=_scan_optional_dependencies(project, poetry_meta),
         root_modules=_scan_root_modules(path),
         package_dirs=_scan_package_dirs(path),
     )
