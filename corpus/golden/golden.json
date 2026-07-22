@@ -1,6 +1,6 @@
 {
-  "promoted_from_label": "llm-extras",
-  "corpus_commit": "929a3c77bae83f1ae62b99fbe7c4d13d68bec4ca",
+  "promoted_from_label": "llm-entrypoint-intent",
+  "corpus_commit": "ea35507a45f7686089169b63f8f5ab0ae44cd871",
   "deployer_version": "0.1.0",
   "author_backend": "anthropic",
   "runtime_tool": "podman",
@@ -10,12 +10,71 @@
   "health_timeout_s": 30,
   "cases": [
     {
+      "case": "entrypoint-override",
+      "success": true,
+      "stopped_reason": "success",
+      "iterations": 1,
+      "failure_kinds": [],
+      "image_size_bytes": 148565635,
+      "hadolint_status": "skipped",
+      "checks": [
+        {
+          "check_id": "parses",
+          "status": "passed",
+          "failure_kind": null
+        },
+        {
+          "check_id": "copy_sources",
+          "status": "passed",
+          "failure_kind": null
+        },
+        {
+          "check_id": "base_pinned",
+          "status": "passed",
+          "failure_kind": null
+        },
+        {
+          "check_id": "install_strategy",
+          "status": "passed",
+          "failure_kind": null
+        },
+        {
+          "check_id": "hadolint",
+          "status": "skipped",
+          "failure_kind": null
+        },
+        {
+          "check_id": "build",
+          "status": "passed",
+          "failure_kind": null
+        },
+        {
+          "check_id": "run_healthcheck",
+          "status": "passed",
+          "failure_kind": null
+        }
+      ],
+      "expected": {
+        "expected_success": true,
+        "max_iterations": 3,
+        "requires_l2": true,
+        "expected_failure_kind": null,
+        "capabilities": [
+          "entrypoint",
+          "service"
+        ],
+        "notes": "miniature of the locallogai shape: script_entrypoint picks the main.py decoy, the intent names app.py; without the entrypoint intent the rules force the stub and the healthcheck fails"
+      },
+      "external_url": null,
+      "external_commit": null
+    },
+    {
       "case": "extras-job",
       "success": true,
       "stopped_reason": "success",
       "iterations": 1,
       "failure_kinds": [],
-      "image_size_bytes": 148724399,
+      "image_size_bytes": 177079064,
       "hadolint_status": "skipped",
       "checks": [
         {
@@ -75,7 +134,7 @@
       "stopped_reason": "success",
       "iterations": 1,
       "failure_kinds": [],
-      "image_size_bytes": 176789066,
+      "image_size_bytes": 176839037,
       "hadolint_status": "skipped",
       "checks": [
         {
@@ -134,7 +193,7 @@
       "stopped_reason": "success",
       "iterations": 1,
       "failure_kinds": [],
-      "image_size_bytes": 157048313,
+      "image_size_bytes": 157048454,
       "hadolint_status": "skipped",
       "checks": [
         {
@@ -193,7 +252,7 @@
       "stopped_reason": "success",
       "iterations": 1,
       "failure_kinds": [],
-      "image_size_bytes": 148564611,
+      "image_size_bytes": 148564601,
       "hadolint_status": "skipped",
       "checks": [
         {
@@ -312,7 +371,7 @@
       "stopped_reason": "success",
       "iterations": 1,
       "failure_kinds": [],
-      "image_size_bytes": 154851927,
+      "image_size_bytes": 154852438,
       "hadolint_status": "skipped",
       "checks": [
         {
@@ -372,7 +431,7 @@
       "stopped_reason": "success",
       "iterations": 1,
       "failure_kinds": [],
-      "image_size_bytes": 148621984,
+      "image_size_bytes": 148627096,
       "hadolint_status": "skipped",
       "checks": [
         {

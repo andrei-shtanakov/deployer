@@ -1,0 +1,1 @@
+{"entrypoint": "app.py", "service": {"port": 8000, "healthcheck_path": "/health"}}

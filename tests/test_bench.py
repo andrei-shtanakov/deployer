@@ -1018,3 +1018,26 @@ def test_extras_job_facts() -> None:
     assert "cli" in facts.optional_dependencies
     assert facts.script_entrypoint == "main.py"
     assert facts.has_build_system is False
+
+
+def test_entrypoint_override_case_shape() -> None:
+    corpus = Path(__file__).parent.parent / "corpus"
+    case = next(c for c in load_corpus(corpus) if c.name == "entrypoint-override")
+    assert case.target.entrypoint == "app.py"
+    assert case.target.service is not None
+    assert case.target.service.port == 8000
+
+
+def test_entrypoint_override_facts() -> None:
+    from deployer.facts import analyze_project
+
+    project = (
+        Path(__file__).parent.parent
+        / "corpus"
+        / "synthetic"
+        / "entrypoint-override"
+        / "project"
+    )
+    facts = analyze_project(project)
+    assert facts.script_entrypoint == "main.py"  # the decoy wins the fact
+    assert "app.py" in facts.root_modules

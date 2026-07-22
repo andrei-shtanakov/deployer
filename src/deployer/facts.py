@@ -18,19 +18,40 @@ class TargetConfigError(ValueError):
 
 def validate_target_against_facts(target: DeployTarget, facts: ProjectFacts) -> None:
     """Config-level compatibility gate between intent and scanned facts."""
-    if not target.extras:
-        return
-    unknown = [e for e in target.extras if e not in facts.optional_dependencies]
-    if unknown:
-        raise TargetConfigError(
-            "deploy target requests extras not present in "
-            f"[project.optional-dependencies]: {', '.join(unknown)}"
-        )
-    if facts.package_manager == "pip" and not facts.has_build_system:
-        raise TargetConfigError(
-            "extras require an installable project; pip projects without "
-            "a build-system are unsupported"
-        )
+    if target.extras:
+        unknown = [e for e in target.extras if e not in facts.optional_dependencies]
+        if unknown:
+            raise TargetConfigError(
+                "deploy target requests extras not present in "
+                f"[project.optional-dependencies]: {', '.join(unknown)}"
+            )
+        if facts.package_manager == "pip" and not facts.has_build_system:
+            raise TargetConfigError(
+                "extras require an installable project; pip projects without "
+                "a build-system are unsupported"
+            )
+    if target.entrypoint is not None:
+        name = target.entrypoint
+        if "/" in name or "\\" in name:
+            raise TargetConfigError(
+                "DeployTarget.entrypoint must be a bare name (a root module "
+                f"filename or a [project.scripts] name), not a path: {name!r}"
+            )
+        if name not in facts.entrypoints and name not in facts.root_modules:
+            raise TargetConfigError(
+                f"deploy target entrypoint {name!r} matches neither a "
+                "[project.scripts] name nor a file in root_modules"
+            )
+        if (
+            name not in facts.root_modules
+            and name in facts.entrypoints
+            and not facts.has_build_system
+        ):
+            raise TargetConfigError(
+                f"deploy target entrypoint {name!r} is a [project.scripts] "
+                "name, but the project has no build-system: the console "
+                "script will not exist in a --no-install-project image"
+            )
 
 
 _REQ_NAME_SPLIT = re.compile(r"[=<>!~;\[\s]")

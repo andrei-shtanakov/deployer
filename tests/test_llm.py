@@ -183,3 +183,23 @@ def test_system_prompt_states_extras_and_copy_rules() -> None:
 
 def test_system_prompt_copy_rule_has_empty_facts_escape() -> None:
     assert "If both root_modules and package_dirs are empty" in SYSTEM_PROMPT
+
+
+def test_system_prompt_entrypoint_precedence() -> None:
+    assert "[project.scripts] name runs as its console script" in SYSTEM_PROMPT
+    unwrapped = " ".join(SYSTEM_PROMPT.split())
+    assert (
+        "Never override a DeployTarget.entrypoint. It is operator intent." in unwrapped
+    )
+    first = SYSTEM_PROMPT.index('deploy intent sets "entrypoint"')
+    second = SYSTEM_PROMPT.index("[project.scripts]) is non-empty")
+    third = SYSTEM_PROMPT.index("script_entrypoint is deterministic")
+    assert first < second < third
+
+
+def test_intent_json_renders_entrypoint() -> None:
+    rendered = _context_blocks(
+        ProjectFacts(root_modules=["app.py"]),
+        DeployTarget(entrypoint="app.py"),
+    )
+    assert '"entrypoint": "app.py"' in rendered

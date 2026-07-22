@@ -734,10 +734,10 @@ def verify(
     """
     if facts is not None:
         validate_target_against_facts(target, facts)
-    elif target.extras:
+    elif target.extras or target.entrypoint is not None:
         raise TargetConfigError(
-            "deploy target requests extras but no project facts were "
-            "provided to validate them against"
+            "deploy target requires facts-based validation (extras or "
+            "entrypoint) but no project facts were provided"
         )
     report = verify_static(dockerfile, project_path, facts)
     report.runtime = runtime

@@ -17,14 +17,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq5 \
     && rm -rf /var/lib/apt/lists/*
 
-RUN useradd --create-home appuser
-
 WORKDIR /app
 
 COPY --from=build /install /usr/local
 
 COPY main.py ./
 
+RUN useradd --create-home appuser
 USER appuser
 
 CMD ["python", "main.py"]

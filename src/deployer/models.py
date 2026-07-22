@@ -49,6 +49,7 @@ class DeployTarget(BaseModel):
     memory_limit: str = "512m"
     system_packages: list[str] = Field(default_factory=list)
     extras: list[str] = Field(default_factory=list)
+    entrypoint: str | None = Field(default=None, min_length=1)
 
     @model_validator(mode="after")
     def _service_and_run_exclusive(self) -> "DeployTarget":

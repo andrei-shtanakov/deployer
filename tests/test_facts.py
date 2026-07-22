@@ -295,3 +295,46 @@ def test_src_not_listed_as_both_unit_and_parent(tmp_path: Path) -> None:
     pkg.mkdir()
     (pkg / "__init__.py").write_text("")
     assert analyze_project(tmp_path).package_dirs == ["src/foo"]
+
+
+def test_validate_entrypoint_root_module_ok() -> None:
+    facts = ProjectFacts(root_modules=["app.py", "main.py"])
+    validate_target_against_facts(DeployTarget(entrypoint="app.py"), facts)
+
+
+def test_validate_entrypoint_scripts_name_ok() -> None:
+    facts = ProjectFacts(entrypoints={"serve": "pkg.app:main"}, has_build_system=True)
+    validate_target_against_facts(DeployTarget(entrypoint="serve"), facts)
+
+
+def test_validate_scripts_entrypoint_needs_build_system() -> None:
+    """A console script cannot exist in a --no-install-project image."""
+    facts = ProjectFacts(entrypoints={"serve": "pkg.app:main"})
+    with pytest.raises(TargetConfigError, match="build-system"):
+        validate_target_against_facts(DeployTarget(entrypoint="serve"), facts)
+
+
+def test_validate_filename_entrypoint_ok_without_build_system() -> None:
+    """A root-module filename needs no installation; both-sources names
+    resolve as the filename and stay valid."""
+    facts = ProjectFacts(
+        entrypoints={"app.py": "pkg.app:main"}, root_modules=["app.py"]
+    )
+    validate_target_against_facts(DeployTarget(entrypoint="app.py"), facts)
+
+
+def test_validate_entrypoint_unknown_raises() -> None:
+    facts = ProjectFacts(root_modules=["main.py"])
+    with pytest.raises(TargetConfigError, match="app.py"):
+        validate_target_against_facts(DeployTarget(entrypoint="app.py"), facts)
+
+
+def test_validate_entrypoint_rejects_paths() -> None:
+    facts = ProjectFacts(root_modules=["app.py"])
+    for bad in ("src/app.py", "./app.py", "pkg\\mod.py"):
+        with pytest.raises(TargetConfigError, match="bare name"):
+            validate_target_against_facts(DeployTarget(entrypoint=bad), facts)
+
+
+def test_validate_entrypoint_unset_is_noop() -> None:
+    validate_target_against_facts(DeployTarget(), ProjectFacts())
