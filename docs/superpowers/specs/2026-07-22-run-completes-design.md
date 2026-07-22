@@ -40,7 +40,11 @@ class RunSpec(BaseModel):
 - No timeout field: per the verify-timeouts rule, the target says *what*,
   never *how*. The run deadline reuses the existing `--health-timeout`
   value (semantically the generic "runtime check timeout"; renaming the
-  flag is deliberately deferred).
+  flag is deliberately deferred). The user-facing wording changes now,
+  though: CLI help (`cli.py`) and README currently say the flag is
+  "ignored for non-service targets" — after this change that is true
+  only for **build-only** targets; both surfaces must say the timeout
+  bounds runtime checks (service healthcheck or run intent).
 
 Assertion semantics (explicitly tiered — a bare `run: {}` is weaker but
 still meaningful):
@@ -71,14 +75,37 @@ Classification:
 | outcome | status | failure_kind | feedback |
 |---|---|---|---|
 | exit 0, marker satisfied (or no marker) | PASSED | — | — |
-| non-zero exit | FAILED | AUTHORING | tail of output + `_with_command_feedback` |
+| non-zero exit (incl. tracebacks) | FAILED | AUTHORING | tail of output + `_with_command_feedback` |
 | exit 0 but marker absent | FAILED | AUTHORING | actual stdout tail + command feedback; **never quotes the expected marker** |
 | subprocess timeout (hang) | FAILED | AUTHORING | notes the timeout + command feedback |
-| transport markers in output | FAILED | ENVIRONMENT | as in `run_healthcheck` |
-| `OSError` / runtime CLI failure | FAILED | ENVIRONMENT | as in `run_healthcheck` |
+| CLI/transport failure (see below) | FAILED | ENVIRONMENT | as in `run_healthcheck` |
+| `OSError` / subprocess failure | FAILED | ENVIRONMENT | as in `run_healthcheck` |
 
 The AUTHORING messages carry the image's ENTRYPOINT/CMD (Phase-4a
 lesson: repair cannot converge on a CMD mistake the error never names).
+
+**Narrow ENVIRONMENT classification.** A foreground `container run`
+interleaves *application* output with *CLI/daemon* output, so the broad
+`_classify()` sweep must not be applied to the whole capture: a job that
+legitimately prints "connection refused" (or raises
+`ConnectionRefusedError`) would be misclassified as ENVIRONMENT. Rule:
+
+- ENVIRONMENT only on clear CLI/runtime failure — `OSError`, or the
+  docker/podman CLI's own error exit (exit code 125/126) combined with
+  the narrow `_is_transport_failure` markers, mirroring the caution
+  `_run_healthcheck` already applies to mid-poll transport loss;
+- an ordinary container process exiting non-zero — whatever its output
+  says — stays AUTHORING.
+
+**Full-message oracle redaction.** The prompt-side redaction (below) is
+not sufficient on its own: the marker can leak back to the model through
+*verifier* text — a program that prints the marker and then crashes puts
+it in the stdout tail, and a (mis)authored `CMD` echoing it puts it in
+the command feedback. Rule: before any `run_completes` FAILED message is
+returned, the verifier redacts `target.run.expect_stdout` from the
+**complete** message — stdout/stderr tails and command feedback included
+(e.g. build the full message, then `_redact_oracle(message, marker)`
+before constructing the `CheckResult`).
 
 ## Prompt: intent visible, oracle hidden
 
@@ -149,14 +176,20 @@ divergence — that is a change of measured subject, not a regression
   `bench promote`; `bench compare <run> golden` clean afterwards.
 - Prompt-side: unit test asserts the rendered context for a
   marker-bearing target contains `"run"` but not the marker string.
+- Docs: CLI `--health-timeout` help and the README usage note no longer
+  claim the flag is ignored for all non-service targets (build-only
+  only).
 
 ## Testing strategy
 
 - Unit: `RunSpec` validation (service+run mutual exclusion → error);
   `_run_completes` classification matrix over a mocked subprocess
-  (exit 0, exit 0 + marker hit/miss, non-zero exit, timeout, transport
-  marker, OSError); redaction in `_context_blocks` (generate and repair
-  paths); marker never appears in the failure message.
+  (exit 0, exit 0 + marker hit/miss, non-zero exit, timeout, CLI
+  transport failure, OSError, and the counter-case: app output
+  containing "connection refused" with a plain non-zero exit stays
+  AUTHORING); redaction in `_context_blocks` (generate and repair
+  paths); full-message redaction (marker printed then crash, marker
+  echoed in CMD feedback — never appears in any failure message).
 - Docker-marked: job fixture success path; inert-CMD failure path with
   command feedback (the acceptance negative above).
 - Bench: corpus smoke unchanged; fixture run stays 6/6.
