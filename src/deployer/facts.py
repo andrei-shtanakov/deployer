@@ -42,6 +42,16 @@ def validate_target_against_facts(target: DeployTarget, facts: ProjectFacts) -> 
                 f"deploy target entrypoint {name!r} matches neither a "
                 "[project.scripts] name nor a file in root_modules"
             )
+        if (
+            name not in facts.root_modules
+            and name in facts.entrypoints
+            and not facts.has_build_system
+        ):
+            raise TargetConfigError(
+                f"deploy target entrypoint {name!r} is a [project.scripts] "
+                "name, but the project has no build-system: the console "
+                "script will not exist in a --no-install-project image"
+            )
 
 
 _REQ_NAME_SPLIT = re.compile(r"[=<>!~;\[\s]")
