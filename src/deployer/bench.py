@@ -59,8 +59,13 @@ class FixtureAuthor:
     so there is nothing to "repair" — a failing fixture is corpus rot.
     """
 
-    def __init__(self, dockerfile: str, compose: str | None = None) -> None:
-        self._response = render_artifact_response(dockerfile, compose)
+    def __init__(
+        self,
+        dockerfile: str,
+        compose: str | None = None,
+        ci: str | None = None,
+    ) -> None:
+        self._response = render_artifact_response(dockerfile, compose, ci)
 
     def generate(self, facts: ProjectFacts, target: DeployTarget) -> str:
         return self._response
@@ -91,6 +96,7 @@ class BenchCase(BaseModel):
     expected: ExpectedOutcome = Field(default_factory=ExpectedOutcome)
     fixture_dockerfile: Path | None = None
     fixture_compose: Path | None = None
+    fixture_ci: Path | None = None
     external_url: str | None = None
     external_commit: str | None = None
 
@@ -121,6 +127,7 @@ def load_corpus(corpus_root: Path, pattern: str = "*") -> list[BenchCase]:
         )
         fixture = case_dir / "fixture.Dockerfile"
         fixture_compose = case_dir / "fixture.compose.yaml"
+        fixture_ci = case_dir / "fixture.ci.yml"
         cases.append(
             BenchCase(
                 name=case_dir.name,
@@ -129,6 +136,7 @@ def load_corpus(corpus_root: Path, pattern: str = "*") -> list[BenchCase]:
                 expected=expected,
                 fixture_dockerfile=fixture if fixture.is_file() else None,
                 fixture_compose=fixture_compose if fixture_compose.is_file() else None,
+                fixture_ci=fixture_ci if fixture_ci.is_file() else None,
             )
         )
     return cases
@@ -208,6 +216,17 @@ def run_case(
             skip_reason="dependencies target has no fixture.compose.yaml",
             expected=case.expected,
         )
+    if (
+        case.target.ci is not None
+        and case.fixture_ci is None
+        and isinstance(author, FixtureAuthor)
+    ):
+        return BenchCaseResult(
+            case=case.name,
+            outcome="skipped",
+            skip_reason="ci target has no fixture.ci.yml",
+            expected=case.expected,
+        )
     started = time.monotonic()
     with tempfile.TemporaryDirectory(prefix=f"deployer-bench-{case.name}-") as tmp:
         scratch = Path(tmp) / "project"
@@ -234,6 +253,8 @@ def run_case(
         (case_out_dir / "Dockerfile").write_text(last.dockerfile + "\n")
         if last.compose is not None:
             (case_out_dir / "compose.yaml").write_text(last.compose + "\n")
+        if last.ci is not None:
+            (case_out_dir / "ci.yml").write_text(last.ci + "\n")
     failure_kinds = sorted(
         {
             r.failure_kind
@@ -443,6 +464,7 @@ def verify_corpus(
             compose=(
                 case.fixture_compose.read_text() if case.fixture_compose else None
             ),
+            ci=case.fixture_ci.read_text() if case.fixture_ci else None,
         )
         results.append((case.name, report))
     return results
@@ -557,13 +579,16 @@ def promote_run(run_dir: Path, corpus_root: Path, *, force: bool = False) -> Pat
     for case in golden.cases:
         src = run_dir / "cases" / case.case / "Dockerfile"
         compose_src = run_dir / "cases" / case.case / "compose.yaml"
-        if src.is_file() or compose_src.is_file():
+        ci_src = run_dir / "cases" / case.case / "ci.yml"
+        if src.is_file() or compose_src.is_file() or ci_src.is_file():
             dest = golden_dir / "cases" / case.case
             dest.mkdir(parents=True)
             if src.is_file():
                 shutil.copyfile(src, dest / "Dockerfile")
             if compose_src.is_file():
                 shutil.copyfile(compose_src, dest / "compose.yaml")
+            if ci_src.is_file():
+                shutil.copyfile(ci_src, dest / "ci.yml")
     return golden_dir
 
 

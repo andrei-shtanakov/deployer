@@ -301,6 +301,7 @@ def _cmd_bench_run(args: argparse.Namespace) -> int:
                 compose=(
                     case.fixture_compose.read_text() if case.fixture_compose else None
                 ),
+                ci=case.fixture_ci.read_text() if case.fixture_ci else None,
             )
             if case.fixture_dockerfile is not None
             else None

@@ -10,6 +10,10 @@ A deploy target may declare pinned infra `dependencies` (redis,
 postgres, ...): the model then authors a compose.yaml next to the
 Dockerfile and verification runs `compose up` with an in-network
 healthcheck probe — no host ports are ever published.
+A `{"ci": {}}` intent additionally authors a build-image GitHub
+Actions workflow (`.github/workflows/ci.yml`, SHA-pinned actions,
+build-only — no registry push), verified statically incl. a pinned
+actionlint.
 
 Facts cover uv, Poetry (poetry.lock, including legacy [tool.poetry]
 metadata) and pip (requirements.txt) projects; a curated hints table
