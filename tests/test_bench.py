@@ -10,6 +10,7 @@ from pydantic import ValidationError
 
 import deployer.bench as bench
 from deployer.bench import (
+    BenchCase,
     FixtureAuthor,
     _create_run_dir,
     clone_external,
@@ -1072,7 +1073,7 @@ def test_bench_filter_skips_nonmatching_external_without_cloning(
     cloned: list[str] = []
     real_clone = bench.clone_external
 
-    def tracking_clone(ext, dest_root):
+    def tracking_clone(ext: ExternalTarget, dest_root: Path) -> BenchCase:
         cloned.append(ext.name)
         return real_clone(ext, dest_root)
 

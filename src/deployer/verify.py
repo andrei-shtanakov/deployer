@@ -232,7 +232,14 @@ def _check_install_strategy(
 def _final_stage_commands(
     instructions: list[tuple[str, str]],
 ) -> tuple[str | None, str | None]:
-    """Last ENTRYPOINT and CMD args after the last FROM (the final stage)."""
+    """Last ENTRYPOINT and CMD args after the last FROM (the final stage).
+
+    Deliberately ignores commands a final stage may inherit (a builder
+    alias via `FROM build`, or a base image's own ENTRYPOINT): that errs
+    toward a false FAIL — one repair iteration nudging the model to an
+    explicit final-stage CMD — never a false pass. Do not "fix" this by
+    scanning earlier stages.
+    """
     last_from = -1
     for i, (name, _) in enumerate(instructions):
         if name == "FROM":

@@ -52,13 +52,14 @@ def _load_dotenv(path: Path = Path(".env")) -> None:
     """Narrow KEY=VALUE loader for Anthropic author auth; env always wins.
 
     Intentionally not a general dotenv: no `export`, no interpolation,
-    no escapes, no multiline. Quotes are stripped only when the whole
-    value is wrapped in matching quotes. Runtime env defaults
-    (DEPLOYER_CONTAINER_*) are resolved before the author is
-    constructed and never come from this file.
+    no escapes, no multiline, and inline `#` comments become part of the
+    value. Quotes are stripped only when the whole value is wrapped in
+    matching quotes. Runtime env defaults (DEPLOYER_CONTAINER_*) are
+    resolved before the author is constructed and never come from this
+    file.
     """
     try:
-        text = path.read_text(encoding="utf-8")
+        text = path.read_text(encoding="utf-8-sig")
     except (OSError, UnicodeDecodeError):
         return
     for line in text.splitlines():

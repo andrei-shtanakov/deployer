@@ -758,3 +758,27 @@ def test_load_dotenv_sets_missing_and_env_wins(
 
 def test_load_dotenv_missing_file_is_noop(tmp_path: Path) -> None:
     cli._load_dotenv(tmp_path / "absent.env")
+
+
+def test_load_dotenv_strips_bom(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A Windows-editor BOM must not silently disarm the first key."""
+    fake_env: dict[str, str] = {}
+    monkeypatch.setattr(cli.os, "environ", fake_env)
+    env_file = tmp_path / ".env"
+    env_file.write_bytes(b"\xef\xbb\xbfANTHROPIC_API_KEY=from-file\n")
+    cli._load_dotenv(env_file)
+    assert fake_env["ANTHROPIC_API_KEY"] == "from-file"
+
+
+def test_load_dotenv_mismatched_quotes_not_stripped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake_env: dict[str, str] = {}
+    monkeypatch.setattr(cli.os, "environ", fake_env)
+    env_file = tmp_path / ".env"
+    env_file.write_text("TRAIL=not-stripped'\nMIXED='a\"\n")
+    cli._load_dotenv(env_file)
+    assert fake_env["TRAIL"] == "not-stripped'"
+    assert fake_env["MIXED"] == "'a\""
