@@ -114,7 +114,9 @@ def author_dockerfile(
         for index in range(max_iterations):
             start = time.monotonic()
             try:
-                dockerfile, compose = parse_artifact_response(response, expects_compose)
+                dockerfile, compose, _ci = parse_artifact_response(
+                    response, expects_compose
+                )
             except ArtifactParseError as exc:
                 report = VerificationReport(
                     results=[
