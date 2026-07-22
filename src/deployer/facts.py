@@ -234,9 +234,12 @@ def analyze_project(path: Path) -> ProjectFacts:
         for req in sorted(path.glob("requirements*.txt"))
     }
     has_uv_lock = (path / "uv.lock").is_file()
-    package_manager: Literal["uv", "pip"] | None = None
+    has_poetry_lock = (path / "poetry.lock").is_file()
+    package_manager: Literal["uv", "pip", "poetry"] | None = None
     if has_uv_lock:
         package_manager = "uv"
+    elif has_poetry_lock:
+        package_manager = "poetry"
     elif requirements_files:
         package_manager = "pip"
 
@@ -247,6 +250,7 @@ def analyze_project(path: Path) -> ProjectFacts:
         dependencies=dependencies,
         entrypoints=entrypoints,
         has_uv_lock=has_uv_lock,
+        has_poetry_lock=has_poetry_lock,
         package_manager=package_manager,
         has_build_system=isinstance(pyproject.get("build-system"), dict),
         script_entrypoint=_scan_script_entrypoint(path),

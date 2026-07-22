@@ -62,6 +62,34 @@ def test_uv_lock_wins_over_requirements(tmp_path: Path) -> None:
     assert facts.requirements_files == {"requirements.txt": ["requests"]}
 
 
+def test_poetry_lock_sets_poetry_manager(tmp_path: Path) -> None:
+    (tmp_path / "poetry.lock").write_text("")
+    facts = analyze_project(tmp_path)
+    assert facts.package_manager == "poetry"
+    assert facts.has_poetry_lock is True
+
+
+def test_tool_poetry_without_lock_does_not_detect(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text('[tool.poetry]\nname = "x"\n')
+    facts = analyze_project(tmp_path)
+    assert facts.package_manager is None
+    assert facts.has_poetry_lock is False
+
+
+def test_uv_lock_wins_over_poetry_lock(tmp_path: Path) -> None:
+    (tmp_path / "uv.lock").write_text("")
+    (tmp_path / "poetry.lock").write_text("")
+    assert analyze_project(tmp_path).package_manager == "uv"
+
+
+def test_poetry_lock_wins_over_requirements(tmp_path: Path) -> None:
+    (tmp_path / "poetry.lock").write_text("")
+    (tmp_path / "requirements.txt").write_text("flask\n")
+    facts = analyze_project(tmp_path)
+    assert facts.package_manager == "poetry"
+    assert facts.requirements_files == {"requirements.txt": ["flask"]}
+
+
 def test_no_manager_when_nothing_present(tmp_path: Path) -> None:
     assert analyze_project(tmp_path).package_manager is None
 

@@ -86,7 +86,8 @@ class ProjectFacts(BaseModel):
     dependencies: list[str] = Field(default_factory=list)
     entrypoints: dict[str, str] = Field(default_factory=dict)
     has_uv_lock: bool = False
-    package_manager: Literal["uv", "pip"] | None = None
+    has_poetry_lock: bool = False
+    package_manager: Literal["uv", "pip", "poetry"] | None = None
     has_build_system: bool = False
     script_entrypoint: str | None = None
     requirements_files: dict[str, list[str]] = Field(default_factory=dict)
