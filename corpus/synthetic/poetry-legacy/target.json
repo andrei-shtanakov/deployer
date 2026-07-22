@@ -1,0 +1,1 @@
+{"service": {"port": 8000, "healthcheck_path": "/health"}}

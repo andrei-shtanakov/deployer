@@ -1,6 +1,6 @@
 {
-  "promoted_from_label": "llm-qol",
-  "corpus_commit": "bb5a9ebf7bf19cd122699b760ba722c88cf1adc4",
+  "promoted_from_label": "llm-poetry",
+  "corpus_commit": "6521f25b90269e3257209d94c90adc471e4f45af",
   "deployer_version": "0.1.0",
   "author_backend": "anthropic",
   "runtime_tool": "podman",
@@ -15,7 +15,7 @@
       "stopped_reason": "success",
       "iterations": 1,
       "failure_kinds": [],
-      "image_size_bytes": 148565634,
+      "image_size_bytes": 148565623,
       "hadolint_status": "skipped",
       "checks": [
         {
@@ -79,7 +79,7 @@
       "stopped_reason": "success",
       "iterations": 1,
       "failure_kinds": [],
-      "image_size_bytes": 177420753,
+      "image_size_bytes": 176916715,
       "hadolint_status": "skipped",
       "checks": [
         {
@@ -139,7 +139,7 @@
       "stopped_reason": "success",
       "iterations": 1,
       "failure_kinds": [],
-      "image_size_bytes": 177153097,
+      "image_size_bytes": 176789211,
       "hadolint_status": "skipped",
       "checks": [
         {
@@ -198,7 +198,7 @@
       "stopped_reason": "success",
       "iterations": 1,
       "failure_kinds": [],
-      "image_size_bytes": 157048452,
+      "image_size_bytes": 157048454,
       "hadolint_status": "skipped",
       "checks": [
         {
@@ -252,12 +252,71 @@
       "external_commit": null
     },
     {
+      "case": "poetry-legacy",
+      "success": true,
+      "stopped_reason": "success",
+      "iterations": 1,
+      "failure_kinds": [],
+      "image_size_bytes": 157151024,
+      "hadolint_status": "skipped",
+      "checks": [
+        {
+          "check_id": "parses",
+          "status": "passed",
+          "failure_kind": null
+        },
+        {
+          "check_id": "copy_sources",
+          "status": "passed",
+          "failure_kind": null
+        },
+        {
+          "check_id": "base_pinned",
+          "status": "passed",
+          "failure_kind": null
+        },
+        {
+          "check_id": "install_strategy",
+          "status": "passed",
+          "failure_kind": null
+        },
+        {
+          "check_id": "hadolint",
+          "status": "skipped",
+          "failure_kind": null
+        },
+        {
+          "check_id": "build",
+          "status": "passed",
+          "failure_kind": null
+        },
+        {
+          "check_id": "run_healthcheck",
+          "status": "passed",
+          "failure_kind": null
+        }
+      ],
+      "expected": {
+        "expected_success": true,
+        "max_iterations": 3,
+        "requires_l2": true,
+        "expected_failure_kind": null,
+        "capabilities": [
+          "poetry",
+          "service"
+        ],
+        "notes": "legacy [tool.poetry] metadata + poetry.lock; builder-stage Poetry install, .venv copy"
+      },
+      "external_url": null,
+      "external_commit": null
+    },
+    {
       "case": "service-healthcheck",
       "success": true,
       "stopped_reason": "success",
       "iterations": 1,
       "failure_kinds": [],
-      "image_size_bytes": 148564611,
+      "image_size_bytes": 148564601,
       "hadolint_status": "skipped",
       "checks": [
         {
@@ -315,7 +374,7 @@
       "stopped_reason": "success",
       "iterations": 1,
       "failure_kinds": [],
-      "image_size_bytes": 158551174,
+      "image_size_bytes": 158551033,
       "hadolint_status": "skipped",
       "checks": [
         {
@@ -376,7 +435,7 @@
       "stopped_reason": "success",
       "iterations": 1,
       "failure_kinds": [],
-      "image_size_bytes": 154851924,
+      "image_size_bytes": 369370228,
       "hadolint_status": "skipped",
       "checks": [
         {
@@ -434,9 +493,11 @@
       "case": "uv-minimal",
       "success": true,
       "stopped_reason": "success",
-      "iterations": 1,
-      "failure_kinds": [],
-      "image_size_bytes": 148621461,
+      "iterations": 2,
+      "failure_kinds": [
+        "authoring"
+      ],
+      "image_size_bytes": 180953228,
       "hadolint_status": "skipped",
       "checks": [
         {

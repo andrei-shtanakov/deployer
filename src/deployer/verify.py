@@ -15,7 +15,11 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-from deployer.facts import TargetConfigError, validate_target_against_facts
+from deployer.facts import (
+    TargetConfigError,
+    _normalize_requirement_name,
+    validate_target_against_facts,
+)
 from deployer.models import (
     CheckResult,
     CheckStatus,
@@ -32,6 +36,13 @@ DEFAULT_BUILD_TIMEOUT = 600
 DEFAULT_HEALTH_TIMEOUT = 30
 _ENV_ASSIGNMENT = re.compile(r"^(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)+")
 _PYTHON_M_PIP = re.compile(r"^\S*python[\d.]*\s+-m\s+pip\s+install\b")
+_PIP_INSTALL = re.compile(r"^(?:\S*python[\d.]*\s+-m\s+pip|(?:\S*/)?pip3?)\s+install\b")
+# Flags whose separate-token value is never an install target (index/
+# transport options). Deliberately EXCLUDES -r/-c/-e: their values are
+# install targets and must stay in the payload for the FAIL rules.
+_PIP_VALUE_FLAGS = frozenset(
+    {"-i", "--index-url", "--extra-index-url", "--trusted-host", "--proxy", "--cert"}
+)
 
 CONTEXT_IGNORE = (
     ".git",
@@ -171,6 +182,39 @@ def _check_base_pinned(instructions: list[tuple[str, str]]) -> CheckResult:
     return CheckResult(check_id="base_pinned", status=CheckStatus.PASSED)
 
 
+def _pip_install_payload(cmd: str) -> list[str] | None:
+    """Positional install args of a pip invocation; None if not one.
+
+    Covers pip / pip3 / python -m pip / python3 -m pip, with an optional
+    path prefix on the pip executable (/usr/bin/pip, .venv/bin/pip3).
+    Flags are dropped; for the known value-taking flags in
+    _PIP_VALUE_FLAGS the value token is dropped too, so an index URL
+    never masquerades as an install target. Unknown flags' values may
+    still survive as positionals — that errs toward FAIL, never a false
+    pass. The regex's `\\b` also matches inside a hyphenated token (e.g.
+    `pip install-e .`), so a missing standalone "install" token is
+    guarded explicitly rather than letting `.index()` raise.
+    """
+    if not _PIP_INSTALL.match(cmd):
+        return None
+    tokens = cmd.split()
+    if "install" not in tokens:
+        return None
+    payload: list[str] = []
+    skip_next = False
+    for token in tokens[tokens.index("install") + 1 :]:
+        if skip_next:
+            skip_next = False
+            continue
+        if token in _PIP_VALUE_FLAGS:
+            skip_next = True
+            continue
+        if token.startswith("-"):
+            continue
+        payload.append(token.strip("'\""))
+    return payload
+
+
 def _check_install_strategy(
     instructions: list[tuple[str, str]], facts: ProjectFacts
 ) -> CheckResult:
@@ -178,6 +222,7 @@ def _check_install_strategy(
     run_lines = [args for name, args in instructions if name == "RUN"]
     commands = _run_commands(run_lines)
     problems: list[str] = []
+    warnings: list[str] = []
 
     # uv-in-pip-project rule
     if facts.package_manager == "pip":
@@ -219,12 +264,55 @@ def _check_install_strategy(
                 )
                 break
 
+    # poetry rules: poetry.lock is the only dependency source
+    if facts.package_manager == "poetry":
+        for cmd in commands:
+            if cmd.startswith(("uv sync", "uv pip")):
+                problems.append(
+                    "project uses poetry (poetry.lock) but Dockerfile invokes uv"
+                )
+                break
+        for cmd in commands:
+            payload = _pip_install_payload(cmd)
+            if not payload:
+                continue
+            names = {_normalize_requirement_name(t) for t in payload}
+            if names == {"poetry"}:
+                # the builder bootstrap — allowed, but must be pinned
+                if not all("==" in t for t in payload):
+                    msg = "poetry bootstrap is not pinned; use poetry==<version>"
+                    if msg not in warnings:
+                        warnings.append(msg)
+                continue
+            problems.append(
+                "project uses poetry (poetry.lock) but Dockerfile installs "
+                "dependencies with pip; poetry.lock is the only dependency "
+                "source"
+            )
+            break
+
+    # poetry-in-non-poetry rule
+    if facts.package_manager in ("uv", "pip"):
+        for cmd in commands:
+            if cmd.startswith("poetry install"):
+                problems.append(
+                    f"project uses {facts.package_manager} but Dockerfile "
+                    "invokes poetry install"
+                )
+                break
+
     if problems:
         return CheckResult(
             check_id="install_strategy",
             status=CheckStatus.FAILED,
             failure_kind=FailureKind.AUTHORING,
             message="; ".join(problems),
+        )
+    if warnings:
+        return CheckResult(
+            check_id="install_strategy",
+            status=CheckStatus.WARNING,
+            message="; ".join(warnings),
         )
     return CheckResult(check_id="install_strategy", status=CheckStatus.PASSED)
 

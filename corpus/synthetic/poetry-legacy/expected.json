@@ -1,0 +1,1 @@
+{"capabilities": ["poetry", "service"], "notes": "legacy [tool.poetry] metadata + poetry.lock; builder-stage Poetry install, .venv copy"}

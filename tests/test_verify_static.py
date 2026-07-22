@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Literal
 
 import pytest
 
@@ -249,6 +250,164 @@ def test_echoed_python_m_pip_does_not_trigger(hello_service: Path) -> None:
     )
     report = verify_static(dockerfile, hello_service, facts)
     assert _by_id(report, "install_strategy").status is CheckStatus.PASSED
+
+
+# -- Task 3: L1 install-strategy rules for Poetry --
+
+
+POETRY_FACTS = ProjectFacts(package_manager="poetry", has_build_system=True)
+
+POETRY_GOOD = (
+    "FROM python:3.12-slim AS builder\nWORKDIR /app\n"
+    "RUN pip install --no-cache-dir poetry==2.4.1\n"
+    "RUN poetry install --no-root --only main --no-interaction --no-ansi\n"
+    "FROM python:3.12-slim\nWORKDIR /app\n"
+    'CMD ["python", "main.py"]\n'
+)
+
+
+def _poetry_report(hello_service: Path, run_line: str):
+    dockerfile = POETRY_GOOD.replace(
+        "RUN pip install --no-cache-dir poetry==2.4.1", run_line
+    )
+    return verify_static(dockerfile, hello_service, POETRY_FACTS)
+
+
+def test_poetry_pinned_bootstrap_passes(hello_service: Path) -> None:
+    report = verify_static(POETRY_GOOD, hello_service, POETRY_FACTS)
+    assert _by_id(report, "install_strategy").status is CheckStatus.PASSED
+
+
+@pytest.mark.parametrize(
+    "line",
+    ["RUN pip install poetry", "RUN pip install 'poetry>=1.8'"],
+)
+def test_poetry_unpinned_bootstrap_warns(hello_service: Path, line: str) -> None:
+    report = _poetry_report(hello_service, line)
+    check = _by_id(report, "install_strategy")
+    assert check.status is CheckStatus.WARNING
+    assert "pin" in check.message or "==" in check.message
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "RUN pip install -r requirements.txt",
+        "RUN pip install .",
+        "RUN pip install flask",
+        "RUN pip install poetry==2.4.1 flask",
+        "RUN pip3 install flask",
+        "RUN python -m pip install flask",
+        "RUN python3 -m pip install flask",
+        "RUN uv sync --frozen",
+        "RUN uv pip install flask",
+    ],
+)
+def test_poetry_project_direct_dep_install_fails(
+    hello_service: Path, line: str
+) -> None:
+    report = _poetry_report(hello_service, line)
+    check = _by_id(report, "install_strategy")
+    assert check.status is CheckStatus.FAILED
+    assert check.failure_kind == "authoring"
+
+
+def test_poetry_bootstrap_with_index_url_passes(hello_service: Path) -> None:
+    line = (
+        "RUN pip install --index-url https://pypi.internal/simple "
+        "--no-cache-dir poetry==2.4.1"
+    )
+    report = _poetry_report(hello_service, line)
+    assert _by_id(report, "install_strategy").status is CheckStatus.PASSED
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "RUN /usr/bin/pip install flask",
+        "RUN ./.venv/bin/pip3 install flask",
+        "RUN pip install --index-url https://pypi.internal/simple flask",
+    ],
+)
+def test_poetry_project_pip_variants_still_fail(hello_service: Path, line: str) -> None:
+    report = _poetry_report(hello_service, line)
+    assert _by_id(report, "install_strategy").status is CheckStatus.FAILED
+
+
+@pytest.mark.parametrize("manager", ["uv", "pip"])
+def test_non_poetry_project_poetry_install_fails(
+    hello_service: Path, manager: Literal["uv", "pip"]
+) -> None:
+    facts = ProjectFacts(package_manager=manager, has_build_system=True)
+    dockerfile = (
+        "FROM python:3.12-slim\nWORKDIR /app\n"
+        "RUN poetry install --no-root\n"
+        'CMD ["python", "main.py"]\n'
+    )
+    report = verify_static(dockerfile, hello_service, facts)
+    assert _by_id(report, "install_strategy").status is CheckStatus.FAILED
+
+
+def test_pip_project_poetry_bootstrap_alone_is_not_flagged(
+    hello_service: Path,
+) -> None:
+    facts = ProjectFacts(package_manager="pip", has_build_system=False)
+    dockerfile = (
+        "FROM python:3.12-slim\nWORKDIR /app\n"
+        "RUN pip install poetry==2.4.1\n"
+        "RUN pip install --no-cache-dir -r requirements.txt\n"
+        'CMD ["python", "main.py"]\n'
+    )
+    report = verify_static(dockerfile, hello_service, facts)
+    assert _by_id(report, "install_strategy").status is CheckStatus.PASSED
+
+
+def test_pip_install_hyphenated_flag_does_not_crash(hello_service: Path) -> None:
+    """`pip install-e .` matches _PIP_INSTALL's `\\b` but has no standalone
+    "install" token; _pip_install_payload must not raise ValueError."""
+    dockerfile = (
+        "FROM python:3.12-slim AS builder\nWORKDIR /app\n"
+        "RUN pip install-e .\n"
+        "FROM python:3.12-slim\nWORKDIR /app\n"
+        'CMD ["python", "main.py"]\n'
+    )
+    report = verify_static(dockerfile, hello_service, POETRY_FACTS)
+    assert _by_id(report, "install_strategy").status is CheckStatus.PASSED
+
+
+@pytest.mark.parametrize(
+    "line,expected_status",
+    [
+        ("RUN python -m pip install poetry==2.4.1", CheckStatus.PASSED),
+        ("RUN python -m pip install poetry", CheckStatus.WARNING),
+    ],
+)
+def test_python_m_pip_poetry_bootstrap_forms(
+    hello_service: Path, line: str, expected_status: CheckStatus
+) -> None:
+    dockerfile = (
+        f"FROM python:3.12-slim AS builder\nWORKDIR /app\n{line}\n"
+        "RUN poetry install --no-root --only main\n"
+        "FROM python:3.12-slim\nWORKDIR /app\n"
+        'CMD ["python", "main.py"]\n'
+    )
+    report = verify_static(dockerfile, hello_service, POETRY_FACTS)
+    assert _by_id(report, "install_strategy").status is expected_status
+
+
+def test_unpinned_bootstrap_warning_is_deduped(hello_service: Path) -> None:
+    dockerfile = (
+        "FROM python:3.12-slim AS builder\nWORKDIR /app\n"
+        "RUN pip install poetry\n"
+        "RUN pip install poetry\n"
+        "RUN poetry install --no-root --only main\n"
+        "FROM python:3.12-slim\nWORKDIR /app\n"
+        'CMD ["python", "main.py"]\n'
+    )
+    report = verify_static(dockerfile, hello_service, POETRY_FACTS)
+    check = _by_id(report, "install_strategy")
+    assert check.status is CheckStatus.WARNING
+    assert check.message.count("poetry bootstrap is not pinned") == 1
 
 
 def _spy_docker(captured: dict):

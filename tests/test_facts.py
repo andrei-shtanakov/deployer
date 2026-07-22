@@ -62,6 +62,34 @@ def test_uv_lock_wins_over_requirements(tmp_path: Path) -> None:
     assert facts.requirements_files == {"requirements.txt": ["requests"]}
 
 
+def test_poetry_lock_sets_poetry_manager(tmp_path: Path) -> None:
+    (tmp_path / "poetry.lock").write_text("")
+    facts = analyze_project(tmp_path)
+    assert facts.package_manager == "poetry"
+    assert facts.has_poetry_lock is True
+
+
+def test_tool_poetry_without_lock_does_not_detect(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text('[tool.poetry]\nname = "x"\n')
+    facts = analyze_project(tmp_path)
+    assert facts.package_manager is None
+    assert facts.has_poetry_lock is False
+
+
+def test_uv_lock_wins_over_poetry_lock(tmp_path: Path) -> None:
+    (tmp_path / "uv.lock").write_text("")
+    (tmp_path / "poetry.lock").write_text("")
+    assert analyze_project(tmp_path).package_manager == "uv"
+
+
+def test_poetry_lock_wins_over_requirements(tmp_path: Path) -> None:
+    (tmp_path / "poetry.lock").write_text("")
+    (tmp_path / "requirements.txt").write_text("flask\n")
+    facts = analyze_project(tmp_path)
+    assert facts.package_manager == "poetry"
+    assert facts.requirements_files == {"requirements.txt": ["flask"]}
+
+
 def test_no_manager_when_nothing_present(tmp_path: Path) -> None:
     assert analyze_project(tmp_path).package_manager is None
 
@@ -338,3 +366,116 @@ def test_validate_entrypoint_rejects_paths() -> None:
 
 def test_validate_entrypoint_unset_is_noop() -> None:
     validate_target_against_facts(DeployTarget(), ProjectFacts())
+
+
+_LEGACY_PYPROJECT = """\
+[tool.poetry]
+name = "legacy-app"
+version = "0.1.0"
+
+[tool.poetry.dependencies]
+python = ">=3.12"
+flask = "^3.0"
+psycopg2 = { version = "^2.9", optional = true }
+
+[tool.poetry.extras]
+db = ["psycopg2"]
+
+[tool.poetry.scripts]
+legacy-app = "legacy_app.main:run"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+"""
+
+
+def test_legacy_poetry_metadata_fallback(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text(_LEGACY_PYPROJECT)
+    (tmp_path / "poetry.lock").write_text("")
+    facts = analyze_project(tmp_path)
+    assert facts.name == "legacy-app"
+    assert facts.dependencies == ["flask"]  # python and optional excluded
+    assert facts.entrypoints == {"legacy-app": "legacy_app.main:run"}
+    assert facts.optional_dependencies == {"db": ["psycopg2"]}
+    assert facts.package_manager == "poetry"
+
+
+def test_legacy_fallback_does_not_detect_poetry(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text(_LEGACY_PYPROJECT)
+    facts = analyze_project(tmp_path)
+    assert facts.name == "legacy-app"  # metadata visible
+    assert facts.package_manager is None  # but no lock -> no strategy
+
+
+def test_project_table_wins_over_legacy(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "pep621"\ndependencies = ["requests"]\n\n'
+        '[tool.poetry]\nname = "legacy"\n\n'
+        '[tool.poetry.dependencies]\nflask = "^3.0"\n'
+    )
+    facts = analyze_project(tmp_path)
+    assert facts.name == "pep621"
+    assert facts.dependencies == ["requests"]
+
+
+def test_invalid_project_key_is_not_replaced_by_legacy(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = 42\n\n[tool.poetry]\nname = "legacy"\n'
+    )
+    assert analyze_project(tmp_path).name is None
+
+
+def test_invalid_dependencies_and_scripts_are_not_replaced_by_legacy(
+    tmp_path: Path,
+) -> None:
+    """A present-but-wrong-typed [project] key must not fall back to
+    legacy [tool.poetry] metadata: presence, not validity, gates the
+    fallback (matching the existing rule for `name`)."""
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\n"
+        'dependencies = "not-a-list"\n'
+        'scripts = "nope"\n\n'
+        "[tool.poetry]\n"
+        'name = "legacy"\n\n'
+        "[tool.poetry.dependencies]\n"
+        'flask = "^3.0"\n\n'
+        "[tool.poetry.scripts]\n"
+        'legacy-app = "legacy_app.main:run"\n'
+    )
+    facts = analyze_project(tmp_path)
+    assert facts.dependencies == []
+    assert facts.entrypoints == {}
+
+
+def test_pep621_extras_collision_not_papered_over(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "x"\n\n'
+        "[project.optional-dependencies]\n"
+        'my_extra = []\n"my-extra" = []\n\n'
+        '[tool.poetry.extras]\ndb = ["psycopg2"]\n'
+    )
+    assert analyze_project(tmp_path).optional_dependencies == {}
+
+
+def test_legacy_extras_normalize_and_collide(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.poetry.extras]\nmy_extra = ["a"]\n"my-extra" = ["b"]\n'
+    )
+    assert analyze_project(tmp_path).optional_dependencies == {}
+
+
+def test_validate_entrypoint_against_legacy_scripts(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text(_LEGACY_PYPROJECT)
+    (tmp_path / "poetry.lock").write_text("")
+    facts = analyze_project(tmp_path)
+    validate_target_against_facts(DeployTarget(entrypoint="legacy-app"), facts)
+
+
+def test_validate_extras_against_legacy_extras(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text(_LEGACY_PYPROJECT)
+    (tmp_path / "poetry.lock").write_text("")
+    facts = analyze_project(tmp_path)
+    validate_target_against_facts(DeployTarget(extras=["db"]), facts)
+    with pytest.raises(TargetConfigError):
+        validate_target_against_facts(DeployTarget(extras=["gui"]), facts)

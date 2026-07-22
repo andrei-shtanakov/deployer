@@ -16,6 +16,7 @@ EXPECTED_CASES = [
     "extras-job",
     "no-build-system",
     "pip-requirements",
+    "poetry-legacy",
     "service-healthcheck",
     "slow-build",
     "system-deps-psycopg2",
@@ -91,3 +92,10 @@ def test_bench_run_offline_single_case_end_to_end(
     runs = list((tmp_path / ".deployer-runs").iterdir())
     assert len(runs) == 1
     assert (runs[0] / "cases" / "service-healthcheck" / "authoring-run.json").is_file()
+
+
+def test_poetry_pin_matches_llm_constant() -> None:
+    from deployer.llm import POETRY_VERSION
+
+    fixture = CORPUS / "synthetic" / "poetry-legacy" / "fixture.Dockerfile"
+    assert f"poetry=={POETRY_VERSION}" in fixture.read_text()
