@@ -138,3 +138,18 @@ def probe_runtime_versions(runtime: ContainerRuntime) -> RuntimeVersions:
         AttributeError,
     ) as exc:
         return RuntimeVersions(probe_warning=f"{exc.__class__.__name__}: {exc}")
+
+
+def compose_available(runtime: ContainerRuntime) -> bool:
+    """Whether `<tool> compose` resolves to a working provider."""
+    try:
+        proc = container_run(
+            runtime,
+            ["compose", "version"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+    return proc.returncode == 0

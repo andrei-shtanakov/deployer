@@ -31,7 +31,7 @@ from deployer.models import (
     ProjectFacts,
     VerificationReport,
 )
-from deployer.runtime import container_run
+from deployer.runtime import compose_available, container_run
 
 HADOLINT_VERSION = "2.12.0"
 DEFAULT_BUILD_TIMEOUT = 600
@@ -952,6 +952,132 @@ def _run_completes(
     )
 
 
+def _verify_compose(
+    dockerfile: str,
+    compose: str,
+    project_path: Path,
+    target: DeployTarget,
+    runtime: ContainerRuntime,
+    *,
+    build_timeout: int,
+    health_timeout: int,
+) -> list[CheckResult]:
+    """L2 for a dependencies target: compose up, in-network probe, down.
+
+    The candidate Dockerfile and compose.yaml are written INTO the
+    isolated context and compose runs against that copy, so the
+    CONTEXT_IGNORE invariant holds and `app.build.context: "."`
+    resolves inside the sandbox. The unique project name keeps parallel
+    runs and stale containers from colliding. Teardown (`down -v`)
+    runs in `finally` inside the context manager and never clobbers
+    the result. No ports are ever published; the probe runs inside the
+    app container. memory_limit is not enforced on this path
+    (provider support is inconsistent).
+    """
+    assert target.service is not None
+    project = f"deployer-verify-{uuid.uuid4().hex[:8]}"
+    url = f"http://127.0.0.1:{target.service.port}{target.service.healthcheck_path}"
+    probe = f"import urllib.request; urllib.request.urlopen('{url}', timeout=2)"
+    results: list[CheckResult] = []
+    with _isolated_context(project_path) as context:
+        (context / "Dockerfile").write_text(dockerfile + "\n")
+        (context / "compose.yaml").write_text(compose + "\n")
+        base = ["compose", "-p", project, "-f", str(context / "compose.yaml")]
+        try:
+            up = container_run(
+                runtime,
+                [*base, "up", "--build", "-d"],
+                capture_output=True,
+                text=True,
+                timeout=build_timeout,
+            )
+            if up.returncode != 0:
+                results.append(
+                    CheckResult(
+                        check_id="compose_up",
+                        status=CheckStatus.FAILED,
+                        failure_kind=_classify(up.stdout + "\n" + up.stderr),
+                        message=_tail(up.stderr or up.stdout),
+                    )
+                )
+                return results
+            results.append(_passed("compose_up"))
+
+            deadline = time.monotonic() + health_timeout
+            last_error = ""
+            while time.monotonic() < deadline:
+                remaining = deadline - time.monotonic()
+                try:
+                    probe_proc = container_run(
+                        runtime,
+                        [*base, "exec", "-T", "app", "python", "-c", probe],
+                        capture_output=True,
+                        text=True,
+                        timeout=max(1.0, remaining),
+                    )
+                except subprocess.TimeoutExpired:
+                    break
+                if probe_proc.returncode == 0:
+                    results.append(_passed("compose_healthcheck"))
+                    return results
+                last_error = probe_proc.stdout + "\n" + probe_proc.stderr
+                time.sleep(1)
+            logs = container_run(
+                runtime, [*base, "logs"], capture_output=True, text=True, timeout=30
+            )
+            log_text = (logs.stdout + "\n" + logs.stderr).strip()
+            if _is_transport_failure(last_error):
+                results.append(
+                    CheckResult(
+                        check_id="compose_healthcheck",
+                        status=CheckStatus.FAILED,
+                        failure_kind=FailureKind.ENVIRONMENT,
+                        message=(
+                            f"healthcheck {url}: daemon became unreachable "
+                            f"mid-poll: {_tail(last_error, 3)}"
+                        ),
+                    )
+                )
+                return results
+            results.append(
+                CheckResult(
+                    check_id="compose_healthcheck",
+                    status=CheckStatus.FAILED,
+                    failure_kind=FailureKind.AUTHORING,
+                    message=(
+                        f"healthcheck {url} failed within {health_timeout}s: "
+                        f"{_tail(last_error, 3)}\ncompose logs:\n{_tail(log_text)}"
+                    ),
+                )
+            )
+            return results
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            message = (
+                "compose command timed out"
+                if isinstance(exc, subprocess.TimeoutExpired)
+                else f"compose command failed: {exc}"
+            )
+            results.append(
+                CheckResult(
+                    check_id="compose_up" if not results else "compose_healthcheck",
+                    status=CheckStatus.FAILED,
+                    failure_kind=FailureKind.ENVIRONMENT,
+                    message=message,
+                )
+            )
+            return results
+        finally:
+            try:
+                container_run(
+                    runtime,
+                    [*base, "down", "-v", "--timeout", "10"],
+                    capture_output=True,
+                    timeout=60,
+                )
+            except (subprocess.TimeoutExpired, OSError):
+                pass  # best-effort cleanup; must never clobber the result
+
+
 def verify_docker(
     dockerfile: str,
     project_path: Path,
@@ -1018,7 +1144,33 @@ def verify(
     report.runtime = runtime
     if runtime is not None:
         report.docker_available = True
-        if report.passed:
+        if target.dependencies:
+            if not compose_available(runtime):
+                report.results.append(
+                    CheckResult(
+                        check_id="compose_available",
+                        status=CheckStatus.FAILED,
+                        failure_kind=FailureKind.ENVIRONMENT,
+                        message=(
+                            f"{runtime.tool} compose provider is not "
+                            "available; a dependencies target cannot be "
+                            "L2-verified"
+                        ),
+                    )
+                )
+            elif report.passed and compose is not None:
+                report.results.extend(
+                    _verify_compose(
+                        dockerfile,
+                        compose,
+                        project_path,
+                        target,
+                        runtime,
+                        build_timeout=build_timeout,
+                        health_timeout=health_timeout,
+                    )
+                )
+        elif report.passed:
             docker_results, image_size = verify_docker(
                 dockerfile,
                 project_path,
