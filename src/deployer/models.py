@@ -39,6 +39,44 @@ class RunSpec(BaseModel):
     expect_stdout: str | None = Field(default=None, min_length=1)
 
 
+_DEP_NAME_RE = re.compile(r"^[a-z][a-z0-9_-]*$")
+
+
+class ServiceDependency(BaseModel):
+    """A pinned infra dependency the app service needs next to it."""
+
+    name: str
+    image: str
+    env: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("name")
+    @classmethod
+    def _valid_service_name(cls, value: str) -> str:
+        if value == "app":
+            raise ValueError(
+                'ServiceDependency.name "app" is reserved for the app service'
+            )
+        if not _DEP_NAME_RE.fullmatch(value):
+            raise ValueError(
+                f"ServiceDependency.name must match [a-z][a-z0-9_-]*, got {value!r}"
+            )
+        return value
+
+    @field_validator("image")
+    @classmethod
+    def _pinned_image(cls, value: str) -> str:
+        """Same rule as base images: tag allowed, digest preferred."""
+        if "@sha256:" in value:
+            return value
+        _, _, tag = value.partition(":")
+        if not tag or tag == "latest":
+            raise ValueError(
+                "ServiceDependency.image must be pinned (a tag or digest, "
+                f"never :latest): {value!r}"
+            )
+        return value
+
+
 class DeployTarget(BaseModel):
     """Declarative deploy intent: what is wanted, never how."""
 
@@ -50,6 +88,7 @@ class DeployTarget(BaseModel):
     system_packages: list[str] = Field(default_factory=list)
     extras: list[str] = Field(default_factory=list)
     entrypoint: str | None = Field(default=None, min_length=1)
+    dependencies: list[ServiceDependency] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _service_and_run_exclusive(self) -> "DeployTarget":
@@ -58,6 +97,19 @@ class DeployTarget(BaseModel):
                 "DeployTarget.service and DeployTarget.run are mutually "
                 "exclusive: an artifact is a service or a job, not both"
             )
+        return self
+
+    @model_validator(mode="after")
+    def _dependencies_require_service(self) -> "DeployTarget":
+        if self.dependencies:
+            if self.service is None:
+                raise ValueError(
+                    "DeployTarget.dependencies require a service intent "
+                    "(jobs with dependencies are unsupported)"
+                )
+            names = [d.name for d in self.dependencies]
+            if len(names) != len(set(names)):
+                raise ValueError("DeployTarget.dependencies names must be unique")
         return self
 
     @field_validator("extras")
@@ -248,6 +300,7 @@ class IterationRecord(BaseModel):
 
     index: int
     dockerfile: str
+    compose: str | None = None
     report: VerificationReport
     duration_s: float
 
