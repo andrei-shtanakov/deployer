@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 from typing import Protocol
 
-from deployer.facts import analyze_project
+from deployer.facts import analyze_project, validate_target_against_facts
 from deployer.hints import collect_hints
 from deployer.models import (
     AuthoringRun,
@@ -80,6 +80,7 @@ def author_dockerfile(
     so a caller can never silently downgrade to static-only by omission.
     """
     facts = analyze_project(project_path)
+    validate_target_against_facts(target, facts)
     hints = collect_hints(facts)
 
     iterations: list[IterationRecord] = []

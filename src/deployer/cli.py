@@ -19,7 +19,7 @@ from deployer.bench import (
     run_bench,
     verify_corpus,
 )
-from deployer.facts import analyze_project
+from deployer.facts import TargetConfigError, analyze_project
 from deployer.llm import AnthropicAuthor
 from deployer.models import (
     BenchReport,
@@ -156,15 +156,19 @@ def _cmd_verify(args: argparse.Namespace) -> int:
     if isinstance(runtime, str):
         print(f"error: {runtime}", file=sys.stderr)
         return 2
-    report = verify(
-        dockerfile_path.read_text(),
-        project,
-        target,
-        runtime,
-        analyze_project(project),
-        build_timeout=args.build_timeout,
-        health_timeout=args.health_timeout,
-    )
+    try:
+        report = verify(
+            dockerfile_path.read_text(),
+            project,
+            target,
+            runtime,
+            analyze_project(project),
+            build_timeout=args.build_timeout,
+            health_timeout=args.health_timeout,
+        )
+    except TargetConfigError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
     if runtime is not None:
         report.runtime_versions = probe_runtime_versions(runtime)
     _print_report(report)
@@ -198,15 +202,19 @@ def _cmd_author(args: argparse.Namespace) -> int:
         if isinstance(runtime, str):
             print(f"error: {runtime}", file=sys.stderr)
             return 2
-    run = author_dockerfile(
-        project,
-        target,
-        AnthropicAuthor(),
-        max_iterations=args.max_iterations,
-        runtime=runtime,
-        build_timeout=args.build_timeout,
-        health_timeout=args.health_timeout,
-    )
+    try:
+        run = author_dockerfile(
+            project,
+            target,
+            AnthropicAuthor(),
+            max_iterations=args.max_iterations,
+            runtime=runtime,
+            build_timeout=args.build_timeout,
+            health_timeout=args.health_timeout,
+        )
+    except TargetConfigError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
     if run.iterations:
         (project / "Dockerfile").write_text(run.iterations[-1].dockerfile + "\n")
         _print_report(run.iterations[-1].report)

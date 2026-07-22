@@ -1,6 +1,13 @@
 from pathlib import Path
 
-from deployer.facts import analyze_project
+import pytest
+
+from deployer.facts import (
+    TargetConfigError,
+    analyze_project,
+    validate_target_against_facts,
+)
+from deployer.models import DeployTarget, ProjectFacts
 
 
 def test_analyze_hello_service(hello_service: Path) -> None:
@@ -238,6 +245,28 @@ def test_package_dirs_root_src_and_denylist(tmp_path: Path) -> None:
     (src_pkg / "__init__.py").write_text("")
     facts = analyze_project(tmp_path)
     assert facts.package_dirs == ["agents", "src/foo"]
+
+
+def test_validate_extras_ok_and_noop() -> None:
+    facts = ProjectFacts(optional_dependencies={"gui": ["gradio>=6.0"]})
+    validate_target_against_facts(DeployTarget(extras=["GUI"]), facts)
+    validate_target_against_facts(DeployTarget(), ProjectFacts())
+
+
+def test_validate_unknown_extra_raises() -> None:
+    facts = ProjectFacts(optional_dependencies={"gui": []})
+    with pytest.raises(TargetConfigError, match="inference"):
+        validate_target_against_facts(DeployTarget(extras=["inference"]), facts)
+
+
+def test_validate_pip_without_build_system_rejects_extras() -> None:
+    facts = ProjectFacts(
+        optional_dependencies={"gui": []},
+        package_manager="pip",
+        has_build_system=False,
+    )
+    with pytest.raises(TargetConfigError, match="build-system"):
+        validate_target_against_facts(DeployTarget(extras=["gui"]), facts)
 
 
 def test_layout_facts_empty_without_pyproject(tmp_path: Path) -> None:

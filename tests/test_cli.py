@@ -657,3 +657,34 @@ def test_bench_compare_golden_as_candidate_exits_2_with_message(
         "candidate must be a raw run dir (the golden can only be a baseline)"
         in capsys.readouterr().err
     )
+
+
+def test_verify_unknown_extra_exits_2(tmp_path: Path, monkeypatch) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "x"\nversion = "0"\ndependencies = []\n'
+    )
+    (tmp_path / "Dockerfile").write_text("FROM python:3.12-slim\n")
+    target = tmp_path / "target.json"
+    target.write_text('{"extras": ["nope"]}')
+    monkeypatch.setattr("deployer.cli.resolve_runtime", lambda *a, **k: None)
+    assert cli.main(["verify", str(tmp_path), "--target", str(target)]) == 2
+
+
+def test_author_unknown_extra_exits_2(tmp_path: Path, monkeypatch) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "x"\nversion = "0"\ndependencies = []\n'
+    )
+    target = tmp_path / "target.json"
+    target.write_text('{"extras": ["nope"]}')
+
+    class FakeAuthor:
+        def generate(self, facts, target):
+            raise AssertionError("generate must not be called")
+
+        def repair(self, facts, target, dockerfile, report):
+            raise AssertionError("repair must not be called")
+
+    monkeypatch.setattr("deployer.cli.AnthropicAuthor", lambda: FakeAuthor())
+    assert (
+        cli.main(["author", str(tmp_path), "--target", str(target), "--no-docker"]) == 2
+    )

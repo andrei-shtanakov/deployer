@@ -5,7 +5,33 @@ import tomllib
 from pathlib import Path
 from typing import Any, Literal
 
-from deployer.models import ProjectFacts
+from deployer.models import DeployTarget, ProjectFacts
+
+
+class TargetConfigError(ValueError):
+    """Deploy target asks for something the project facts cannot satisfy.
+
+    A config error, not an authoring failure: the model cannot fix it,
+    so it must surface as CLI exit 2 before any authoring/verification.
+    """
+
+
+def validate_target_against_facts(target: DeployTarget, facts: ProjectFacts) -> None:
+    """Config-level compatibility gate between intent and scanned facts."""
+    if not target.extras:
+        return
+    unknown = [e for e in target.extras if e not in facts.optional_dependencies]
+    if unknown:
+        raise TargetConfigError(
+            "deploy target requests extras not present in "
+            f"[project.optional-dependencies]: {', '.join(unknown)}"
+        )
+    if facts.package_manager == "pip" and not facts.has_build_system:
+        raise TargetConfigError(
+            "extras require an installable project; pip projects without "
+            "a build-system are unsupported"
+        )
+
 
 _REQ_NAME_SPLIT = re.compile(r"[=<>!~;\[\s]")
 _VALID_NAME = re.compile(r"^[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?$")
