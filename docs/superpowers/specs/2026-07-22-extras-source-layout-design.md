@@ -145,7 +145,14 @@ by design). Two SYSTEM_PROMPT rules:
   deploy target explicitly requires it. This governs source code only —
   metadata and lockfiles (`pyproject.toml`, `uv.lock`,
   `requirements*.txt`) are copied per the existing install-strategy
-  rules and are not restricted by it.
+  rules and are not restricted by it. When both layout facts are empty
+  (nested-only source trees the MVP scan cannot see), the rule is
+  explicitly inert rather than a prohibition.
+- `_context_blocks` also filters the facts JSON's
+  `optional_dependencies` down to the requested extras — unrequested
+  groups appear nowhere in the prompt. This is intentional: it keeps
+  the model from installing (or being tempted by) extras the deploy
+  intent never asked for.
 
 ## Corpus
 

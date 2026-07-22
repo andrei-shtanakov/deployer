@@ -44,6 +44,8 @@ Rules:
   This governs source code only — copy metadata and lockfiles
   (pyproject.toml, uv.lock, requirements files) per the install
   strategy above.
+  If both root_modules and package_dirs are empty, this rule is inert:
+  copy whatever sources the entrypoint requires.
 - script_entrypoint is deterministic ground truth. If it is set and
   entrypoints ([project.scripts]) is empty, the Dockerfile CMD MUST execute
   that file in exec form (e.g. CMD ["python", "main.py"] or the

@@ -179,3 +179,7 @@ def test_prompt_hints_follow_requested_extras() -> None:
 def test_system_prompt_states_extras_and_copy_rules() -> None:
     assert "--extra" in SYSTEM_PROMPT
     assert "root_modules" in SYSTEM_PROMPT and "package_dirs" in SYSTEM_PROMPT
+
+
+def test_system_prompt_copy_rule_has_empty_facts_escape() -> None:
+    assert "If both root_modules and package_dirs are empty" in SYSTEM_PROMPT

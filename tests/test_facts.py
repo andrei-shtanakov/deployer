@@ -279,3 +279,19 @@ def test_layout_facts_empty_without_pyproject(tmp_path: Path) -> None:
     assert facts.optional_dependencies == {}
     assert facts.root_modules == []
     assert facts.package_dirs == []
+
+
+def test_package_dir_ignores_py_named_subdirectory(tmp_path: Path) -> None:
+    trap = tmp_path / "app" / "mod.py"
+    trap.mkdir(parents=True)  # a DIRECTORY named mod.py
+    assert analyze_project(tmp_path).package_dirs == []
+
+
+def test_src_not_listed_as_both_unit_and_parent(tmp_path: Path) -> None:
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "util.py").write_text("x = 1\n")
+    pkg = src / "foo"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("")
+    assert analyze_project(tmp_path).package_dirs == ["src/foo"]

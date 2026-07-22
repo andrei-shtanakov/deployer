@@ -11,6 +11,11 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 _SAFE_NAME_RE = re.compile(r"[A-Za-z0-9._-]+")
 
 
+def normalize_extra_name(raw: str) -> str:
+    """PEP 503/685-style extra-name normalization (shared, must not drift)."""
+    return raw.strip().lower().replace("_", "-")
+
+
 class ServiceSpec(BaseModel):
     """Runtime surface the artifact must expose to count as deployed."""
 
@@ -54,7 +59,7 @@ class DeployTarget(BaseModel):
         """PEP 503/685-normalize, reject empties, dedupe keeping first."""
         canonical: list[str] = []
         for raw in value:
-            name = raw.strip().lower().replace("_", "-")
+            name = normalize_extra_name(raw)
             if not name:
                 raise ValueError("DeployTarget.extras entries must be non-empty")
             if name not in canonical:

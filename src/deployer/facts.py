@@ -5,7 +5,7 @@ import tomllib
 from pathlib import Path
 from typing import Any, Literal
 
-from deployer.models import DeployTarget, ProjectFacts
+from deployer.models import DeployTarget, ProjectFacts, normalize_extra_name
 
 
 class TargetConfigError(ValueError):
@@ -81,11 +81,6 @@ def _parse_requirements(path: Path) -> list[str]:
     return entries
 
 
-def _normalize_extra(raw: str) -> str:
-    """PEP 503/685-style extra-name normalization."""
-    return raw.strip().lower().replace("_", "-")
-
-
 def _scan_optional_dependencies(project: dict[str, Any]) -> dict[str, list[str]]:
     """Normalized [project.optional-dependencies]; key collision -> {}.
 
@@ -99,7 +94,7 @@ def _scan_optional_dependencies(project: dict[str, Any]) -> dict[str, list[str]]
     for key, value in raw.items():
         if not isinstance(key, str) or not isinstance(value, list):
             continue
-        name = _normalize_extra(key)
+        name = normalize_extra_name(key)
         if name in result:
             return {}
         result[name] = [d for d in value if isinstance(d, str)]
@@ -129,7 +124,7 @@ def _package_dirs_in(base: Path, prefix: str) -> list[str]:
             continue
         if entry.name in _DIR_DENYLIST or entry.name.startswith("."):
             continue
-        if any(f.suffix == ".py" for f in entry.glob("*.py")):
+        if any(f.is_file() for f in entry.glob("*.py")):
             found.append(f"{prefix}{entry.name}")
     return found
 
@@ -139,6 +134,7 @@ def _scan_package_dirs(path: Path) -> list[str]:
     dirs = _package_dirs_in(path, prefix="")
     src = path / "src"
     if src.is_dir():
+        dirs = [d for d in dirs if d != "src"]
         dirs.extend(_package_dirs_in(src, prefix="src/"))
     return sorted(dirs)
 
