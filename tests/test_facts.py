@@ -1,6 +1,13 @@
 from pathlib import Path
 
-from deployer.facts import analyze_project
+import pytest
+
+from deployer.facts import (
+    TargetConfigError,
+    analyze_project,
+    validate_target_against_facts,
+)
+from deployer.models import DeployTarget, ProjectFacts
 
 
 def test_analyze_hello_service(hello_service: Path) -> None:
@@ -194,3 +201,97 @@ def test_slow_build_corpus_case_has_entrypoint_fact() -> None:
     facts = analyze_project(corpus_case)
     assert facts.script_entrypoint == "main.py"
     assert facts.package_manager == "pip"
+
+
+def test_optional_dependencies_scanned_and_normalized(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "x"\nversion = "0"\n'
+        "[project.optional-dependencies]\n"
+        'My_GUI = ["gradio>=6.0"]\n'
+        'inference = ["llama-cpp-python>=0.2"]\n'
+    )
+    facts = analyze_project(tmp_path)
+    assert facts.optional_dependencies == {
+        "my-gui": ["gradio>=6.0"],
+        "inference": ["llama-cpp-python>=0.2"],
+    }
+
+
+def test_optional_dependencies_collision_yields_no_fact(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "x"\nversion = "0"\n'
+        "[project.optional-dependencies]\n"
+        'my_extra = ["a"]\n'
+        'my-extra = ["b"]\n'
+    )
+    assert analyze_project(tmp_path).optional_dependencies == {}
+
+
+def test_root_modules_respect_file_denylist(tmp_path: Path) -> None:
+    for name in ("app.py", "main.py", "setup.py", "conftest.py"):
+        (tmp_path / name).write_text("x = 1\n")
+    assert analyze_project(tmp_path).root_modules == ["app.py", "main.py"]
+
+
+def test_package_dirs_root_src_and_denylist(tmp_path: Path) -> None:
+    for pkg in ("agents", "tests", ".hidden"):
+        (tmp_path / pkg).mkdir()
+        (tmp_path / pkg / "__init__.py").write_text("")
+    ns_pkg = tmp_path / "nsapp"
+    ns_pkg.mkdir()
+    (ns_pkg / "handlers.py").write_text("x = 1\n")  # namespace pkg, no __init__
+    (tmp_path / "data").mkdir()  # denylisted anyway
+    (tmp_path / "assets").mkdir()  # no .py files -> not a source unit
+    (tmp_path / "assets" / "logo.txt").write_text("")
+    src_pkg = tmp_path / "src" / "foo"
+    src_pkg.mkdir(parents=True)
+    (src_pkg / "__init__.py").write_text("")
+    facts = analyze_project(tmp_path)
+    assert facts.package_dirs == ["agents", "nsapp", "src/foo"]
+
+
+def test_validate_extras_ok_and_noop() -> None:
+    facts = ProjectFacts(optional_dependencies={"gui": ["gradio>=6.0"]})
+    validate_target_against_facts(DeployTarget(extras=["GUI"]), facts)
+    validate_target_against_facts(DeployTarget(), ProjectFacts())
+
+
+def test_validate_unknown_extra_raises() -> None:
+    facts = ProjectFacts(optional_dependencies={"gui": []})
+    with pytest.raises(TargetConfigError, match="inference"):
+        validate_target_against_facts(DeployTarget(extras=["inference"]), facts)
+
+
+def test_validate_pip_without_build_system_rejects_extras() -> None:
+    facts = ProjectFacts(
+        optional_dependencies={"gui": []},
+        package_manager="pip",
+        has_build_system=False,
+    )
+    with pytest.raises(TargetConfigError, match="build-system"):
+        validate_target_against_facts(DeployTarget(extras=["gui"]), facts)
+
+
+def test_layout_facts_empty_without_pyproject(tmp_path: Path) -> None:
+    facts = analyze_project(tmp_path)
+    assert facts.optional_dependencies == {}
+    assert facts.root_modules == []
+    assert facts.package_dirs == []
+
+
+def test_package_dir_ignores_py_named_subdirectory(tmp_path: Path) -> None:
+    trap = tmp_path / "app" / "mod.py"
+    trap.mkdir(parents=True)  # a DIRECTORY named mod.py
+    assert analyze_project(tmp_path).package_dirs == []
+
+
+def test_src_not_listed_as_both_unit_and_parent(tmp_path: Path) -> None:
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "util.py").write_text("x = 1\n")
+    pkg = src / "foo"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("")
+    assert analyze_project(tmp_path).package_dirs == ["src/foo"]

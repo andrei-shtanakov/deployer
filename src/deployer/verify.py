@@ -15,6 +15,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
+from deployer.facts import TargetConfigError, validate_target_against_facts
 from deployer.models import (
     CheckResult,
     CheckStatus,
@@ -731,6 +732,13 @@ def verify(
 
     The timeouts bound the L2 build and healthcheck subprocesses (seconds).
     """
+    if facts is not None:
+        validate_target_against_facts(target, facts)
+    elif target.extras:
+        raise TargetConfigError(
+            "deploy target requests extras but no project facts were "
+            "provided to validate them against"
+        )
     report = verify_static(dockerfile, project_path, facts)
     report.runtime = runtime
     if runtime is not None:

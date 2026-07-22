@@ -1,0 +1,1 @@
+{"capabilities": ["uv", "extras", "run-check"], "notes": "extra-only import under run_completes proves the extra is installed, not just that the image builds"}

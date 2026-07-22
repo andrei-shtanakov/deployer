@@ -998,3 +998,23 @@ def test_no_build_system_main_has_guard() -> None:
         / "project"
     )
     assert analyze_project(project).script_entrypoint == "main.py"
+
+
+def test_extras_job_case_shape() -> None:
+    corpus = Path(__file__).parent.parent / "corpus"
+    case = next(c for c in load_corpus(corpus) if c.name == "extras-job")
+    assert case.target.extras == ["cli"]
+    assert case.target.run is not None
+    assert case.target.run.expect_stdout == "hello from extras-job"
+
+
+def test_extras_job_facts() -> None:
+    from deployer.facts import analyze_project
+
+    project = (
+        Path(__file__).parent.parent / "corpus" / "synthetic" / "extras-job" / "project"
+    )
+    facts = analyze_project(project)
+    assert "cli" in facts.optional_dependencies
+    assert facts.script_entrypoint == "main.py"
+    assert facts.has_build_system is False

@@ -167,3 +167,32 @@ def test_run_spec_rejects_empty_oracle() -> None:
 def test_run_spec_none_and_nonempty_oracle_remain_valid() -> None:
     assert RunSpec().expect_stdout is None
     assert RunSpec(expect_stdout="x").expect_stdout == "x"
+
+
+def test_project_facts_layout_fields_default_empty() -> None:
+    facts = ProjectFacts()
+    assert facts.optional_dependencies == {}
+    assert facts.root_modules == []
+    assert facts.package_dirs == []
+
+
+def test_extras_default_empty_and_roundtrip() -> None:
+    target = DeployTarget(extras=["gui"])
+    parsed = DeployTarget.model_validate_json(target.model_dump_json())
+    assert parsed.extras == ["gui"]
+    assert DeployTarget().extras == []
+
+
+def test_extras_canonicalized_and_deduped() -> None:
+    target = DeployTarget(extras=["GUI", "my_extra", "my-extra"])
+    assert target.extras == ["gui", "my-extra"]
+
+
+def test_extras_full_pep503_separator_collapse() -> None:
+    target = DeployTarget(extras=["my.extra", "my__extra", "my-_.extra"])
+    assert target.extras == ["my-extra"]
+
+
+def test_extras_reject_empty_entries() -> None:
+    with pytest.raises(ValidationError, match="non-empty"):
+        DeployTarget(extras=["gui", "  "])

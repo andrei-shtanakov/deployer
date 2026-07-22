@@ -152,3 +152,34 @@ def test_service_target_rendering_unchanged() -> None:
 def test_system_prompt_states_job_rule() -> None:
     assert "run" in SYSTEM_PROMPT and "job" in SYSTEM_PROMPT
     assert "exit 0" in SYSTEM_PROMPT
+
+
+def test_prompt_includes_extras_and_layout_facts() -> None:
+    facts = ProjectFacts(
+        optional_dependencies={"gui": ["gradio>=6.0"]},
+        root_modules=["app.py", "main.py"],
+        package_dirs=["agents"],
+    )
+    target = DeployTarget(extras=["gui"])
+    rendered = _context_blocks(facts, target)
+    assert '"extras"' in rendered and '"gui"' in rendered
+    assert "app.py" in rendered and "agents" in rendered
+
+
+def test_prompt_hints_follow_requested_extras() -> None:
+    facts = ProjectFacts(
+        optional_dependencies={"inference": ["llama-cpp-python>=0.2.0"]}
+    )
+    with_extra = _context_blocks(facts, DeployTarget(extras=["inference"]))
+    without = _context_blocks(facts, DeployTarget())
+    assert "llama-cpp-python" in with_extra
+    assert "llama-cpp-python" not in without
+
+
+def test_system_prompt_states_extras_and_copy_rules() -> None:
+    assert "--extra" in SYSTEM_PROMPT
+    assert "root_modules" in SYSTEM_PROMPT and "package_dirs" in SYSTEM_PROMPT
+
+
+def test_system_prompt_copy_rule_has_empty_facts_escape() -> None:
+    assert "If both root_modules and package_dirs are empty" in SYSTEM_PROMPT

@@ -58,3 +58,22 @@ def test_collect_hints_returns_copies() -> None:
     hints = collect_hints(facts)
     hints[0].build_packages.append("EVIL")
     assert "EVIL" not in KNOWN_SYSTEM_DEPS["psycopg2"].build_packages
+
+
+def test_requested_extra_deps_fire_hints() -> None:
+    facts = ProjectFacts(
+        optional_dependencies={
+            "inference": ["llama-cpp-python>=0.2.0"],
+            "gui": ["gradio>=6.0"],
+        }
+    )
+    names = [h.python_package for h in collect_hints(facts, ["inference"])]
+    assert names == ["llama-cpp-python"]
+
+
+def test_unrequested_extras_stay_silent() -> None:
+    facts = ProjectFacts(
+        optional_dependencies={"inference": ["llama-cpp-python>=0.2.0"]}
+    )
+    assert collect_hints(facts) == []
+    assert collect_hints(facts, ["gui"]) == []

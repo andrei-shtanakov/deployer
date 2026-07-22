@@ -9,6 +9,17 @@ from typing import Literal
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 _SAFE_NAME_RE = re.compile(r"[A-Za-z0-9._-]+")
+_EXTRA_SEPARATOR_RUN_RE = re.compile(r"[-_.]+")
+
+
+def normalize_extra_name(raw: str) -> str:
+    """PEP 503/685 extra-name normalization (shared, must not drift).
+
+    Lowercases and collapses every run of ``-``, ``_``, ``.`` into a
+    single hyphen, so ``my.extra``, ``my__extra`` and ``my---extra`` all
+    canonicalize to ``my-extra``.
+    """
+    return _EXTRA_SEPARATOR_RUN_RE.sub("-", raw.strip().lower())
 
 
 class ServiceSpec(BaseModel):
@@ -37,6 +48,7 @@ class DeployTarget(BaseModel):
     env: dict[str, str] = Field(default_factory=dict)
     memory_limit: str = "512m"
     system_packages: list[str] = Field(default_factory=list)
+    extras: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _service_and_run_exclusive(self) -> "DeployTarget":
@@ -46,6 +58,19 @@ class DeployTarget(BaseModel):
                 "exclusive: an artifact is a service or a job, not both"
             )
         return self
+
+    @field_validator("extras")
+    @classmethod
+    def _canonicalize_extras(cls, value: list[str]) -> list[str]:
+        """PEP 503/685-normalize, reject empties, dedupe keeping first."""
+        canonical: list[str] = []
+        for raw in value:
+            name = normalize_extra_name(raw)
+            if not name:
+                raise ValueError("DeployTarget.extras entries must be non-empty")
+            if name not in canonical:
+                canonical.append(name)
+        return canonical
 
 
 class ProjectFacts(BaseModel):
@@ -64,6 +89,9 @@ class ProjectFacts(BaseModel):
     has_build_system: bool = False
     script_entrypoint: str | None = None
     requirements_files: dict[str, list[str]] = Field(default_factory=dict)
+    optional_dependencies: dict[str, list[str]] = Field(default_factory=dict)
+    root_modules: list[str] = Field(default_factory=list)
+    package_dirs: list[str] = Field(default_factory=list)
 
 
 class SystemDepHint(BaseModel):

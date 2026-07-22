@@ -2,10 +2,12 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-RUN groupadd --system app && useradd --system --gid app --create-home appuser
+RUN useradd --create-home --uid 1000 appuser
 
 COPY main.py ./
 
 USER appuser
 
-CMD ["python", "-m", "main"]
+EXPOSE 8000
+
+CMD ["python", "main.py"]

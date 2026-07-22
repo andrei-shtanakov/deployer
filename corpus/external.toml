@@ -11,15 +11,20 @@
 # expected_success = false
 
 # Local research target (machine-specific path; private EPAM GitLab remote).
-# Build-only intent: the real app (app.py, Gradio) needs the 'gui' extra,
-# which deploy_target cannot express yet — recorded as a Phase 4b need.
+# Extras are expressible via deploy_target now; the blocker is service-entrypoint
+# disambiguation (main.py stub vs. the real app.py Gradio app) — see notes below.
 [[targets]]
 name = "locallogai-backend"
 url = "/Users/Andrei_Shtanakov/lab_aist/locallogai-backend"
 commit = "a8309d71b93598a402f7c1f0cd92af8fa2626667"
+[targets.target]
+extras = ["gui"]
+[targets.target.service]
+port = 7860
+healthcheck_path = "/"
 [targets.expected]
-expected_success = true
+expected_success = false
 max_iterations = 3
 requires_l2 = true
-capabilities = ["uv", "external", "build-only", "python-3.13"]
-notes = "uv + psycopg[binary], py>=3.13; main.py is a stub (build-only target); gradio app needs extras support (Phase 4b)"
+capabilities = ["uv", "external", "service", "extras", "python-3.13"]
+notes = "service entrypoint disambiguation missing: script_entrypoint resolves to the main.py stub and the prompt rule makes it binding, while the real Gradio app is app.py — success requires violating an authoring contract. Flip to true when a service-entrypoint fact/intent lands (see 2026-07-22 spec, Deferred)."
