@@ -2,15 +2,13 @@ FROM python:3.12-slim AS build
 
 COPY --from=ghcr.io/astral-sh/uv:0.5.11 /uv /bin/uv
 
-WORKDIR /app
-
 ENV UV_LINK_MODE=copy
 
-COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-install-project
+WORKDIR /app
 
-COPY src/uv_minimal ./src/uv_minimal
-RUN uv sync --frozen
+COPY pyproject.toml uv.lock ./
+
+RUN uv sync --frozen --no-install-project --extra cli
 
 FROM python:3.12-slim
 
@@ -18,10 +16,12 @@ WORKDIR /app
 
 RUN useradd --create-home --uid 1000 appuser
 
-COPY --from=build /app /app
+COPY --from=build /app/.venv /app/.venv
+
+COPY main.py ./
 
 ENV PATH="/app/.venv/bin:$PATH"
 
 USER appuser
 
-CMD ["python", "-m", "uv_minimal"]
+CMD ["python", "main.py"]

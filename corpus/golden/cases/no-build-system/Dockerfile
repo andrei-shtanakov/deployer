@@ -4,12 +4,11 @@ COPY --from=ghcr.io/astral-sh/uv:0.5.11 /uv /bin/uv
 
 WORKDIR /app
 
-ENV UV_LINK_MODE=copy
-
 COPY pyproject.toml uv.lock ./
+
 RUN uv sync --frozen --no-install-project
 
-COPY . .
+COPY main.py ./
 
 RUN useradd --create-home appuser
 USER appuser

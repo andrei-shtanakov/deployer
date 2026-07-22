@@ -1,6 +1,6 @@
 {
-  "promoted_from_label": "llm-run-completes",
-  "corpus_commit": "eda64421163d019bf9ff5d45d76bfc9543d3234d",
+  "promoted_from_label": "llm-extras",
+  "corpus_commit": "929a3c77bae83f1ae62b99fbe7c4d13d68bec4ca",
   "deployer_version": "0.1.0",
   "author_backend": "anthropic",
   "runtime_tool": "podman",
@@ -10,12 +10,72 @@
   "health_timeout_s": 30,
   "cases": [
     {
+      "case": "extras-job",
+      "success": true,
+      "stopped_reason": "success",
+      "iterations": 1,
+      "failure_kinds": [],
+      "image_size_bytes": 148724399,
+      "hadolint_status": "skipped",
+      "checks": [
+        {
+          "check_id": "parses",
+          "status": "passed",
+          "failure_kind": null
+        },
+        {
+          "check_id": "copy_sources",
+          "status": "passed",
+          "failure_kind": null
+        },
+        {
+          "check_id": "base_pinned",
+          "status": "passed",
+          "failure_kind": null
+        },
+        {
+          "check_id": "install_strategy",
+          "status": "passed",
+          "failure_kind": null
+        },
+        {
+          "check_id": "hadolint",
+          "status": "skipped",
+          "failure_kind": null
+        },
+        {
+          "check_id": "build",
+          "status": "passed",
+          "failure_kind": null
+        },
+        {
+          "check_id": "run_completes",
+          "status": "passed",
+          "failure_kind": null
+        }
+      ],
+      "expected": {
+        "expected_success": true,
+        "max_iterations": 3,
+        "requires_l2": true,
+        "expected_failure_kind": null,
+        "capabilities": [
+          "uv",
+          "extras",
+          "run-check"
+        ],
+        "notes": "extra-only import under run_completes proves the extra is installed, not just that the image builds"
+      },
+      "external_url": null,
+      "external_commit": null
+    },
+    {
       "case": "no-build-system",
       "success": true,
       "stopped_reason": "success",
       "iterations": 1,
       "failure_kinds": [],
-      "image_size_bytes": 176795349,
+      "image_size_bytes": 176789066,
       "hadolint_status": "skipped",
       "checks": [
         {
@@ -74,7 +134,7 @@
       "stopped_reason": "success",
       "iterations": 1,
       "failure_kinds": [],
-      "image_size_bytes": 157048314,
+      "image_size_bytes": 157048313,
       "hadolint_status": "skipped",
       "checks": [
         {
@@ -133,7 +193,7 @@
       "stopped_reason": "success",
       "iterations": 1,
       "failure_kinds": [],
-      "image_size_bytes": 148561450,
+      "image_size_bytes": 148564611,
       "hadolint_status": "skipped",
       "checks": [
         {
@@ -191,7 +251,7 @@
       "stopped_reason": "success",
       "iterations": 1,
       "failure_kinds": [],
-      "image_size_bytes": 158561776,
+      "image_size_bytes": 158551034,
       "hadolint_status": "skipped",
       "checks": [
         {
@@ -252,7 +312,7 @@
       "stopped_reason": "success",
       "iterations": 1,
       "failure_kinds": [],
-      "image_size_bytes": 154855484,
+      "image_size_bytes": 154851927,
       "hadolint_status": "skipped",
       "checks": [
         {
@@ -312,7 +372,7 @@
       "stopped_reason": "success",
       "iterations": 1,
       "failure_kinds": [],
-      "image_size_bytes": 148633745,
+      "image_size_bytes": 148621984,
       "hadolint_status": "skipped",
       "checks": [
         {
