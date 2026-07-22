@@ -1289,6 +1289,16 @@ def test_ci_both_on_keys_ambiguous_fails() -> None:
         lambda t: t + "      - run: docker login ghcr.io\n",
         lambda t: t + f"      - uses: docker/login-action@{GOOD_SHA}\n",
         lambda t: t + "      - run: echo ${{ secrets.TOKEN }}\n",
+        lambda t: (
+            t + f"      - uses: docker/build-push-action@{GOOD_SHA}\n"
+            "        with:\n"
+            "          push: true\n"
+        ),
+        lambda t: (
+            t + f"      - uses: docker/build-push-action@{GOOD_SHA}\n"
+            "        with:\n"
+            '          push: "true"\n'
+        ),
     ],
 )
 def test_ci_wiring_negatives(mutate) -> None:

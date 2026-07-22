@@ -572,7 +572,6 @@ def _build_line_ok(line: str) -> bool:
 
 def _ci_wiring_problems(workflow: dict, raw: str) -> list[str]:
     problems: list[str] = []
-    # raw-text sweep: secrets must not appear anywhere, incl. ${{ }}
     triggers = _ci_triggers(workflow)
     assert triggers is not None  # ci_parses guarantees unambiguous `on`
     for wanted in ("push", "pull_request"):
@@ -614,8 +613,12 @@ def _ci_wiring_problems(workflow: dict, raw: str) -> list[str]:
             if isinstance(uses, str) and "login-action" in uses:
                 problems.append(f"login action is out of the MVP: {uses}")
             with_block = step.get("with")
-            if isinstance(with_block, dict) and with_block.get("push") is True:
-                problems.append("push: true input is out of the MVP")
+            if isinstance(with_block, dict):
+                push_value = with_block.get("push")
+                if push_value is True or (
+                    isinstance(push_value, str) and push_value.strip().lower() == "true"
+                ):
+                    problems.append("push: true input is out of the MVP")
             for line in _run_lines_of(step):
                 if _DOCKER_PUSH.search(line):
                     problems.append("docker push is out of the MVP")
@@ -623,6 +626,7 @@ def _ci_wiring_problems(workflow: dict, raw: str) -> list[str]:
                     problems.append("docker login is out of the MVP")
                 if _DOCKER_BUILD.match(line) and "--push" in line.split():
                     problems.append("buildx --push is out of the MVP")
+    # raw-text sweep: secrets must not appear anywhere, incl. ${{ }}
     if _SECRETS_REF.search(raw):
         problems.append("secrets.* references are out of the MVP")
     return problems
