@@ -295,3 +295,8 @@ def test_iteration_record_ci_defaults_none() -> None:
         index=0, dockerfile="FROM x:1", report=VerificationReport(), duration_s=0.1
     )
     assert rec.ci is None
+
+
+def test_ci_spec_rejects_unknown_keys() -> None:
+    with pytest.raises(ValidationError):
+        DeployTarget.model_validate_json('{"ci": {"kind": "x"}}')

@@ -6,7 +6,13 @@ import re
 from enum import StrEnum
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 
 _SAFE_NAME_RE = re.compile(r"[A-Za-z0-9._-]+")
 _EXTRA_SEPARATOR_RUN_RE = re.compile(r"[-_.]+")
@@ -87,8 +93,11 @@ class CISpec(BaseModel):
 
     Deliberately empty: no kind/registry/triggers until a second
     implemented workflow kind exists — a discriminator now would be
-    false extensibility.
+    false extensibility. Unknown keys are rejected loudly: a silently
+    dropped "kind" would no-op instead of failing the config.
     """
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class DeployTarget(BaseModel):
