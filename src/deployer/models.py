@@ -9,11 +9,17 @@ from typing import Literal
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 _SAFE_NAME_RE = re.compile(r"[A-Za-z0-9._-]+")
+_EXTRA_SEPARATOR_RUN_RE = re.compile(r"[-_.]+")
 
 
 def normalize_extra_name(raw: str) -> str:
-    """PEP 503/685-style extra-name normalization (shared, must not drift)."""
-    return raw.strip().lower().replace("_", "-")
+    """PEP 503/685 extra-name normalization (shared, must not drift).
+
+    Lowercases and collapses every run of ``-``, ``_``, ``.`` into a
+    single hyphen, so ``my.extra``, ``my__extra`` and ``my---extra`` all
+    canonicalize to ``my-extra``.
+    """
+    return _EXTRA_SEPARATOR_RUN_RE.sub("-", raw.strip().lower())
 
 
 class ServiceSpec(BaseModel):

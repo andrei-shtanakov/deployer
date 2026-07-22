@@ -188,6 +188,11 @@ def test_extras_canonicalized_and_deduped() -> None:
     assert target.extras == ["gui", "my-extra"]
 
 
+def test_extras_full_pep503_separator_collapse() -> None:
+    target = DeployTarget(extras=["my.extra", "my__extra", "my-_.extra"])
+    assert target.extras == ["my-extra"]
+
+
 def test_extras_reject_empty_entries() -> None:
     with pytest.raises(ValidationError, match="non-empty"):
         DeployTarget(extras=["gui", "  "])
