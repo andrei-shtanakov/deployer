@@ -1,6 +1,6 @@
 {
-  "promoted_from_label": "llm-entrypoint-intent",
-  "corpus_commit": "ea35507a45f7686089169b63f8f5ab0ae44cd871",
+  "promoted_from_label": "llm-qol",
+  "corpus_commit": "bb5a9ebf7bf19cd122699b760ba722c88cf1adc4",
   "deployer_version": "0.1.0",
   "author_backend": "anthropic",
   "runtime_tool": "podman",
@@ -15,7 +15,7 @@
       "stopped_reason": "success",
       "iterations": 1,
       "failure_kinds": [],
-      "image_size_bytes": 148565635,
+      "image_size_bytes": 148565634,
       "hadolint_status": "skipped",
       "checks": [
         {
@@ -35,6 +35,11 @@
         },
         {
           "check_id": "install_strategy",
+          "status": "passed",
+          "failure_kind": null
+        },
+        {
+          "check_id": "entrypoint_in_command",
           "status": "passed",
           "failure_kind": null
         },
@@ -74,7 +79,7 @@
       "stopped_reason": "success",
       "iterations": 1,
       "failure_kinds": [],
-      "image_size_bytes": 177079064,
+      "image_size_bytes": 177420753,
       "hadolint_status": "skipped",
       "checks": [
         {
@@ -134,7 +139,7 @@
       "stopped_reason": "success",
       "iterations": 1,
       "failure_kinds": [],
-      "image_size_bytes": 176839037,
+      "image_size_bytes": 177153097,
       "hadolint_status": "skipped",
       "checks": [
         {
@@ -193,7 +198,7 @@
       "stopped_reason": "success",
       "iterations": 1,
       "failure_kinds": [],
-      "image_size_bytes": 157048454,
+      "image_size_bytes": 157048452,
       "hadolint_status": "skipped",
       "checks": [
         {
@@ -252,7 +257,7 @@
       "stopped_reason": "success",
       "iterations": 1,
       "failure_kinds": [],
-      "image_size_bytes": 148564601,
+      "image_size_bytes": 148564611,
       "hadolint_status": "skipped",
       "checks": [
         {
@@ -310,7 +315,7 @@
       "stopped_reason": "success",
       "iterations": 1,
       "failure_kinds": [],
-      "image_size_bytes": 158551034,
+      "image_size_bytes": 158551174,
       "hadolint_status": "skipped",
       "checks": [
         {
@@ -371,7 +376,7 @@
       "stopped_reason": "success",
       "iterations": 1,
       "failure_kinds": [],
-      "image_size_bytes": 154852438,
+      "image_size_bytes": 154851924,
       "hadolint_status": "skipped",
       "checks": [
         {
@@ -431,7 +436,7 @@
       "stopped_reason": "success",
       "iterations": 1,
       "failure_kinds": [],
-      "image_size_bytes": 148627096,
+      "image_size_bytes": 148621461,
       "hadolint_status": "skipped",
       "checks": [
         {
