@@ -229,6 +229,51 @@ def _check_install_strategy(
     return CheckResult(check_id="install_strategy", status=CheckStatus.PASSED)
 
 
+def _final_stage_commands(
+    instructions: list[tuple[str, str]],
+) -> tuple[str | None, str | None]:
+    """Last ENTRYPOINT and CMD args after the last FROM (the final stage)."""
+    last_from = -1
+    for i, (name, _) in enumerate(instructions):
+        if name == "FROM":
+            last_from = i
+    entrypoint: str | None = None
+    cmd: str | None = None
+    for name, args in instructions[last_from + 1 :]:
+        if name == "ENTRYPOINT":
+            entrypoint = args
+        elif name == "CMD":
+            cmd = args
+    return entrypoint, cmd
+
+
+def _check_entrypoint_in_command(
+    instructions: list[tuple[str, str]], target: DeployTarget
+) -> CheckResult:
+    """The image's effective command must reference the operator entrypoint.
+
+    Only the final stage counts: a builder-stage CMD is not the image's
+    command. Substring match covers exec form, shell form, and
+    [project.scripts] names alike; deliberately conservative (e.g.
+    `python -m main` does not satisfy `main.py`).
+    """
+    assert target.entrypoint is not None
+    entry_args, cmd_args = _final_stage_commands(instructions)
+    haystack = " ".join(a for a in (entry_args, cmd_args) if a is not None)
+    if target.entrypoint in haystack:
+        return CheckResult(check_id="entrypoint_in_command", status=CheckStatus.PASSED)
+    return CheckResult(
+        check_id="entrypoint_in_command",
+        status=CheckStatus.FAILED,
+        failure_kind=FailureKind.AUTHORING,
+        message=(
+            f"entrypoint intent {target.entrypoint!r} not found in image "
+            f"command: ENTRYPOINT {entry_args if entry_args is not None else 'none'}, "
+            f"CMD {cmd_args if cmd_args is not None else 'none'}"
+        ),
+    )
+
+
 def _check_hadolint(dockerfile: str) -> tuple[CheckResult, bool]:
     """Run hadolint at the pinned version; (result, available_and_comparable)."""
     binary = shutil.which("hadolint")
@@ -298,7 +343,10 @@ def _check_hadolint(dockerfile: str) -> tuple[CheckResult, bool]:
 
 
 def verify_static(
-    dockerfile: str, project_path: Path, facts: ProjectFacts | None = None
+    dockerfile: str,
+    project_path: Path,
+    facts: ProjectFacts | None = None,
+    target: DeployTarget | None = None,
 ) -> VerificationReport:
     """Run all L1 static checks against a Dockerfile candidate."""
     instructions = parse_dockerfile(dockerfile)
@@ -316,6 +364,8 @@ def verify_static(
                     message="no project facts provided",
                 )
             )
+        if target is not None and target.entrypoint is not None:
+            results.append(_check_entrypoint_in_command(instructions, target))
     hadolint_result, hadolint_available = _check_hadolint(dockerfile)
     results.append(hadolint_result)
     return VerificationReport(results=results, hadolint_available=hadolint_available)
@@ -739,7 +789,7 @@ def verify(
             "deploy target requires facts-based validation (extras or "
             "entrypoint) but no project facts were provided"
         )
-    report = verify_static(dockerfile, project_path, facts)
+    report = verify_static(dockerfile, project_path, facts, target=target)
     report.runtime = runtime
     if runtime is not None:
         report.docker_available = True

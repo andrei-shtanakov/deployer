@@ -653,3 +653,85 @@ def test_image_command_unicode_decode_error_swallowed(monkeypatch) -> None:
     assert result.status is CheckStatus.FAILED
     assert result.failure_kind is FailureKind.AUTHORING
     assert "container command:" not in result.message
+
+
+# -- Task 3: L1 check entrypoint_in_command --
+
+
+def _entry_target() -> DeployTarget:
+    return DeployTarget(entrypoint="app.py")
+
+
+def _project(tmp_path: Path) -> Path:
+    (tmp_path / "app.py").write_text("x = 1\n")
+    (tmp_path / "main.py").write_text("y = 2\n")
+    return tmp_path
+
+
+def test_entrypoint_check_absent_without_intent(tmp_path: Path) -> None:
+    df = 'FROM python:3.12-slim\nCOPY app.py .\nCMD ["python", "app.py"]\n'
+    report = verify_static(df, _project(tmp_path))
+    assert all(r.check_id != "entrypoint_in_command" for r in report.results)
+
+
+def test_entrypoint_in_exec_cmd_passes(tmp_path: Path) -> None:
+    df = 'FROM python:3.12-slim\nCOPY app.py .\nCMD ["python", "app.py"]\n'
+    report = verify_static(df, _project(tmp_path), target=_entry_target())
+    assert _by_id(report, "entrypoint_in_command").status is CheckStatus.PASSED
+
+
+def test_entrypoint_in_shell_cmd_passes(tmp_path: Path) -> None:
+    df = "FROM python:3.12-slim\nCOPY app.py .\nCMD python app.py\n"
+    report = verify_static(df, _project(tmp_path), target=_entry_target())
+    assert _by_id(report, "entrypoint_in_command").status is CheckStatus.PASSED
+
+
+def test_entrypoint_in_entrypoint_with_args_cmd_passes(tmp_path: Path) -> None:
+    df = (
+        "FROM python:3.12-slim\n"
+        "COPY app.py .\n"
+        'ENTRYPOINT ["python", "app.py"]\n'
+        'CMD ["--port", "8000"]\n'
+    )
+    report = verify_static(df, _project(tmp_path), target=_entry_target())
+    assert _by_id(report, "entrypoint_in_command").status is CheckStatus.PASSED
+
+
+def test_scripts_name_entrypoint_matches(tmp_path: Path) -> None:
+    # scripts names are not files: the project dir needs no "serve"
+    df = 'FROM python:3.12-slim\nCMD ["serve"]\n'
+    report = verify_static(
+        df, _project(tmp_path), target=DeployTarget(entrypoint="serve")
+    )
+    assert _by_id(report, "entrypoint_in_command").status is CheckStatus.PASSED
+
+
+def test_wrong_cmd_fails_with_both_named(tmp_path: Path) -> None:
+    df = 'FROM python:3.12-slim\nCOPY main.py .\nCMD ["python", "main.py"]\n'
+    report = verify_static(df, _project(tmp_path), target=_entry_target())
+    check = _by_id(report, "entrypoint_in_command")
+    assert check.status is CheckStatus.FAILED
+    assert check.failure_kind == "authoring"
+    assert "app.py" in check.message
+    assert "main.py" in check.message
+
+
+def test_no_command_in_final_stage_fails(tmp_path: Path) -> None:
+    df = "FROM python:3.12-slim\nCOPY app.py .\n"
+    report = verify_static(df, _project(tmp_path), target=_entry_target())
+    check = _by_id(report, "entrypoint_in_command")
+    assert check.status is CheckStatus.FAILED
+    assert "none" in check.message
+
+
+def test_builder_stage_cmd_does_not_satisfy_entrypoint(tmp_path: Path) -> None:
+    """The spec-review blocker case: a builder-stage CMD must not
+    false-pass when the final stage sets no command."""
+    df = (
+        "FROM python:3.12-slim AS build\n"
+        'CMD ["python", "app.py"]\n'
+        "FROM python:3.12-slim\n"
+        "COPY app.py .\n"
+    )
+    report = verify_static(df, _project(tmp_path), target=_entry_target())
+    assert _by_id(report, "entrypoint_in_command").status is CheckStatus.FAILED
