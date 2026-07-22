@@ -37,6 +37,7 @@ class DeployTarget(BaseModel):
     env: dict[str, str] = Field(default_factory=dict)
     memory_limit: str = "512m"
     system_packages: list[str] = Field(default_factory=list)
+    extras: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _service_and_run_exclusive(self) -> "DeployTarget":
@@ -46,6 +47,19 @@ class DeployTarget(BaseModel):
                 "exclusive: an artifact is a service or a job, not both"
             )
         return self
+
+    @field_validator("extras")
+    @classmethod
+    def _canonicalize_extras(cls, value: list[str]) -> list[str]:
+        """PEP 503/685-normalize, reject empties, dedupe keeping first."""
+        canonical: list[str] = []
+        for raw in value:
+            name = raw.strip().lower().replace("_", "-")
+            if not name:
+                raise ValueError("DeployTarget.extras entries must be non-empty")
+            if name not in canonical:
+                canonical.append(name)
+        return canonical
 
 
 class ProjectFacts(BaseModel):
@@ -64,6 +78,9 @@ class ProjectFacts(BaseModel):
     has_build_system: bool = False
     script_entrypoint: str | None = None
     requirements_files: dict[str, list[str]] = Field(default_factory=dict)
+    optional_dependencies: dict[str, list[str]] = Field(default_factory=dict)
+    root_modules: list[str] = Field(default_factory=list)
+    package_dirs: list[str] = Field(default_factory=list)
 
 
 class SystemDepHint(BaseModel):
