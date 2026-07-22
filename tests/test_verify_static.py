@@ -1042,6 +1042,23 @@ def test_verify_appends_compose_checks_for_deps_target(hello_service: Path) -> N
 # -- Task 4: compose L2 — up/exec-probe/down (fake-driven, no marker) --
 
 
+def _assert_both_compose_files(calls: list[list[str]]) -> None:
+    """Every compose invocation must carry both `-f` entries.
+
+    The base-list construction (`compose -p <project> -f compose.yaml -f
+    deployer.override.yaml`) is shared by every subcommand, so this is one
+    assertion on any recorded call — it also covers the egress-sandbox
+    override landing on the command line.
+    """
+    for call in calls:
+        if call[0] != "compose":
+            continue
+        f_values = [call[i + 1] for i, tok in enumerate(call) if tok == "-f"]
+        assert len(f_values) == 2, call
+        assert f_values[0].endswith("compose.yaml"), call
+        assert f_values[1].endswith("deployer.override.yaml"), call
+
+
 def test_verify_compose_up_probe_down_sequence(monkeypatch, tmp_path: Path) -> None:
     import subprocess
 
@@ -1069,9 +1086,15 @@ def test_verify_compose_up_probe_down_sequence(monkeypatch, tmp_path: Path) -> N
     assert any("up" in c for c in calls if c[0] == "compose")
     project_flags = {c[c.index("-p") + 1] for c in calls if "-p" in c}
     assert len(project_flags) == 1  # one unique project name throughout
-    assert next(iter(project_flags)).startswith("deployer-verify-")
-    assert calls[-1][:1] == ["compose"] and "down" in calls[-1]  # teardown last
-    assert "-v" in calls[-1]
+    project = next(iter(project_flags))
+    assert project.startswith("deployer-verify-")
+    _assert_both_compose_files(calls)
+    down_call, image_rm_call = calls[-2], calls[-1]
+    assert down_call[:1] == ["compose"] and "down" in down_call  # teardown
+    assert "-v" in down_call
+    assert image_rm_call[:3] == ["image", "rm", "-f"]  # image cleanup follows down
+    assert f"{project}-app" in image_rm_call
+    assert f"{project}_app" in image_rm_call
 
 
 def test_verify_compose_up_failure_classifies_and_still_tears_down(
@@ -1105,7 +1128,9 @@ def test_verify_compose_up_failure_classifies_and_still_tears_down(
     assert by_id["compose_up"].status is CheckStatus.FAILED
     assert by_id["compose_up"].failure_kind == "authoring"
     assert "compose_healthcheck" not in by_id
-    assert "down" in calls[-1]  # teardown ran despite failure
+    _assert_both_compose_files(calls)
+    assert "down" in calls[-2]  # teardown ran despite failure
+    assert calls[-1][:3] == ["image", "rm", "-f"]  # image cleanup follows down
 
 
 def test_verify_compose_probe_failure_collects_logs(
@@ -1115,7 +1140,10 @@ def test_verify_compose_probe_failure_collects_logs(
 
     from deployer.verify import _verify_compose
 
+    calls: list[list[str]] = []
+
     def fake(runtime, args, **kwargs):
+        calls.append(args)
         if "exec" in args:
             return subprocess.CompletedProcess(
                 args, 1, stdout="", stderr="urlopen error"
@@ -1136,6 +1164,7 @@ def test_verify_compose_probe_failure_collects_logs(
         build_timeout=60,
         health_timeout=2,
     )
+    _assert_both_compose_files(calls)
     by_id = {r.check_id: r for r in results}
     check = by_id["compose_healthcheck"]
     assert check.status is CheckStatus.FAILED

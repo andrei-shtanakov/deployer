@@ -388,6 +388,62 @@ def test_author_records_compose_artifact(tmp_path: Path) -> None:
     assert run.iterations[0].dockerfile.startswith("FROM python:3.12-slim")
 
 
+def test_author_forwards_compose_to_both_verify_calls(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Regression: environment retry on a dependencies target must not drop
+    the compose artifact — both verify calls (main + retry) get the same
+    compose text parsed from the author's response.
+    """
+    from deployer.models import FailureKind
+
+    (tmp_path / "main.py").write_text("if __name__ == '__main__':\n    pass\n")
+    compose_text = "services: {}"
+    response = render_artifact_response(
+        "FROM python:3.12-slim\nCOPY main.py .", compose_text
+    )
+
+    captured: list[dict] = []
+
+    def spy_verify(
+        dockerfile,
+        project_path,
+        target,
+        runtime,
+        facts=None,
+        *,
+        build_timeout,
+        health_timeout,
+        compose=None,
+    ):
+        captured.append({"compose": compose})
+        if len(captured) == 1:  # first call: environment flake -> triggers retry
+            return VerificationReport(
+                results=[
+                    CheckResult(
+                        check_id="build",
+                        status=CheckStatus.FAILED,
+                        failure_kind=FailureKind.ENVIRONMENT,
+                        message="connection reset",
+                    )
+                ]
+            )
+        return VerificationReport(
+            results=[CheckResult(check_id="build", status=CheckStatus.PASSED)]
+        )
+
+    monkeypatch.setattr("deployer.author.verify", spy_verify)
+    run = author_dockerfile(
+        tmp_path,
+        COMPOSE_TARGET,
+        ScriptedAuthor(response),
+        runtime=ContainerRuntime(tool="podman"),
+    )
+    assert len(captured) == 2  # main call + environment-retry call
+    assert all(c["compose"] == compose_text for c in captured)
+    assert run.stopped_reason == "success"
+
+
 def test_author_parse_failure_becomes_artifact_format_finding(
     tmp_path: Path,
 ) -> None:

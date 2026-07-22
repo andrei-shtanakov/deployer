@@ -7,7 +7,7 @@ import pytest
 from deployer.bench import load_corpus
 from deployer.facts import analyze_project
 from deployer.models import ContainerRuntime
-from deployer.runtime import resolve_runtime
+from deployer.runtime import container_run, resolve_runtime
 from deployer.verify import verify
 
 CORPUS = Path(__file__).parent.parent / "corpus"
@@ -72,6 +72,21 @@ def test_corpus_fixture_verifies_end_to_end(name: str, runtime) -> None:
         compose=case.fixture_compose.read_text() if case.fixture_compose else None,
     )
     assert report.passed, f"{name}: {report.model_dump_json(indent=2)}"
+
+    if name == "compose-redis":
+        # Real-daemon teardown: _verify_compose's `down -v` must leave no
+        # verifier containers behind (cheap check, so only one case runs it).
+        ps = container_run(
+            runtime,
+            ["ps", "-a", "--format", "{{.Names}}"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        leftover = [
+            n for n in ps.stdout.splitlines() if n.startswith("deployer-verify-")
+        ]
+        assert not leftover, f"leftover verifier containers: {leftover}"
 
 
 @pytest.mark.docker

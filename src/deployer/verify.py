@@ -371,7 +371,7 @@ def _check_entrypoint_in_command(
     )
 
 
-def _failed(check_id: str, message: str) -> CheckResult:
+def _check_failed(check_id: str, message: str) -> CheckResult:
     return CheckResult(
         check_id=check_id,
         status=CheckStatus.FAILED,
@@ -380,11 +380,11 @@ def _failed(check_id: str, message: str) -> CheckResult:
     )
 
 
-def _passed(check_id: str) -> CheckResult:
+def _check_passed(check_id: str) -> CheckResult:
     return CheckResult(check_id=check_id, status=CheckStatus.PASSED)
 
 
-def _env_keys(service: dict) -> set[str]:
+def _env_keys(service: dict[str, object]) -> set[str]:
     """Keys of a compose `environment` block, mapping or KEY=VALUE list."""
     raw = service.get("environment")
     if isinstance(raw, dict):
@@ -402,32 +402,32 @@ def _compose_l1_checks(compose: str | None, target: DeployTarget) -> list[CheckR
     """
     if compose is None:
         return [
-            _failed(
+            _check_failed(
                 "compose_present",
                 "deploy target declares dependencies but no compose.yaml "
                 "artifact was provided",
             )
         ]
-    results = [_passed("compose_present")]
+    results = [_check_passed("compose_present")]
 
     try:
         doc = yaml.safe_load(compose)
     except yaml.YAMLError as exc:
-        results.append(_failed("compose_parses", f"compose.yaml: {exc}"))
+        results.append(_check_failed("compose_parses", f"compose.yaml: {exc}"))
         return results
     services = doc.get("services") if isinstance(doc, dict) else None
     if not isinstance(services, dict) or not all(
         isinstance(v, dict) for v in services.values()
     ):
         results.append(
-            _failed(
+            _check_failed(
                 "compose_parses",
                 "compose.yaml must be a mapping with a `services` mapping "
                 "whose values are mappings",
             )
         )
         return results
-    results.append(_passed("compose_parses"))
+    results.append(_check_passed("compose_parses"))
 
     problems: list[str] = []
     expected = {"app"} | {d.name for d in target.dependencies}
@@ -456,9 +456,9 @@ def _compose_l1_checks(compose: str | None, target: DeployTarget) -> list[CheckR
                 f"got {svc.get('image')!r}"
             )
     results.append(
-        _failed("compose_services", "; ".join(problems))
+        _check_failed("compose_services", "; ".join(problems))
         if problems
-        else _passed("compose_services")
+        else _check_passed("compose_services")
     )
 
     wiring: list[str] = []
@@ -489,9 +489,9 @@ def _compose_l1_checks(compose: str | None, target: DeployTarget) -> list[CheckR
                 "internal-only for the verifier"
             )
     results.append(
-        _failed("compose_wiring", "; ".join(wiring))
+        _check_failed("compose_wiring", "; ".join(wiring))
         if wiring
-        else _passed("compose_wiring")
+        else _check_passed("compose_wiring")
     )
     return results
 
@@ -973,6 +973,16 @@ def _verify_compose(
     the result. No ports are ever published; the probe runs inside the
     app container. memory_limit is not enforced on this path
     (provider support is inconsistent).
+
+    The single-container path (`verify_docker`) runs with
+    `--network=none`; compose has no equivalent per-service flag, so
+    the egress sandbox invariant is restored verifier-side instead: a
+    `deployer.override.yaml` is written into the isolated context (the
+    authored compose.yaml artifact itself is unchanged) and layered on
+    top via a second `-f`. Compose merges files left-to-right, so
+    `internal: true` on the default network cuts runtime egress for
+    every service while leaving the daemon-side image pull/build
+    unaffected.
     """
     assert target.service is not None
     project = f"deployer-verify-{uuid.uuid4().hex[:8]}"
@@ -982,7 +992,18 @@ def _verify_compose(
     with _isolated_context(project_path) as context:
         (context / "Dockerfile").write_text(dockerfile + "\n")
         (context / "compose.yaml").write_text(compose + "\n")
-        base = ["compose", "-p", project, "-f", str(context / "compose.yaml")]
+        (context / "deployer.override.yaml").write_text(
+            "networks:\n  default:\n    internal: true\n"
+        )
+        base = [
+            "compose",
+            "-p",
+            project,
+            "-f",
+            str(context / "compose.yaml"),
+            "-f",
+            str(context / "deployer.override.yaml"),
+        ]
         try:
             up = container_run(
                 runtime,
@@ -1001,7 +1022,7 @@ def _verify_compose(
                     )
                 )
                 return results
-            results.append(_passed("compose_up"))
+            results.append(_check_passed("compose_up"))
 
             deadline = time.monotonic() + health_timeout
             last_error = ""
@@ -1018,7 +1039,7 @@ def _verify_compose(
                 except subprocess.TimeoutExpired:
                     break
                 if probe_proc.returncode == 0:
-                    results.append(_passed("compose_healthcheck"))
+                    results.append(_check_passed("compose_healthcheck"))
                     return results
                 last_error = probe_proc.stdout + "\n" + probe_proc.stderr
                 time.sleep(1)
@@ -1053,7 +1074,8 @@ def _verify_compose(
             return results
         except (subprocess.TimeoutExpired, OSError) as exc:
             message = (
-                "compose command timed out"
+                f"compose command timed out (build_timeout={build_timeout}s, "
+                f"health_timeout={health_timeout}s)"
                 if isinstance(exc, subprocess.TimeoutExpired)
                 else f"compose command failed: {exc}"
             )
@@ -1071,6 +1093,15 @@ def _verify_compose(
                 container_run(
                     runtime,
                     [*base, "down", "-v", "--timeout", "10"],
+                    capture_output=True,
+                    timeout=60,
+                )
+            except (subprocess.TimeoutExpired, OSError):
+                pass  # best-effort cleanup; must never clobber the result
+            try:
+                container_run(
+                    runtime,
+                    ["image", "rm", "-f", f"{project}-app", f"{project}_app"],
                     capture_output=True,
                     timeout=60,
                 )
