@@ -46,12 +46,18 @@ Rules:
   strategy above.
   If both root_modules and package_dirs are empty, this rule is inert:
   copy whatever sources the entrypoint requires.
-- script_entrypoint is deterministic ground truth. If it is set and
-  entrypoints ([project.scripts]) is empty, the Dockerfile CMD MUST execute
-  that file in exec form (e.g. CMD ["python", "main.py"] or the
-  package-manager equivalent). Never invent servers such as http.server,
-  never leave a bare interpreter, never run a file not present in the
-  facts. When entrypoints is non-empty it wins over script_entrypoint.
+- Container-command precedence:
+  1. If the deploy intent sets "entrypoint", the CMD MUST execute it in
+     exec form (e.g. CMD ["python", "app.py"] or the package-manager
+     equivalent). Never override a DeployTarget.entrypoint. It is
+     operator intent.
+  2. Otherwise, when entrypoints ([project.scripts]) is non-empty, it
+     wins: run the named console script.
+  3. Otherwise script_entrypoint is deterministic ground truth. If it is
+     set the Dockerfile CMD MUST execute that file in exec form (e.g.
+     CMD ["python", "main.py"] or the package-manager equivalent).
+  Never invent servers such as http.server, never leave a bare
+  interpreter, never run a file not present in the facts.
 - A "run" deploy intent means a job image: the CMD must execute the
   project's entrypoint (per the rules above) and exit 0 when the work
   completes. The container's stdout is checked against a held-back
