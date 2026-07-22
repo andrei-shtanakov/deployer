@@ -33,6 +33,11 @@ module:
   anthropic`) — never before `verify`, and never from library code
   (`llm.py`/`author.py` stay env-agnostic).
 - Values are never logged or echoed.
+- **Scope: Anthropic author authentication only.** The CLI resolves the
+  container runtime (`DEPLOYER_CONTAINER_TOOL`/`_HOST`) before the
+  author is constructed, so `.env` is deliberately NOT a source of
+  runtime env defaults — those still come from the real process
+  environment.
 
 ## 2. `bench --filter` matches external targets
 
@@ -70,13 +75,17 @@ optional `target: DeployTarget | None = None` parameter (passed by
   for the common case. Facts are NOT required for the check itself (the
   intent string is in the target); `verify()`'s existing facts-required
   config validation for `entrypoint` is unchanged and still runs first.
-- Mechanics: take the **effective last `ENTRYPOINT` and last `CMD`**
-  instructions (multi-stage: last occurrence in the file). The check
-  passes when `target.entrypoint` appears as a substring in either —
-  covering exec form, shell form, entrypoint-in-ENTRYPOINT with
-  args-only CMD, and `[project.scripts]` names alike.
+- Mechanics: only the **final stage** counts — find the last `FROM`
+  and consider solely the instructions after it, taking that stage's
+  last `ENTRYPOINT` and last `CMD`. (A builder-stage `CMD` is not the
+  image's effective command: `FROM x AS build / CMD ["python",
+  "app.py"] / FROM x` must FAIL, not false-pass — this exact case is
+  unit-tested.) The check passes when `target.entrypoint` appears as a
+  substring in either instruction — covering exec form, shell form,
+  entrypoint-in-ENTRYPOINT with args-only CMD, and `[project.scripts]`
+  names alike.
 - Fails (AUTHORING) when the substring appears in neither, or when the
-  Dockerfile has no `CMD` and no `ENTRYPOINT` at all.
+  final stage has no `CMD` and no `ENTRYPOINT` at all.
 - The failure message names **both** the expectation and the reality, so
   the repair loop can fix it at L1 without Docker:
   `entrypoint intent 'app.py' not found in image command: ENTRYPOINT
@@ -92,13 +101,20 @@ green LLM run, as with every measured-subject change.
 ## Acceptance
 
 - `uv run pytest`, `uv run pytest -m docker`, `bench verify` green over
-  all 8 cases; fixture bench 8/8.
+  all 8 cases; fixture bench 8/8; `uv run ruff check .` and
+  `uv run pyrefly check` clean (the standing repo rules, listed here
+  explicitly).
+- README updated: the bench section currently states `--filter` applies
+  to synthetic cases only and externals are included wholesale — that
+  sentence must reflect the new filtering semantics, and the `.env`
+  auto-load (auth-only scope) gets a line in the usage section.
 - Unit: env-loader (parses, skips junk, quote-stripping rules, env
   wins, missing file no-op); external filtering (match runs, non-match
   is not cloned, combined-empty error, synthetic-only unchanged);
   `entrypoint_in_command` matrix (exec form, shell form,
   ENTRYPOINT-holds-it + args-only CMD, scripts name, no
-  CMD/ENTRYPOINT → fail, message contains both intent and effective
+  CMD/ENTRYPOINT in the final stage → fail, builder-stage CMD with bare
+  final stage → fail, message contains both intent and effective
   command, check absent when no entrypoint intent).
 - Manual: `--author anthropic` run without sourcing `.env` succeeds;
   8/8 → `bench promote` → `bench compare` clean;
