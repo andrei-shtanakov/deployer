@@ -15,6 +15,8 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
+import yaml
+
 from deployer.facts import (
     TargetConfigError,
     _normalize_requirement_name,
@@ -367,6 +369,131 @@ def _check_entrypoint_in_command(
             f"CMD {cmd_args if cmd_args is not None else 'none'}"
         ),
     )
+
+
+def _failed(check_id: str, message: str) -> CheckResult:
+    return CheckResult(
+        check_id=check_id,
+        status=CheckStatus.FAILED,
+        failure_kind=FailureKind.AUTHORING,
+        message=message,
+    )
+
+
+def _passed(check_id: str) -> CheckResult:
+    return CheckResult(check_id=check_id, status=CheckStatus.PASSED)
+
+
+def _env_keys(service: dict) -> set[str]:
+    """Keys of a compose `environment` block, mapping or KEY=VALUE list."""
+    raw = service.get("environment")
+    if isinstance(raw, dict):
+        return {k for k in raw if isinstance(k, str)}
+    if isinstance(raw, list):
+        return {e.split("=", 1)[0] for e in raw if isinstance(e, str) and "=" in e}
+    return set()
+
+
+def _compose_l1_checks(compose: str | None, target: DeployTarget) -> list[CheckResult]:
+    """Static checks for the compose artifact of a dependencies target.
+
+    Validates only the schema slice deployer relies on (services
+    mapping, service mappings) — never the full Compose spec.
+    """
+    if compose is None:
+        return [
+            _failed(
+                "compose_present",
+                "deploy target declares dependencies but no compose.yaml "
+                "artifact was provided",
+            )
+        ]
+    results = [_passed("compose_present")]
+
+    try:
+        doc = yaml.safe_load(compose)
+    except yaml.YAMLError as exc:
+        results.append(_failed("compose_parses", f"compose.yaml: {exc}"))
+        return results
+    services = doc.get("services") if isinstance(doc, dict) else None
+    if not isinstance(services, dict) or not all(
+        isinstance(v, dict) for v in services.values()
+    ):
+        results.append(
+            _failed(
+                "compose_parses",
+                "compose.yaml must be a mapping with a `services` mapping "
+                "whose values are mappings",
+            )
+        )
+        return results
+    results.append(_passed("compose_parses"))
+
+    problems: list[str] = []
+    expected = {"app"} | {d.name for d in target.dependencies}
+    actual = set(services)
+    if actual != expected:
+        problems.append(
+            f"services must be exactly {sorted(expected)}, got {sorted(actual)}"
+        )
+    app = services.get("app", {})
+    build = app.get("build")
+    build_ok = build == "." or (
+        isinstance(build, dict)
+        and build.get("context") == "."
+        and build.get("dockerfile", "Dockerfile") == "Dockerfile"
+    )
+    if "app" in services and not build_ok:
+        problems.append(
+            "app must build from the project Dockerfile "
+            '(build: "." or {context: ".", dockerfile: "Dockerfile"})'
+        )
+    for dep in target.dependencies:
+        svc = services.get(dep.name)
+        if svc is not None and svc.get("image") != dep.image:
+            problems.append(
+                f"service {dep.name} must use image {dep.image!r} verbatim, "
+                f"got {svc.get('image')!r}"
+            )
+    results.append(
+        _failed("compose_services", "; ".join(problems))
+        if problems
+        else _passed("compose_services")
+    )
+
+    wiring: list[str] = []
+    depends = app.get("depends_on")
+    for dep in target.dependencies:
+        svc = services.get(dep.name)
+        if svc is not None and not isinstance(svc.get("healthcheck"), dict):
+            wiring.append(f"service {dep.name} must define a healthcheck")
+        condition = (
+            depends.get(dep.name, {}).get("condition")
+            if isinstance(depends, dict) and isinstance(depends.get(dep.name), dict)
+            else None
+        )
+        if condition != "service_healthy":
+            wiring.append(
+                f"app must depend on {dep.name} with condition: service_healthy"
+            )
+    missing_env = set(target.env) - _env_keys(app)
+    if missing_env:
+        wiring.append(
+            "app environment must carry the deploy intent env keys: "
+            f"missing {sorted(missing_env)}"
+        )
+    for name, svc in services.items():
+        if isinstance(svc, dict) and "ports" in svc:
+            wiring.append(
+                f"service {name} declares ports; compose networking is "
+                "internal-only for the verifier"
+            )
+    results.append(
+        _failed("compose_wiring", "; ".join(wiring))
+        if wiring
+        else _passed("compose_wiring")
+    )
+    return results
 
 
 def _check_hadolint(dockerfile: str) -> tuple[CheckResult, bool]:
@@ -872,6 +999,7 @@ def verify(
     *,
     build_timeout: int = DEFAULT_BUILD_TIMEOUT,
     health_timeout: int = DEFAULT_HEALTH_TIMEOUT,
+    compose: str | None = None,
 ) -> VerificationReport:
     """Full verification: L1 static always; L2 docker when available and L1 passed.
 
@@ -885,6 +1013,8 @@ def verify(
             "entrypoint) but no project facts were provided"
         )
     report = verify_static(dockerfile, project_path, facts, target=target)
+    if target.dependencies:
+        report.results.extend(_compose_l1_checks(compose, target))
     report.runtime = runtime
     if runtime is not None:
         report.docker_available = True

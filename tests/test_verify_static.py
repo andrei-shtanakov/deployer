@@ -10,6 +10,7 @@ from deployer.models import (
     DeployTarget,
     FailureKind,
     ProjectFacts,
+    ServiceDependency,
     ServiceSpec,
 )
 from deployer.verify import (
@@ -894,3 +895,145 @@ def test_builder_stage_cmd_does_not_satisfy_entrypoint(tmp_path: Path) -> None:
     )
     report = verify_static(df, _project(tmp_path), target=_entry_target())
     assert _by_id(report, "entrypoint_in_command").status is CheckStatus.FAILED
+
+
+COMPOSE_TARGET = DeployTarget(
+    service=ServiceSpec(port=8000),
+    env={"REDIS_URL": "redis://cache:6379/0"},
+    dependencies=[ServiceDependency(name="cache", image="redis:7-alpine")],
+)
+
+COMPOSE_GOOD = """\
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      REDIS_URL: redis://cache:6379/0
+    depends_on:
+      cache:
+        condition: service_healthy
+  cache:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+"""
+
+
+def _compose_checks(compose: str | None):
+    from deployer.verify import _compose_l1_checks
+
+    return {r.check_id: r for r in _compose_l1_checks(compose, COMPOSE_TARGET)}
+
+
+def test_compose_good_passes_all_l1() -> None:
+    checks = _compose_checks(COMPOSE_GOOD)
+    for check_id in (
+        "compose_present",
+        "compose_parses",
+        "compose_services",
+        "compose_wiring",
+    ):
+        assert checks[check_id].status is CheckStatus.PASSED, check_id
+
+
+def test_compose_missing_artifact_fails_present() -> None:
+    checks = _compose_checks(None)
+    check = checks["compose_present"]
+    assert check.status is CheckStatus.FAILED
+    assert check.failure_kind == "authoring"
+    assert "compose_parses" not in checks  # later checks not attempted
+
+
+def test_compose_unparseable_yaml_fails() -> None:
+    checks = _compose_checks("services: [unclosed")
+    assert checks["compose_parses"].status is CheckStatus.FAILED
+
+
+def test_compose_non_mapping_shapes_fail() -> None:
+    for text in ("- a\n- b", "services: []", "services:\n  app: []"):
+        checks = _compose_checks(text)
+        assert checks["compose_parses"].status is CheckStatus.FAILED, text
+
+
+def test_compose_wrong_service_set_fails() -> None:
+    missing_dep = COMPOSE_GOOD.replace("  cache:\n    image: redis:7-alpine\n", "")
+    extra = COMPOSE_GOOD + "  rogue:\n    image: nginx:1.27\n"
+    for text in (missing_dep, extra):
+        checks = _compose_checks(text)
+        assert checks["compose_services"].status is CheckStatus.FAILED, text
+
+
+def test_compose_image_mismatch_fails() -> None:
+    checks = _compose_checks(COMPOSE_GOOD.replace("redis:7-alpine", "redis:6"))
+    assert checks["compose_services"].status is CheckStatus.FAILED
+
+
+def test_compose_app_build_shapes() -> None:
+    short_form = COMPOSE_GOOD.replace(
+        "    build:\n      context: .\n      dockerfile: Dockerfile\n",
+        "    build: .\n",
+    )
+    assert _compose_checks(short_form)["compose_services"].status is (
+        CheckStatus.PASSED
+    )
+    wrong_context = COMPOSE_GOOD.replace("context: .", "context: ./src")
+    assert _compose_checks(wrong_context)["compose_services"].status is (
+        CheckStatus.FAILED
+    )
+
+
+def test_compose_missing_healthcheck_fails_wiring() -> None:
+    text = COMPOSE_GOOD.replace(
+        '    healthcheck:\n      test: ["CMD", "redis-cli", "ping"]\n'
+        "      interval: 2s\n",
+        "",
+    )
+    assert _compose_checks(text)["compose_wiring"].status is CheckStatus.FAILED
+
+
+def test_compose_depends_on_needs_condition() -> None:
+    list_form = COMPOSE_GOOD.replace(
+        "    depends_on:\n      cache:\n        condition: service_healthy\n",
+        "    depends_on: [cache]\n",
+    )
+    assert _compose_checks(list_form)["compose_wiring"].status is CheckStatus.FAILED
+
+
+def test_compose_missing_env_key_fails_wiring() -> None:
+    text = COMPOSE_GOOD.replace(
+        "    environment:\n      REDIS_URL: redis://cache:6379/0\n", ""
+    )
+    assert _compose_checks(text)["compose_wiring"].status is CheckStatus.FAILED
+
+
+def test_compose_env_list_form_accepted() -> None:
+    text = COMPOSE_GOOD.replace(
+        "    environment:\n      REDIS_URL: redis://cache:6379/0\n",
+        "    environment:\n      - REDIS_URL=redis://cache:6379/0\n",
+    )
+    assert _compose_checks(text)["compose_wiring"].status is CheckStatus.PASSED
+
+
+def test_compose_ports_forbidden_everywhere() -> None:
+    on_app = COMPOSE_GOOD.replace(
+        "    environment:", '    ports:\n      - "8000:8000"\n    environment:'
+    )
+    on_dep = COMPOSE_GOOD.replace(
+        "    image: redis:7-alpine",
+        '    image: redis:7-alpine\n    ports:\n      - "6379:6379"',
+    )
+    for text in (on_app, on_dep):
+        checks = _compose_checks(text)
+        assert checks["compose_wiring"].status is CheckStatus.FAILED, text
+
+
+def test_verify_appends_compose_checks_for_deps_target(hello_service: Path) -> None:
+    report = verify(GOOD, hello_service, COMPOSE_TARGET, None, compose=COMPOSE_GOOD)
+    ids = [r.check_id for r in report.results]
+    assert "compose_parses" in ids and "compose_wiring" in ids
+
+    plain = verify(GOOD, hello_service, DeployTarget(), None)
+    assert "compose_present" not in [r.check_id for r in plain.results]
