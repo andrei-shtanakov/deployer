@@ -1,6 +1,6 @@
 FROM python:3.12-slim
 
-COPY --from=ghcr.io/astral-sh/uv:0.5.11 /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv:0.5.11 /uv /bin/uv
 
 WORKDIR /app
 
@@ -12,5 +12,7 @@ COPY main.py ./
 
 RUN useradd --create-home appuser
 USER appuser
+
+ENV PATH="/app/.venv/bin:$PATH"
 
 CMD ["uv", "run", "--no-sync", "python", "main.py"]
