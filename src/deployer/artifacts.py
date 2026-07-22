@@ -34,15 +34,31 @@ def parse_artifact_response(
     equals the sentinel exactly), sections must appear in the order
     Dockerfile -> compose -> ci, each exactly once and non-empty.
     Prose before the Dockerfile sentinel is dropped as chatter.
+
+    A KNOWN sentinel that was not requested is rejected outright: it
+    would otherwise be absorbed as literal content of the preceding
+    section — a corrupted artifact that static-only verification could
+    wave through.
     """
     expected = [DOCKERFILE_SENTINEL]
     if expects_compose:
         expected.append(COMPOSE_SENTINEL)
     if expects_ci:
         expected.append(CI_SENTINEL)
+    lines = text.splitlines()
+    unexpected = [
+        s
+        for s in (DOCKERFILE_SENTINEL, COMPOSE_SENTINEL, CI_SENTINEL)
+        if s not in expected and _sentinel_line_indices(lines, s)
+    ]
+    if unexpected:
+        names = ", ".join(repr(s) for s in unexpected)
+        raise ArtifactParseError(
+            f"response contains unrequested section sentinel(s): {names}; "
+            "reply with only the sections the deploy intent asks for"
+        )
     if len(expected) == 1:
         return text.strip(), None, None
-    lines = text.splitlines()
     listed = ", ".join(repr(s) for s in expected)
     positions: list[int] = []
     for sentinel in expected:

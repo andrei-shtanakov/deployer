@@ -154,3 +154,20 @@ def test_render_three_sections_round_trips() -> None:
         "name: ci",
     )
     assert render_artifact_response("FROM x:1") == "FROM x:1"
+
+
+def test_unrequested_known_sentinel_rejected() -> None:
+    # ci-only expectation, model also emits a compose section
+    text = (
+        f"{DOCKERFILE_SENTINEL}\nFROM x:1\n"
+        f"{COMPOSE_SENTINEL}\nservices: {{}}\n"
+        f"{CI_SENTINEL}\nname: ci\n"
+    )
+    with pytest.raises(ArtifactParseError, match="unrequested"):
+        parse_artifact_response(text, expects_compose=False, expects_ci=True)
+
+
+def test_unrequested_sentinel_rejected_in_plain_mode() -> None:
+    text = f"FROM x:1\n{COMPOSE_SENTINEL}\nservices: {{}}\n"
+    with pytest.raises(ArtifactParseError, match="unrequested"):
+        parse_artifact_response(text, expects_compose=False)
