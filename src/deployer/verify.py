@@ -577,6 +577,108 @@ def _run_healthcheck(
             pass  # best-effort cleanup; must never clobber the return value
 
 
+def _redact_oracle(message: str, marker: str | None) -> str:
+    """Strip the run-intent stdout oracle from verifier text.
+
+    Prompt-side redaction alone cannot stop a program that prints the
+    marker and then crashes, or an echo-CMD that carries it into command
+    feedback — so every FAILED run_completes message passes through here.
+
+    A multi-line marker is also redacted line by line: other checks
+    (e.g. build) tail their output before the report-wide pass runs, and
+    truncation can leave a fragment the full-string replace would miss.
+    """
+    if not marker:
+        return message
+    message = message.replace(marker, "<redacted>")
+    for line in marker.splitlines():
+        if line.strip():
+            message = message.replace(line, "<redacted>")
+    return message
+
+
+def _run_completes(
+    target: DeployTarget, runtime: ContainerRuntime, tag: str, timeout: int
+) -> CheckResult:
+    """Job intent: the image's default command must exit 0 within timeout.
+
+    With an `expect_stdout` oracle, stdout must also contain the marker.
+    ENVIRONMENT is deliberately narrow: a foreground run interleaves app
+    and CLI output, so only an explicit CLI failure (OSError, or exit
+    125/126 plus transport markers) counts — an app that prints
+    "connection refused" and exits non-zero stays AUTHORING.
+    """
+    assert target.run is not None
+    container = f"deployer-check-{uuid.uuid4().hex[:8]}"
+    marker = target.run.expect_stdout
+
+    def _failed(kind: FailureKind, message: str) -> CheckResult:
+        if kind is FailureKind.AUTHORING:
+            message = _with_command_feedback(message, runtime, tag)
+        return CheckResult(
+            check_id="run_completes",
+            status=CheckStatus.FAILED,
+            failure_kind=kind,
+            message=_redact_oracle(message, marker),
+        )
+
+    try:
+        proc = container_run(
+            runtime,
+            [
+                "run",
+                "--name",
+                container,
+                "--network=none",
+                "--memory",
+                target.memory_limit,
+                tag,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        return _failed(
+            FailureKind.AUTHORING,
+            f"container did not exit within {timeout}s (a run intent means "
+            "a job: the default command must run to completion)",
+        )
+    except OSError as exc:
+        return _failed(
+            FailureKind.ENVIRONMENT,
+            f"container runtime command failed: {exc}",
+        )
+    finally:
+        try:
+            container_run(
+                runtime, ["rm", "-f", container], capture_output=True, timeout=30
+            )
+        except (subprocess.TimeoutExpired, OSError):
+            pass  # best-effort cleanup; must never clobber the return value
+
+    if proc.returncode == 0:
+        if marker is not None and marker not in proc.stdout:
+            redacted_stdout = _redact_oracle(proc.stdout, marker)
+            return _failed(
+                FailureKind.AUTHORING,
+                "container exited 0 but stdout did not contain the expected "
+                f"output\nstdout tail:\n{_tail(redacted_stdout)}",
+            )
+        return CheckResult(check_id="run_completes", status=CheckStatus.PASSED)
+
+    output = _redact_oracle(proc.stdout + "\n" + proc.stderr, marker)
+    if proc.returncode in (125, 126) and _is_transport_failure(output):
+        return _failed(
+            FailureKind.ENVIRONMENT,
+            f"container runtime failed to start the job: {_tail(output, 3)}",
+        )
+    return _failed(
+        FailureKind.AUTHORING,
+        f"container exited {proc.returncode}\noutput tail:\n{_tail(output)}",
+    )
+
+
 def verify_docker(
     dockerfile: str,
     project_path: Path,
@@ -586,7 +688,7 @@ def verify_docker(
     build_timeout: int = DEFAULT_BUILD_TIMEOUT,
     health_timeout: int = DEFAULT_HEALTH_TIMEOUT,
 ) -> tuple[list[CheckResult], int | None]:
-    """L2: real sandboxed build; for service intents, run + loopback healthcheck.
+    """L2: real sandboxed build; then service healthcheck or job run-completes.
 
     The healthcheck probes over the container's loopback via `exec python -c`,
     so `--network=none` still works. This assumes a Python base image — true
@@ -605,6 +707,8 @@ def verify_docker(
             image_size = _image_size(runtime, tag)
             if target.service is not None:
                 results.append(_run_healthcheck(target, runtime, tag, health_timeout))
+            elif target.run is not None:
+                results.append(_run_completes(target, runtime, tag, health_timeout))
     finally:
         try:
             container_run(runtime, ["rmi", "-f", tag], capture_output=True, timeout=60)
@@ -629,18 +733,23 @@ def verify(
     """
     report = verify_static(dockerfile, project_path, facts)
     report.runtime = runtime
-    if runtime is None:
-        return report
-    report.docker_available = True
-    if report.passed:
-        docker_results, image_size = verify_docker(
-            dockerfile,
-            project_path,
-            target,
-            runtime,
-            build_timeout=build_timeout,
-            health_timeout=health_timeout,
-        )
-        report.results.extend(docker_results)
-        report.image_size_bytes = image_size
+    if runtime is not None:
+        report.docker_available = True
+        if report.passed:
+            docker_results, image_size = verify_docker(
+                dockerfile,
+                project_path,
+                target,
+                runtime,
+                build_timeout=build_timeout,
+                health_timeout=health_timeout,
+            )
+            report.results.extend(docker_results)
+            report.image_size_bytes = image_size
+    if target.run is not None and target.run.expect_stdout:
+        marker = target.run.expect_stdout
+        report.results = [
+            r.model_copy(update={"message": _redact_oracle(r.message, marker)})
+            for r in report.results
+        ]
     return report

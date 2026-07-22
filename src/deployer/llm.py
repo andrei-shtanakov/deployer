@@ -1,6 +1,7 @@
 """Thin Anthropic SDK wrapper implementing the DockerfileAuthor protocol."""
 
 import hashlib
+import json
 from typing import Any
 
 import anthropic
@@ -38,6 +39,13 @@ Rules:
   package-manager equivalent). Never invent servers such as http.server,
   never leave a bare interpreter, never run a file not present in the
   facts. When entrypoints is non-empty it wins over script_entrypoint.
+- A "run" deploy intent means a job image: the CMD must execute the
+  project's entrypoint (per the rules above) and exit 0 when the work
+  completes. The container's stdout is checked against a held-back
+  oracle you cannot see, so the only winning strategy is to actually
+  run the project's code — never fake output with echo, never leave a
+  bare interpreter, never author a long-running server for a run
+  intent.
 - Packages listed under "Required system packages" MUST be installed via
   apt-get.
 - "Suspected system dependencies" are curated hints, not facts: verify them,
@@ -47,10 +55,22 @@ Rules:
 """
 
 
+def _intent_json(target: DeployTarget) -> str:
+    """Deploy intent for the prompt, with the run oracle redacted.
+
+    The model may see that a run intent exists — never the expected
+    stdout, or `CMD ["echo", ...]` would game the check.
+    """
+    data = target.model_dump()
+    if data.get("run") is not None:
+        data["run"] = {}
+    return json.dumps(data, indent=2)
+
+
 def _context_blocks(facts: ProjectFacts, target: DeployTarget) -> str:
     blocks = [
         f"Project facts (deterministic scan):\n{facts.model_dump_json(indent=2)}",
-        f"Deploy intent:\n{target.model_dump_json(indent=2)}",
+        f"Deploy intent:\n{_intent_json(target)}",
     ]
     if target.system_packages:
         listed = "\n".join(f"- {p}" for p in target.system_packages)

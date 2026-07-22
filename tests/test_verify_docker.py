@@ -2,7 +2,13 @@ from pathlib import Path
 
 import pytest
 
-from deployer.models import CheckStatus, ContainerRuntime, DeployTarget, ServiceSpec
+from deployer.models import (
+    CheckStatus,
+    ContainerRuntime,
+    DeployTarget,
+    RunSpec,
+    ServiceSpec,
+)
 from deployer.runtime import resolve_runtime
 from deployer.verify import verify
 
@@ -155,3 +161,37 @@ def test_build_context_excludes_dotenv(
     )
     report = verify(dockerfile, project, DeployTarget(), runtime)
     assert _by_id(report, "build").status is CheckStatus.PASSED
+
+
+CORPUS_JOB = Path(__file__).parent.parent / "corpus" / "synthetic" / "no-build-system"
+JOB_TARGET = DeployTarget(run=RunSpec(expect_stdout="hello from no-build-system"))
+
+
+def test_job_fixture_passes_run_completes(runtime: ContainerRuntime) -> None:
+    dockerfile = (CORPUS_JOB / "fixture.Dockerfile").read_text()
+    report = verify(dockerfile, CORPUS_JOB / "project", JOB_TARGET, runtime)
+    assert _by_id(report, "build").status is CheckStatus.PASSED
+    assert _by_id(report, "run_completes").status is CheckStatus.PASSED
+    assert report.passed
+
+
+def test_inert_cmd_fails_run_completes_without_leaking_oracle(
+    runtime: ContainerRuntime,
+) -> None:
+    """The motivating blind spot: bare `python` exits 0 silently — only
+    the hidden stdout oracle catches it, and the failure names the CMD
+    but never the oracle."""
+    dockerfile = (
+        (CORPUS_JOB / "fixture.Dockerfile")
+        .read_text()
+        .replace(
+            'CMD ["uv", "run", "--no-sync", "python", "main.py"]',
+            'CMD ["python"]',
+        )
+    )
+    report = verify(dockerfile, CORPUS_JOB / "project", JOB_TARGET, runtime)
+    check = _by_id(report, "run_completes")
+    assert check.status is CheckStatus.FAILED
+    assert check.failure_kind == "authoring"
+    assert "container command" in check.message
+    assert "hello from no-build-system" not in check.message

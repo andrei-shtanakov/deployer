@@ -977,3 +977,24 @@ def test_promote_golden_path_is_file_raises_value_error(
     golden_file.write_text("not a directory\n")
     with pytest.raises(ValueError, match="golden path .* exists and is not"):
         promote_run(run_dir, tmp_path)
+
+
+def test_no_build_system_is_a_job_case() -> None:
+    corpus = Path(__file__).parent.parent / "corpus"
+    case = next(c for c in load_corpus(corpus) if c.name == "no-build-system")
+    assert case.target.service is None
+    assert case.target.run is not None
+    assert case.target.run.expect_stdout == "hello from no-build-system"
+
+
+def test_no_build_system_main_has_guard() -> None:
+    from deployer.facts import analyze_project
+
+    project = (
+        Path(__file__).parent.parent
+        / "corpus"
+        / "synthetic"
+        / "no-build-system"
+        / "project"
+    )
+    assert analyze_project(project).script_entrypoint == "main.py"

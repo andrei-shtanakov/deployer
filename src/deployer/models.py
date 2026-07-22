@@ -18,14 +18,34 @@ class ServiceSpec(BaseModel):
     healthcheck_path: str = "/health"
 
 
+class RunSpec(BaseModel):
+    """Job intent: the container must run to completion successfully.
+
+    `expect_stdout` is a verifier-side oracle (substring of stdout); it is
+    never shown to the authoring model.
+    """
+
+    expect_stdout: str | None = Field(default=None, min_length=1)
+
+
 class DeployTarget(BaseModel):
     """Declarative deploy intent: what is wanted, never how."""
 
     base_image: str | None = None
     service: ServiceSpec | None = None
+    run: RunSpec | None = None
     env: dict[str, str] = Field(default_factory=dict)
     memory_limit: str = "512m"
     system_packages: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _service_and_run_exclusive(self) -> "DeployTarget":
+        if self.service is not None and self.run is not None:
+            raise ValueError(
+                "DeployTarget.service and DeployTarget.run are mutually "
+                "exclusive: an artifact is a service or a job, not both"
+            )
+        return self
 
 
 class ProjectFacts(BaseModel):

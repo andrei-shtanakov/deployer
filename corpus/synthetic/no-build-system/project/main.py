@@ -1,3 +1,4 @@
 """Script-style project: no [build-system], must not be pip-installed."""
 
-print("hello from no-build-system")
+if __name__ == "__main__":
+    print("hello from no-build-system")
