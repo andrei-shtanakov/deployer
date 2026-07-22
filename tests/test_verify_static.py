@@ -340,6 +340,54 @@ def test_pip_project_poetry_bootstrap_alone_is_not_flagged(
     assert _by_id(report, "install_strategy").status is CheckStatus.PASSED
 
 
+def test_pip_install_hyphenated_flag_does_not_crash(hello_service: Path) -> None:
+    """`pip install-e .` matches _PIP_INSTALL's `\\b` but has no standalone
+    "install" token; _pip_install_payload must not raise ValueError."""
+    dockerfile = (
+        "FROM python:3.12-slim AS builder\nWORKDIR /app\n"
+        "RUN pip install-e .\n"
+        "FROM python:3.12-slim\nWORKDIR /app\n"
+        'CMD ["python", "main.py"]\n'
+    )
+    report = verify_static(dockerfile, hello_service, POETRY_FACTS)
+    assert _by_id(report, "install_strategy").status is CheckStatus.PASSED
+
+
+@pytest.mark.parametrize(
+    "line,expected_status",
+    [
+        ("RUN python -m pip install poetry==2.4.1", CheckStatus.PASSED),
+        ("RUN python -m pip install poetry", CheckStatus.WARNING),
+    ],
+)
+def test_python_m_pip_poetry_bootstrap_forms(
+    hello_service: Path, line: str, expected_status: CheckStatus
+) -> None:
+    dockerfile = (
+        f"FROM python:3.12-slim AS builder\nWORKDIR /app\n{line}\n"
+        "RUN poetry install --no-root --only main\n"
+        "FROM python:3.12-slim\nWORKDIR /app\n"
+        'CMD ["python", "main.py"]\n'
+    )
+    report = verify_static(dockerfile, hello_service, POETRY_FACTS)
+    assert _by_id(report, "install_strategy").status is expected_status
+
+
+def test_unpinned_bootstrap_warning_is_deduped(hello_service: Path) -> None:
+    dockerfile = (
+        "FROM python:3.12-slim AS builder\nWORKDIR /app\n"
+        "RUN pip install poetry\n"
+        "RUN pip install poetry\n"
+        "RUN poetry install --no-root --only main\n"
+        "FROM python:3.12-slim\nWORKDIR /app\n"
+        'CMD ["python", "main.py"]\n'
+    )
+    report = verify_static(dockerfile, hello_service, POETRY_FACTS)
+    check = _by_id(report, "install_strategy")
+    assert check.status is CheckStatus.WARNING
+    assert check.message.count("poetry bootstrap is not pinned") == 1
+
+
 def _spy_docker(captured: dict):
     """verify_docker replacement that records the timeout kwargs it got."""
 

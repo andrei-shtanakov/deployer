@@ -181,11 +181,16 @@ def _pip_install_payload(cmd: str) -> list[str] | None:
 
     Covers pip / pip3 / python -m pip / python3 -m pip. Flags are
     dropped, so a flag's value may survive as a positional (e.g. an
-    index URL) — that errs toward FAIL, never a false pass.
+    index URL) — that errs toward FAIL, never a false pass. The regex's
+    `\\b` also matches inside a hyphenated token (e.g. `pip install-e .`),
+    so a missing standalone "install" token is guarded explicitly rather
+    than letting `.index()` raise.
     """
     if not _PIP_INSTALL.match(cmd):
         return None
     tokens = cmd.split()
+    if "install" not in tokens:
+        return None
     idx = tokens.index("install")
     return [t.strip("'\"") for t in tokens[idx + 1 :] if not t.startswith("-")]
 
@@ -255,9 +260,9 @@ def _check_install_strategy(
             if names == {"poetry"}:
                 # the builder bootstrap — allowed, but must be pinned
                 if not all("==" in t for t in payload):
-                    warnings.append(
-                        "poetry bootstrap is not pinned; use poetry==<version>"
-                    )
+                    msg = "poetry bootstrap is not pinned; use poetry==<version>"
+                    if msg not in warnings:
+                        warnings.append(msg)
                 continue
             problems.append(
                 "project uses poetry (poetry.lock) but Dockerfile installs "

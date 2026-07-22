@@ -426,6 +426,28 @@ def test_invalid_project_key_is_not_replaced_by_legacy(tmp_path: Path) -> None:
     assert analyze_project(tmp_path).name is None
 
 
+def test_invalid_dependencies_and_scripts_are_not_replaced_by_legacy(
+    tmp_path: Path,
+) -> None:
+    """A present-but-wrong-typed [project] key must not fall back to
+    legacy [tool.poetry] metadata: presence, not validity, gates the
+    fallback (matching the existing rule for `name`)."""
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\n"
+        'dependencies = "not-a-list"\n'
+        'scripts = "nope"\n\n'
+        "[tool.poetry]\n"
+        'name = "legacy"\n\n'
+        "[tool.poetry.dependencies]\n"
+        'flask = "^3.0"\n\n'
+        "[tool.poetry.scripts]\n"
+        'legacy-app = "legacy_app.main:run"\n'
+    )
+    facts = analyze_project(tmp_path)
+    assert facts.dependencies == []
+    assert facts.entrypoints == {}
+
+
 def test_pep621_extras_collision_not_papered_over(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text(
         '[project]\nname = "x"\n\n'

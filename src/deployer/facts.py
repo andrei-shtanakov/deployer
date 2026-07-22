@@ -245,6 +245,11 @@ def analyze_project(path: Path) -> ProjectFacts:
         if isinstance(legacy_deps, dict):
             # optional deps are exposed only via extras, never as base
             # deps — otherwise hints would fire for unrequested extras
+            # TODO: Poetry also allows a dependency value to be a list of
+            # constraint dicts (multiple constraints per name), each
+            # possibly carrying its own `optional = true`; this filter
+            # only recognizes a single dict value, so a fully-optional
+            # list-valued dependency currently lands in base dependencies.
             dependencies = [
                 k
                 for k, v in legacy_deps.items()

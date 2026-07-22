@@ -49,7 +49,7 @@ Rules:
   extras, never every group in optional_dependencies. Use the package
   manager's mechanism: `uv sync --extra <name>` (adding
   `--no-install-project` when has_build_system is false), or
-  `pip install ".[name]"` for installable pip projects.
+  `pip install ".[name]"` for installable pip projects,
   or `poetry install --no-root --only main --extras "<name>"` (repeat
   `--extras` once per requested extra) for poetry projects.
 - When copying application source, use root_modules and package_dirs
