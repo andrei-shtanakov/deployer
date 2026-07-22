@@ -7,6 +7,7 @@ from deployer.models import (
     CheckStatus,
     DeployTarget,
     FailureKind,
+    IterationRecord,
     ProjectFacts,
     RunSpec,
     ServiceSpec,
@@ -208,3 +209,53 @@ def test_entrypoint_default_none_and_roundtrip() -> None:
 def test_entrypoint_rejects_empty_string() -> None:
     with pytest.raises(ValidationError):
         DeployTarget(entrypoint="")
+
+
+def test_service_dependency_requires_pinned_image() -> None:
+    from deployer.models import ServiceDependency
+
+    ServiceDependency(name="cache", image="redis:7-alpine")
+    ServiceDependency(name="db", image="postgres:16-alpine")
+    ServiceDependency(name="cache", image="redis@sha256:" + "a" * 64)
+    ServiceDependency(name="cache", image="localhost:5000/redis:7-alpine")
+    for image in ("redis", "redis:latest", "localhost:5000/redis"):
+        with pytest.raises(ValidationError):
+            ServiceDependency(name="cache", image=image)
+
+
+def test_service_dependency_name_rules() -> None:
+    from deployer.models import ServiceDependency
+
+    with pytest.raises(ValidationError):
+        ServiceDependency(name="app", image="redis:7-alpine")
+    with pytest.raises(ValidationError):
+        ServiceDependency(name="Cache!", image="redis:7-alpine")
+
+
+def test_dependencies_require_service() -> None:
+    from deployer.models import ServiceDependency
+
+    dep = ServiceDependency(name="cache", image="redis:7-alpine")
+    DeployTarget(service=ServiceSpec(port=8000), dependencies=[dep])
+    with pytest.raises(ValidationError):
+        DeployTarget(dependencies=[dep])  # no service
+    with pytest.raises(ValidationError):
+        DeployTarget(run=RunSpec(), dependencies=[dep])  # job with deps
+
+
+def test_duplicate_dependency_names_rejected() -> None:
+    from deployer.models import ServiceDependency
+
+    deps = [
+        ServiceDependency(name="cache", image="redis:7-alpine"),
+        ServiceDependency(name="cache", image="redis:8-alpine"),
+    ]
+    with pytest.raises(ValidationError):
+        DeployTarget(service=ServiceSpec(port=8000), dependencies=deps)
+
+
+def test_iteration_record_compose_defaults_none() -> None:
+    rec = IterationRecord(
+        index=0, dockerfile="FROM x:1", report=VerificationReport(), duration_s=0.1
+    )
+    assert rec.compose is None

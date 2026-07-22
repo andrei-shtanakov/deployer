@@ -6,6 +6,10 @@ deterministic pipeline verifies it (static checks, then a sandboxed
 `docker build` + run + healthcheck) and feeds failures back for repair.
 **Authoring ≠ execution**: the model only ever sees facts and reports and
 returns text — files, docker, and control flow belong to the pipeline.
+A deploy target may declare pinned infra `dependencies` (redis,
+postgres, ...): the model then authors a compose.yaml next to the
+Dockerfile and verification runs `compose up` with an in-network
+healthcheck probe — no host ports are ever published.
 
 Facts cover uv, Poetry (poetry.lock, including legacy [tool.poetry]
 metadata) and pip (requirements.txt) projects; a curated hints table

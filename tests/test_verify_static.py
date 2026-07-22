@@ -10,6 +10,7 @@ from deployer.models import (
     DeployTarget,
     FailureKind,
     ProjectFacts,
+    ServiceDependency,
     ServiceSpec,
 )
 from deployer.verify import (
@@ -894,3 +895,314 @@ def test_builder_stage_cmd_does_not_satisfy_entrypoint(tmp_path: Path) -> None:
     )
     report = verify_static(df, _project(tmp_path), target=_entry_target())
     assert _by_id(report, "entrypoint_in_command").status is CheckStatus.FAILED
+
+
+COMPOSE_TARGET = DeployTarget(
+    service=ServiceSpec(port=8000),
+    env={"REDIS_URL": "redis://cache:6379/0"},
+    dependencies=[ServiceDependency(name="cache", image="redis:7-alpine")],
+)
+
+COMPOSE_GOOD = """\
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      REDIS_URL: redis://cache:6379/0
+    depends_on:
+      cache:
+        condition: service_healthy
+  cache:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+"""
+
+
+def _compose_checks(compose: str | None):
+    from deployer.verify import _compose_l1_checks
+
+    return {r.check_id: r for r in _compose_l1_checks(compose, COMPOSE_TARGET)}
+
+
+def test_compose_good_passes_all_l1() -> None:
+    checks = _compose_checks(COMPOSE_GOOD)
+    for check_id in (
+        "compose_present",
+        "compose_parses",
+        "compose_services",
+        "compose_wiring",
+    ):
+        assert checks[check_id].status is CheckStatus.PASSED, check_id
+
+
+def test_compose_missing_artifact_fails_present() -> None:
+    checks = _compose_checks(None)
+    check = checks["compose_present"]
+    assert check.status is CheckStatus.FAILED
+    assert check.failure_kind == "authoring"
+    assert "compose_parses" not in checks  # later checks not attempted
+
+
+def test_compose_unparseable_yaml_fails() -> None:
+    checks = _compose_checks("services: [unclosed")
+    assert checks["compose_parses"].status is CheckStatus.FAILED
+
+
+def test_compose_non_mapping_shapes_fail() -> None:
+    for text in ("- a\n- b", "services: []", "services:\n  app: []"):
+        checks = _compose_checks(text)
+        assert checks["compose_parses"].status is CheckStatus.FAILED, text
+
+
+def test_compose_wrong_service_set_fails() -> None:
+    missing_dep = COMPOSE_GOOD.replace("  cache:\n    image: redis:7-alpine\n", "")
+    extra = COMPOSE_GOOD + "  rogue:\n    image: nginx:1.27\n"
+    for text in (missing_dep, extra):
+        checks = _compose_checks(text)
+        assert checks["compose_services"].status is CheckStatus.FAILED, text
+
+
+def test_compose_image_mismatch_fails() -> None:
+    checks = _compose_checks(COMPOSE_GOOD.replace("redis:7-alpine", "redis:6"))
+    assert checks["compose_services"].status is CheckStatus.FAILED
+
+
+def test_compose_app_build_shapes() -> None:
+    short_form = COMPOSE_GOOD.replace(
+        "    build:\n      context: .\n      dockerfile: Dockerfile\n",
+        "    build: .\n",
+    )
+    assert _compose_checks(short_form)["compose_services"].status is (
+        CheckStatus.PASSED
+    )
+    wrong_context = COMPOSE_GOOD.replace("context: .", "context: ./src")
+    assert _compose_checks(wrong_context)["compose_services"].status is (
+        CheckStatus.FAILED
+    )
+
+
+def test_compose_missing_healthcheck_fails_wiring() -> None:
+    text = COMPOSE_GOOD.replace(
+        '    healthcheck:\n      test: ["CMD", "redis-cli", "ping"]\n'
+        "      interval: 2s\n",
+        "",
+    )
+    assert _compose_checks(text)["compose_wiring"].status is CheckStatus.FAILED
+
+
+def test_compose_depends_on_needs_condition() -> None:
+    list_form = COMPOSE_GOOD.replace(
+        "    depends_on:\n      cache:\n        condition: service_healthy\n",
+        "    depends_on: [cache]\n",
+    )
+    assert _compose_checks(list_form)["compose_wiring"].status is CheckStatus.FAILED
+
+
+def test_compose_missing_env_key_fails_wiring() -> None:
+    text = COMPOSE_GOOD.replace(
+        "    environment:\n      REDIS_URL: redis://cache:6379/0\n", ""
+    )
+    assert _compose_checks(text)["compose_wiring"].status is CheckStatus.FAILED
+
+
+def test_compose_env_list_form_accepted() -> None:
+    text = COMPOSE_GOOD.replace(
+        "    environment:\n      REDIS_URL: redis://cache:6379/0\n",
+        "    environment:\n      - REDIS_URL=redis://cache:6379/0\n",
+    )
+    assert _compose_checks(text)["compose_wiring"].status is CheckStatus.PASSED
+
+
+def test_compose_ports_forbidden_everywhere() -> None:
+    on_app = COMPOSE_GOOD.replace(
+        "    environment:", '    ports:\n      - "8000:8000"\n    environment:'
+    )
+    on_dep = COMPOSE_GOOD.replace(
+        "    image: redis:7-alpine",
+        '    image: redis:7-alpine\n    ports:\n      - "6379:6379"',
+    )
+    for text in (on_app, on_dep):
+        checks = _compose_checks(text)
+        assert checks["compose_wiring"].status is CheckStatus.FAILED, text
+
+
+def test_compose_network_escape_hatches_forbidden() -> None:
+    host_mode = COMPOSE_GOOD.replace(
+        "    environment:", "    network_mode: host\n    environment:"
+    )
+    external_net = COMPOSE_GOOD.replace(
+        "    image: redis:7-alpine",
+        "    image: redis:7-alpine\n    networks:\n      - outside",
+    )
+    for text in (host_mode, external_net):
+        checks = _compose_checks(text)
+        check = checks["compose_wiring"]
+        assert check.status is CheckStatus.FAILED, text
+        assert "internal-only" in check.message
+
+
+def test_verify_appends_compose_checks_for_deps_target(hello_service: Path) -> None:
+    report = verify(GOOD, hello_service, COMPOSE_TARGET, None, compose=COMPOSE_GOOD)
+    ids = [r.check_id for r in report.results]
+    assert "compose_parses" in ids and "compose_wiring" in ids
+
+    plain = verify(GOOD, hello_service, DeployTarget(), None)
+    assert "compose_present" not in [r.check_id for r in plain.results]
+
+
+# -- Task 4: compose L2 — up/exec-probe/down (fake-driven, no marker) --
+
+
+def _assert_both_compose_files(calls: list[list[str]]) -> None:
+    """Every compose invocation must carry both `-f` entries.
+
+    The base-list construction (`compose -p <project> -f compose.yaml -f
+    deployer.override.yaml`) is shared by every subcommand, so this is one
+    assertion on any recorded call — it also covers the egress-sandbox
+    override landing on the command line.
+    """
+    for call in calls:
+        if call[0] != "compose":
+            continue
+        f_values = [call[i + 1] for i, tok in enumerate(call) if tok == "-f"]
+        assert len(f_values) == 2, call
+        assert f_values[0].endswith("compose.yaml"), call
+        assert f_values[1].endswith("deployer.override.yaml"), call
+
+
+def test_verify_compose_up_probe_down_sequence(monkeypatch, tmp_path: Path) -> None:
+    import subprocess
+
+    from deployer.verify import _verify_compose
+
+    calls: list[list[str]] = []
+
+    def fake(runtime, args, **kwargs):
+        calls.append(args)
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("deployer.verify.container_run", fake)
+    results = _verify_compose(
+        "FROM python:3.12-slim",
+        COMPOSE_GOOD,
+        tmp_path,
+        COMPOSE_TARGET,
+        ContainerRuntime(tool="podman"),
+        build_timeout=60,
+        health_timeout=5,
+    )
+    by_id = {r.check_id: r for r in results}
+    assert by_id["compose_up"].status is CheckStatus.PASSED
+    assert by_id["compose_healthcheck"].status is CheckStatus.PASSED
+    assert any("up" in c for c in calls if c[0] == "compose")
+    project_flags = {c[c.index("-p") + 1] for c in calls if "-p" in c}
+    assert len(project_flags) == 1  # one unique project name throughout
+    project = next(iter(project_flags))
+    assert project.startswith("deployer-verify-")
+    _assert_both_compose_files(calls)
+    exec_call = next(c for c in calls if "exec" in c)
+    url = "http://127.0.0.1:8000/health"
+    assert exec_call[-1] == (
+        f"import urllib.request; urllib.request.urlopen({url!r}, timeout=2)"
+    )
+    down_call, image_rm_call = calls[-2], calls[-1]
+    assert down_call[:1] == ["compose"] and "down" in down_call  # teardown
+    assert "-v" in down_call
+    assert image_rm_call[:3] == ["image", "rm", "-f"]  # image cleanup follows down
+    assert f"{project}-app" in image_rm_call
+    assert f"{project}_app" in image_rm_call
+
+
+def test_verify_compose_up_failure_classifies_and_still_tears_down(
+    monkeypatch, tmp_path: Path
+) -> None:
+    import subprocess
+
+    from deployer.verify import _verify_compose
+
+    calls: list[list[str]] = []
+
+    def fake(runtime, args, **kwargs):
+        calls.append(args)
+        if "up" in args:
+            return subprocess.CompletedProcess(
+                args, 1, stdout="", stderr="build failed: syntax error"
+            )
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("deployer.verify.container_run", fake)
+    results = _verify_compose(
+        "FROM python:3.12-slim",
+        COMPOSE_GOOD,
+        tmp_path,
+        COMPOSE_TARGET,
+        ContainerRuntime(tool="podman"),
+        build_timeout=60,
+        health_timeout=5,
+    )
+    by_id = {r.check_id: r for r in results}
+    assert by_id["compose_up"].status is CheckStatus.FAILED
+    assert by_id["compose_up"].failure_kind == "authoring"
+    assert "compose_healthcheck" not in by_id
+    _assert_both_compose_files(calls)
+    assert "down" in calls[-2]  # teardown ran despite failure
+    assert calls[-1][:3] == ["image", "rm", "-f"]  # image cleanup follows down
+
+
+def test_verify_compose_probe_failure_collects_logs(
+    monkeypatch, tmp_path: Path
+) -> None:
+    import subprocess
+
+    from deployer.verify import _verify_compose
+
+    calls: list[list[str]] = []
+
+    def fake(runtime, args, **kwargs):
+        calls.append(args)
+        if "exec" in args:
+            return subprocess.CompletedProcess(
+                args, 1, stdout="", stderr="urlopen error"
+            )
+        if "logs" in args:
+            return subprocess.CompletedProcess(
+                args, 0, stdout="app exploded here", stderr=""
+            )
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("deployer.verify.container_run", fake)
+    results = _verify_compose(
+        "FROM python:3.12-slim",
+        COMPOSE_GOOD,
+        tmp_path,
+        COMPOSE_TARGET,
+        ContainerRuntime(tool="podman"),
+        build_timeout=60,
+        health_timeout=2,
+    )
+    _assert_both_compose_files(calls)
+    by_id = {r.check_id: r for r in results}
+    check = by_id["compose_healthcheck"]
+    assert check.status is CheckStatus.FAILED
+    assert check.failure_kind == "authoring"
+    assert "app exploded here" in check.message
+
+
+def test_verify_missing_compose_provider_is_environment_failure(
+    monkeypatch, hello_service: Path
+) -> None:
+    monkeypatch.setattr("deployer.verify.compose_available", lambda rt: False)
+    report = verify(
+        GOOD,
+        hello_service,
+        COMPOSE_TARGET,
+        ContainerRuntime(tool="podman"),
+        compose=COMPOSE_GOOD,
+    )
+    check = next(r for r in report.results if r.check_id == "compose_available")
+    assert check.status is CheckStatus.FAILED
+    assert check.failure_kind == "environment"

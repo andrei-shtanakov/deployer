@@ -121,6 +121,7 @@ def test_verify_flags_reach_library(
         *,
         build_timeout,
         health_timeout,
+        compose=None,
     ):
         captured["timeouts"] = (build_timeout, health_timeout)
         return VerificationReport(
@@ -770,6 +771,24 @@ def test_load_dotenv_strips_bom(
     env_file.write_bytes(b"\xef\xbb\xbfANTHROPIC_API_KEY=from-file\n")
     cli._load_dotenv(env_file)
     assert fake_env["ANTHROPIC_API_KEY"] == "from-file"
+
+
+def test_cli_verify_reads_compose_for_deps_target(
+    tmp_path: Path, capsys, monkeypatch
+) -> None:
+    (tmp_path / "main.py").write_text("if __name__ == '__main__':\n    pass\n")
+    (tmp_path / "Dockerfile").write_text("FROM python:3.12-slim\nCOPY main.py .\n")
+    target = {
+        "service": {"port": 8000},
+        "dependencies": [{"name": "cache", "image": "redis:7-alpine"}],
+    }
+    target_path = tmp_path / "target.json"
+    target_path.write_text(json.dumps(target))
+    monkeypatch.setattr("deployer.cli.resolve_runtime", lambda *a, **k: None)
+    # no compose.yaml -> compose_present FAILED -> exit 1
+    code = main(["verify", str(tmp_path), "--target", str(target_path)])
+    assert code == 1
+    assert "compose_present" in capsys.readouterr().out
 
 
 def test_load_dotenv_mismatched_quotes_not_stripped(

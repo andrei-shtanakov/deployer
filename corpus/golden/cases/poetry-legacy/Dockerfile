@@ -14,15 +14,13 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-RUN useradd --create-home appuser
+ENV PATH="/app/.venv/bin:$PATH"
 
 COPY --from=builder /app/.venv /app/.venv
-ENV PATH="/app/.venv/bin:$PATH"
 
 COPY main.py ./
 
+RUN useradd --create-home appuser
 USER appuser
-
-EXPOSE 8000
 
 CMD ["python", "main.py"]

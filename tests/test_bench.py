@@ -101,6 +101,17 @@ def test_fixture_author_info() -> None:
     assert info.prompt_sha256 is not None and len(info.prompt_sha256) == 64
 
 
+def test_fixture_author_renders_sentinels_when_compose_present() -> None:
+    from deployer.artifacts import COMPOSE_SENTINEL
+    from deployer.bench import FixtureAuthor
+
+    author = FixtureAuthor("FROM x:1", compose="services: {}")
+    out = author.generate(ProjectFacts(), DeployTarget())
+    assert COMPOSE_SENTINEL in out
+    plain = FixtureAuthor("FROM x:1")
+    assert COMPOSE_SENTINEL not in plain.generate(ProjectFacts(), DeployTarget())
+
+
 def _passing_report():
     from deployer.models import VerificationReport
 
@@ -215,6 +226,31 @@ def test_run_case_skips_when_author_missing(tmp_path: Path) -> None:
     )
     assert result.outcome == "skipped"
     assert "fixture" in result.skip_reason
+
+
+def test_run_case_skips_deps_case_without_fixture_compose(tmp_path: Path) -> None:
+    _make_case(
+        tmp_path,
+        "deps",
+        target={
+            "service": {"port": 8000, "healthcheck_path": "/health"},
+            "dependencies": [{"name": "cache", "image": "redis:7-alpine"}],
+        },
+        expected={"requires_l2": False},
+    )
+    case = load_corpus(tmp_path)[0]
+    assert case.fixture_dockerfile is not None
+    assert case.fixture_compose is None
+    result = run_case(
+        case,
+        FixtureAuthor(case.fixture_dockerfile.read_text()),
+        None,
+        tmp_path / "out",
+        build_timeout=60,
+        health_timeout=5,
+    )
+    assert result.outcome == "skipped"
+    assert "fixture.compose.yaml" in result.skip_reason
 
 
 def test_run_case_runs_in_scratch_and_writes_artifacts(

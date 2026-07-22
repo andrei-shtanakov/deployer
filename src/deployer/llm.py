@@ -6,6 +6,7 @@ from typing import Any
 
 import anthropic
 
+from deployer.artifacts import COMPOSE_SENTINEL, DOCKERFILE_SENTINEL
 from deployer.hints import collect_hints
 from deployer.models import AuthorInfo, DeployTarget, ProjectFacts, VerificationReport
 
@@ -86,6 +87,23 @@ Rules:
   put build packages in the build stage and runtime packages in the final
   stage, and trust build errors over hints.
 - Prefer slim base images and a non-root user where practical.
+- When the deploy intent declares "dependencies", you author TWO
+  artifacts and reply with exactly two sections:
+  {DOCKERFILE_SENTINEL}
+  <the Dockerfile>
+  {COMPOSE_SENTINEL}
+  <the compose.yaml>
+  Compose rules: the buildable service is named exactly "app" and
+  builds from the project Dockerfile (build: {{context: ".",
+  dockerfile: "Dockerfile"}}). Each dependency becomes a service using
+  the intent's name and image verbatim, with a healthcheck you choose
+  for that image. "app" must declare depends_on with
+  condition: service_healthy for every dependency. Deploy-intent env
+  goes into the app service environment; per-dependency env into that
+  dependency's environment. Services never declare ports — compose
+  networking is internal-only here; ingress is not this artifact's
+  job. Without "dependencies", reply with only the Dockerfile as
+  before — no sentinels.
 """
 
 
@@ -184,7 +202,7 @@ class AnthropicAuthor:
         self,
         facts: ProjectFacts,
         target: DeployTarget,
-        dockerfile: str,
+        artifact_text: str,
         report: VerificationReport,
     ) -> str:
         failures = [
@@ -193,7 +211,7 @@ class AnthropicAuthor:
         findings = "\n".join(f"- [{r.check_id}] {r.message}" for r in failures)
         prompt = (
             "The following Dockerfile failed verification. Fix it.\n\n"
-            f"Dockerfile:\n{dockerfile}\n\n"
+            f"Current artifacts:\n{artifact_text}\n\n"
             f"Verification findings:\n{findings}\n\n"
             + _context_blocks(facts, target)
             + "\n"

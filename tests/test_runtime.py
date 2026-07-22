@@ -206,3 +206,34 @@ def test_probe_never_raises_on_garbage(monkeypatch) -> None:
         lambda *a, **k: _fake_proc(0, stdout="not json"),
     )
     assert probe_runtime_versions(ContainerRuntime(tool="podman")).probe_warning
+
+
+# -- Task 4: compose provider probe --
+
+
+def test_compose_available_true_and_false(monkeypatch) -> None:
+    import subprocess
+
+    from deployer.models import ContainerRuntime
+    from deployer.runtime import compose_available
+
+    runtime = ContainerRuntime(tool="podman")
+
+    def ok(rt, args, **kwargs):
+        assert args == ["compose", "version"]
+        return subprocess.CompletedProcess(args, 0, stdout="v2", stderr="")
+
+    monkeypatch.setattr("deployer.runtime.container_run", ok)
+    assert compose_available(runtime) is True
+
+    def missing(rt, args, **kwargs):
+        return subprocess.CompletedProcess(args, 125, stdout="", stderr="no provider")
+
+    monkeypatch.setattr("deployer.runtime.container_run", missing)
+    assert compose_available(runtime) is False
+
+    def boom(rt, args, **kwargs):
+        raise OSError("gone")
+
+    monkeypatch.setattr("deployer.runtime.container_run", boom)
+    assert compose_available(runtime) is False

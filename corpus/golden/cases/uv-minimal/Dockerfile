@@ -5,6 +5,9 @@ COPY --from=ghcr.io/astral-sh/uv:0.5.11 /uv /bin/uv
 WORKDIR /app
 
 COPY pyproject.toml uv.lock ./
+
+RUN uv sync --frozen --no-install-project
+
 COPY src/uv_minimal ./src/uv_minimal
 
 RUN uv sync --frozen
@@ -14,4 +17,4 @@ USER appuser
 
 ENV PATH="/app/.venv/bin:$PATH"
 
-CMD ["python"]
+CMD ["python", "-m", "uv_minimal"]

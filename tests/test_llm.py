@@ -212,3 +212,13 @@ def test_system_prompt_carries_poetry_rules() -> None:
     assert "--no-root" in SYSTEM_PROMPT
     assert "POETRY_VIRTUALENVS_IN_PROJECT" in SYSTEM_PROMPT
     assert "--extras" in SYSTEM_PROMPT
+
+
+def test_system_prompt_carries_compose_rules() -> None:
+    from deployer.artifacts import COMPOSE_SENTINEL, DOCKERFILE_SENTINEL
+
+    assert DOCKERFILE_SENTINEL in SYSTEM_PROMPT
+    assert COMPOSE_SENTINEL in SYSTEM_PROMPT
+    assert "service_healthy" in SYSTEM_PROMPT
+    assert "never declare ports" in SYSTEM_PROMPT
+    assert 'named exactly "app"' in SYSTEM_PROMPT

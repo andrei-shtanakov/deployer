@@ -187,6 +187,8 @@ def _cmd_verify(args: argparse.Namespace) -> int:
     if isinstance(runtime, str):
         print(f"error: {runtime}", file=sys.stderr)
         return 2
+    compose_path = project / "compose.yaml"
+    compose = compose_path.read_text() if compose_path.is_file() else None
     try:
         report = verify(
             dockerfile_path.read_text(),
@@ -194,6 +196,7 @@ def _cmd_verify(args: argparse.Namespace) -> int:
             target,
             runtime,
             analyze_project(project),
+            compose=compose,
             build_timeout=args.build_timeout,
             health_timeout=args.health_timeout,
         )
@@ -248,8 +251,11 @@ def _cmd_author(args: argparse.Namespace) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 2
     if run.iterations:
-        (project / "Dockerfile").write_text(run.iterations[-1].dockerfile + "\n")
-        _print_report(run.iterations[-1].report)
+        last = run.iterations[-1]
+        (project / "Dockerfile").write_text(last.dockerfile + "\n")
+        if last.compose is not None:
+            (project / "compose.yaml").write_text(last.compose + "\n")
+        _print_report(last.report)
     report_path = _write_report(
         project, "authoring-run.json", run.model_dump_json(indent=2)
     )
@@ -283,7 +289,12 @@ def _cmd_bench_run(args: argparse.Namespace) -> int:
         make_author = lambda case: shared  # noqa: E731
     else:
         make_author = lambda case: (  # noqa: E731
-            FixtureAuthor(case.fixture_dockerfile.read_text())
+            FixtureAuthor(
+                case.fixture_dockerfile.read_text(),
+                compose=(
+                    case.fixture_compose.read_text() if case.fixture_compose else None
+                ),
+            )
             if case.fixture_dockerfile is not None
             else None
         )

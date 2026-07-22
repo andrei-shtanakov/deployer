@@ -10,9 +10,9 @@ RUN uv sync --frozen --no-install-project --extra cli
 
 COPY main.py ./
 
+ENV PATH="/app/.venv/bin:$PATH"
+
 RUN useradd --create-home appuser
 USER appuser
-
-ENV PATH="/app/.venv/bin:$PATH"
 
 CMD ["uv", "run", "--no-sync", "python", "main.py"]
