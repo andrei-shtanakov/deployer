@@ -300,6 +300,7 @@ class VerificationReport(BaseModel):
 
     results: list[CheckResult] = Field(default_factory=list)
     hadolint_available: bool = False
+    actionlint_available: bool = False
     docker_available: bool = False
     image_size_bytes: int | None = None
     runtime: ContainerRuntime | None = None

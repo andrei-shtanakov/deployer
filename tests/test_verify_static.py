@@ -1206,3 +1206,201 @@ def test_verify_missing_compose_provider_is_environment_failure(
     check = next(r for r in report.results if r.check_id == "compose_available")
     assert check.status is CheckStatus.FAILED
     assert check.failure_kind == "environment"
+
+
+GOOD_SHA = "a" * 40
+
+CI_GOOD = f"""\
+name: ci
+on:
+  push:
+  pull_request:
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@{GOOD_SHA}
+      - run: docker build --file ./Dockerfile .
+"""
+
+
+def _ci_checks(ci: str | None):
+    from deployer.verify import _ci_l1_checks
+
+    results, _ = _ci_l1_checks(ci)
+    return {r.check_id: r for r in results}
+
+
+def test_ci_good_passes_own_checks(monkeypatch) -> None:
+    monkeypatch.setattr("deployer.verify.shutil.which", lambda _: None)
+    checks = _ci_checks(CI_GOOD)
+    for check_id in ("ci_present", "ci_parses", "ci_wiring", "ci_pinned"):
+        assert checks[check_id].status is CheckStatus.PASSED, check_id
+    assert checks["actionlint"].status is CheckStatus.SKIPPED
+
+
+def test_ci_missing_artifact_fails_present_and_skips_rest() -> None:
+    checks = _ci_checks(None)
+    assert checks["ci_present"].status is CheckStatus.FAILED
+    assert checks["ci_present"].failure_kind == "authoring"
+    for dep in ("ci_parses", "ci_wiring", "ci_pinned", "actionlint"):
+        assert checks[dep].status is CheckStatus.SKIPPED, dep
+
+
+def test_ci_unparseable_fails_parses_and_skips_dependents() -> None:
+    checks = _ci_checks("on: [unclosed")
+    assert checks["ci_parses"].status is CheckStatus.FAILED
+    for dep in ("ci_wiring", "ci_pinned", "actionlint"):
+        assert checks[dep].status is CheckStatus.SKIPPED, dep
+
+
+def test_ci_on_true_key_normalized(monkeypatch) -> None:
+    monkeypatch.setattr("deployer.verify.shutil.which", lambda _: None)
+    # unquoted `on:` -> YAML 1.1 boolean True key; must still parse+wire
+    checks = _ci_checks(CI_GOOD)  # CI_GOOD's `on:` IS the True key
+    assert checks["ci_parses"].status is CheckStatus.PASSED
+    assert checks["ci_wiring"].status is CheckStatus.PASSED
+
+
+def test_ci_both_on_keys_ambiguous_fails() -> None:
+    text = CI_GOOD.replace("name: ci", 'name: ci\n"on":\n  push:')
+    checks = _ci_checks(text)
+    assert checks["ci_parses"].status is CheckStatus.FAILED
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda t: t.replace("  pull_request:\n", ""),  # missing trigger
+        lambda t: t.replace("pull_request", "pull_request_target"),
+        lambda t: t.replace("--file ./Dockerfile", "--file /abs/Dockerfile"),
+        lambda t: t.replace("--file ./Dockerfile", "--file other.Dockerfile"),
+        lambda t: t.replace(
+            "      - uses: actions/checkout@" + GOOD_SHA + "\n"
+            "      - run: docker build --file ./Dockerfile .",
+            "      - run: docker build --file ./Dockerfile .\n"
+            "      - uses: actions/checkout@" + GOOD_SHA,
+        ),  # checkout after build
+        lambda t: t + "      - run: docker push ghcr.io/x/y\n",
+        lambda t: t.replace(
+            "docker build --file ./Dockerfile .",
+            "docker buildx build --push --file ./Dockerfile .",
+        ),
+        lambda t: t + "      - run: docker login ghcr.io\n",
+        lambda t: t + f"      - uses: docker/login-action@{GOOD_SHA}\n",
+        lambda t: t + "      - run: echo ${{ secrets.TOKEN }}\n",
+    ],
+)
+def test_ci_wiring_negatives(mutate) -> None:
+    checks = _ci_checks(mutate(CI_GOOD))
+    assert checks["ci_wiring"].status is CheckStatus.FAILED
+
+
+@pytest.mark.parametrize(
+    "build_cmd",
+    [
+        "docker build .",
+        "docker build -f Dockerfile .",
+        "docker build -f ./Dockerfile .",
+        "docker build --file=./Dockerfile .",
+    ],
+)
+def test_ci_wiring_accepts_build_forms(build_cmd: str) -> None:
+    text = CI_GOOD.replace("docker build --file ./Dockerfile .", build_cmd)
+    assert _ci_checks(text)["ci_wiring"].status is CheckStatus.PASSED
+
+
+def test_ci_push_trigger_does_not_trip_push_rule() -> None:
+    assert _ci_checks(CI_GOOD)["ci_wiring"].status is CheckStatus.PASSED
+
+
+def test_ci_multiline_run_scalar_parsed() -> None:
+    text = CI_GOOD.replace(
+        "      - run: docker build --file ./Dockerfile .",
+        "      - run: |\n"
+        "          # build the image\n"
+        "          docker build --file ./Dockerfile .",
+    )
+    assert _ci_checks(text)["ci_wiring"].status is CheckStatus.PASSED
+
+
+def test_ci_checkout_and_build_must_share_a_job() -> None:
+    text = CI_GOOD.replace(
+        "      - run: docker build --file ./Dockerfile .",
+        "",
+    ) + (
+        "  build2:\n"
+        "    runs-on: ubuntu-24.04\n"
+        "    steps:\n"
+        "      - run: docker build --file ./Dockerfile .\n"
+    )
+    assert _ci_checks(text)["ci_wiring"].status is CheckStatus.FAILED
+
+
+@pytest.mark.parametrize(
+    "uses",
+    [
+        "actions/checkout@v5",
+        "actions/checkout@main",
+        "actions/checkout",
+        "./local-action",
+        "docker://alpine:3.20",
+    ],
+)
+def test_ci_pinned_rejects_non_sha_refs(uses: str) -> None:
+    text = CI_GOOD.replace(f"actions/checkout@{GOOD_SHA}", uses)
+    assert _ci_checks(text)["ci_pinned"].status is CheckStatus.FAILED
+
+
+def test_ci_pinned_accepts_remote_sha() -> None:
+    assert _ci_checks(CI_GOOD)["ci_pinned"].status is CheckStatus.PASSED
+
+
+def test_actionlint_version_mismatch_skips_without_running(monkeypatch) -> None:
+    import subprocess
+
+    monkeypatch.setattr("deployer.verify.shutil.which", lambda _: "/usr/bin/actionlint")
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout="9.9.9", stderr="")
+
+    monkeypatch.setattr("deployer.verify.subprocess.run", fake_run)
+    checks = _ci_checks(CI_GOOD)
+    assert checks["actionlint"].status is CheckStatus.SKIPPED
+    assert len(calls) == 1  # only --version; the linter itself never ran
+
+
+def test_actionlint_runs_against_real_workflow_path(monkeypatch) -> None:
+    import subprocess
+
+    from deployer.verify import ACTIONLINT_VERSION, _ci_l1_checks
+
+    monkeypatch.setattr("deployer.verify.shutil.which", lambda _: "/usr/bin/actionlint")
+    seen: list[str] = []
+
+    def fake_run(cmd, **kwargs):
+        if "--version" in cmd or "-version" in cmd:
+            return subprocess.CompletedProcess(
+                cmd, 0, stdout=ACTIONLINT_VERSION, stderr=""
+            )
+        seen.append(cmd[-1])
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("deployer.verify.subprocess.run", fake_run)
+    results, available = _ci_l1_checks(CI_GOOD)
+    assert available is True
+    assert seen and seen[0].endswith(".github/workflows/ci.yml")
+
+
+def test_verify_appends_ci_checks_only_for_ci_target(hello_service: Path) -> None:
+    from deployer.models import CISpec
+
+    target = DeployTarget(ci=CISpec())
+    report = verify(GOOD, hello_service, target, None, ci=CI_GOOD)
+    ids = [r.check_id for r in report.results]
+    assert "ci_wiring" in ids and "ci_pinned" in ids
+
+    plain = verify(GOOD, hello_service, DeployTarget(), None)
+    assert "ci_present" not in [r.check_id for r in plain.results]

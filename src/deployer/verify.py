@@ -34,6 +34,14 @@ from deployer.models import (
 from deployer.runtime import compose_available, container_run
 
 HADOLINT_VERSION = "2.12.0"
+ACTIONLINT_VERSION = "1.7.12"
+_USES_REMOTE_PIN = re.compile(
+    r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_./-]+)?@[0-9a-f]{40}$"
+)
+_DOCKER_BUILD = re.compile(r"^docker\s+(?:buildx\s+)?build\b")
+_DOCKER_PUSH = re.compile(r"\bdocker\s+push\b")
+_DOCKER_LOGIN = re.compile(r"\bdocker\s+login\b")
+_SECRETS_REF = re.compile(r"\bsecrets\.")
 DEFAULT_BUILD_TIMEOUT = 600
 DEFAULT_HEALTH_TIMEOUT = 30
 _ENV_ASSIGNMENT = re.compile(r"^(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)+")
@@ -499,6 +507,304 @@ def _compose_l1_checks(compose: str | None, target: DeployTarget) -> list[CheckR
         else _check_passed("compose_wiring")
     )
     return results
+
+
+def _ci_skipped(reason: str, *check_ids: str) -> list[CheckResult]:
+    return [
+        CheckResult(check_id=cid, status=CheckStatus.SKIPPED, message=reason)
+        for cid in check_ids
+    ]
+
+
+def _ci_triggers(workflow: dict) -> set[str] | None:
+    """Trigger names, normalizing the YAML 1.1 `on` -> True key.
+
+    Returns None when BOTH "on" and True are present (ambiguous) or
+    when neither is — callers turn that into a ci_parses failure.
+    """
+    keys = [k for k in ("on", True) if k in workflow]
+    if len(keys) != 1:
+        return None
+    value = workflow[keys[0]]
+    if isinstance(value, str):
+        return {value}
+    if isinstance(value, list):
+        return {v for v in value if isinstance(v, str)}
+    if isinstance(value, dict):
+        return {k for k in value if isinstance(k, str)}
+    return set()
+
+
+def _run_lines_of(step: dict) -> list[str]:
+    """Non-empty, non-comment lines of a step's run scalar."""
+    run = step.get("run")
+    if not isinstance(run, str):
+        return []
+    lines = []
+    for raw in run.splitlines():
+        line = raw.strip()
+        if line and not line.startswith("#"):
+            lines.append(line)
+    return lines
+
+
+def _build_line_ok(line: str) -> bool:
+    """Accept docker build forms targeting the project Dockerfile.
+
+    `docker build .` (default ./Dockerfile), `-f Dockerfile`,
+    `-f ./Dockerfile`, `--file=./Dockerfile` — flag with space or `=`.
+    Any other path (absolute, renamed) is rejected.
+    """
+    if not _DOCKER_BUILD.match(line) or "--push" in line.split():
+        return False
+    tokens = line.split()
+    file_value: str | None = None
+    for i, tok in enumerate(tokens):
+        if tok in ("-f", "--file"):
+            if i + 1 < len(tokens):
+                file_value = tokens[i + 1]
+        elif tok.startswith(("--file=", "-f=")):
+            file_value = tok.split("=", 1)[1]
+    if file_value is None:
+        return tokens[-1] == "."
+    return file_value in ("Dockerfile", "./Dockerfile") and tokens[-1] == "."
+
+
+def _ci_wiring_problems(workflow: dict, raw: str) -> list[str]:
+    problems: list[str] = []
+    # raw-text sweep: secrets must not appear anywhere, incl. ${{ }}
+    triggers = _ci_triggers(workflow)
+    assert triggers is not None  # ci_parses guarantees unambiguous `on`
+    for wanted in ("push", "pull_request"):
+        if wanted not in triggers:
+            problems.append(f"workflow must trigger on {wanted}")
+    if "pull_request_target" in triggers:
+        problems.append("pull_request_target is forbidden (security)")
+    jobs = workflow.get("jobs", {})
+    paired = False
+    for job in jobs.values():
+        steps = job.get("steps") or []
+        checkout_at: int | None = None
+        build_at: int | None = None
+        for i, step in enumerate(steps):
+            uses = step.get("uses")
+            if (
+                isinstance(uses, str)
+                and uses.split("@")[0] == "actions/checkout"
+                and checkout_at is None
+            ):
+                checkout_at = i
+            if build_at is None and any(
+                _build_line_ok(line) for line in _run_lines_of(step)
+            ):
+                build_at = i
+        if checkout_at is not None and build_at is not None:
+            if checkout_at < build_at:
+                paired = True
+            else:
+                problems.append("checkout must precede docker build in the same job")
+    if not paired and not any("checkout must precede" in p for p in problems):
+        problems.append(
+            "no job pairs an actions/checkout step with a "
+            "`docker build` of the project Dockerfile"
+        )
+    for job in jobs.values():
+        for step in job.get("steps") or []:
+            uses = step.get("uses")
+            if isinstance(uses, str) and "login-action" in uses:
+                problems.append(f"login action is out of the MVP: {uses}")
+            with_block = step.get("with")
+            if isinstance(with_block, dict) and with_block.get("push") is True:
+                problems.append("push: true input is out of the MVP")
+            for line in _run_lines_of(step):
+                if _DOCKER_PUSH.search(line):
+                    problems.append("docker push is out of the MVP")
+                if _DOCKER_LOGIN.search(line):
+                    problems.append("docker login is out of the MVP")
+                if _DOCKER_BUILD.match(line) and "--push" in line.split():
+                    problems.append("buildx --push is out of the MVP")
+    if _SECRETS_REF.search(raw):
+        problems.append("secrets.* references are out of the MVP")
+    return problems
+
+
+def _ci_pinned_problems(workflow: dict) -> list[str]:
+    problems: list[str] = []
+    for job in workflow.get("jobs", {}).values():
+        for step in job.get("steps") or []:
+            uses = step.get("uses")
+            if not isinstance(uses, str):
+                continue
+            if uses.startswith("./"):
+                problems.append(f"local action is out of the MVP: {uses}")
+            elif uses.startswith("docker://"):
+                problems.append(f"docker action is out of the MVP: {uses}")
+            elif not _USES_REMOTE_PIN.fullmatch(uses):
+                problems.append(f"uses must be pinned to a 40-hex commit SHA: {uses}")
+    return problems
+
+
+def _check_actionlint(ci: str) -> tuple[CheckResult, bool]:
+    """actionlint at the pinned version; (result, available_and_comparable).
+
+    Runs against a real temporary .github/workflows/ci.yml (actionlint
+    applies path-based context); a mismatched version is never executed.
+    """
+    binary = shutil.which("actionlint")
+    if binary is None:
+        return (
+            CheckResult(
+                check_id="actionlint",
+                status=CheckStatus.SKIPPED,
+                message=f"actionlint {ACTIONLINT_VERSION} not installed; "
+                "run is non-comparable",
+            ),
+            False,
+        )
+    try:
+        version = subprocess.run(
+            [binary, "--version"], capture_output=True, text=True, timeout=10
+        ).stdout
+        if ACTIONLINT_VERSION not in version:
+            return (
+                CheckResult(
+                    check_id="actionlint",
+                    status=CheckStatus.SKIPPED,
+                    message=(
+                        f"actionlint version mismatch (want "
+                        f"{ACTIONLINT_VERSION}, got: "
+                        f"{version.strip().splitlines()[0] if version.strip() else '?'}"
+                        "); run is non-comparable"
+                    ),
+                ),
+                False,
+            )
+        with tempfile.TemporaryDirectory(prefix="deployer-ci-") as tmp:
+            wf_dir = Path(tmp) / ".github" / "workflows"
+            wf_dir.mkdir(parents=True)
+            wf_path = wf_dir / "ci.yml"
+            wf_path.write_text(ci + "\n")
+            proc = subprocess.run(
+                [binary, "-no-color", str(wf_path)],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+        if proc.returncode == 0:
+            return (
+                CheckResult(check_id="actionlint", status=CheckStatus.PASSED),
+                True,
+            )
+        return (
+            CheckResult(
+                check_id="actionlint",
+                status=CheckStatus.FAILED,
+                failure_kind=FailureKind.AUTHORING,
+                message=_tail(proc.stdout or proc.stderr),
+            ),
+            True,
+        )
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        return (
+            CheckResult(
+                check_id="actionlint",
+                status=CheckStatus.SKIPPED,
+                message=f"actionlint execution failed ({exc.__class__.__name__}); "
+                "run is non-comparable",
+            ),
+            False,
+        )
+
+
+def _ci_l1_checks(ci: str | None) -> tuple[list[CheckResult], bool]:
+    """Static checks for the CI artifact of a ci-target.
+
+    Cascade: ci_present -> ci_parses -> {ci_wiring, ci_pinned,
+    actionlint}; a failed prerequisite gives dependents SKIPPED,
+    never a cascading FAILED. No CI L2 exists: workflows are never
+    executed.
+    """
+    if ci is None:
+        return (
+            [
+                _check_failed(
+                    "ci_present",
+                    "deploy target requests a CI workflow but no ci.yml "
+                    "artifact was provided",
+                ),
+                *_ci_skipped(
+                    "skipped: ci_present failed",
+                    "ci_parses",
+                    "ci_wiring",
+                    "ci_pinned",
+                    "actionlint",
+                ),
+            ],
+            False,
+        )
+    results = [_check_passed("ci_present")]
+
+    parse_problem: str | None = None
+    workflow: dict = {}
+    try:
+        doc = yaml.safe_load(ci)
+    except yaml.YAMLError as exc:
+        parse_problem = f"ci.yml: {exc}"
+    else:
+        if not isinstance(doc, dict):
+            parse_problem = "ci.yml must be a mapping"
+        elif _ci_triggers(doc) is None:
+            parse_problem = (
+                "workflow must have exactly one trigger key "
+                '("on"; YAML 1.1 may parse it as boolean True — both at '
+                "once is ambiguous)"
+            )
+        else:
+            jobs = doc.get("jobs")
+            if (
+                not isinstance(jobs, dict)
+                or not jobs
+                or not all(
+                    isinstance(j, dict)
+                    and isinstance(j.get("steps"), list)
+                    and all(isinstance(s, dict) for s in j.get("steps") or [])
+                    for j in jobs.values()
+                )
+            ):
+                parse_problem = (
+                    "workflow must define a `jobs` mapping whose jobs "
+                    "carry `steps` lists of mappings"
+                )
+            else:
+                workflow = doc
+    if parse_problem is not None:
+        results.append(_check_failed("ci_parses", parse_problem))
+        results.extend(
+            _ci_skipped(
+                "skipped: ci_parses failed",
+                "ci_wiring",
+                "ci_pinned",
+                "actionlint",
+            )
+        )
+        return results, False
+    results.append(_check_passed("ci_parses"))
+
+    wiring = _ci_wiring_problems(workflow, ci)
+    results.append(
+        _check_failed("ci_wiring", "; ".join(wiring))
+        if wiring
+        else _check_passed("ci_wiring")
+    )
+    pinned = _ci_pinned_problems(workflow)
+    results.append(
+        _check_failed("ci_pinned", "; ".join(pinned))
+        if pinned
+        else _check_passed("ci_pinned")
+    )
+    lint_result, lint_available = _check_actionlint(ci)
+    results.append(lint_result)
+    return results, lint_available
 
 
 def _check_hadolint(dockerfile: str) -> tuple[CheckResult, bool]:
@@ -1162,6 +1468,7 @@ def verify(
     build_timeout: int = DEFAULT_BUILD_TIMEOUT,
     health_timeout: int = DEFAULT_HEALTH_TIMEOUT,
     compose: str | None = None,
+    ci: str | None = None,
 ) -> VerificationReport:
     """Full verification: L1 static always; L2 docker when available and L1 passed.
 
@@ -1177,6 +1484,10 @@ def verify(
     report = verify_static(dockerfile, project_path, facts, target=target)
     if target.dependencies:
         report.results.extend(_compose_l1_checks(compose, target))
+    if target.ci is not None:
+        ci_results, actionlint_available = _ci_l1_checks(ci)
+        report.results.extend(ci_results)
+        report.actionlint_available = actionlint_available
     report.runtime = runtime
     if runtime is not None:
         report.docker_available = True
