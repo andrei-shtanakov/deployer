@@ -1030,6 +1030,21 @@ def test_compose_ports_forbidden_everywhere() -> None:
         assert checks["compose_wiring"].status is CheckStatus.FAILED, text
 
 
+def test_compose_network_escape_hatches_forbidden() -> None:
+    host_mode = COMPOSE_GOOD.replace(
+        "    environment:", "    network_mode: host\n    environment:"
+    )
+    external_net = COMPOSE_GOOD.replace(
+        "    image: redis:7-alpine",
+        "    image: redis:7-alpine\n    networks:\n      - outside",
+    )
+    for text in (host_mode, external_net):
+        checks = _compose_checks(text)
+        check = checks["compose_wiring"]
+        assert check.status is CheckStatus.FAILED, text
+        assert "internal-only" in check.message
+
+
 def test_verify_appends_compose_checks_for_deps_target(hello_service: Path) -> None:
     report = verify(GOOD, hello_service, COMPOSE_TARGET, None, compose=COMPOSE_GOOD)
     ids = [r.check_id for r in report.results]

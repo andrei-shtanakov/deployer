@@ -482,12 +482,17 @@ def _compose_l1_checks(compose: str | None, target: DeployTarget) -> list[CheckR
             "app environment must carry the deploy intent env keys: "
             f"missing {sorted(missing_env)}"
         )
+    # ports would publish to the host; network_mode/networks could escape
+    # the verifier's internal-default-network override entirely
     for name, svc in services.items():
-        if isinstance(svc, dict) and "ports" in svc:
-            wiring.append(
-                f"service {name} declares ports; compose networking is "
-                "internal-only for the verifier"
-            )
+        if not isinstance(svc, dict):
+            continue
+        for key in ("ports", "network_mode", "networks"):
+            if key in svc:
+                wiring.append(
+                    f"service {name} declares {key}; compose networking is "
+                    "internal-only for the verifier"
+                )
     results.append(
         _check_failed("compose_wiring", "; ".join(wiring))
         if wiring
