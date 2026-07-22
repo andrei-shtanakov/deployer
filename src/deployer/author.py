@@ -6,12 +6,16 @@ import time
 from pathlib import Path
 from typing import Protocol
 
+from deployer.artifacts import ArtifactParseError, parse_artifact_response
 from deployer.facts import analyze_project, validate_target_against_facts
 from deployer.hints import collect_hints
 from deployer.models import (
     AuthoringRun,
+    CheckResult,
+    CheckStatus,
     ContainerRuntime,
     DeployTarget,
+    FailureKind,
     IterationRecord,
     ProjectFacts,
     StopReason,
@@ -44,7 +48,12 @@ def _deployer_git_sha() -> str | None:
 
 
 class DockerfileAuthor(Protocol):
-    """Anything that can draft and repair Dockerfiles from facts + intent."""
+    """Anything that can draft and repair deploy artifacts from facts + intent.
+
+    Both methods return the RAW response text: a plain Dockerfile when the
+    target declares no dependencies, or the sentinel-delimited two-artifact
+    format (see `deployer.artifacts`) when it does.
+    """
 
     def generate(self, facts: ProjectFacts, target: DeployTarget) -> str: ...
 
@@ -52,8 +61,9 @@ class DockerfileAuthor(Protocol):
         self,
         facts: ProjectFacts,
         target: DeployTarget,
-        dockerfile: str,
+        artifact_text: str,
         report: VerificationReport,
+        /,
     ) -> str: ...
 
 
@@ -90,41 +100,61 @@ def author_dockerfile(
     llm_error: str | None = None
     prev_signature: str | None = None
 
-    dockerfile: str | None
+    expects_compose = bool(target.dependencies)
+
+    response: str | None
     try:
-        dockerfile = author.generate(facts, target)
+        response = author.generate(facts, target)
     except Exception as exc:
-        dockerfile = None
+        response = None
         llm_error = f"{exc.__class__.__name__}: {exc}"
         stopped_reason = "llm_error"
 
-    if dockerfile is not None:
+    if response is not None:
         for index in range(max_iterations):
             start = time.monotonic()
-            report = verify(
-                dockerfile,
-                project_path,
-                target,
-                runtime,
-                facts,
-                build_timeout=build_timeout,
-                health_timeout=health_timeout,
-            )
-            if report.environment_failures and environment_retries == 0:
-                environment_retries += 1
+            try:
+                dockerfile, compose = parse_artifact_response(response, expects_compose)
+            except ArtifactParseError as exc:
+                report = VerificationReport(
+                    results=[
+                        CheckResult(
+                            check_id="artifact_format",
+                            status=CheckStatus.FAILED,
+                            failure_kind=FailureKind.AUTHORING,
+                            message=str(exc),
+                        )
+                    ]
+                )
+                dockerfile, compose = response, None
+            else:
                 report = verify(
                     dockerfile,
                     project_path,
                     target,
                     runtime,
                     facts,
+                    compose=compose,
                     build_timeout=build_timeout,
                     health_timeout=health_timeout,
                 )
+                if report.environment_failures and environment_retries == 0:
+                    environment_retries += 1
+                    report = verify(
+                        dockerfile,
+                        project_path,
+                        target,
+                        runtime,
+                        facts,
+                        compose=compose,
+                        build_timeout=build_timeout,
+                        health_timeout=health_timeout,
+                    )
             iterations.append(
                 IterationRecord(
                     index=index,
                     dockerfile=dockerfile,
+                    compose=compose,
                     report=report,
                     duration_s=time.monotonic() - start,
                 )
@@ -144,7 +174,7 @@ def author_dockerfile(
             prev_signature = signature
             if index < max_iterations - 1:
                 try:
-                    dockerfile = author.repair(facts, target, dockerfile, report)
+                    response = author.repair(facts, target, response, report)
                 except Exception as exc:
                     llm_error = f"{exc.__class__.__name__}: {exc}"
                     stopped_reason = "llm_error"
