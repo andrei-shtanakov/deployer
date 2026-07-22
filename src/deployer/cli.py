@@ -217,6 +217,20 @@ def _cmd_verify(args: argparse.Namespace) -> int:
     return 0 if report.passed else 1
 
 
+def _is_parse_failure(report: VerificationReport) -> bool:
+    """Whether a report is an artifact-parse failure, not a verify failure.
+
+    A parse failure means the LLM response never became structured
+    artifacts (`IterationRecord.dockerfile` still holds the raw,
+    possibly sentinel-laden response text) — writing it out would
+    violate the authoring spec's transactional-write guarantee.
+    """
+    return any(
+        r.check_id == "artifact_format" and r.status is CheckStatus.FAILED
+        for r in report.results
+    )
+
+
 def _cmd_author(args: argparse.Namespace) -> int:
     project = Path(args.path)
     if not project.is_dir():
@@ -255,13 +269,14 @@ def _cmd_author(args: argparse.Namespace) -> int:
         return 2
     if run.iterations:
         last = run.iterations[-1]
-        (project / "Dockerfile").write_text(last.dockerfile + "\n")
-        if last.compose is not None:
-            (project / "compose.yaml").write_text(last.compose + "\n")
-        if last.ci is not None:
-            wf_dir = project / ".github" / "workflows"
-            wf_dir.mkdir(parents=True, exist_ok=True)
-            (wf_dir / "ci.yml").write_text(last.ci + "\n")
+        if not _is_parse_failure(last.report):
+            (project / "Dockerfile").write_text(last.dockerfile + "\n")
+            if last.compose is not None:
+                (project / "compose.yaml").write_text(last.compose + "\n")
+            if last.ci is not None:
+                wf_dir = project / ".github" / "workflows"
+                wf_dir.mkdir(parents=True, exist_ok=True)
+                (wf_dir / "ci.yml").write_text(last.ci + "\n")
         _print_report(last.report)
     report_path = _write_report(
         project, "authoring-run.json", run.model_dump_json(indent=2)

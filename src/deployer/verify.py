@@ -39,9 +39,9 @@ _USES_REMOTE_PIN = re.compile(
     r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_./-]+)?@[0-9a-f]{40}$"
 )
 _DOCKER_BUILD = re.compile(r"^docker\s+(?:buildx\s+)?build\b")
-_DOCKER_PUSH = re.compile(r"\bdocker\s+push\b")
+_DOCKER_PUSH = re.compile(r"\b(?:docker(?:\s+image)?|podman)\s+push\b")
 _DOCKER_LOGIN = re.compile(r"\bdocker\s+login\b")
-_SECRETS_REF = re.compile(r"\bsecrets\.")
+_SECRETS_REF = re.compile(r"\bsecrets[.\[]")
 DEFAULT_BUILD_TIMEOUT = 600
 DEFAULT_HEALTH_TIMEOUT = 30
 _ENV_ASSIGNMENT = re.compile(r"^(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)+")
@@ -573,7 +573,8 @@ def _build_line_ok(line: str) -> bool:
 def _ci_wiring_problems(workflow: dict, raw: str) -> list[str]:
     problems: list[str] = []
     triggers = _ci_triggers(workflow)
-    assert triggers is not None  # ci_parses guarantees unambiguous `on`
+    if triggers is None:
+        raise RuntimeError("ci_parses must guarantee an unambiguous trigger key")
     for wanted in ("push", "pull_request"):
         if wanted not in triggers:
             problems.append(f"workflow must trigger on {wanted}")
@@ -613,18 +614,22 @@ def _ci_wiring_problems(workflow: dict, raw: str) -> list[str]:
             if isinstance(uses, str) and "login-action" in uses:
                 problems.append(f"login action is out of the MVP: {uses}")
             with_block = step.get("with")
-            if isinstance(with_block, dict):
-                push_value = with_block.get("push")
-                if push_value is True or (
-                    isinstance(push_value, str) and push_value.strip().lower() == "true"
-                ):
-                    problems.append("push: true input is out of the MVP")
+            if isinstance(with_block, dict) and "push" in with_block:
+                push_value = with_block["push"]
+                is_false = push_value is False or (
+                    isinstance(push_value, str)
+                    and push_value.strip().lower() == "false"
+                )
+                if not is_false:
+                    problems.append("push input must be absent or explicitly false")
             for line in _run_lines_of(step):
                 if _DOCKER_PUSH.search(line):
                     problems.append("docker push is out of the MVP")
                 if _DOCKER_LOGIN.search(line):
                     problems.append("docker login is out of the MVP")
-                if _DOCKER_BUILD.match(line) and "--push" in line.split():
+                if any(
+                    tok == "--push" or tok.startswith("--push=") for tok in line.split()
+                ):
                     problems.append("buildx --push is out of the MVP")
     # raw-text sweep: secrets must not appear anywhere, incl. ${{ }}
     if _SECRETS_REF.search(raw):

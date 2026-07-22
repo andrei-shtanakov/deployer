@@ -13,7 +13,9 @@ from deployer.models import AuthorInfo, DeployTarget, ProjectFacts, Verification
 DEFAULT_MODEL = "claude-opus-4-8"
 MAX_TOKENS = 8192
 POETRY_VERSION = "2.4.1"
-ACTIONS_CHECKOUT_PIN = "actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd"
+ACTIONS_CHECKOUT_PIN = (
+    "actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd"  # v5.0.1
+)
 
 SYSTEM_PROMPT = f"""\
 You are a deployment artifact author. You write production-quality Dockerfiles

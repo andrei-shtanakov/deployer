@@ -459,6 +459,63 @@ def test_author_report_write_failure_warns_not_crashes(
     assert "stopped: static_only" in captured.out
 
 
+def test_author_parse_failure_does_not_write_new_dockerfile(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Sentinel-less response for a ci-target is a parse failure every
+
+    iteration (no_progress) — the raw, sentinel-laden text must never be
+    written over Dockerfile; the transactional-write guarantee holds.
+    """
+    project = tmp_path / "proj"
+    project.mkdir()
+    (project / "main.py").write_text("if __name__ == '__main__':\n    pass\n")
+    target_file = tmp_path / "target.json"
+    target_file.write_text('{"ci": {}}')
+
+    class NeverParsesAuthor:
+        def generate(self, facts, target):
+            return "FROM python:3.12-slim\nCOPY main.py .\n"  # no ci sentinel
+
+        def repair(self, facts, target, artifact_text, report):
+            return "FROM python:3.12-slim\nCOPY main.py .\n"
+
+    monkeypatch.setattr("deployer.cli.AnthropicAuthor", lambda: NeverParsesAuthor())
+    exit_code = cli.main(
+        ["author", str(project), "--no-docker", "--target", str(target_file)]
+    )
+    assert exit_code == 1
+    run_data = json.loads((project / ".deployer" / "authoring-run.json").read_text())
+    assert run_data["stopped_reason"] == "no_progress"
+    assert not (project / "Dockerfile").exists()
+
+
+def test_author_parse_failure_leaves_existing_dockerfile_unchanged(
+    tmp_path: Path, monkeypatch
+) -> None:
+    project = tmp_path / "proj"
+    project.mkdir()
+    (project / "main.py").write_text("if __name__ == '__main__':\n    pass\n")
+    target_file = tmp_path / "target.json"
+    target_file.write_text('{"ci": {}}')
+    existing = 'FROM python:3.12-slim\nCOPY main.py .\nCMD ["python", "main.py"]\n'
+    (project / "Dockerfile").write_text(existing)
+
+    class NeverParsesAuthor:
+        def generate(self, facts, target):
+            return "FROM python:3.12-slim\nCOPY main.py .\n"  # no ci sentinel
+
+        def repair(self, facts, target, artifact_text, report):
+            return "FROM python:3.12-slim\nCOPY main.py .\n"
+
+    monkeypatch.setattr("deployer.cli.AnthropicAuthor", lambda: NeverParsesAuthor())
+    exit_code = cli.main(
+        ["author", str(project), "--no-docker", "--target", str(target_file)]
+    )
+    assert exit_code == 1
+    assert (project / "Dockerfile").read_text() == existing
+
+
 def _make_corpus(tmp_path, name="case-one", requires_l2=False):
     import json as _json
 

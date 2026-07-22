@@ -1299,11 +1299,50 @@ def test_ci_both_on_keys_ambiguous_fails() -> None:
             "        with:\n"
             '          push: "true"\n'
         ),
+        lambda t: t.replace(
+            "docker build --file ./Dockerfile .",
+            "docker buildx build --push=true --file ./Dockerfile .",
+        ),
+        lambda t: (
+            t
+            + (
+                "      - run: true && docker buildx build --push --file "
+                "./Dockerfile .\n"
+            )
+        ),
+        lambda t: t + "      - run: docker image push x\n",
+        lambda t: t + "      - run: podman push x\n",
+        lambda t: t + "      - run: echo ${{ secrets['TOKEN'] }}\n",
+        lambda t: (
+            t + f"      - uses: docker/build-push-action@{GOOD_SHA}\n"
+            "        with:\n"
+            "          push: ${{ github.event_name != 'pull_request' }}\n"
+        ),
+        lambda t: (
+            t + f"      - uses: docker/build-push-action@{GOOD_SHA}\n"
+            "        with:\n"
+            '          push: "yes"\n'
+        ),
     ],
 )
 def test_ci_wiring_negatives(mutate) -> None:
     checks = _ci_checks(mutate(CI_GOOD))
     assert checks["ci_wiring"].status is CheckStatus.FAILED
+
+
+@pytest.mark.parametrize(
+    "with_push_line",
+    [
+        "          push: false\n",
+        '          push: "false"\n',
+    ],
+)
+def test_ci_wiring_push_explicitly_false_passes(with_push_line: str) -> None:
+    text = (
+        CI_GOOD + f"      - uses: docker/build-push-action@{GOOD_SHA}\n"
+        "        with:\n" + with_push_line
+    )
+    assert _ci_checks(text)["ci_wiring"].status is CheckStatus.PASSED
 
 
 @pytest.mark.parametrize(
@@ -1414,3 +1453,38 @@ def test_verify_appends_ci_checks_only_for_ci_target(hello_service: Path) -> Non
 
     plain = verify(GOOD, hello_service, DeployTarget(), None)
     assert "ci_present" not in [r.check_id for r in plain.results]
+
+
+def test_verify_reports_actionlint_unavailable_via_public_api(
+    hello_service: Path, monkeypatch
+) -> None:
+    from deployer.models import CISpec
+
+    monkeypatch.setattr("deployer.verify.shutil.which", lambda _: None)
+    target = DeployTarget(ci=CISpec())
+    report = verify(GOOD, hello_service, target, None, ci=CI_GOOD)
+    assert report.actionlint_available is False
+    assert _by_id(report, "actionlint").status is CheckStatus.SKIPPED
+
+
+def test_verify_reports_actionlint_available_via_public_api(
+    hello_service: Path, monkeypatch
+) -> None:
+    import subprocess
+
+    from deployer.models import CISpec
+    from deployer.verify import ACTIONLINT_VERSION
+
+    monkeypatch.setattr("deployer.verify.shutil.which", lambda _: "/usr/bin/actionlint")
+
+    def fake_run(cmd, **kwargs):
+        if "--version" in cmd or "-version" in cmd:
+            return subprocess.CompletedProcess(
+                cmd, 0, stdout=ACTIONLINT_VERSION, stderr=""
+            )
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("deployer.verify.subprocess.run", fake_run)
+    target = DeployTarget(ci=CISpec())
+    report = verify(GOOD, hello_service, target, None, ci=CI_GOOD)
+    assert report.actionlint_available is True
