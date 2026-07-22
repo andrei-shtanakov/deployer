@@ -1,10 +1,17 @@
-from deployer.llm import AnthropicAuthor, _extract_dockerfile
+from deployer.llm import (
+    SYSTEM_PROMPT,
+    AnthropicAuthor,
+    _context_blocks,
+    _extract_dockerfile,
+)
 from deployer.models import (
     CheckResult,
     CheckStatus,
     DeployTarget,
     FailureKind,
     ProjectFacts,
+    RunSpec,
+    ServiceSpec,
     VerificationReport,
 )
 
@@ -122,3 +129,26 @@ def test_system_prompt_carries_entrypoint_rule() -> None:
 
     assert "script_entrypoint" in SYSTEM_PROMPT
     assert "[project.scripts]" in SYSTEM_PROMPT
+
+
+def test_run_intent_visible_but_oracle_redacted() -> None:
+    target = DeployTarget(run=RunSpec(expect_stdout="secret-oracle-string"))
+    rendered = _context_blocks(ProjectFacts(), target)
+    assert '"run": {}' in rendered
+    assert "secret-oracle-string" not in rendered
+
+
+def test_build_only_target_renders_null_run() -> None:
+    rendered = _context_blocks(ProjectFacts(), DeployTarget())
+    assert '"run": null' in rendered
+
+
+def test_service_target_rendering_unchanged() -> None:
+    target = DeployTarget(service=ServiceSpec(port=8000))
+    rendered = _context_blocks(ProjectFacts(), target)
+    assert '"port": 8000' in rendered
+
+
+def test_system_prompt_states_job_rule() -> None:
+    assert "run" in SYSTEM_PROMPT and "job" in SYSTEM_PROMPT
+    assert "exit 0" in SYSTEM_PROMPT
