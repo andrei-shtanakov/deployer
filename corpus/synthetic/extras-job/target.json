@@ -1,0 +1,1 @@
+{"extras": ["cli"], "run": {"expect_stdout": "hello from extras-job"}}

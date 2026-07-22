@@ -12,6 +12,7 @@ from deployer.verify import verify
 
 CORPUS = Path(__file__).parent.parent / "corpus"
 EXPECTED_CASES = [
+    "extras-job",
     "no-build-system",
     "pip-requirements",
     "service-healthcheck",
