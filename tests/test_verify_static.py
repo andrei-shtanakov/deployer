@@ -312,6 +312,28 @@ def test_poetry_project_direct_dep_install_fails(
     assert check.failure_kind == "authoring"
 
 
+def test_poetry_bootstrap_with_index_url_passes(hello_service: Path) -> None:
+    line = (
+        "RUN pip install --index-url https://pypi.internal/simple "
+        "--no-cache-dir poetry==2.4.1"
+    )
+    report = _poetry_report(hello_service, line)
+    assert _by_id(report, "install_strategy").status is CheckStatus.PASSED
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "RUN /usr/bin/pip install flask",
+        "RUN ./.venv/bin/pip3 install flask",
+        "RUN pip install --index-url https://pypi.internal/simple flask",
+    ],
+)
+def test_poetry_project_pip_variants_still_fail(hello_service: Path, line: str) -> None:
+    report = _poetry_report(hello_service, line)
+    assert _by_id(report, "install_strategy").status is CheckStatus.FAILED
+
+
 @pytest.mark.parametrize("manager", ["uv", "pip"])
 def test_non_poetry_project_poetry_install_fails(
     hello_service: Path, manager: Literal["uv", "pip"]

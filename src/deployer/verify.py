@@ -36,7 +36,13 @@ DEFAULT_BUILD_TIMEOUT = 600
 DEFAULT_HEALTH_TIMEOUT = 30
 _ENV_ASSIGNMENT = re.compile(r"^(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)+")
 _PYTHON_M_PIP = re.compile(r"^\S*python[\d.]*\s+-m\s+pip\s+install\b")
-_PIP_INSTALL = re.compile(r"^(?:\S*python[\d.]*\s+-m\s+pip|pip3?)\s+install\b")
+_PIP_INSTALL = re.compile(r"^(?:\S*python[\d.]*\s+-m\s+pip|(?:\S*/)?pip3?)\s+install\b")
+# Flags whose separate-token value is never an install target (index/
+# transport options). Deliberately EXCLUDES -r/-c/-e: their values are
+# install targets and must stay in the payload for the FAIL rules.
+_PIP_VALUE_FLAGS = frozenset(
+    {"-i", "--index-url", "--extra-index-url", "--trusted-host", "--proxy", "--cert"}
+)
 
 CONTEXT_IGNORE = (
     ".git",
@@ -179,20 +185,34 @@ def _check_base_pinned(instructions: list[tuple[str, str]]) -> CheckResult:
 def _pip_install_payload(cmd: str) -> list[str] | None:
     """Positional install args of a pip invocation; None if not one.
 
-    Covers pip / pip3 / python -m pip / python3 -m pip. Flags are
-    dropped, so a flag's value may survive as a positional (e.g. an
-    index URL) — that errs toward FAIL, never a false pass. The regex's
-    `\\b` also matches inside a hyphenated token (e.g. `pip install-e .`),
-    so a missing standalone "install" token is guarded explicitly rather
-    than letting `.index()` raise.
+    Covers pip / pip3 / python -m pip / python3 -m pip, with an optional
+    path prefix on the pip executable (/usr/bin/pip, .venv/bin/pip3).
+    Flags are dropped; for the known value-taking flags in
+    _PIP_VALUE_FLAGS the value token is dropped too, so an index URL
+    never masquerades as an install target. Unknown flags' values may
+    still survive as positionals — that errs toward FAIL, never a false
+    pass. The regex's `\\b` also matches inside a hyphenated token (e.g.
+    `pip install-e .`), so a missing standalone "install" token is
+    guarded explicitly rather than letting `.index()` raise.
     """
     if not _PIP_INSTALL.match(cmd):
         return None
     tokens = cmd.split()
     if "install" not in tokens:
         return None
-    idx = tokens.index("install")
-    return [t.strip("'\"") for t in tokens[idx + 1 :] if not t.startswith("-")]
+    payload: list[str] = []
+    skip_next = False
+    for token in tokens[tokens.index("install") + 1 :]:
+        if skip_next:
+            skip_next = False
+            continue
+        if token in _PIP_VALUE_FLAGS:
+            skip_next = True
+            continue
+        if token.startswith("-"):
+            continue
+        payload.append(token.strip("'\""))
+    return payload
 
 
 def _check_install_strategy(
