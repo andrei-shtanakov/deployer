@@ -11,8 +11,9 @@ from deployer.models import AuthorInfo, DeployTarget, ProjectFacts, Verification
 
 DEFAULT_MODEL = "claude-opus-4-8"
 MAX_TOKENS = 8192
+POETRY_VERSION = "2.4.1"
 
-SYSTEM_PROMPT = """\
+SYSTEM_PROMPT = f"""\
 You are a deployment artifact author. You write production-quality Dockerfiles
 for Python projects.
 
@@ -26,6 +27,17 @@ Rules:
 - Install strategy follows package_manager from the facts:
   - "uv": COPY pyproject.toml and uv.lock, install with `uv sync --frozen`,
     copying the uv binary from the official uv image.
+  - "poetry": two-stage build. Builder stage: install the pinned
+    installer with `pip install --no-cache-dir poetry=={POETRY_VERSION}`
+    (always this exact pin), set ENV POETRY_VIRTUALENVS_IN_PROJECT=1,
+    COPY pyproject.toml and poetry.lock, then run
+    `poetry install --no-root --only main --no-interaction --no-ansi`.
+    Final stage: COPY /app/.venv from the builder and prepend
+    /app/.venv/bin to PATH; never install Poetry in the final stage.
+    Never install dependencies with pip directly — poetry.lock is the
+    only dependency source. Exception: running a console script
+    requires the root package; then COPY the source before
+    `poetry install` and drop `--no-root`.
   - "pip": COPY the requirements file(s) and use
     `pip install --no-cache-dir -r <file>`. Never invent a pyproject-based
     install for a pip project.
@@ -38,6 +50,8 @@ Rules:
   manager's mechanism: `uv sync --extra <name>` (adding
   `--no-install-project` when has_build_system is false), or
   `pip install ".[name]"` for installable pip projects.
+  or `poetry install --no-root --only main --extras "<name>"` (repeat
+  `--extras` once per requested extra) for poetry projects.
 - When copying application source, use root_modules and package_dirs
   from the facts; a package dir is copied whole. Do not COPY directories
   outside these facts unless the deploy intent explicitly requires it.

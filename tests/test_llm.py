@@ -203,3 +203,12 @@ def test_intent_json_renders_entrypoint() -> None:
         DeployTarget(entrypoint="app.py"),
     )
     assert '"entrypoint": "app.py"' in rendered
+
+
+def test_system_prompt_carries_poetry_rules() -> None:
+    from deployer.llm import POETRY_VERSION, SYSTEM_PROMPT
+
+    assert f"poetry=={POETRY_VERSION}" in SYSTEM_PROMPT
+    assert "--no-root" in SYSTEM_PROMPT
+    assert "POETRY_VIRTUALENVS_IN_PROJECT" in SYSTEM_PROMPT
+    assert "--extras" in SYSTEM_PROMPT
