@@ -7,7 +7,8 @@ deterministic pipeline verifies it (static checks, then a sandboxed
 **Authoring ≠ execution**: the model only ever sees facts and reports and
 returns text — files, docker, and control flow belong to the pipeline.
 
-Facts cover uv and pip (requirements.txt) projects; a curated hints table
+Facts cover uv, Poetry (poetry.lock, including legacy [tool.poetry]
+metadata) and pip (requirements.txt) projects; a curated hints table
 suggests apt packages for known no-wheel dependencies (hints, not facts —
 build errors win), and `deploy_target.system_packages` lets the operator
 require apt packages outright.
