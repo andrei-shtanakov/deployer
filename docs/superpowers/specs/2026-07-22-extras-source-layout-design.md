@@ -34,6 +34,11 @@ package_dirs: list[str] = Field(default_factory=list)   # ["agents", "src/foo"]
   `[project.optional-dependencies]`, exactly as `dependencies` is read
   today (list-of-str filter, no parsing). Group keys are stored
   **normalized** (PEP 503/685 style: lowercase, `_` → `-`).
+  **Collision policy:** if two raw keys normalize to the same name
+  (`my_extra` + `my-extra`), the metadata is ambiguous — the scanner
+  records `optional_dependencies = {}` (invalid metadata is no fact;
+  merging would silently accept ambiguity). A requested extra then fails
+  target validation as unknown. This edge is unit-tested.
 - `root_modules`: root-level `*.py`, minus the existing file denylist
   (`setup.py`, `conftest.py`, `manage.py`), sorted.
 - `package_dirs`: directories containing `__init__.py`, scanned at the
@@ -56,18 +61,37 @@ extras: list[str] = Field(default_factory=list)
 
 Names of optional-dependency groups that MUST be installed in the image.
 Composes with any runtime surface (service, run, build-only). Not a
-secret — rendered in the prompt as-is, no redaction.
+secret — rendered in the prompt, no redaction.
+
+**Canonical at the model boundary:** a `field_validator` on
+`DeployTarget.extras` normalizes each name PEP 503/685 (lowercase,
+`_` → `-`), rejects empty strings, and deduplicates preserving first
+occurrence. Prompt, reports and golden all see the canonical form —
+`["GUI", "my_extra", "my-extra"]` becomes `["gui", "my-extra"]` — so
+comparability never depends on how the operator spelled the extra. This
+needs no facts and lives entirely in the model.
 
 ### Validation: `validate_target_against_facts(target, facts)`
 
 Extras cannot be validated inside a `model_validator` — the check needs
-`facts.optional_dependencies`. A dedicated step runs **after
-`analyze_project`, before the authoring loop / verification**, and is
-called from all four entry paths: `verify`, `author`, `bench run`,
-`bench verify`. Failures are **config errors** (CLI exit 2; in bench a
-loud case error), never AUTHORING — the model cannot fix a target that
-asks for a nonexistent extra, and repair iterations must not be burned
-on it.
+`facts.optional_dependencies`. A dedicated library-level step raises
+`TargetConfigError` (a new exception); failures are **config errors**,
+never AUTHORING — the model cannot fix a target that asks for a
+nonexistent extra, and repair iterations must not be burned on it.
+
+Placement is library-level so the CLI and the Python API cannot
+diverge:
+
+- `author_dockerfile()` calls it after `analyze_project()`, before the
+  first `author.generate()`;
+- `verify()` calls it whenever facts are provided; if `target.extras`
+  is non-empty and `facts is None`, that is itself a config error —
+  never a silent skip;
+- the CLI catches `TargetConfigError` and maps it to exit 2 (both
+  subcommands);
+- `bench run` / `bench verify` treat an invalid corpus case as a config
+  error surfacing as exit 2 — not as a mismatched/AUTHORING case
+  result.
 
 Rules (extra names normalized PEP 503/685 on both sides before
 comparison — `GUI`/`gui`, `my_extra`/`my-extra` must not be fragile):
@@ -149,13 +173,17 @@ healthcheck_path = "/"
 (Gradio serves 200 on `/`; `launch()` binds 127.0.0.1:7860 and the
 healthcheck probes via in-container exec, so the loopback bind is fine.)
 
-`expected_success` stays `true` with `max_iterations = 3` for the first
-research run. Known risk, accepted: `script_entrypoint` resolves to the
-`main.py` stub (main.py wins over app.py by rule), so the model must
-discover `app.py` through the healthcheck/repair loop — honest research
-data. If the first run does not converge, record
-`expected_success = false` with notes instead of weakening the
-capability.
+`expected_success` is **`false`** from the start, with notes naming the
+real blocker: `script_entrypoint` resolves to the `main.py` stub
+(main.py wins over app.py by rule), and the SYSTEM_PROMPT rule makes
+that fact binding — "CMD MUST execute that file". Success would
+therefore require the model to *violate* an authoring contract, which is
+a contradiction between the healthcheck oracle and the prompt rules, not
+honest difficulty. The research run still happens (`max_iterations = 3`)
+and its outcome is recorded; the prompt rule is NOT weakened for service
+intents in this PR. The real fix is a future service-entrypoint
+disambiguation fact/intent — see Deferred. `expected_success` flips to
+`true` only when that lands and a run proves it.
 
 **Golden-scope process rule:** external targets never enter the golden —
 `bench promote` runs are made from bench runs **without**
@@ -180,19 +208,26 @@ is now the recorded process, not a habit.
 ## Testing strategy
 
 - Unit: scanner (optional-deps parsing incl. normalization of group
-  keys, denylist filtering, `src/` layout, dot-dirs, unreadable files →
-  empty); `validate_target_against_facts` matrix (unknown extra,
-  case/underscore variants accepted after normalization,
-  pip×no-build-system rejection, empty extras no-op); hints filtering by
-  requested extras (llama-cpp fires only when `inference` requested);
-  prompt rendering (extras + layout facts present, only requested extras
-  named as to-install); CLI exit-2 paths.
+  keys, the collision→`{}` edge, denylist filtering, `src/` layout,
+  dot-dirs, unreadable files → empty); `DeployTarget.extras` validator
+  (canonicalization, dedupe-preserving-first, empty-string rejection);
+  `validate_target_against_facts` matrix (unknown extra, case/underscore
+  variants accepted after normalization, pip×no-build-system rejection,
+  empty extras no-op, extras-with-facts-None config error); hints
+  filtering by requested extras (llama-cpp fires only when `inference`
+  requested); prompt rendering (extras + layout facts present, only
+  requested extras named as to-install); CLI exit-2 paths.
 - Docker-marked: corpus smoke covers `extras-job` end-to-end via its
   fixture (extra actually imported at run time).
 - LLM paths stay out of CI; research runs are manual.
 
 ## Deferred
 
+- **Service-entrypoint disambiguation** (fact or intent): the mechanism
+  that would let a service target name/derive its real entrypoint when
+  `script_entrypoint` points at a stub (locallogai: main.py stub vs
+  app.py). Prerequisite for flipping locallogai-service to
+  `expected_success = true`.
 - L1 check "run/service intent must COPY the entrypoint / package_dirs"
   (candidate hardening, explicitly not in this PR).
 - pip×no-build-system extras support (rejected as config error for now).
