@@ -1261,7 +1261,7 @@ If no remote host is reachable yet, record Steps 2–3 as pending in progress.md
 
 ### Remote acceptance results (2026-07-22, post-merge)
 
-Host: `ssh://user@192.168.1.103` ("homelab", Ubuntu 24.04, docker server
+Host: `ssh://user@host` ("homelab", LAN address redacted; Ubuntu 24.04, docker server
 29.6.1; local client 29.6.2 via `brew install docker` — the dev machine is
 podman-only). All steps PASSED:
 
