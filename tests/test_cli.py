@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from deployer import cli
+from deployer.artifacts import render_artifact_response
 from deployer.cli import main
 from deployer.models import CheckResult, CheckStatus, FailureKind, VerificationReport
 
@@ -122,6 +123,7 @@ def test_verify_flags_reach_library(
         build_timeout,
         health_timeout,
         compose=None,
+        ci=None,
     ):
         captured["timeouts"] = (build_timeout, health_timeout)
         return VerificationReport(
@@ -801,3 +803,37 @@ def test_load_dotenv_mismatched_quotes_not_stripped(
     cli._load_dotenv(env_file)
     assert fake_env["TRAIL"] == "not-stripped'"
     assert fake_env["MIXED"] == "'a\""
+
+
+def test_cli_verify_reads_ci_workflow(tmp_path: Path, monkeypatch, capsys) -> None:
+    (tmp_path / "main.py").write_text("if __name__ == '__main__':\n    pass\n")
+    (tmp_path / "Dockerfile").write_text("FROM python:3.12-slim\nCOPY main.py .\n")
+    target_path = tmp_path / "target.json"
+    target_path.write_text('{"ci": {}}')
+    monkeypatch.setattr("deployer.cli.resolve_runtime", lambda *a, **k: None)
+    # no .github/workflows/ci.yml -> ci_present FAILED -> exit 1
+    code = main(["verify", str(tmp_path), "--target", str(target_path)])
+    assert code == 1
+    assert "ci_present" in capsys.readouterr().out
+
+
+def test_cli_author_writes_ci_workflow(tmp_path: Path, monkeypatch) -> None:
+    (tmp_path / "main.py").write_text("if __name__ == '__main__':\n    pass\n")
+    target_file = tmp_path / "target.json"
+    target_file.write_text('{"ci": {}}')
+
+    good = render_artifact_response(
+        "FROM python:3.12-slim\nCOPY main.py .", ci="name: ci"
+    )
+
+    class FakeAuthor:
+        def generate(self, facts, target):
+            return good
+
+        def repair(self, facts, target, dockerfile, report):
+            return good
+
+    monkeypatch.setattr("deployer.cli.AnthropicAuthor", lambda: FakeAuthor())
+    main(["author", str(tmp_path), "--no-docker", "--target", str(target_file)])
+    ci_path = tmp_path / ".github" / "workflows" / "ci.yml"
+    assert ci_path.read_text() == "name: ci\n"

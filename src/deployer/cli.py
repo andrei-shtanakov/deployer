@@ -189,6 +189,8 @@ def _cmd_verify(args: argparse.Namespace) -> int:
         return 2
     compose_path = project / "compose.yaml"
     compose = compose_path.read_text() if compose_path.is_file() else None
+    ci_path = project / ".github" / "workflows" / "ci.yml"
+    ci = ci_path.read_text() if ci_path.is_file() else None
     try:
         report = verify(
             dockerfile_path.read_text(),
@@ -197,6 +199,7 @@ def _cmd_verify(args: argparse.Namespace) -> int:
             runtime,
             analyze_project(project),
             compose=compose,
+            ci=ci,
             build_timeout=args.build_timeout,
             health_timeout=args.health_timeout,
         )
@@ -255,6 +258,10 @@ def _cmd_author(args: argparse.Namespace) -> int:
         (project / "Dockerfile").write_text(last.dockerfile + "\n")
         if last.compose is not None:
             (project / "compose.yaml").write_text(last.compose + "\n")
+        if last.ci is not None:
+            wf_dir = project / ".github" / "workflows"
+            wf_dir.mkdir(parents=True, exist_ok=True)
+            (wf_dir / "ci.yml").write_text(last.ci + "\n")
         _print_report(last.report)
     report_path = _write_report(
         project, "authoring-run.json", run.model_dump_json(indent=2)

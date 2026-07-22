@@ -101,6 +101,7 @@ def author_dockerfile(
     prev_signature: str | None = None
 
     expects_compose = bool(target.dependencies)
+    expects_ci = target.ci is not None
 
     response: str | None
     try:
@@ -114,8 +115,8 @@ def author_dockerfile(
         for index in range(max_iterations):
             start = time.monotonic()
             try:
-                dockerfile, compose, _ci = parse_artifact_response(
-                    response, expects_compose
+                dockerfile, compose, ci = parse_artifact_response(
+                    response, expects_compose, expects_ci
                 )
             except ArtifactParseError as exc:
                 report = VerificationReport(
@@ -128,7 +129,7 @@ def author_dockerfile(
                         )
                     ]
                 )
-                dockerfile, compose = response, None
+                dockerfile, compose, ci = response, None, None
             else:
                 report = verify(
                     dockerfile,
@@ -137,6 +138,7 @@ def author_dockerfile(
                     runtime,
                     facts,
                     compose=compose,
+                    ci=ci,
                     build_timeout=build_timeout,
                     health_timeout=health_timeout,
                 )
@@ -149,6 +151,7 @@ def author_dockerfile(
                         runtime,
                         facts,
                         compose=compose,
+                        ci=ci,
                         build_timeout=build_timeout,
                         health_timeout=health_timeout,
                     )
@@ -157,6 +160,7 @@ def author_dockerfile(
                     index=index,
                     dockerfile=dockerfile,
                     compose=compose,
+                    ci=ci,
                     report=report,
                     duration_s=time.monotonic() - start,
                 )
