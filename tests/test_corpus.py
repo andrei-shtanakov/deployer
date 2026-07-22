@@ -12,6 +12,7 @@ from deployer.verify import verify
 
 CORPUS = Path(__file__).parent.parent / "corpus"
 EXPECTED_CASES = [
+    "compose-redis",
     "entrypoint-override",
     "extras-job",
     "no-build-system",
@@ -42,6 +43,9 @@ def test_corpus_static_checks_pass_for_every_fixture() -> None:
             case.target,
             None,
             analyze_project(case.project_dir),
+            compose=(
+                case.fixture_compose.read_text() if case.fixture_compose else None
+            ),
         )
         assert report.passed, f"{case.name}: {report.model_dump_json(indent=2)}"
 
@@ -65,6 +69,7 @@ def test_corpus_fixture_verifies_end_to_end(name: str, runtime) -> None:
         case.target,
         runtime,
         analyze_project(case.project_dir),
+        compose=case.fixture_compose.read_text() if case.fixture_compose else None,
     )
     assert report.passed, f"{name}: {report.model_dump_json(indent=2)}"
 

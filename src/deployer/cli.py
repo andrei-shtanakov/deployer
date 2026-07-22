@@ -289,7 +289,12 @@ def _cmd_bench_run(args: argparse.Namespace) -> int:
         make_author = lambda case: shared  # noqa: E731
     else:
         make_author = lambda case: (  # noqa: E731
-            FixtureAuthor(case.fixture_dockerfile.read_text())
+            FixtureAuthor(
+                case.fixture_dockerfile.read_text(),
+                compose=(
+                    case.fixture_compose.read_text() if case.fixture_compose else None
+                ),
+            )
             if case.fixture_dockerfile is not None
             else None
         )

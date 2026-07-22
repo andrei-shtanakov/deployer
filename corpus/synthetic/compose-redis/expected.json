@@ -1,0 +1,1 @@
+{"capabilities": ["compose", "service"], "notes": "app + redis dep; /health does redis.ping() so a green healthcheck proves env wiring, depends_on and the dep healthcheck — not merely app startup"}

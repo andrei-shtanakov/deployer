@@ -13,6 +13,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
+from deployer.artifacts import render_artifact_response
 from deployer.author import (
     DockerfileAuthor,
     _deployer_git_sha,
@@ -58,26 +59,26 @@ class FixtureAuthor:
     so there is nothing to "repair" — a failing fixture is corpus rot.
     """
 
-    def __init__(self, dockerfile: str) -> None:
-        self._dockerfile = dockerfile
+    def __init__(self, dockerfile: str, compose: str | None = None) -> None:
+        self._response = render_artifact_response(dockerfile, compose)
 
     def generate(self, facts: ProjectFacts, target: DeployTarget) -> str:
-        return self._dockerfile
+        return self._response
 
     def repair(
         self,
         facts: ProjectFacts,
         target: DeployTarget,
-        dockerfile: str,
+        artifact_text: str,
         report: VerificationReport,
     ) -> str:
-        return self._dockerfile
+        return self._response
 
     def info(self) -> AuthorInfo:
         """Comparability metadata: fixture hash stands in for a prompt hash."""
         return AuthorInfo(
             backend="fixture",
-            prompt_sha256=hashlib.sha256(self._dockerfile.encode()).hexdigest(),
+            prompt_sha256=hashlib.sha256(self._response.encode()).hexdigest(),
         )
 
 
@@ -89,6 +90,7 @@ class BenchCase(BaseModel):
     target: DeployTarget = Field(default_factory=DeployTarget)
     expected: ExpectedOutcome = Field(default_factory=ExpectedOutcome)
     fixture_dockerfile: Path | None = None
+    fixture_compose: Path | None = None
     external_url: str | None = None
     external_commit: str | None = None
 
@@ -118,6 +120,7 @@ def load_corpus(corpus_root: Path, pattern: str = "*") -> list[BenchCase]:
             else ExpectedOutcome()
         )
         fixture = case_dir / "fixture.Dockerfile"
+        fixture_compose = case_dir / "fixture.compose.yaml"
         cases.append(
             BenchCase(
                 name=case_dir.name,
@@ -125,6 +128,7 @@ def load_corpus(corpus_root: Path, pattern: str = "*") -> list[BenchCase]:
                 target=target,
                 expected=expected,
                 fixture_dockerfile=fixture if fixture.is_file() else None,
+                fixture_compose=fixture_compose if fixture_compose.is_file() else None,
             )
         )
     return cases
@@ -193,6 +197,17 @@ def run_case(
             skip_reason="no fixture.Dockerfile for the offline fixture author",
             expected=case.expected,
         )
+    if (
+        case.target.dependencies
+        and case.fixture_compose is None
+        and isinstance(author, FixtureAuthor)
+    ):
+        return BenchCaseResult(
+            case=case.name,
+            outcome="skipped",
+            skip_reason="dependencies target has no fixture.compose.yaml",
+            expected=case.expected,
+        )
     started = time.monotonic()
     with tempfile.TemporaryDirectory(prefix=f"deployer-bench-{case.name}-") as tmp:
         scratch = Path(tmp) / "project"
@@ -217,6 +232,8 @@ def run_case(
     last = run.iterations[-1] if run.iterations else None
     if last is not None:
         (case_out_dir / "Dockerfile").write_text(last.dockerfile + "\n")
+        if last.compose is not None:
+            (case_out_dir / "compose.yaml").write_text(last.compose + "\n")
     failure_kinds = sorted(
         {
             r.failure_kind
@@ -423,6 +440,9 @@ def verify_corpus(
             analyze_project(case.project_dir),
             build_timeout=build_timeout,
             health_timeout=health_timeout,
+            compose=(
+                case.fixture_compose.read_text() if case.fixture_compose else None
+            ),
         )
         results.append((case.name, report))
     return results
@@ -536,10 +556,14 @@ def promote_run(run_dir: Path, corpus_root: Path, *, force: bool = False) -> Pat
     (golden_dir / "golden.json").write_text(golden.model_dump_json(indent=2) + "\n")
     for case in golden.cases:
         src = run_dir / "cases" / case.case / "Dockerfile"
-        if src.is_file():
+        compose_src = run_dir / "cases" / case.case / "compose.yaml"
+        if src.is_file() or compose_src.is_file():
             dest = golden_dir / "cases" / case.case
             dest.mkdir(parents=True)
-            shutil.copyfile(src, dest / "Dockerfile")
+            if src.is_file():
+                shutil.copyfile(src, dest / "Dockerfile")
+            if compose_src.is_file():
+                shutil.copyfile(compose_src, dest / "compose.yaml")
     return golden_dir
 
 

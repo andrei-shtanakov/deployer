@@ -1,0 +1,3 @@
+{"service": {"port": 8000, "healthcheck_path": "/health"},
+ "env": {"REDIS_URL": "redis://cache:6379/0"},
+ "dependencies": [{"name": "cache", "image": "redis:7-alpine"}]}
