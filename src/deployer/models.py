@@ -82,6 +82,15 @@ class ServiceDependency(BaseModel):
         return value
 
 
+class CISpec(BaseModel):
+    """Request for a build-image CI workflow. Presence is the request.
+
+    Deliberately empty: no kind/registry/triggers until a second
+    implemented workflow kind exists — a discriminator now would be
+    false extensibility.
+    """
+
+
 class DeployTarget(BaseModel):
     """Declarative deploy intent: what is wanted, never how."""
 
@@ -94,6 +103,7 @@ class DeployTarget(BaseModel):
     extras: list[str] = Field(default_factory=list)
     entrypoint: str | None = Field(default=None, min_length=1)
     dependencies: list[ServiceDependency] = Field(default_factory=list)
+    ci: CISpec | None = None
 
     @model_validator(mode="after")
     def _service_and_run_exclusive(self) -> "DeployTarget":
@@ -115,6 +125,15 @@ class DeployTarget(BaseModel):
             names = [d.name for d in self.dependencies]
             if len(names) != len(set(names)):
                 raise ValueError("DeployTarget.dependencies names must be unique")
+        return self
+
+    @model_validator(mode="after")
+    def _ci_incompatible_with_dependencies(self) -> "DeployTarget":
+        if self.ci is not None and self.dependencies:
+            raise ValueError(
+                "DeployTarget.ci with dependencies is unsupported: "
+                "compose-aware CI is a later iteration"
+            )
         return self
 
     @field_validator("extras")
@@ -306,6 +325,7 @@ class IterationRecord(BaseModel):
     index: int
     dockerfile: str
     compose: str | None = None
+    ci: str | None = None
     report: VerificationReport
     duration_s: float
 
