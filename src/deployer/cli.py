@@ -187,10 +187,16 @@ def _cmd_verify(args: argparse.Namespace) -> int:
     if isinstance(runtime, str):
         print(f"error: {runtime}", file=sys.stderr)
         return 2
-    compose_path = project / "compose.yaml"
-    compose = compose_path.read_text() if compose_path.is_file() else None
-    ci_path = project / ".github" / "workflows" / "ci.yml"
-    ci = ci_path.read_text() if ci_path.is_file() else None
+    # artifacts are consulted only when the target requests them: a plain
+    # target must not depend on the presence/readability of these files
+    compose: str | None = None
+    if target.dependencies:
+        compose_path = project / "compose.yaml"
+        compose = compose_path.read_text() if compose_path.is_file() else None
+    ci: str | None = None
+    if target.ci is not None:
+        ci_path = project / ".github" / "workflows" / "ci.yml"
+        ci = ci_path.read_text() if ci_path.is_file() else None
     try:
         report = verify(
             dockerfile_path.read_text(),

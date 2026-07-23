@@ -874,6 +874,27 @@ def test_cli_verify_reads_ci_workflow(tmp_path: Path, monkeypatch, capsys) -> No
     assert "ci_present" in capsys.readouterr().out
 
 
+def test_cli_verify_ignores_artifacts_for_plain_target(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """A plain target must not depend on unrequested artifact files.
+
+    An unreadable (non-UTF-8) ci.yml or compose.yaml next to a plain
+    target used to crash the read; now they are never consulted.
+    """
+    (tmp_path / "main.py").write_text("if __name__ == '__main__':\n    pass\n")
+    (tmp_path / "Dockerfile").write_text("FROM python:3.12-slim\nCOPY main.py .\n")
+    wf_dir = tmp_path / ".github" / "workflows"
+    wf_dir.mkdir(parents=True)
+    (wf_dir / "ci.yml").write_bytes(b"\xff\xfe garbage")
+    (tmp_path / "compose.yaml").write_bytes(b"\xff\xfe garbage")
+    monkeypatch.setattr("deployer.cli.resolve_runtime", lambda *a, **k: None)
+    code = main(["verify", str(tmp_path)])
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "ci_present" not in out and "compose_present" not in out
+
+
 def test_cli_author_writes_ci_workflow(tmp_path: Path, monkeypatch) -> None:
     (tmp_path / "main.py").write_text("if __name__ == '__main__':\n    pass\n")
     target_file = tmp_path / "target.json"
