@@ -7,6 +7,7 @@ authoring loop converts into an authoring finding — never a crash.
 
 DOCKERFILE_SENTINEL = "=== Dockerfile ==="
 COMPOSE_SENTINEL = "=== compose.yaml ==="
+CI_SENTINEL = "=== ci.yml ==="
 
 
 class ArtifactParseError(ValueError):
@@ -22,53 +23,78 @@ def _sentinel_line_indices(lines: list[str], sentinel: str) -> list[int]:
     return [i for i, line in enumerate(lines) if line.strip() == sentinel]
 
 
-def parse_artifact_response(text: str, expects_compose: bool) -> tuple[str, str | None]:
-    """Split a raw author response into (dockerfile, compose).
+def parse_artifact_response(
+    text: str, expects_compose: bool, expects_ci: bool = False
+) -> tuple[str, str | None, str | None]:
+    """Split a raw author response into (dockerfile, compose, ci).
 
-    Without compose expectation the whole text is the Dockerfile —
-    the single-artifact contract is unchanged.
+    With no extra sections expected the whole text is the Dockerfile —
+    the single-artifact contract is unchanged. Otherwise sentinels are
+    matched line-anchored (a line counts only when its stripped content
+    equals the sentinel exactly), sections must appear in the order
+    Dockerfile -> compose -> ci, each exactly once and non-empty.
+    Prose before the Dockerfile sentinel is dropped as chatter.
 
-    With compose expectation, sentinels are matched line-by-line: a
-    line counts only when its stripped content equals the sentinel
-    exactly, so incidental occurrences inside artifact content (e.g.
-    a Dockerfile `RUN echo "=== compose.yaml ==="`) are not mistaken
-    for the delimiter. Any prose the model emits before the Dockerfile
-    sentinel is dropped as chatter tolerance.
+    A KNOWN sentinel that was not requested is rejected outright: it
+    would otherwise be absorbed as literal content of the preceding
+    section — a corrupted artifact that static-only verification could
+    wave through.
     """
-    if not expects_compose:
-        return text.strip(), None
+    expected = [DOCKERFILE_SENTINEL]
+    if expects_compose:
+        expected.append(COMPOSE_SENTINEL)
+    if expects_ci:
+        expected.append(CI_SENTINEL)
     lines = text.splitlines()
-    dockerfile_idxs = _sentinel_line_indices(lines, DOCKERFILE_SENTINEL)
-    compose_idxs = _sentinel_line_indices(lines, COMPOSE_SENTINEL)
-    if len(dockerfile_idxs) != 1:
+    unexpected = [
+        s
+        for s in (DOCKERFILE_SENTINEL, COMPOSE_SENTINEL, CI_SENTINEL)
+        if s not in expected and _sentinel_line_indices(lines, s)
+    ]
+    if unexpected:
+        names = ", ".join(repr(s) for s in unexpected)
         raise ArtifactParseError(
-            f"response must contain the line {DOCKERFILE_SENTINEL!r} exactly "
-            f"once (found {len(dockerfile_idxs)}); reply with both sections "
-            f"under {DOCKERFILE_SENTINEL!r} and {COMPOSE_SENTINEL!r}, each "
-            "sentinel on its own line"
+            f"response contains unrequested section sentinel(s): {names}; "
+            "reply with only the sections the deploy intent asks for"
         )
-    if len(compose_idxs) != 1:
-        raise ArtifactParseError(
-            f"response must contain the line {COMPOSE_SENTINEL!r} exactly "
-            f"once (found {len(compose_idxs)}); reply with both sections "
-            f"under {DOCKERFILE_SENTINEL!r} and {COMPOSE_SENTINEL!r}, each "
-            "sentinel on its own line"
-        )
-    dockerfile_idx = dockerfile_idxs[0]
-    compose_idx = compose_idxs[0]
-    if compose_idx < dockerfile_idx:
-        raise ArtifactParseError(
-            f"{DOCKERFILE_SENTINEL!r} must come before {COMPOSE_SENTINEL!r}"
-        )
-    dockerfile = "\n".join(lines[dockerfile_idx + 1 : compose_idx]).strip()
-    compose = "\n".join(lines[compose_idx + 1 :]).strip()
-    if not dockerfile or not compose:
-        raise ArtifactParseError("both artifact sections must be non-empty")
-    return dockerfile, compose
+    if len(expected) == 1:
+        return text.strip(), None, None
+    listed = ", ".join(repr(s) for s in expected)
+    positions: list[int] = []
+    for sentinel in expected:
+        idxs = _sentinel_line_indices(lines, sentinel)
+        if len(idxs) != 1:
+            raise ArtifactParseError(
+                f"response must contain the line {sentinel!r} exactly once "
+                f"(found {len(idxs)}); reply with one section per expected "
+                f"sentinel ({listed}), each sentinel on its own line"
+            )
+        positions.append(idxs[0])
+    if positions != sorted(positions):
+        order = " -> ".join(repr(s) for s in expected)
+        raise ArtifactParseError(f"sections must appear in order: {order}")
+    bounds = positions[1:] + [len(lines)]
+    contents: list[str] = []
+    for start, end in zip(positions, bounds):
+        section = "\n".join(lines[start + 1 : end]).strip()
+        if not section:
+            raise ArtifactParseError("every artifact section must be non-empty")
+        contents.append(section)
+    dockerfile = contents[0]
+    compose = contents[1] if expects_compose else None
+    ci = contents[-1] if expects_ci else None
+    return dockerfile, compose, ci
 
 
-def render_artifact_response(dockerfile: str, compose: str | None) -> str:
+def render_artifact_response(
+    dockerfile: str, compose: str | None = None, ci: str | None = None
+) -> str:
     """Inverse of parse: the format fixture authors and prompts use."""
-    if compose is None:
+    if compose is None and ci is None:
         return dockerfile
-    return f"{DOCKERFILE_SENTINEL}\n{dockerfile}\n{COMPOSE_SENTINEL}\n{compose}"
+    parts = [DOCKERFILE_SENTINEL, dockerfile]
+    if compose is not None:
+        parts.extend([COMPOSE_SENTINEL, compose])
+    if ci is not None:
+        parts.extend([CI_SENTINEL, ci])
+    return "\n".join(parts)

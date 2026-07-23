@@ -259,3 +259,44 @@ def test_iteration_record_compose_defaults_none() -> None:
         index=0, dockerfile="FROM x:1", report=VerificationReport(), duration_s=0.1
     )
     assert rec.compose is None
+
+
+def test_ci_spec_presence_is_the_request() -> None:
+    from deployer.models import CISpec
+
+    target = DeployTarget.model_validate_json('{"ci": {}}')
+    assert isinstance(target.ci, CISpec)
+    assert DeployTarget().ci is None
+
+
+def test_ci_composes_with_service_and_run() -> None:
+    from deployer.models import CISpec
+
+    DeployTarget(ci=CISpec(), service=ServiceSpec(port=8000))
+    DeployTarget(ci=CISpec(), run=RunSpec())
+    DeployTarget(ci=CISpec())  # build-only
+
+
+def test_ci_with_dependencies_rejected() -> None:
+    from deployer.models import CISpec, ServiceDependency
+
+    with pytest.raises(ValidationError):
+        DeployTarget(
+            ci=CISpec(),
+            service=ServiceSpec(port=8000),
+            dependencies=[ServiceDependency(name="cache", image="redis:7-alpine")],
+        )
+
+
+def test_iteration_record_ci_defaults_none() -> None:
+    from deployer.models import IterationRecord, VerificationReport
+
+    rec = IterationRecord(
+        index=0, dockerfile="FROM x:1", report=VerificationReport(), duration_s=0.1
+    )
+    assert rec.ci is None
+
+
+def test_ci_spec_rejects_unknown_keys() -> None:
+    with pytest.raises(ValidationError):
+        DeployTarget.model_validate_json('{"ci": {"kind": "x"}}')

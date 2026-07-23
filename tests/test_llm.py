@@ -222,3 +222,22 @@ def test_system_prompt_carries_compose_rules() -> None:
     assert "service_healthy" in SYSTEM_PROMPT
     assert "never declare ports" in SYSTEM_PROMPT
     assert 'named exactly "app"' in SYSTEM_PROMPT
+
+
+def test_system_prompt_carries_ci_rules() -> None:
+    from deployer.artifacts import CI_SENTINEL
+    from deployer.llm import ACTIONS_CHECKOUT_PIN, SYSTEM_PROMPT
+
+    assert CI_SENTINEL in SYSTEM_PROMPT
+    assert ACTIONS_CHECKOUT_PIN in SYSTEM_PROMPT
+    assert "ubuntu-24.04" in SYSTEM_PROMPT
+    assert "pull_request" in SYSTEM_PROMPT
+    assert "never push" in SYSTEM_PROMPT
+
+
+def test_actions_checkout_pin_shape() -> None:
+    import re
+
+    from deployer.llm import ACTIONS_CHECKOUT_PIN
+
+    assert re.fullmatch(r"actions/checkout@[0-9a-f]{40}", ACTIONS_CHECKOUT_PIN)

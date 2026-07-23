@@ -112,6 +112,14 @@ def test_fixture_author_renders_sentinels_when_compose_present() -> None:
     assert COMPOSE_SENTINEL not in plain.generate(ProjectFacts(), DeployTarget())
 
 
+def test_fixture_author_renders_ci_section() -> None:
+    from deployer.artifacts import CI_SENTINEL
+    from deployer.bench import FixtureAuthor
+
+    author = FixtureAuthor("FROM x:1", ci="name: ci")
+    assert CI_SENTINEL in author.generate(ProjectFacts(), DeployTarget())
+
+
 def _passing_report():
     from deployer.models import VerificationReport
 
@@ -251,6 +259,28 @@ def test_run_case_skips_deps_case_without_fixture_compose(tmp_path: Path) -> Non
     )
     assert result.outcome == "skipped"
     assert "fixture.compose.yaml" in result.skip_reason
+
+
+def test_run_case_skips_ci_case_without_fixture_ci(tmp_path: Path) -> None:
+    _make_case(
+        tmp_path,
+        "ci-target",
+        target={"ci": {}},
+        expected={"requires_l2": False},
+    )
+    case = load_corpus(tmp_path)[0]
+    assert case.fixture_dockerfile is not None
+    assert case.fixture_ci is None
+    result = run_case(
+        case,
+        FixtureAuthor(case.fixture_dockerfile.read_text()),
+        None,
+        tmp_path / "out",
+        build_timeout=60,
+        health_timeout=5,
+    )
+    assert result.outcome == "skipped"
+    assert "fixture.ci.yml" in result.skip_reason
 
 
 def test_run_case_runs_in_scratch_and_writes_artifacts(

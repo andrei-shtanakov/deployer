@@ -6,13 +6,16 @@ from typing import Any
 
 import anthropic
 
-from deployer.artifacts import COMPOSE_SENTINEL, DOCKERFILE_SENTINEL
+from deployer.artifacts import CI_SENTINEL, COMPOSE_SENTINEL, DOCKERFILE_SENTINEL
 from deployer.hints import collect_hints
 from deployer.models import AuthorInfo, DeployTarget, ProjectFacts, VerificationReport
 
 DEFAULT_MODEL = "claude-opus-4-8"
 MAX_TOKENS = 8192
 POETRY_VERSION = "2.4.1"
+ACTIONS_CHECKOUT_PIN = (
+    "actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd"  # v5.0.1
+)
 
 SYSTEM_PROMPT = f"""\
 You are a deployment artifact author. You write production-quality Dockerfiles
@@ -104,6 +107,18 @@ Rules:
   networking is internal-only here; ingress is not this artifact's
   job. Without "dependencies", reply with only the Dockerfile as
   before — no sentinels.
+- When the deploy intent sets "ci", you also author a GitHub Actions
+  build-image workflow and add a third section to your reply:
+  {CI_SENTINEL}
+  <the workflow YAML>
+  (order: Dockerfile section first, compose section if any, ci last).
+  Workflow rules: trigger on push and pull_request (never
+  pull_request_target); one job on the fixed runner label
+  ubuntu-24.04; steps: `uses: {ACTIONS_CHECKOUT_PIN}` (use this exact
+  pinned reference), then `run: docker build --file ./Dockerfile .`.
+  Pin every action to a full commit SHA. The workflow only builds:
+  never push images, never docker login, never reference secrets.
+  Without "ci", do not emit a ci section.
 """
 
 

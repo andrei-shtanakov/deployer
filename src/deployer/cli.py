@@ -187,8 +187,16 @@ def _cmd_verify(args: argparse.Namespace) -> int:
     if isinstance(runtime, str):
         print(f"error: {runtime}", file=sys.stderr)
         return 2
-    compose_path = project / "compose.yaml"
-    compose = compose_path.read_text() if compose_path.is_file() else None
+    # artifacts are consulted only when the target requests them: a plain
+    # target must not depend on the presence/readability of these files
+    compose: str | None = None
+    if target.dependencies:
+        compose_path = project / "compose.yaml"
+        compose = compose_path.read_text() if compose_path.is_file() else None
+    ci: str | None = None
+    if target.ci is not None:
+        ci_path = project / ".github" / "workflows" / "ci.yml"
+        ci = ci_path.read_text() if ci_path.is_file() else None
     try:
         report = verify(
             dockerfile_path.read_text(),
@@ -197,6 +205,7 @@ def _cmd_verify(args: argparse.Namespace) -> int:
             runtime,
             analyze_project(project),
             compose=compose,
+            ci=ci,
             build_timeout=args.build_timeout,
             health_timeout=args.health_timeout,
         )
@@ -212,6 +221,20 @@ def _cmd_verify(args: argparse.Namespace) -> int:
     if report_path is not None:
         print(f"report: {report_path}")
     return 0 if report.passed else 1
+
+
+def _is_parse_failure(report: VerificationReport) -> bool:
+    """Whether a report is an artifact-parse failure, not a verify failure.
+
+    A parse failure means the LLM response never became structured
+    artifacts (`IterationRecord.dockerfile` still holds the raw,
+    possibly sentinel-laden response text) — writing it out would
+    violate the authoring spec's transactional-write guarantee.
+    """
+    return any(
+        r.check_id == "artifact_format" and r.status is CheckStatus.FAILED
+        for r in report.results
+    )
 
 
 def _cmd_author(args: argparse.Namespace) -> int:
@@ -252,9 +275,14 @@ def _cmd_author(args: argparse.Namespace) -> int:
         return 2
     if run.iterations:
         last = run.iterations[-1]
-        (project / "Dockerfile").write_text(last.dockerfile + "\n")
-        if last.compose is not None:
-            (project / "compose.yaml").write_text(last.compose + "\n")
+        if not _is_parse_failure(last.report):
+            (project / "Dockerfile").write_text(last.dockerfile + "\n")
+            if last.compose is not None:
+                (project / "compose.yaml").write_text(last.compose + "\n")
+            if last.ci is not None:
+                wf_dir = project / ".github" / "workflows"
+                wf_dir.mkdir(parents=True, exist_ok=True)
+                (wf_dir / "ci.yml").write_text(last.ci + "\n")
         _print_report(last.report)
     report_path = _write_report(
         project, "authoring-run.json", run.model_dump_json(indent=2)
@@ -294,6 +322,7 @@ def _cmd_bench_run(args: argparse.Namespace) -> int:
                 compose=(
                     case.fixture_compose.read_text() if case.fixture_compose else None
                 ),
+                ci=case.fixture_ci.read_text() if case.fixture_ci else None,
             )
             if case.fixture_dockerfile is not None
             else None

@@ -6,7 +6,13 @@ import re
 from enum import StrEnum
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 
 _SAFE_NAME_RE = re.compile(r"[A-Za-z0-9._-]+")
 _EXTRA_SEPARATOR_RUN_RE = re.compile(r"[-_.]+")
@@ -82,6 +88,18 @@ class ServiceDependency(BaseModel):
         return value
 
 
+class CISpec(BaseModel):
+    """Request for a build-image CI workflow. Presence is the request.
+
+    Deliberately empty: no kind/registry/triggers until a second
+    implemented workflow kind exists — a discriminator now would be
+    false extensibility. Unknown keys are rejected loudly: a silently
+    dropped "kind" would no-op instead of failing the config.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class DeployTarget(BaseModel):
     """Declarative deploy intent: what is wanted, never how."""
 
@@ -94,6 +112,7 @@ class DeployTarget(BaseModel):
     extras: list[str] = Field(default_factory=list)
     entrypoint: str | None = Field(default=None, min_length=1)
     dependencies: list[ServiceDependency] = Field(default_factory=list)
+    ci: CISpec | None = None
 
     @model_validator(mode="after")
     def _service_and_run_exclusive(self) -> "DeployTarget":
@@ -115,6 +134,15 @@ class DeployTarget(BaseModel):
             names = [d.name for d in self.dependencies]
             if len(names) != len(set(names)):
                 raise ValueError("DeployTarget.dependencies names must be unique")
+        return self
+
+    @model_validator(mode="after")
+    def _ci_incompatible_with_dependencies(self) -> "DeployTarget":
+        if self.ci is not None and self.dependencies:
+            raise ValueError(
+                "DeployTarget.ci with dependencies is unsupported: "
+                "compose-aware CI is a later iteration"
+            )
         return self
 
     @field_validator("extras")
@@ -272,6 +300,7 @@ class VerificationReport(BaseModel):
 
     results: list[CheckResult] = Field(default_factory=list)
     hadolint_available: bool = False
+    actionlint_available: bool = False
     docker_available: bool = False
     image_size_bytes: int | None = None
     runtime: ContainerRuntime | None = None
@@ -306,6 +335,7 @@ class IterationRecord(BaseModel):
     index: int
     dockerfile: str
     compose: str | None = None
+    ci: str | None = None
     report: VerificationReport
     duration_s: float
 

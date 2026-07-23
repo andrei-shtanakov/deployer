@@ -12,6 +12,7 @@ from deployer.verify import verify
 
 CORPUS = Path(__file__).parent.parent / "corpus"
 EXPECTED_CASES = [
+    "ci-build",
     "compose-redis",
     "entrypoint-override",
     "extras-job",
@@ -46,6 +47,7 @@ def test_corpus_static_checks_pass_for_every_fixture() -> None:
             compose=(
                 case.fixture_compose.read_text() if case.fixture_compose else None
             ),
+            ci=case.fixture_ci.read_text() if case.fixture_ci else None,
         )
         assert report.passed, f"{case.name}: {report.model_dump_json(indent=2)}"
 
@@ -70,6 +72,7 @@ def test_corpus_fixture_verifies_end_to_end(name: str, runtime) -> None:
         runtime,
         analyze_project(case.project_dir),
         compose=case.fixture_compose.read_text() if case.fixture_compose else None,
+        ci=case.fixture_ci.read_text() if case.fixture_ci else None,
     )
     assert report.passed, f"{name}: {report.model_dump_json(indent=2)}"
 
@@ -119,3 +122,10 @@ def test_poetry_pin_matches_llm_constant() -> None:
 
     fixture = CORPUS / "synthetic" / "poetry-legacy" / "fixture.Dockerfile"
     assert f"poetry=={POETRY_VERSION}" in fixture.read_text()
+
+
+def test_checkout_pin_matches_llm_constant() -> None:
+    from deployer.llm import ACTIONS_CHECKOUT_PIN
+
+    fixture = CORPUS / "synthetic" / "ci-build" / "fixture.ci.yml"
+    assert ACTIONS_CHECKOUT_PIN in fixture.read_text()

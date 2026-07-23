@@ -1,6 +1,6 @@
 {
-  "promoted_from_label": "llm-compose",
-  "corpus_commit": "86521215a183c95c2099233cf28196dbafc3794e",
+  "promoted_from_label": "llm-ci",
+  "corpus_commit": "e28ed0c66619f171f86c7ddedade17c61f77d6cb",
   "deployer_version": "0.1.0",
   "author_backend": "anthropic",
   "runtime_tool": "podman",
@@ -9,6 +9,84 @@
   "build_timeout_s": 600,
   "health_timeout_s": 30,
   "cases": [
+    {
+      "case": "ci-build",
+      "success": true,
+      "stopped_reason": "success",
+      "iterations": 1,
+      "failure_kinds": [],
+      "image_size_bytes": 181326447,
+      "hadolint_status": "skipped",
+      "checks": [
+        {
+          "check_id": "parses",
+          "status": "passed",
+          "failure_kind": null
+        },
+        {
+          "check_id": "copy_sources",
+          "status": "passed",
+          "failure_kind": null
+        },
+        {
+          "check_id": "base_pinned",
+          "status": "passed",
+          "failure_kind": null
+        },
+        {
+          "check_id": "install_strategy",
+          "status": "passed",
+          "failure_kind": null
+        },
+        {
+          "check_id": "hadolint",
+          "status": "skipped",
+          "failure_kind": null
+        },
+        {
+          "check_id": "ci_present",
+          "status": "passed",
+          "failure_kind": null
+        },
+        {
+          "check_id": "ci_parses",
+          "status": "passed",
+          "failure_kind": null
+        },
+        {
+          "check_id": "ci_wiring",
+          "status": "passed",
+          "failure_kind": null
+        },
+        {
+          "check_id": "ci_pinned",
+          "status": "passed",
+          "failure_kind": null
+        },
+        {
+          "check_id": "actionlint",
+          "status": "passed",
+          "failure_kind": null
+        },
+        {
+          "check_id": "build",
+          "status": "passed",
+          "failure_kind": null
+        }
+      ],
+      "expected": {
+        "expected_success": true,
+        "max_iterations": 3,
+        "requires_l2": true,
+        "expected_failure_kind": null,
+        "capabilities": [
+          "ci"
+        ],
+        "notes": "build-only + ci: the workflow builds the same Dockerfile/context that pass L2, so the PAIR is verified coherent, not an isolated YAML"
+      },
+      "external_url": null,
+      "external_commit": null
+    },
     {
       "case": "compose-redis",
       "success": true,
@@ -158,7 +236,7 @@
       "stopped_reason": "success",
       "iterations": 1,
       "failure_kinds": [],
-      "image_size_bytes": 176916713,
+      "image_size_bytes": 176916716,
       "hadolint_status": "skipped",
       "checks": [
         {
@@ -216,9 +294,11 @@
       "case": "no-build-system",
       "success": true,
       "stopped_reason": "success",
-      "iterations": 1,
-      "failure_kinds": [],
-      "image_size_bytes": 176789679,
+      "iterations": 2,
+      "failure_kinds": [
+        "authoring"
+      ],
+      "image_size_bytes": 176789159,
       "hadolint_status": "skipped",
       "checks": [
         {
@@ -277,7 +357,7 @@
       "stopped_reason": "success",
       "iterations": 1,
       "failure_kinds": [],
-      "image_size_bytes": 157048314,
+      "image_size_bytes": 157048312,
       "hadolint_status": "skipped",
       "checks": [
         {
@@ -336,7 +416,7 @@
       "stopped_reason": "success",
       "iterations": 1,
       "failure_kinds": [],
-      "image_size_bytes": 157150374,
+      "image_size_bytes": 157150886,
       "hadolint_status": "skipped",
       "checks": [
         {
@@ -395,7 +475,7 @@
       "stopped_reason": "success",
       "iterations": 1,
       "failure_kinds": [],
-      "image_size_bytes": 148564461,
+      "image_size_bytes": 148564471,
       "hadolint_status": "skipped",
       "checks": [
         {
@@ -453,7 +533,7 @@
       "stopped_reason": "success",
       "iterations": 1,
       "failure_kinds": [],
-      "image_size_bytes": 158551033,
+      "image_size_bytes": 158551034,
       "hadolint_status": "skipped",
       "checks": [
         {
@@ -514,7 +594,7 @@
       "stopped_reason": "success",
       "iterations": 1,
       "failure_kinds": [],
-      "image_size_bytes": 367803494,
+      "image_size_bytes": 367803491,
       "hadolint_status": "skipped",
       "checks": [
         {
@@ -572,11 +652,9 @@
       "case": "uv-minimal",
       "success": true,
       "stopped_reason": "success",
-      "iterations": 2,
-      "failure_kinds": [
-        "authoring"
-      ],
-      "image_size_bytes": 180962458,
+      "iterations": 1,
+      "failure_kinds": [],
+      "image_size_bytes": 180962417,
       "hadolint_status": "skipped",
       "checks": [
         {

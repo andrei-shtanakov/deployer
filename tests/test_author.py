@@ -150,6 +150,7 @@ def test_environment_failure_retries_once_without_consuming_iteration(
         build_timeout,
         health_timeout,
         compose=None,
+        ci=None,
     ):
         calls["n"] += 1
         if calls["n"] == 1:
@@ -203,6 +204,7 @@ def test_hints_offered_recorded_and_facts_passed(
         build_timeout,
         health_timeout,
         compose=None,
+        ci=None,
     ):
         captured["facts"] = facts
         return VerificationReport(
@@ -232,6 +234,7 @@ def test_second_environment_failure_stops_run(hello_service: Path, monkeypatch) 
         build_timeout,
         health_timeout,
         compose=None,
+        ci=None,
     ):
         calls["n"] += 1
         return VerificationReport(
@@ -275,6 +278,7 @@ def test_author_forwards_timeouts_to_both_verify_calls(
         build_timeout,
         health_timeout,
         compose=None,
+        ci=None,
     ):
         captured.append(
             {"build_timeout": build_timeout, "health_timeout": health_timeout}
@@ -340,6 +344,7 @@ def test_run_with_runtime_survives_json_round_trip(
         build_timeout,
         health_timeout,
         compose=None,
+        ci=None,
     ):
         return VerificationReport(
             results=[CheckResult(check_id="parses", status=CheckStatus.PASSED)]
@@ -415,6 +420,7 @@ def test_author_forwards_compose_to_both_verify_calls(
         build_timeout,
         health_timeout,
         compose=None,
+        ci=None,
     ):
         captured.append({"compose": compose})
         if len(captured) == 1:  # first call: environment flake -> triggers retry
@@ -473,3 +479,36 @@ def test_author_single_artifact_contract_unchanged(tmp_path: Path) -> None:
     run = author_dockerfile(tmp_path, DeployTarget(), _Plain(), runtime=None)
     assert run.iterations[0].compose is None
     assert run.stopped_reason == "static_only"
+
+
+CI_TARGET = DeployTarget.model_validate_json('{"ci": {}}')
+
+
+def test_author_records_ci_artifact(tmp_path: Path) -> None:
+    (tmp_path / "main.py").write_text("if __name__ == '__main__':\n    pass\n")
+
+    class _CIAuthor:
+        def generate(self, facts, target):
+            return render_artifact_response(
+                "FROM python:3.12-slim\nCOPY main.py .", ci="name: ci"
+            )
+
+        def repair(self, facts, target, artifact_text, report, /):
+            return self.generate(facts, target)
+
+    run = author_dockerfile(tmp_path, CI_TARGET, _CIAuthor(), runtime=None)
+    assert run.iterations[0].ci == "name: ci"
+    assert run.iterations[0].compose is None
+
+
+def test_author_ci_parse_failure_is_artifact_format(tmp_path: Path) -> None:
+    class _Broken:
+        def generate(self, facts, target):
+            return "FROM python:3.12-slim"  # no ci section despite target.ci
+
+        def repair(self, facts, target, artifact_text, report, /):
+            return "FROM python:3.12-slim"
+
+    run = author_dockerfile(tmp_path, CI_TARGET, _Broken(), runtime=None)
+    assert [r.check_id for r in run.iterations[0].report.results] == ["artifact_format"]
+    assert run.iterations[0].ci is None
