@@ -4,10 +4,16 @@ Team-level open work for this repo. Implementation micro-steps live in
 `docs/superpowers/plans/`; this file is the "what is left" view and is also read by
 Robin's cross-mirror digest.
 
-Syntax: `- [ ]` open, `- [x]` done. Optional inline tags at the end of an item —
-`@owner:<handle>`, `@blocked_by:<repo>#<slug>`, `@trigger:"<checkable condition>"`.
-A missing tag means "unknown" on purpose; inventing a trigger is worse than leaving it
-out (format: `../_cowork_output/2026-07-26-plan-fields-and-todo-coverage-handoff.md`).
+Syntax: `- [ ]` open, `- [x]` done. Optional inline tags — `@owner:<handle>`,
+`@blocked_by:<repo>#<slug>`, `@trigger:"<checkable condition>"`. A missing tag means
+"unknown" on purpose; inventing a trigger is worse than leaving it out (format:
+`../_cowork_output/2026-07-26-plan-fields-and-todo-coverage-handoff.md`).
+
+**Tags must sit on the checkbox line itself, and a quoted value must not wrap.** Robin
+matches one line at a time (`robin-runtime/src/robin/plan_state.py:37,71`), so a tag on
+a continuation line is invisible to it and a `@trigger:"…"` broken across lines parses
+as the garbage value `"a`. Keep the first line self-contained and tagged; put the
+elaboration on the lines below it.
 
 ## Status (2026-07-26)
 
@@ -29,26 +35,25 @@ item below is the one that unblocks the rest.
 
 ## Research bench
 
-- [ ] Agent-with-tools comparison arm — author with tool access vs today's facts-only
-  prompt over the same corpus; the spec declares this arm, it was never built @owner:andrei
-- [ ] Baseline arm vs the official uv Dockerfile — measures what the agent adds over
-  the vendor template @owner:andrei
-- [ ] Second CI corpus case, then wire `actionlint_status` into bench comparability
-  @trigger:"a second ci corpus case exists"
+- [ ] Agent-with-tools comparison arm @owner:andrei — author with tool access vs
+  today's facts-only prompt over the same corpus; the spec declares this arm, it was
+  never built
+- [ ] Baseline arm vs the official uv Dockerfile @owner:andrei — measures what the
+  agent adds over the vendor template
+- [ ] Second CI corpus case, then `actionlint_status` in bench compare @trigger:"a second ci corpus case exists"
 - [ ] Install `hadolint` 2.12.0 on the bench machine — it is not on PATH here, so every
   golden so far is non-comparable on the hadolint axis
 - [ ] Test-kind CI target (current `{"ci": {}}` authors build-image only) and the
   registry-push contour (deliberately default-deny today)
-- [ ] Adopt the harness-eval discipline for the comparison arms above — one
-  intervention per run, condition-blind grading, an explicit taxonomy of invalid
+- [ ] Adopt the harness-eval discipline for the comparison arms above @owner:andrei —
+  one intervention per run, condition-blind grading, an explicit taxonomy of invalid
   runs (idea #4 of `../prograph-vault/authored/notes/2026-07-22-ideas-from-ai-repos-research.md`);
-  without it an arm measures model noise as well as the intervention @owner:andrei
+  without it an arm measures model noise as well as the intervention
 
 ## Verification hardening
 
-- [ ] Run-config seam: per-target persistence of build/health timeouts (the recording
-  half shipped in #10; the operator still has to pass the flag)
-  @trigger:"an external target again needs a non-default --build-timeout"
+- [ ] Run-config seam: per-target persistence of build/health timeouts @trigger:"an external target again needs a non-default --build-timeout"
+  — the recording half shipped in #10; the operator still has to pass the flag
 - [ ] Token-boundary entrypoint match — L1 `entrypoint_in_command` compares substrings,
   so short names like `app` false-pass
 - [ ] L1 rule: a run/service intent must COPY the entrypoint and `package_dirs`
@@ -63,10 +68,10 @@ item below is the one that unblocks the rest.
 - [ ] Poetry: list-valued optional-dependency constraints (`src/deployer/facts.py:248`)
 - [ ] Bench run-dir litter on config error; document `docker system prune` for bench
   hosts (failed builds leave containers plus dangling intermediates)
-- [ ] podman-remote transport marker unverified — the homelab host runs docker only
-  @trigger:"a podman remote host is available"
-- [ ] Stage-split / image-size signal in `bench compare` @trigger:"a golden regresses to
-  a single-stage image" (low urgency: the model now stage-splits unprompted)
+- [ ] podman-remote transport marker unverified @trigger:"a podman remote host is available"
+  — the homelab host runs docker only
+- [ ] Stage-split / image-size signal in `bench compare` @trigger:"a golden regresses to a single-stage image"
+  (low urgency: the model now stage-splits unprompted)
 - [ ] Small stuff, one PR: add E501 to ruff `extend-select`; COPY JSON-array form check;
   `healthcheck_path` validation; pids/cpu limits on container run; CLI `--no-docker`
   note wording; `no_progress` vs `budget_exhausted` coincidence; `DeployTarget.env`
@@ -74,24 +79,20 @@ item below is the one that unblocks the rest.
 
 ## Ecosystem seams
 
-- [ ] arbiter policy gate in front of any mutating action the bench grows
-  @blocked_by:deployer#post-phase-4-direction
-- [ ] ATP smoke-test of built artifacts as a verification level above L2
-  @blocked_by:deployer#post-phase-4-direction
-- [ ] Keep the MLOps seams of `docs/idea-mlops-layer.md` pluggable rather than built
-  @trigger:"a target needs eval hooks or promotion gates"
-- [ ] Watch research-bench Stage B (`../_cowork_output/plans/2026-07-25-stage-b-provider-design.md`,
-  approved 2026-07-25): its `VerificationProvider` protocol, append-only verdicts and
-  fail-closed `0/1/2` exit contract cover the same ground as L1/L2 here. If it
-  stabilises, vendor a pinned copy rather than growing a second shape
-  @trigger:"research-bench ships a stable VerificationProvider"
+- [ ] arbiter policy gate in front of any mutating action the bench grows @blocked_by:deployer#post-phase-4-direction
+- [ ] ATP smoke-test of built artifacts as a verification level above L2 @blocked_by:deployer#post-phase-4-direction
+- [ ] Keep the MLOps seams of `docs/idea-mlops-layer.md` pluggable, not built @trigger:"a target needs eval hooks or promotion gates"
+- [ ] Watch research-bench Stage B @trigger:"research-bench ships a stable VerificationProvider"
+  — `../_cowork_output/plans/2026-07-25-stage-b-provider-design.md` (approved 2026-07-25):
+  its `VerificationProvider` protocol, append-only verdicts and fail-closed `0/1/2` exit
+  contract cover the same ground as L1/L2 here. If it stabilises, vendor a pinned copy
+  rather than growing a second shape
 
 ## Cross-repo hygiene
 
-- [ ] Neighbour docs still describe deployer as "MVP / Dockerfile authoring"
-  (`../prograph-vault/authored/registry/registry.md`, the 2026-07-22 ideas note).
-  Both are read-only from here — write the correction as a handoff note, do not edit
-  @owner:andrei
+- [ ] Neighbour docs still describe deployer as "MVP / Dockerfile authoring" @owner:andrei
+  — `../prograph-vault/authored/registry/registry.md` and the 2026-07-22 ideas note.
+  Both are read-only from here: write the correction as a handoff note, do not edit
 
 ## Shipped
 

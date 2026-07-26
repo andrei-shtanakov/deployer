@@ -75,5 +75,9 @@ Verify subagent acceptance claims against the plan's expected values yourself; a
   чекбоксы `- [ ]`/`- [x]` плюс опциональные инлайн-теги `@owner:`/`@blocked_by:<repo>#<slug>`/
   `@trigger:"<проверяемое условие>"`; отсутствие тега значит «неизвестно» и это честнее
   выдуманного (формат: `../_cowork_output/2026-07-26-plan-fields-and-todo-coverage-handoff.md`,
-  парсер Robin умеет теги с robin-runtime#27).
+  парсер Robin умеет теги с robin-runtime#27). **Тег обязан стоять на самой строке
+  чекбокса, а значение в кавычках не переносится:** Robin матчит построчно
+  (`robin-runtime/src/robin/plan_state.py:37,71`), поэтому тег на строке продолжения он
+  не видит вовсе, а разорванный `@trigger:"…"` парсится в мусорное значение `"a`.
+  Ради этого длина строки пункта важнее 88 символов.
 - Полное правило (SSOT): `../prograph-vault/authored/rules/git-workflow.md`.
