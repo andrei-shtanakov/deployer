@@ -116,6 +116,13 @@ them is the next thing to pick up.
 
 ## Shipped
 
+Merged work, plus the decisions that closed an open item without being code — those are
+prefixed `Decision:` so the ledger does not imply shipped behaviour.
+
+- [x] Decision (2026-07-26, owner): post-Phase-4 direction is ecosystem seams, ahead of
+  further artifact types; closed the "choose the direction" item and replaced it with the
+  four sequenced items now under "Direction" (#24). Rationale lives there
+- [x] Plan file: `TODO.md` created, `CLAUDE.md` caught up with Phase 4 (#23)
 - [x] MVP: facts → prompt → authoring loop → L1/L2 verification (#1)
 - [x] Facts v2: requirements.txt, hints table, `system_packages` (#2)
 - [x] Timeout forwarding (#3), CLI hardening and exit-code taxonomy (#4)
