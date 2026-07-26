@@ -21,19 +21,39 @@ Phases 1–4 of `docs/superpowers/specs/2026-07-21-bench-remote-verify-design.md
 shipped and merged (PRs #10–#22). Bench: 11 synthetic corpus cases across three
 artifact types (Dockerfile / compose.yaml / ci.yml), LLM-authored golden at success
 rate 1.0 with every case converging in one iteration. Remote L2 over `ssh://` is
-accepted on the homelab docker host. There is no open roadmap past Phase 4 — the first
-item below is the one that unblocks the rest.
+accepted on the homelab docker host. The post-Phase-4 direction is decided (below); the
+seam audit is the item that unblocks the rest.
 
 ## Direction
 
-- [ ] Choose the post-Phase-4 direction and commit a spec for it @owner:andrei —
-  candidates: (a) further artifact types from the founding doc (Helm, Terraform),
-  (b) CI-failure diagnosis (the founding doc's other half: read a failed run, author
-  the fix), (c) ecosystem seams (arbiter gate / ATP smoke / Maestro workstream),
-  (d) deepen the bench itself via the comparison arms below. Everything under
-  "Ecosystem seams" hangs on this choice.
+**Decided 2026-07-26 (owner): ecosystem seams first, not more artifact types.** deployer
+can already author and verify Docker / compose / CI artifacts; before widening the
+surface to Helm or Terraform it is worth pinning down how those artifacts are actually
+consumed. Widening first risks building the next format in isolation and discovering the
+contract was wrong only after it has users. The order below is deliberate — each step is
+tagged with what blocks it, so the sequencing survives without anyone re-reading this
+paragraph.
+
+- [ ] Seam audit of the Phase-4 artifacts @owner:andrei — producer/consumer pairs,
+  artifact paths, status and error channels. Short and factual; its output is the
+  shortlist the next item picks from. Covers the candidate consumers (Maestro, Robin,
+  spec-runner) plus the two seams already listed below (arbiter, ATP)
+- [ ] Define and implement the first production consumer seam for Phase-4 deploy artifacts @blocked_by:deployer#seam-audit
+  — one executable vertical seam with a real consumer, not a survey. Spec first, per the
+  usual rhythm. **Boundary check before committing to a consumer:** deployer may only
+  build its own half. If the seam needs a change on the consumer's side, that is a
+  handoff plus their PR, so prefer a consumer whose half already exists or whose owner
+  has agreed — otherwise the "real consumer" is aspirational and the seam stalls half-built
+- [ ] CI-failure diagnosis — read a failed run, author the fix @blocked_by:deployer#first-consumer-seam
+  — the founding doc's other half, and the next applied slice once a seam is proven
+- [ ] Further artifact types: Helm, Terraform @blocked_by:deployer#first-consumer-seam
+  — deliberately last; wait until the extension contract is confirmed by a live consumer
 
 ## Research bench
+
+Per the 2026-07-26 decision, bench work is now driven by regressions the seams surface
+rather than pursued for its own sake. These items stay open and stay useful, but none of
+them is the next thing to pick up.
 
 - [ ] Agent-with-tools comparison arm @owner:andrei — author with tool access vs
   today's facts-only prompt over the same corpus; the spec declares this arm, it was
@@ -79,8 +99,8 @@ item below is the one that unblocks the rest.
 
 ## Ecosystem seams
 
-- [ ] arbiter policy gate in front of any mutating action the bench grows @blocked_by:deployer#post-phase-4-direction
-- [ ] ATP smoke-test of built artifacts as a verification level above L2 @blocked_by:deployer#post-phase-4-direction
+- [ ] arbiter policy gate in front of any mutating action the bench grows @blocked_by:deployer#seam-audit
+- [ ] ATP smoke-test of built artifacts as a verification level above L2 @blocked_by:deployer#seam-audit
 - [ ] Keep the MLOps seams of `docs/idea-mlops-layer.md` pluggable, not built @trigger:"a target needs eval hooks or promotion gates"
 - [ ] Watch research-bench Stage B @trigger:"research-bench ships a stable VerificationProvider"
   — `../_cowork_output/plans/2026-07-25-stage-b-provider-design.md` (approved 2026-07-25):
