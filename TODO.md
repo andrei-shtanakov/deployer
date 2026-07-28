@@ -9,6 +9,10 @@ Syntax: `- [ ]` open, `- [x]` done. Optional inline tags — `@owner:<handle>`,
 "unknown" on purpose; inventing a trigger is worse than leaving it out (format:
 `../_cowork_output/2026-07-26-plan-fields-and-todo-coverage-handoff.md`).
 
+`@id:<node-id>` is the canonical item identifier (ADR-ECO-005 PF-2B): lowercase grammar
+`[a-z0-9][a-z0-9._-]{0,63}`, forming the URI `todo://deployer/<id>`. `@blocked_by`
+transitionally accepts both legacy `<repo>#<slug>` and canonical `todo://<repo>/<id>`.
+
 **Tags must sit on the checkbox line itself, and a quoted value must not wrap.** Robin
 matches one line at a time (`robin-runtime/src/robin/plan_state.py:37,71`), so a tag on
 a continuation line is invisible to it and a `@trigger:"…"` broken across lines parses
