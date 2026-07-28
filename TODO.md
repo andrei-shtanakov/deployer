@@ -38,15 +38,15 @@ paragraph.
   artifact paths, status and error channels. Short and factual; its output is the
   shortlist the next item picks from. Covers the candidate consumers (Maestro, Robin,
   spec-runner) plus the two seams already listed below (arbiter, ATP)
-- [ ] Define and implement the first production consumer seam for Phase-4 deploy artifacts @blocked_by:deployer#seam-audit @id:first-consumer-seam
+- [ ] Define and implement the first production consumer seam for Phase-4 deploy artifacts @blocked_by:todo://deployer/seam-audit @id:first-consumer-seam
   — one executable vertical seam with a real consumer, not a survey. Spec first, per the
   usual rhythm. **Boundary check before committing to a consumer:** deployer may only
   build its own half. If the seam needs a change on the consumer's side, that is a
   handoff plus their PR, so prefer a consumer whose half already exists or whose owner
   has agreed — otherwise the "real consumer" is aspirational and the seam stalls half-built
-- [ ] CI-failure diagnosis — read a failed run, author the fix @blocked_by:deployer#first-consumer-seam @id:ci-failure-diagnosis
+- [ ] CI-failure diagnosis — read a failed run, author the fix @blocked_by:todo://deployer/first-consumer-seam @id:ci-failure-diagnosis
   — the founding doc's other half, and the next applied slice once a seam is proven
-- [ ] Further artifact types: Helm, Terraform @blocked_by:deployer#first-consumer-seam @id:further-artifact-types
+- [ ] Further artifact types: Helm, Terraform @blocked_by:todo://deployer/first-consumer-seam @id:further-artifact-types
   — deliberately last; wait until the extension contract is confirmed by a live consumer
 
 ## Research bench
@@ -99,8 +99,8 @@ them is the next thing to pick up.
 
 ## Ecosystem seams
 
-- [ ] arbiter policy gate in front of any mutating action the bench grows @blocked_by:deployer#seam-audit @id:arbiter-policy-gate-seam
-- [ ] ATP smoke-test of built artifacts as a verification level above L2 @blocked_by:deployer#seam-audit @id:atp-smoke-test-seam
+- [ ] arbiter policy gate in front of any mutating action the bench grows @blocked_by:todo://deployer/seam-audit @id:arbiter-policy-gate-seam
+- [ ] ATP smoke-test of built artifacts as a verification level above L2 @blocked_by:todo://deployer/seam-audit @id:atp-smoke-test-seam
 - [ ] Keep the MLOps seams of `docs/idea-mlops-layer.md` pluggable, not built @trigger:"a target needs eval hooks or promotion gates" @id:mlops-seams-pluggable
 - [ ] Watch research-bench Stage B @trigger:"research-bench ships a stable VerificationProvider" @id:watch-research-bench-stage-b
   — `../_cowork_output/plans/2026-07-25-stage-b-provider-design.md` (approved 2026-07-25):
