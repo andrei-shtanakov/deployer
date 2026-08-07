@@ -72,10 +72,12 @@ Verify subagent acceptance claims against the plan's expected values yourself; a
 - В PR, который закрывает пункт из `TODO.md`, переносить этот пункт в `## Shipped`
   и добавлять новые открытые пункты, если работа их породила. Файл читает
   кросс-репный дайджест — протухший `TODO.md` хуже отсутствующего. Синтаксис пунктов —
-  чекбоксы `- [ ]`/`- [x]` плюс опциональные инлайн-теги `@owner:`/`@blocked_by:<repo>#<slug>`/
-  `@trigger:"<проверяемое условие>"`; отсутствие тега значит «неизвестно» и это честнее
-  выдуманного (формат: `../_cowork_output/2026-07-26-plan-fields-and-todo-coverage-handoff.md`,
-  парсер Robin умеет теги с robin-runtime#27). **Тег обязан стоять на самой строке
+  чекбоксы `- [ ]`/`- [x]` плюс опциональные plan-fields v2 инлайн-теги
+  `@owner:<principal>` / `@blocked_by:todo://<repo>/<id>` /
+  `@trigger:"<проверяемое условие>"`; owner principal — `github:<login>`,
+  `github-team:<org>/<team>`, `repo:<manifest-key>` или `TBD`, а bare handle/role и
+  `<repo>#<slug>` blocker — только переходный legacy-синтаксис. Отсутствие тега значит
+  «неизвестно» и это честнее выдуманного. **Тег обязан стоять на самой строке
   чекбокса, а значение в кавычках не переносится:** Robin матчит построчно
   (`robin-runtime/src/robin/plan_state.py:37,71`), поэтому тег на строке продолжения он
   не видит вовсе, а разорванный `@trigger:"…"` парсится в мусорное значение `"a`.
