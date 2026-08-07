@@ -5,7 +5,8 @@ Team-level open work for this repo. Implementation micro-steps live in
 Robin's cross-mirror digest.
 
 Syntax: `- [ ]` open, `- [x]` done. Optional plan-fields v2 inline tags —
-`@owner:<principal>`, `@blocked_by:<repo>#<slug>`, `@trigger:"<checkable condition>"`.
+`@owner:<principal>`, `@blocked_by:todo://<repo>/<id>`,
+`@trigger:"<checkable condition>"`.
 For `@owner:` the canonical values are `github:<login>`, `github-team:<org>/<team>`,
 `repo:<manifest-key>`, and `TBD`; `<manifest-key>` is the canonical repository key in
 the workspace manifest, and bare handle/role values are legacy. A missing tag means
