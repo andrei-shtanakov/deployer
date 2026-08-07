@@ -4,10 +4,12 @@ Team-level open work for this repo. Implementation micro-steps live in
 `docs/superpowers/plans/`; this file is the "what is left" view and is also read by
 Robin's cross-mirror digest.
 
-Syntax: `- [ ]` open, `- [x]` done. Optional inline tags — `@owner:<handle>`,
-`@blocked_by:<repo>#<slug>`, `@trigger:"<checkable condition>"`. A missing tag means
-"unknown" on purpose; inventing a trigger is worse than leaving it out (format:
-`../_cowork_output/2026-07-26-plan-fields-and-todo-coverage-handoff.md`).
+Syntax: `- [ ]` open, `- [x]` done. Optional plan-fields v2 inline tags —
+`@owner:<principal>`, `@blocked_by:<repo>#<slug>`, `@trigger:"<checkable condition>"`.
+For `@owner:` the canonical values are `github:<login>`, `github-team:<org>/<team>`,
+`repo:<manifest-key>`, and `TBD`; `<manifest-key>` is the canonical repository key in
+the workspace manifest, and bare handle/role values are legacy. A missing tag means
+"unknown" on purpose; inventing a trigger is worse than leaving it out.
 
 `@id:<node-id>` is the canonical item identifier (ADR-ECO-005 PF-2B): lowercase grammar
 `[a-z0-9][a-z0-9._-]{0,63}`, forming the URI `todo://deployer/<id>`. `@blocked_by`
@@ -38,7 +40,7 @@ contract was wrong only after it has users. The order below is deliberate — ea
 tagged with what blocks it, so the sequencing survives without anyone re-reading this
 paragraph.
 
-- [ ] Seam audit of the Phase-4 artifacts @owner:andrei @id:seam-audit — producer/consumer pairs,
+- [ ] Seam audit of the Phase-4 artifacts @owner:github:andrei-shtanakov @id:seam-audit — producer/consumer pairs,
   artifact paths, status and error channels. Short and factual; its output is the
   shortlist the next item picks from. Covers the candidate consumers (Maestro, Robin,
   spec-runner) plus the two seams already listed below (arbiter, ATP)
@@ -59,17 +61,17 @@ Per the 2026-07-26 decision, bench work is now driven by regressions the seams s
 rather than pursued for its own sake. These items stay open and stay useful, but none of
 them is the next thing to pick up.
 
-- [ ] Agent-with-tools comparison arm @owner:andrei @id:agent-with-tools-arm — author with tool access vs
+- [ ] Agent-with-tools comparison arm @owner:github:andrei-shtanakov @id:agent-with-tools-arm — author with tool access vs
   today's facts-only prompt over the same corpus; the spec declares this arm, it was
   never built
-- [ ] Baseline arm vs the official uv Dockerfile @owner:andrei @id:baseline-uv-dockerfile-arm — measures what the
+- [ ] Baseline arm vs the official uv Dockerfile @owner:github:andrei-shtanakov @id:baseline-uv-dockerfile-arm — measures what the
   agent adds over the vendor template
 - [ ] Second CI corpus case, then `actionlint_status` in bench compare @trigger:"a second ci corpus case exists" @id:second-ci-corpus-case
 - [ ] Install `hadolint` 2.12.0 on the bench machine — it is not on PATH here, so every @id:install-hadolint
   golden so far is non-comparable on the hadolint axis
 - [ ] Test-kind CI target (current `{"ci": {}}` authors build-image only) and the @id:ci-test-kind-target
   registry-push contour (deliberately default-deny today)
-- [ ] Adopt the harness-eval discipline for the comparison arms above @owner:andrei @id:harness-eval-discipline —
+- [ ] Adopt the harness-eval discipline for the comparison arms above @owner:github:andrei-shtanakov @id:harness-eval-discipline —
   one intervention per run, condition-blind grading, an explicit taxonomy of invalid
   runs (idea #4 of `../prograph-vault/authored/notes/2026-07-22-ideas-from-ai-repos-research.md`);
   without it an arm measures model noise as well as the intervention
@@ -114,7 +116,7 @@ them is the next thing to pick up.
 
 ## Cross-repo hygiene
 
-- [ ] Neighbour docs still describe deployer as "MVP / Dockerfile authoring" @owner:andrei @id:neighbour-docs-correction
+- [ ] Neighbour docs still describe deployer as "MVP / Dockerfile authoring" @owner:github:andrei-shtanakov @id:neighbour-docs-correction
   — `../prograph-vault/authored/registry/registry.md` and the 2026-07-22 ideas note.
   Both are read-only from here: write the correction as a handoff note, do not edit
 
