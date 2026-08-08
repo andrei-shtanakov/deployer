@@ -68,10 +68,10 @@ them is the next thing to pick up.
 - [ ] Baseline arm vs the official uv Dockerfile @owner:github:andrei-shtanakov @id:baseline-uv-dockerfile-arm — measures what the
   agent adds over the vendor template
 - [ ] Second CI corpus case, then `actionlint_status` in bench compare @trigger:"a second ci corpus case exists" @id:second-ci-corpus-case
-- [ ] Install `hadolint` 2.12.0 on the bench machine — it is not on PATH here, so every @id:install-hadolint
-  golden so far is non-comparable on the hadolint axis
-- [ ] Test-kind CI target (current `{"ci": {}}` authors build-image only) and the @id:ci-test-kind-target
-  registry-push contour (deliberately default-deny today)
+- [ ] Install `hadolint` 2.12.0 on the bench machine @owner:github:andrei-shtanakov @id:install-hadolint
+  It is not on PATH here, so every golden so far is non-comparable on the hadolint axis
+- [ ] Test-kind CI target and registry-push contour @owner:repo:deployer @id:ci-test-kind-target
+  The current `{"ci": {}}` intent authors build-image only; registry push is deliberately default-deny today
 - [ ] Adopt the harness-eval discipline for the comparison arms above @owner:github:andrei-shtanakov @id:harness-eval-discipline —
   one intervention per run, condition-blind grading, an explicit taxonomy of invalid
   runs (idea #4 of `../prograph-vault/authored/notes/2026-07-22-ideas-from-ai-repos-research.md`);
@@ -81,25 +81,25 @@ them is the next thing to pick up.
 
 - [ ] Run-config seam: per-target persistence of build/health timeouts @trigger:"an external target again needs a non-default --build-timeout" @id:run-config-timeout-persistence
   — the recording half shipped in #10; the operator still has to pass the flag
-- [ ] Token-boundary entrypoint match — L1 `entrypoint_in_command` compares substrings, @id:entrypoint-token-boundary-match
+- [ ] Token-boundary entrypoint match — L1 `entrypoint_in_command` compares substrings, @owner:repo:deployer @id:entrypoint-token-boundary-match
   so short names like `app` false-pass
-- [ ] L1 rule: a run/service intent must COPY the entrypoint and `package_dirs` @id:l1-copy-entrypoint-rule
-- [ ] Unified pip-invocation parser — `pip --no-input install` still slips past the @id:unified-pip-parser
+- [ ] L1 rule: a run/service intent must COPY the entrypoint and `package_dirs` @owner:repo:deployer @id:l1-copy-entrypoint-rule
+- [ ] Unified pip-invocation parser — `pip --no-input install` still slips past the @owner:repo:deployer @id:unified-pip-parser
   payload-based poetry/pip install-strategy rules
-- [ ] Compose follow-ups: logs guard on a failed `up`, per-dependency env check @id:compose-follow-ups
+- [ ] Compose follow-ups: logs guard on a failed `up`, per-dependency env check @owner:repo:deployer @id:compose-follow-ups
   (postgres case), shared pin-rule helper, per-section fences
-- [ ] Failure classification channel: env failures carrying no markers ("exit status 1") @id:failure-classification-channel
+- [ ] Failure classification channel: env failures carrying no markers ("exit status 1") @owner:repo:deployer @id:failure-classification-channel
   and exit-125 non-transport CLI errors both classify AUTHORING
-- [ ] `.envrc` missing from `CONTEXT_IGNORE` (`src/deployer/verify.py:57`) — direnv @id:envrc-context-ignore
+- [ ] `.envrc` missing from `CONTEXT_IGNORE` (`src/deployer/verify.py:57`) — direnv @owner:repo:deployer @id:envrc-context-ignore
   files can carry secrets into the build context
-- [ ] Poetry: list-valued optional-dependency constraints (`src/deployer/facts.py:248`) @id:poetry-list-optional-deps
-- [ ] Bench run-dir litter on config error; document `docker system prune` for bench @id:bench-run-dir-litter
+- [ ] Poetry: list-valued optional-dependency constraints (`src/deployer/facts.py:248`) @owner:repo:deployer @id:poetry-list-optional-deps
+- [ ] Bench run-dir litter on config error; document `docker system prune` for bench @owner:repo:deployer @id:bench-run-dir-litter
   hosts (failed builds leave containers plus dangling intermediates)
 - [ ] podman-remote transport marker unverified @trigger:"a podman remote host is available" @id:podman-remote-marker
   — the homelab host runs docker only
 - [ ] Stage-split / image-size signal in `bench compare` @trigger:"a golden regresses to a single-stage image" @id:bench-stage-split-signal
   (low urgency: the model now stage-splits unprompted)
-- [ ] Small stuff, one PR: add E501 to ruff `extend-select`; COPY JSON-array form check; @id:small-stuff-bundle
+- [ ] Small stuff, one PR: add E501 to ruff `extend-select`; COPY JSON-array form check; @owner:repo:deployer @id:small-stuff-bundle
   `healthcheck_path` validation; pids/cpu limits on container run; CLI `--no-docker`
   note wording; `no_progress` vs `budget_exhausted` coincidence; `DeployTarget.env`
   semantics at run stage (inert by design — decide whether to reject or document)
