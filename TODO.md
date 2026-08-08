@@ -68,10 +68,10 @@ them is the next thing to pick up.
 - [ ] Baseline arm vs the official uv Dockerfile @owner:github:andrei-shtanakov @id:baseline-uv-dockerfile-arm — measures what the
   agent adds over the vendor template
 - [ ] Second CI corpus case, then `actionlint_status` in bench compare @trigger:"a second ci corpus case exists" @id:second-ci-corpus-case
-- [ ] Install `hadolint` 2.12.0 on the bench machine — it is not on PATH here, so every @owner:github:andrei-shtanakov @id:install-hadolint
-  golden so far is non-comparable on the hadolint axis
-- [ ] Test-kind CI target (current `{"ci": {}}` authors build-image only) and the @owner:repo:deployer @id:ci-test-kind-target
-  registry-push contour (deliberately default-deny today)
+- [ ] Install `hadolint` 2.12.0 on the bench machine @owner:github:andrei-shtanakov @id:install-hadolint
+  It is not on PATH here, so every golden so far is non-comparable on the hadolint axis
+- [ ] Test-kind CI target and registry-push contour @owner:repo:deployer @id:ci-test-kind-target
+  The current `{"ci": {}}` intent authors build-image only; registry push is deliberately default-deny today
 - [ ] Adopt the harness-eval discipline for the comparison arms above @owner:github:andrei-shtanakov @id:harness-eval-discipline —
   one intervention per run, condition-blind grading, an explicit taxonomy of invalid
   runs (idea #4 of `../prograph-vault/authored/notes/2026-07-22-ideas-from-ai-repos-research.md`);
