@@ -73,8 +73,9 @@ Verify subagent acceptance claims against the plan's expected values yourself; a
   `gh api -X POST repos/<owner>/<repo>/pulls/<n>/requested_reviewers -f 'reviewers[]=copilot-pull-request-reviewer[bot]'`.
 - **Не мержить.** Мерж делает пользователь.
 - После мержа пользователем: `git switch master && git pull --ff-only`, затем удалить
-  влитую ветку в **обеих половинах**: локально `git branch -d` (после squash-мержа `-d`
-  откажется — сверить, что `git diff master <ветка>` пуст, и удалить `-D`) и на origin
+  влитую ветку в **обеих половинах**: локально `git branch -d <ветка>` (после squash-мержа
+  `-d` откажется — сверить, что `git diff master <ветка>` пуст, и удалить
+  `git branch -D <ветка>`) и на origin
   `git push origin --delete <ветка>`, если GitHub не удалил сам; затем `git fetch --prune`.
 - Никогда не делать force-push в общие ветки; не трогать другие репо (см. scope выше).
 - В PR, который закрывает пункт из `TODO.md`, переносить этот пункт в `## Shipped`
