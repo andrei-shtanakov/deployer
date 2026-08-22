@@ -21,8 +21,9 @@
 # `repo:` is load-bearing, not decoration
 # -----------------------------------------------------------------------------
 # maestro keys a Mode-1 run by THIS field, never by the working directory the
-# process was started in: `identity_from_config` reads `repo_url:` when present
-# and otherwise takes the `origin` of the checkout `repo:` names
+# process was started in. `identity_from_config` first looks for a `repo_url:`
+# declaration; failing that, it treats `repo:` as a path to a checkout and
+# reads that checkout's `origin` remote
 # (maestro/maestro/repo_identity.py:103-135, called at run_bootstrap.py:68).
 # Everything downstream — which `runs/` directory the state lands in, which
 # repository dispatcher locks, which checkout the revision guard governs —
@@ -36,7 +37,25 @@
 # =============================================================================
 
 project: deployer-pilot
+
+# Why an absolute path, and why not a relative one — both settled by running
+# the producer, not by preference:
+#
+#   - a relative `repo:` is REFUSED outright: "Repository path must be an
+#     absolute path (starting with / or ~)". maestro will not load this file
+#     at all with `repo: .`;
+#   - `repo_url:` — which would be machine-independent — is a Mode-2 field.
+#     `ProjectConfig` (Mode 1) has no such field, so the option does not
+#     exist here.
+#
+# So `~`-relative is the most portable form the schema allows, and it is what
+# maestro's own example uses (maestro/examples/maestro-builds-maestro.yaml:18).
+# It does assume the fleet's layout — `~/labs/all_ai_orchestrators/<repo>`.
+# When that assumption is wrong the failure is loud, not silent: the path does
+# not resolve, `identity_from_checkout` raises `IdentityError`, and the run
+# refuses to start rather than picking some other repository.
 repo: ~/labs/all_ai_orchestrators/deployer
+
 max_concurrent: 1  # the three tasks are strictly ordered; nothing to overlap
 
 git:
