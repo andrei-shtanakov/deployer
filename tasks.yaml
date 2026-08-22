@@ -231,6 +231,12 @@ tasks:
 #     moving inside an agent run, which deserves its own decision rather than
 #     a quiet flag flip.
 #
-# Phase 2 of the TODO closure (`[x] … (#<pr>)`) waits on the same answer: it
-# needs a PR number, so it cannot be a task in this DAG.
+# Phase 2 of the TODO closure waits on the same answer: it needs a PR number,
+# so it cannot be a task in this DAG. When it happens, it is not just a tick —
+# this repository's own convention (CLAUDE.md, "Git workflow") is that a PR
+# closing a TODO item **moves that item into `## Shipped`** (TODO.md:124) and
+# adds any new open items the work produced. So phase 2 is: flip the box with
+# `(#<pr>)`, move the line under `## Shipped`, and record whatever the pass
+# turned up — including the push answer above. The cross-repo digest reads
+# this file, and a stale TODO.md is worse than a missing one.
 # =============================================================================
