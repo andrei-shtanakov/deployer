@@ -1,0 +1,217 @@
+# =============================================================================
+# Pilot DAG — Dark Factory pass 1
+# =============================================================================
+#
+# The first backlog item carried end-to-end by the dispatcher control plane
+# (slice 0, dispatcher spec 2026-08-22). It fixes ONE real defect in this
+# repository:
+#
+#   todo://deployer/entrypoint-token-boundary-match
+#   L1 `entrypoint_in_command` compares substrings, so short names like `app`
+#   false-pass against `application.py`.
+#
+# Run through the contour, not by hand:
+#   dispatcher UI → POST /api/runs/submit → maestro run tasks.yaml
+#
+# Running it directly (`uv run maestro run tasks.yaml`) works and is useful
+# while authoring, but it bypasses the durable request, the per-repository
+# lock and the receipt — which is the thing pass 1 is meant to exercise.
+#
+# -----------------------------------------------------------------------------
+# `repo:` is load-bearing, not decoration
+# -----------------------------------------------------------------------------
+# maestro keys a Mode-1 run by THIS field, never by the working directory the
+# process was started in: `identity_from_config` reads `repo_url:` when present
+# and otherwise takes the `origin` of the checkout `repo:` names
+# (maestro/maestro/repo_identity.py:103-135, called at run_bootstrap.py:68).
+# Everything downstream — which `runs/` directory the state lands in, which
+# repository dispatcher locks, which checkout the revision guard governs —
+# follows from it.
+#
+# Copying this file into another repository and forgetting to change `repo:`
+# would make maestro edit THIS clone while the request names the other one.
+# dispatcher refuses that mismatch since #167, by reading this field and
+# comparing it against the request. That check is the reason the mistake is
+# survivable; it is not a reason to be careless here.
+# =============================================================================
+
+project: deployer-pilot
+repo: ~/labs/all_ai_orchestrators/deployer
+max_concurrent: 1  # the three tasks are strictly ordered; nothing to overlap
+
+git:
+  base_branch: master   # deployer's default is `master`, and GitConfig's own
+                        # default is `main` — leaving it unset would branch
+                        # from a branch that does not exist here
+  auto_commit: true     # each task's result must be a commit: the red→green
+                        # pair below IS the evidence, and it only exists if
+                        # both halves land in history
+  auto_push: false      # pushing is outward-facing and belongs to the
+                        # contour's brokered short action, not to an agent
+                        # run. See the open question at the bottom of this
+                        # file — pass 1 has to settle who pushes.
+  branch_prefix: "pilot/"
+
+defaults:
+  timeout_minutes: 20
+  max_retries: 1
+  agent_type: claude_code
+
+tasks:
+  # ---------------------------------------------------------------------------
+  # 1. RED — the failing test, committed on its own
+  # ---------------------------------------------------------------------------
+  # Separate from the fix on purpose. If one task wrote the test and the fix
+  # together, "the test failed first" would be a claim in a report. As two
+  # commits it is a fact anyone can re-run: check out the first, run the test,
+  # watch it fail. That is what dispatcher spec §9.2 means by the contour
+  # carrying its own red/green evidence — deployer's CI runs no tests at all
+  # (its only workflow is the governance caller), so nothing else will produce
+  # this evidence for us.
+  # ---------------------------------------------------------------------------
+  - id: red-test
+    title: "Failing test: a short entrypoint must not match a longer filename"
+    prompt: |
+      `_check_entrypoint_in_command` in src/deployer/verify.py currently does
+      `if target.entrypoint in haystack:` — a plain substring test against the
+      raw text of the image's ENTRYPOINT/CMD arguments. So an operator
+      entrypoint of `app` passes against `CMD ["python", "application.py"]`,
+      which is a false pass: the image does not run `app` at all.
+
+      Add ONE test to tests/test_verify_static.py, beside the existing
+      entrypoint checks (they start at the `-- Task 3: L1 check
+      entrypoint_in_command --` comment, around line 818). It must:
+
+        - build a Dockerfile whose final stage is
+          `CMD ["python", "application.py"]`
+        - use a DeployTarget whose entrypoint is `app`
+        - assert the check FAILS
+
+      Follow the shape of the neighbouring tests exactly — `_project(tmp_path)`
+      for the tree, `_by_id(report, "entrypoint_in_command")` for the result.
+      Name it for the behaviour, not the bug number.
+
+      DO NOT touch src/deployer/verify.py in this task. The test must fail
+      when you are done, and that failure is the deliverable.
+
+      Run `uv run pytest tests/test_verify_static.py -v` and paste the failing
+      output into your report, with the assertion line. Then confirm the rest
+      of that file still passes — exactly one new failure, no others.
+    scope:
+      - "tests/test_verify_static.py"
+
+  # ---------------------------------------------------------------------------
+  # 2. GREEN — token-boundary matching
+  # ---------------------------------------------------------------------------
+  # The token model is decided here rather than left to the implementer,
+  # because it is a design decision with consequences for three existing tests
+  # and the golden corpus — dispatcher spec §9.1 calls it out as "a decision
+  # inside the pass", and a decision made silently mid-run is one nobody
+  # reviewed.
+  # ---------------------------------------------------------------------------
+  - id: token-match
+    title: "Match the entrypoint on token boundaries, not as a substring"
+    depends_on: [red-test]
+    prompt: |
+      Make the test from the previous task pass, without breaking the four
+      entrypoint tests already in tests/test_verify_static.py.
+
+      THE TOKEN MODEL — use this one, do not invent another:
+
+        Split the haystack into tokens on every character that cannot appear
+        in a filename or a [project.scripts] name — whitespace, `[`, `]`,
+        `"`, `'`, `,` — and compare each WHOLE token against the entrypoint.
+        A match is token equality, never containment.
+
+      Check it against every case that already exists, and put these in the
+      test file as the evidence that the model is right rather than merely
+      new:
+
+        exec form      CMD ["python", "app.py"]        entrypoint app.py   MATCH
+        shell form     CMD python app.py               entrypoint app.py   MATCH
+        scripts name   CMD ["serve"]                   entrypoint serve    MATCH
+        entrypoint+cmd ENTRYPOINT ["python","app.py"]  entrypoint app.py   MATCH
+        the new case   CMD ["python","application.py"] entrypoint app      NO
+        conservatism   CMD python -m main              entrypoint main.py  NO
+
+      The last row matters: the current docstring promises `python -m main`
+      does NOT satisfy `main.py`, and the token model must keep that promise.
+
+      Do NOT use a regex word-boundary (`\bapp\b`) for this. `.` is not a word
+      character, so `\bapp\b` matches INSIDE `app.py` — it would accept an
+      entrypoint of `app` against `CMD ["python", "app.py"]`, which is a
+      different false pass from the one we are fixing.
+
+      Update the function's docstring in the same edit. It currently states
+      the substring behaviour as deliberate ("Substring match covers exec
+      form, shell form, and [project.scripts] names alike; deliberately
+      conservative") — that sentence becomes false with this change, and a
+      docstring describing behaviour the code no longer has is worse than
+      none.
+
+      Then check corpus/golden/golden.json: it pins `entrypoint_in_command`
+      results (around line 199). If any golden entry changes, regenerate it
+      the way this repo regenerates goldens and say in your report which
+      entries moved and why. If none change, say that too — silence here
+      reads as "not checked".
+
+      Run `uv run pytest -v` (the whole suite, not just the one file) and
+      paste the result.
+    scope:
+      - "src/deployer/verify.py"
+      - "tests/test_verify_static.py"
+      - "corpus/golden/golden.json"
+    validation_cmd: "uv run pytest tests/test_verify_static.py -q"
+
+  # ---------------------------------------------------------------------------
+  # 3. Phase 1 of closing the item — annotate, do not tick
+  # ---------------------------------------------------------------------------
+  # dispatcher spec §8.1: the box cannot be ticked here, because the PR number
+  # does not exist yet and a `[x]` without one is exactly the memory-retired
+  # record the whole contour exists to replace. Phase 2 — flipping the box
+  # with `(#<pr>)` — happens after the PR is opened. See the open question.
+  # ---------------------------------------------------------------------------
+  - id: todo-phase-1
+    title: "Annotate the TODO item with the branch carrying the fix"
+    depends_on: [token-match]
+    prompt: |
+      In TODO.md, find the checkbox line whose id is
+      `@id:entrypoint-token-boundary-match` (around line 84).
+
+      Leave it as `- [ ]`. It is not done: nothing is merged.
+
+      Add the branch carrying the work to the continuation line beneath it, in
+      the style the surrounding entries use for extra detail. Do NOT put it on
+      the checkbox line itself and do NOT add tags there — that line is parsed
+      line-by-line and is already at its useful length.
+
+      Do not add `[x]`, do not add a PR number, do not remove the line. The
+      repository's own convention (CLAUDE.md, "Планы") is that a closed item
+      carries `[x]` AND a PR number, and that a line is never deleted because
+      delta counters read a disappearance as "closed".
+    scope:
+      - "TODO.md"
+
+# =============================================================================
+# Open question pass 1 has to settle — do not paper over it
+# =============================================================================
+# `auto_push` is false above, so this DAG produces commits on a local branch
+# and nothing more. For a PR to exist, that branch must reach the remote.
+#
+# What is NOT known at authoring time: whether the contour's `open-pr` short
+# action pushes the branch itself, or expects it already pushed. The vendored
+# contract (dispatcher contracts/github-checker-actions/v1) describes the
+# RESULT of the verb — `pr_url`, `pr_state`, `ok` — and says nothing about
+# push behaviour, and guessing from the result shape is exactly the kind of
+# reading-instead-of-running that has been wrong repeatedly on this contour.
+#
+# So pass 1 determines it by observation, and records the answer here:
+#   - if `open-pr` pushes, this file needs no change;
+#   - if it does not, either the contour gains a push step or `auto_push`
+#     becomes true — and if it becomes true, that is an outward-facing action
+#     moving inside an agent run, which deserves its own decision rather than
+#     a quiet flag flip.
+#
+# Phase 2 of the TODO closure (`[x] … (#<pr>)`) waits on the same answer: it
+# needs a PR number, so it cannot be a task in this DAG.
+# =============================================================================
