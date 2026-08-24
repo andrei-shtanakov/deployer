@@ -117,6 +117,10 @@ them is the next thing to pick up.
 
 ## Cross-repo hygiene
 
+- [ ] Drop the pilot-DAG branch-precondition task once maestro isolates Mode-1 runs @blocked_by:maestro#216 @id:pilot-dag-drop-branch-precondition
+  — the `branch-precondition` task in `tasks.yaml` is the explicitly named stopgap
+  for Mode 1 silently ignoring `branch_prefix` (inbox deployer#34); when maestro#216
+  ships run-level isolation, the check and the operator's manual-switch step go away
 - [ ] Neighbour docs still describe deployer as "MVP / Dockerfile authoring" @owner:github:andrei-shtanakov @id:neighbour-docs-correction
   — `../prograph-vault/authored/registry/registry.md` and the 2026-07-22 ideas note.
   Both are read-only from here: write the correction as a handoff note, do not edit
@@ -126,6 +130,11 @@ them is the next thing to pick up.
 Merged work, plus the decisions that closed an open item without being code — those are
 prefixed `Decision:` so the ledger does not imply shipped behaviour.
 
+- [x] Pilot DAG hardening (inbox deployer#34, slug `pilot-dag-branch-precondition`, #35):
+  first task verifies the branch precondition (clean checkout on `pilot/<slug>`,
+  never `master`/`main`) instead of relying on `branch_prefix`, which Mode-1 maestro
+  silently ignores (upstream: maestro#216); `branch_prefix` comment made honest;
+  `logs/` added to `.gitignore` (maestro writes run logs into the worktree)
 - [x] Decision (2026-07-26, owner): post-Phase-4 direction is ecosystem seams, ahead of
   further artifact types; closed the "choose the direction" item and replaced it with the
   four sequenced items now under "Direction" (#24). Rationale lives there
