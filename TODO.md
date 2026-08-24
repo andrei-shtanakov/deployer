@@ -81,8 +81,6 @@ them is the next thing to pick up.
 
 - [ ] Run-config seam: per-target persistence of build/health timeouts @trigger:"an external target again needs a non-default --build-timeout" @id:run-config-timeout-persistence
   — the recording half shipped in #10; the operator still has to pass the flag
-- [ ] Token-boundary entrypoint match — L1 `entrypoint_in_command` compares substrings, @owner:repo:deployer @id:entrypoint-token-boundary-match
-  so short names like `app` false-pass — branch: pilot/entrypoint-token-boundary-match
 - [ ] L1 rule: a run/service intent must COPY the entrypoint and `package_dirs` @owner:repo:deployer @id:l1-copy-entrypoint-rule
 - [ ] Unified pip-invocation parser — `pip --no-input install` still slips past the @owner:repo:deployer @id:unified-pip-parser
   payload-based poetry/pip install-strategy rules
@@ -130,6 +128,19 @@ them is the next thing to pick up.
 Merged work, plus the decisions that closed an open item without being code — those are
 prefixed `Decision:` so the ledger does not imply shipped behaviour.
 
+- [x] Token-boundary entrypoint match — #36 @owner:repo:deployer @id:entrypoint-token-boundary-match
+  `_check_entrypoint_in_command` split the haystack on characters that cannot appear
+  in a filename or a `[project.scripts]` name and now requires whole-token equality,
+  so `app` no longer passes against `CMD ["python", "application.py"]`; the docstring
+  was rewritten with the behaviour rather than left describing the substring rule.
+  **First backlog item carried end-to-end by the Dark Factory contour** (dispatcher
+  slice 0, run `01M0SE57CPBY1GEQ8MGVY5B6GX`, request issued from the UI). Two results,
+  deliberately kept apart: task execution and verification PASSED (red/green
+  reproduced by hand, 475 passed); branch isolation FAILED — Mode-1 maestro committed
+  straight to `master` and the commits were recovered by hand, `master` returned to
+  `f12c15f`. `auto_push: false`, so the protected remote was never touched. That
+  failure, not this fix, is the pilot's most valuable output — upstream contract in
+  maestro#216, precondition in #35.
 - [x] Pilot DAG hardening (inbox deployer#34, slug `pilot-dag-branch-precondition`, #35):
   first task verifies the branch precondition (clean checkout on `pilot/<slug>`,
   never `master`/`main`) instead of relying on `branch_prefix`, which Mode-1 maestro
