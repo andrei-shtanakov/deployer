@@ -18,6 +18,19 @@
 # lock and the receipt — which is the thing pass 1 is meant to exercise.
 #
 # -----------------------------------------------------------------------------
+# Operator precondition (temporary until andrei-shtanakov/maestro#216)
+# -----------------------------------------------------------------------------
+# BEFORE submitting the run, create and switch this checkout to
+# `pilot/entrypoint-token-boundary-match` yourself. Mode 1 has no run-level
+# branch isolation — `branch_prefix` below is silently ignored — so with
+# `auto_commit: true` the run commits to whatever branch is checked out. The
+# first pilot pass landed its commits straight on `master` exactly this way
+# (deployer#34); `master` had to be rolled back by hand. The first task of the
+# DAG verifies this precondition and stops the run before anything is written
+# if the checkout is wrong. This is an explicitly named stopgap for the period
+# until maestro#216, not a permanent scheme.
+#
+# -----------------------------------------------------------------------------
 # `repo:` is load-bearing, not decoration
 # -----------------------------------------------------------------------------
 # maestro keys a Mode-1 run by THIS field, never by the working directory the
@@ -70,6 +83,16 @@ git:
                         # run. See the open question at the bottom of this
                         # file — pass 1 has to settle who pushes.
   branch_prefix: "pilot/"
+                        # ^ Mode 1 IGNORES this setting silently. GitManager,
+                        # its only consumer, is constructed on the Mode-2 path
+                        # alone (maestro/cli.py:1783); Mode-1 `run_command`
+                        # creates no branches at all, so the run writes to the
+                        # branch that is checked out. Tracked upstream as
+                        # andrei-shtanakov/maestro#216. Until that lands, the
+                        # `branch-precondition` task below is the actual guard,
+                        # and the operator switches to `pilot/<slug>` before
+                        # submitting (see the header). Kept here for the day
+                        # the setting becomes real.
 
 defaults:
   timeout_minutes: 20
@@ -77,6 +100,44 @@ defaults:
   agent_type: claude_code
 
 tasks:
+  # ---------------------------------------------------------------------------
+  # 0. PRECONDITION — verify the branch, do not create it
+  # ---------------------------------------------------------------------------
+  # Why verify instead of `git switch -c` (deployer#34): a switch inside the
+  # task would be an agent action, not a runtime guarantee — the agent can
+  # refuse or err and leave the run on `master`, and by the time task 1 starts
+  # the checkout is already treated as accepted, smearing the isolation
+  # contract across every DAG. A precondition check has no such flaw: it
+  # either confirms the state the operator already established, or stops the
+  # run before anything is written. The `validation_cmd` repeats the check
+  # deterministically, so even an agent that wrongly reports success cannot
+  # let the run proceed on the wrong branch.
+  # ---------------------------------------------------------------------------
+  - id: branch-precondition
+    title: "Precondition: clean checkout on pilot/entrypoint-token-boundary-match"
+    prompt: |
+      Verify that the working copy is ready for this pilot run. Change
+      NOTHING: no file edits, and no git commands that mutate state (no
+      switch, no branch, no stash, no checkout). Run exactly these two
+      read-only commands:
+
+        git rev-parse --abbrev-ref HEAD
+        git status --porcelain
+
+      The run may proceed only if BOTH of the following hold:
+
+        - the current branch is exactly `pilot/entrypoint-token-boundary-match`
+          (in particular it is NOT `master` and NOT `main`);
+        - `git status --porcelain` prints nothing (the tree is clean).
+
+      If either check fails, report the exact mismatch and FAIL this task.
+      Do not attempt to repair the state and do not create or switch
+      branches — the operator fixes the checkout and resubmits the run.
+    validation_cmd: >-
+      bash -c 'test "$(git rev-parse --abbrev-ref HEAD)" =
+      "pilot/entrypoint-token-boundary-match" && test -z
+      "$(git status --porcelain)"'
+
   # ---------------------------------------------------------------------------
   # 1. RED — the failing test, committed on its own
   # ---------------------------------------------------------------------------
@@ -90,6 +151,7 @@ tasks:
   # ---------------------------------------------------------------------------
   - id: red-test
     title: "Failing test: a short entrypoint must not match a longer filename"
+    depends_on: [branch-precondition]
     prompt: |
       `_check_entrypoint_in_command` in src/deployer/verify.py currently does
       `if target.entrypoint in haystack:` — a plain substring test against the

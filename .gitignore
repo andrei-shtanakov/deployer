@@ -85,3 +85,7 @@ Thumbs.db
 .superpowers/
 
 .deployer-runs/
+
+# maestro Mode-1 пишет логи прогона в рабочее дерево (deployer#34);
+# при auto_commit: true без этой строки они попадают в коммит
+logs/
