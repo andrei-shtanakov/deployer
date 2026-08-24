@@ -60,6 +60,7 @@ CONTEXT_IGNORE = (
     ".deployer",
     ".env",
     ".env.*",
+    ".envrc",  # direnv — may contain secrets exported into the shell
     "__pycache__",
     ".pytest_cache",
     ".ruff_cache",
@@ -70,8 +71,8 @@ CONTEXT_IGNORE = (
 def _isolated_context(project_path: Path) -> Iterator[Path]:
     """Deterministic temp build context: the project minus CONTEXT_IGNORE.
 
-    Restores the MVP invariant "no secrets in the build context, ever" —
-    with a remote daemon the context leaves the machine entirely.
+    Excludes secrets/local-env files (.env, .env.*, .envrc) and tool caches
+    so they never reach a remote daemon where the context leaves the machine.
     """
     with tempfile.TemporaryDirectory(prefix="deployer-context-") as tmp:
         context = Path(tmp) / "context"
