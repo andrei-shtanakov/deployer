@@ -1,0 +1,176 @@
+# =============================================================================
+# Pilot DAG — Dark Factory pass 1, second run
+# =============================================================================
+#
+# The FIRST run (tasks.yaml) is spent: its item shipped in #36 and its work is
+# in master, so that DAG can no longer be replayed — its red half asks for a
+# failing test against a defect that no longer exists. It stays as the record
+# of pass 1's first attempt: task execution PASSED, branch isolation FAILED.
+#
+# This DAG is the acceptance run. It carries ONE real defect end-to-end:
+#
+#   todo://deployer/envrc-context-ignore
+#   `.envrc` is missing from CONTEXT_IGNORE (src/deployer/verify.py:57), so
+#   direnv files are copied into the build context. With `--container-host`
+#   the context leaves the machine entirely, so a secret in `.envrc` leaves
+#   with it.
+#
+# Verified by running the matcher, not by reading it: `.env` and `.env.local`
+# are excluded, `.envrc` is NOT — fnmatch does not treat `.env.*` as covering
+# `.envrc`, because there is no dot after `env`.
+#
+# What makes THIS run the acceptance and the first one not: branch isolation
+# is now a guarantee of the runtime (`git.run_branch`, maestro#216 phase A),
+# not an operator step before submit and not a task inside the DAG. The launch
+# is UI-driven with nothing done by hand first — which is exactly what pass 1
+# claims and what the first run could not show.
+#
+# Run through the contour, not by hand:
+#
+#   dispatcher UI → POST /api/runs/submit → maestro run tasks-envrc-context-ignore.yaml
+#
+# -----------------------------------------------------------------------------
+# `repo:` is load-bearing, not decoration
+# -----------------------------------------------------------------------------
+# maestro keys a Mode-1 run by THIS field, never by the working directory the
+# process was started in: `identity_from_config` looks for `repo_url:` first
+# and, failing that, reads this checkout's `origin`
+# (maestro/repo_identity.py:103-135). Everything downstream follows from it —
+# which `runs/` directory the state lands in, which repository dispatcher
+# locks, which checkout the revision guard governs.
+#
+# A relative `repo:` is refused outright, and `repo_url:` is a Mode-2 field
+# that `ProjectConfig` does not have. `~`-relative is the most portable form
+# this schema allows; when the layout assumption is wrong the failure is loud
+# (`IdentityError`), never a silently different repository.
+project: deployer-pilot-envrc
+repo: ~/labs/all_ai_orchestrators/deployer
+
+max_concurrent: 1  # strictly ordered; nothing to overlap
+
+git:
+  base_branch: master   # deployer's default; GitConfig's own default is `main`
+  auto_commit: true     # each task's result is a commit — the red→green pair
+                        # IS the evidence, and it exists only in history
+  auto_push: false      # pushing is outward-facing; it belongs to a human or
+                        # to the contour's brokered action, not to an agent run
+  run_branch: pilot/envrc-context-ignore
+                        # Run-level isolation (maestro#216 part 2, phase A).
+                        # The runtime verifies or CREATES this branch from
+                        # `base_branch` BEFORE the run is published, so the
+                        # guarantee does not depend on a task carrying it out
+                        # and no operator step precedes the launch.
+                        #
+                        # A dirty tree is refused, never stashed: the stash is
+                        # shared across every worktree of this workspace, and
+                        # with auto_commit an operator's uncommitted work would
+                        # otherwise be swept into an agent's commit.
+
+defaults:
+  timeout_minutes: 20
+  max_retries: 1
+  agent_type: claude_code
+
+tasks:
+  # ---------------------------------------------------------------------------
+  # 1. RED — the failing test, committed on its own
+  # ---------------------------------------------------------------------------
+  # Separate from the fix on purpose. Written together, "the test failed first"
+  # would be a claim in a report; as two commits it is a fact anyone can
+  # re-run. deployer's CI runs no tests at all (its only workflow is the
+  # governance caller), so nothing else will produce this evidence.
+  # ---------------------------------------------------------------------------
+  - id: red-test
+    title: "Failing test: .envrc must not reach the isolated build context"
+    prompt: |
+      `CONTEXT_IGNORE` in src/deployer/verify.py (around line 57) lists the
+      paths `_isolated_context` keeps out of the build context. It covers
+      `.env` and `.env.*`, but NOT `.envrc` — and `.env.*` does not cover it,
+      because fnmatch needs a dot after `env`. A direnv file therefore lands
+      in the context, and with `--container-host` the context leaves the
+      machine.
+
+      Add ONE test to tests/test_verify_static.py, beside
+      `test_isolated_context_excludes_secrets_and_junk` (around line 499).
+      Follow that test's shape exactly — same `tmp_path` style, same
+      `with _isolated_context(tmp_path) as ctx:` form.
+
+      It must assert BOTH directions:
+
+        - `.envrc` written into the project is NOT present in `ctx`
+          (this is the assertion that fails today, and it is the deliverable);
+        - a normal source file named `envrc.py` IS still present.
+
+      The second assertion is not padding: it is what stops the fix from
+      being an over-broad pattern like `*envrc*` that would silently drop
+      legitimate files. A test that only checks the exclusion would pass for
+      a fix that is worse than the bug.
+
+      Name the test for the behaviour, not for the bug number.
+
+      DO NOT touch src/deployer/verify.py in this task. The test must fail
+      when you are done, and that failure is the deliverable.
+
+      Run `uv run pytest tests/test_verify_static.py -v` and paste the failing
+      output into your report, with the assertion line. Then confirm the rest
+      of that file still passes — exactly one new failure, no others.
+    # EXACTLY one failure, not "some failure": a collection error or a test
+    # broken by accident would otherwise satisfy a looser check, and the red
+    # half would be evidence of nothing.
+    validation_cmd: >-
+      bash -c 'uv run pytest tests/test_verify_static.py -q 2>&1 |
+      grep -qE "^1 failed,"'
+
+  # ---------------------------------------------------------------------------
+  # 2. GREEN — the narrowest fix that satisfies it
+  # ---------------------------------------------------------------------------
+  - id: implement
+    title: "Keep .envrc out of the build context"
+    prompt: |
+      Make the test from the previous task pass, without breaking the
+      context-isolation tests already in tests/test_verify_static.py.
+
+      The fix is one entry: add `.envrc` to `CONTEXT_IGNORE` in
+      src/deployer/verify.py, beside `.env` and `.env.*`.
+
+      Use the literal name, NOT a wildcard. `shutil.ignore_patterns` matches
+      with fnmatch, so `.envrc` excludes exactly that file, while a pattern
+      like `.envrc*` or `*envrc*` would also drop `.envrc.example` and any
+      source file whose name happens to contain it. The previous task's second
+      assertion exists to catch precisely that.
+
+      Check whether the docstring or comment around `CONTEXT_IGNORE` and
+      `_isolated_context` describes what is excluded. If it enumerates the
+      categories, it must now mention direnv — a comment that describes
+      behaviour the code no longer has is worse than none.
+
+      Run `uv run pytest -v` (the whole suite, not just the one file) and
+      paste the result.
+    depends_on: [red-test]
+    validation_cmd: uv run pytest tests/test_verify_static.py -q
+
+  # ---------------------------------------------------------------------------
+  # 3. VERIFY — the whole suite, and the diff says what it claims
+  # ---------------------------------------------------------------------------
+  - id: verify
+    title: "Full suite green, and the change is exactly what was asked"
+    prompt: |
+      Confirm the run's own output, and report honestly if it does not hold.
+
+      1. `uv run pytest` — the whole suite. Paste the summary line.
+      2. `uv run ruff format --check . && uv run ruff check . && uv run pyrefly check`
+         — paste each result.
+      3. `git diff master...HEAD --stat` and then the full diff. Confirm it
+         touches ONLY tests/test_verify_static.py and src/deployer/verify.py,
+         and that the change to verify.py is the single `.envrc` entry plus,
+         if needed, the comment. Anything else in the diff is a finding:
+         report it, do not remove it silently.
+      4. Confirm TODO.md is UNCHANGED. The item `@id:envrc-context-ignore`
+         stays `- [ ]` and stays where it is: nothing is merged yet, and a
+         closed item needs `[x]` WITH a PR number, which does not exist while
+         this run is executing. Closing it is a separate phase after the merge.
+
+      If any of the four does not hold, say so plainly and FAIL this task.
+      A green report over a red fact is the one outcome this pilot cannot use.
+    depends_on: [implement]
+    validation_cmd: uv run pytest -q

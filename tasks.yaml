@@ -1,6 +1,14 @@
 # =============================================================================
-# Pilot DAG — Dark Factory pass 1
+# Pilot DAG — Dark Factory pass 1, FIRST run (SPENT — do not replay)
 # =============================================================================
+#
+# This DAG has run and its item shipped in #36; the fix and the test are in
+# master. It can no longer be replayed: `red-test` asks for a failing test
+# against a defect that no longer exists, so the task is unsatisfiable by
+# construction. Kept as the record of the first attempt — task execution
+# PASSED, branch isolation FAILED (Mode 1 committed to `master`; the commits
+# were recovered by hand). The acceptance run is
+# `tasks-envrc-context-ignore.yaml`.
 #
 # The first backlog item carried end-to-end by the dispatcher control plane
 # (slice 0, dispatcher spec 2026-08-22). It fixes ONE real defect in this
