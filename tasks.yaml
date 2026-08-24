@@ -90,9 +90,10 @@ git:
                         # branch that is checked out. Tracked upstream as
                         # andrei-shtanakov/maestro#216. Until that lands, the
                         # `branch-precondition` task below is the actual guard,
-                        # and the operator switches to `pilot/<slug>` before
-                        # submitting (see the header). Kept here for the day
-                        # the setting becomes real.
+                        # and the operator switches to the ONE branch this DAG
+                        # accepts — `pilot/entrypoint-token-boundary-match` —
+                        # before submitting (see the header). Kept here for
+                        # the day the setting becomes real.
 
 defaults:
   timeout_minutes: 20
