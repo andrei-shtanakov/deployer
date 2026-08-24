@@ -358,14 +358,18 @@ def _check_entrypoint_in_command(
     """The image's effective command must reference the operator entrypoint.
 
     Only the final stage counts: a builder-stage CMD is not the image's
-    command. Substring match covers exec form, shell form, and
-    [project.scripts] names alike; deliberately conservative (e.g.
-    `python -m main` does not satisfy `main.py`).
+    command. The haystack is split on every character that cannot appear in
+    a filename or [project.scripts] name — whitespace and JSON-array
+    punctuation ([ ] " ' ,) — and a match requires whole-token equality.
+    This handles exec form, shell form, and script names while preventing
+    a short entrypoint like `app` from matching inside `application.py`.
+    Conservative: `python -m main` does not satisfy `main.py`.
     """
     assert target.entrypoint is not None
     entry_args, cmd_args = _final_stage_commands(instructions)
     haystack = " ".join(a for a in (entry_args, cmd_args) if a is not None)
-    if target.entrypoint in haystack:
+    tokens = [t for t in re.split(r"""[\s\[\]"',]+""", haystack) if t]
+    if target.entrypoint in tokens:
         return CheckResult(check_id="entrypoint_in_command", status=CheckStatus.PASSED)
     return CheckResult(
         check_id="entrypoint_in_command",
