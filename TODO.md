@@ -88,8 +88,6 @@ them is the next thing to pick up.
   (postgres case), shared pin-rule helper, per-section fences
 - [ ] Failure classification channel: env failures carrying no markers ("exit status 1") @owner:repo:deployer @id:failure-classification-channel
   and exit-125 non-transport CLI errors both classify AUTHORING
-- [ ] `.envrc` missing from `CONTEXT_IGNORE` (`src/deployer/verify.py:57`) — direnv @owner:repo:deployer @id:envrc-context-ignore
-  files can carry secrets into the build context
 - [ ] Poetry: list-valued optional-dependency constraints (`src/deployer/facts.py:248`) @owner:repo:deployer @id:poetry-list-optional-deps
 - [ ] Bench run-dir litter on config error; document `docker system prune` for bench @owner:repo:deployer @id:bench-run-dir-litter
   hosts (failed builds leave containers plus dangling intermediates)
@@ -128,6 +126,20 @@ them is the next thing to pick up.
 Merged work, plus the decisions that closed an open item without being code — those are
 prefixed `Decision:` so the ledger does not imply shipped behaviour.
 
+- [x] `.envrc` kept out of the build context — #40 @owner:repo:deployer @id:envrc-context-ignore
+  `.env.*` never covered `.envrc` (fnmatch needs a dot after `env`), so direnv
+  files reached the context — and with `--container-host` left the machine.
+  Fixed with the literal `.envrc`, never a wildcard: the test pins two
+  survivors, `envrc.py` against `*envrc*` and `.envrc.example` against
+  `.envrc*` (the second added after #40's review caught that the first alone
+  covered only the exotic slip).
+  **The acceptance run of the Dark Factory contour** (dispatcher slice 0, run
+  `01M0T5HA1PW0J0GWTCGMZVFWW0`, request issued from the UI). Unlike the first
+  pass (#36, isolation FAILED), branch isolation here was a guarantee of the
+  runtime: `git.run_branch` (maestro#216 phase A) created
+  `pilot/envrc-context-ignore` from `master` before the run was published, and
+  no git command was run by hand before the launch. `master` never moved.
+  Red/green reproduced by hand against the red commit; 476 passed.
 - [x] Token-boundary entrypoint match — #36 @owner:repo:deployer @id:entrypoint-token-boundary-match
   `_check_entrypoint_in_command` split the haystack on characters that cannot appear
   in a filename or a `[project.scripts]` name and now requires whole-token equality,
