@@ -82,7 +82,7 @@ them is the next thing to pick up.
 - [ ] Run-config seam: per-target persistence of build/health timeouts @trigger:"an external target again needs a non-default --build-timeout" @id:run-config-timeout-persistence
   — the recording half shipped in #10; the operator still has to pass the flag
 - [ ] Token-boundary entrypoint match — L1 `entrypoint_in_command` compares substrings, @owner:repo:deployer @id:entrypoint-token-boundary-match
-  so short names like `app` false-pass — branch: feat/token-match
+  so short names like `app` false-pass — branch: pilot/entrypoint-token-boundary-match
 - [ ] L1 rule: a run/service intent must COPY the entrypoint and `package_dirs` @owner:repo:deployer @id:l1-copy-entrypoint-rule
 - [ ] Unified pip-invocation parser — `pip --no-input install` still slips past the @owner:repo:deployer @id:unified-pip-parser
   payload-based poetry/pip install-strategy rules
