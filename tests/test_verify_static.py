@@ -897,6 +897,44 @@ def test_builder_stage_cmd_does_not_satisfy_entrypoint(tmp_path: Path) -> None:
     assert _by_id(report, "entrypoint_in_command").status is CheckStatus.FAILED
 
 
+def test_short_entrypoint_does_not_match_longer_filename(tmp_path: Path) -> None:
+    df = 'FROM python:3.12-slim\nCOPY application.py .\nCMD ["python", "application.py"]\n'
+    report = verify_static(
+        df, _project(tmp_path), target=DeployTarget(entrypoint="app")
+    )
+    assert _by_id(report, "entrypoint_in_command").status is CheckStatus.FAILED
+
+
+@pytest.mark.parametrize(
+    "cmd_line,entrypoint,expected",
+    [
+        # exec form:     CMD ["python", "app.py"]       entrypoint app.py   MATCH
+        ('CMD ["python", "app.py"]', "app.py", CheckStatus.PASSED),
+        # shell form:    CMD python app.py              entrypoint app.py   MATCH
+        ("CMD python app.py", "app.py", CheckStatus.PASSED),
+        # scripts name:  CMD ["serve"]                  entrypoint serve    MATCH
+        ('CMD ["serve"]', "serve", CheckStatus.PASSED),
+        # new case:      CMD ["python","application.py"] entrypoint app     NO
+        ('CMD ["python","application.py"]', "app", CheckStatus.FAILED),
+        # conservatism:  CMD python -m main             entrypoint main.py  NO
+        ("CMD python -m main", "main.py", CheckStatus.FAILED),
+    ],
+)
+def test_entrypoint_token_model(
+    cmd_line: str, entrypoint: str, expected: CheckStatus, tmp_path: Path
+) -> None:
+    """Token-boundary model: each case from the spec is an executable assertion."""
+    (tmp_path / "app.py").write_text("x = 1")
+    (tmp_path / "application.py").write_text("x = 1")
+    df = f"FROM python:3.12-slim\n{cmd_line}\n"
+    report = verify_static(df, tmp_path, target=DeployTarget(entrypoint=entrypoint))
+    assert _by_id(report, "entrypoint_in_command").status is expected
+
+
+# entrypoint+cmd case: ENTRYPOINT ["python","app.py"] + CMD args  entrypoint app.py  MATCH
+# covered by the existing test_entrypoint_in_entrypoint_with_args_cmd_passes above
+
+
 COMPOSE_TARGET = DeployTarget(
     service=ServiceSpec(port=8000),
     env={"REDIS_URL": "redis://cache:6379/0"},
