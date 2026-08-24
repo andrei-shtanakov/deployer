@@ -130,7 +130,7 @@ them is the next thing to pick up.
 Merged work, plus the decisions that closed an open item without being code — those are
 prefixed `Decision:` so the ledger does not imply shipped behaviour.
 
-- [x] Pilot DAG hardening (inbox deployer#34, slug `pilot-dag-branch-precondition`):
+- [x] Pilot DAG hardening (inbox deployer#34, slug `pilot-dag-branch-precondition`, #35):
   first task verifies the branch precondition (clean checkout on `pilot/<slug>`,
   never `master`/`main`) instead of relying on `branch_prefix`, which Mode-1 maestro
   silently ignores (upstream: maestro#216); `branch_prefix` comment made honest;
