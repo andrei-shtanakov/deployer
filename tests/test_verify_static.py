@@ -897,6 +897,14 @@ def test_builder_stage_cmd_does_not_satisfy_entrypoint(tmp_path: Path) -> None:
     assert _by_id(report, "entrypoint_in_command").status is CheckStatus.FAILED
 
 
+def test_short_entrypoint_does_not_match_longer_filename(tmp_path: Path) -> None:
+    df = 'FROM python:3.12-slim\nCOPY application.py .\nCMD ["python", "application.py"]\n'
+    report = verify_static(
+        df, _project(tmp_path), target=DeployTarget(entrypoint="app")
+    )
+    assert _by_id(report, "entrypoint_in_command").status is CheckStatus.FAILED
+
+
 COMPOSE_TARGET = DeployTarget(
     service=ServiceSpec(port=8000),
     env={"REDIS_URL": "redis://cache:6379/0"},
