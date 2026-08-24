@@ -516,6 +516,14 @@ def test_isolated_context_excludes_secrets_and_junk(tmp_path: Path) -> None:
     assert not ctx.exists()  # cleaned up on exit
 
 
+def test_isolated_context_excludes_envrc(tmp_path: Path) -> None:
+    (tmp_path / ".envrc").write_text("export SECRET=1\n")
+    (tmp_path / "envrc.py").write_text("x = 1\n")
+    with _isolated_context(tmp_path) as ctx:
+        assert not (ctx / ".envrc").exists()
+        assert (ctx / "envrc.py").exists()
+
+
 def test_isolated_context_copies_dangling_symlink_as_link(tmp_path: Path) -> None:
     (tmp_path / "app.py").write_text("print('hi')\n")
     (tmp_path / "dangling").symlink_to(tmp_path / "nope")
