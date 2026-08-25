@@ -41,19 +41,19 @@ contract was wrong only after it has users. The order below is deliberate — ea
 tagged with what blocks it, so the sequencing survives without anyone re-reading this
 paragraph.
 
-- [ ] Seam audit of the Phase-4 artifacts @owner:github:andrei-shtanakov @id:seam-audit — producer/consumer pairs,
+- [ ] Seam audit of the Phase-4 artifacts @owner:github:andrei-shtanakov @id:seam-audit — producer/consumer pairs, @epic:eco.dark-factory
   artifact paths, status and error channels. Short and factual; its output is the
   shortlist the next item picks from. Covers the candidate consumers (Maestro, Robin,
   spec-runner) plus the two seams already listed below (arbiter, ATP)
-- [ ] Define and implement the first production consumer seam for Phase-4 deploy artifacts @blocked_by:todo://deployer/seam-audit @id:first-consumer-seam
+- [ ] Define and implement the first production consumer seam for Phase-4 deploy artifacts @blocked_by:todo://deployer/seam-audit @id:first-consumer-seam @epic:eco.dark-factory
   — one executable vertical seam with a real consumer, not a survey. Spec first, per the
   usual rhythm. **Boundary check before committing to a consumer:** deployer may only
   build its own half. If the seam needs a change on the consumer's side, that is a
   handoff plus their PR, so prefer a consumer whose half already exists or whose owner
   has agreed — otherwise the "real consumer" is aspirational and the seam stalls half-built
-- [ ] CI-failure diagnosis — read a failed run, author the fix @blocked_by:todo://deployer/first-consumer-seam @id:ci-failure-diagnosis
+- [ ] CI-failure diagnosis — read a failed run, author the fix @blocked_by:todo://deployer/first-consumer-seam @id:ci-failure-diagnosis @epic:eco.dark-factory
   — the founding doc's other half, and the next applied slice once a seam is proven
-- [ ] Further artifact types: Helm, Terraform @blocked_by:todo://deployer/first-consumer-seam @id:further-artifact-types
+- [ ] Further artifact types: Helm, Terraform @blocked_by:todo://deployer/first-consumer-seam @id:further-artifact-types @epic:eco.dark-factory
   — deliberately last; wait until the extension contract is confirmed by a live consumer
 
 ## Research bench
@@ -62,50 +62,50 @@ Per the 2026-07-26 decision, bench work is now driven by regressions the seams s
 rather than pursued for its own sake. These items stay open and stay useful, but none of
 them is the next thing to pick up.
 
-- [ ] Agent-with-tools comparison arm @owner:github:andrei-shtanakov @id:agent-with-tools-arm — author with tool access vs
+- [ ] Agent-with-tools comparison arm @owner:github:andrei-shtanakov @id:agent-with-tools-arm — author with tool access vs @epic:eco.research-bench
   today's facts-only prompt over the same corpus; the spec declares this arm, it was
   never built
-- [ ] Baseline arm vs the official uv Dockerfile @owner:github:andrei-shtanakov @id:baseline-uv-dockerfile-arm — measures what the
+- [ ] Baseline arm vs the official uv Dockerfile @owner:github:andrei-shtanakov @id:baseline-uv-dockerfile-arm — measures what the @epic:eco.research-bench
   agent adds over the vendor template
-- [ ] Second CI corpus case, then `actionlint_status` in bench compare @trigger:"a second ci corpus case exists" @id:second-ci-corpus-case
-- [ ] Install `hadolint` 2.12.0 on the bench machine @owner:github:andrei-shtanakov @id:install-hadolint
+- [ ] Second CI corpus case, then `actionlint_status` in bench compare @trigger:"a second ci corpus case exists" @id:second-ci-corpus-case @epic:eco.research-bench
+- [ ] Install `hadolint` 2.12.0 on the bench machine @owner:github:andrei-shtanakov @id:install-hadolint @epic:eco.research-bench
   It is not on PATH here, so every golden so far is non-comparable on the hadolint axis
-- [ ] Test-kind CI target and registry-push contour @owner:repo:deployer @id:ci-test-kind-target
+- [ ] Test-kind CI target and registry-push contour @owner:repo:deployer @id:ci-test-kind-target @epic:eco.research-bench
   The current `{"ci": {}}` intent authors build-image only; registry push is deliberately default-deny today
-- [ ] Adopt the harness-eval discipline for the comparison arms above @owner:github:andrei-shtanakov @id:harness-eval-discipline —
+- [ ] Adopt the harness-eval discipline for the comparison arms above @owner:github:andrei-shtanakov @id:harness-eval-discipline — @epic:eco.research-bench
   one intervention per run, condition-blind grading, an explicit taxonomy of invalid
   runs (idea #4 of `../prograph-vault/authored/notes/2026-07-22-ideas-from-ai-repos-research.md`);
   without it an arm measures model noise as well as the intervention
 
 ## Verification hardening
 
-- [ ] Run-config seam: per-target persistence of build/health timeouts @trigger:"an external target again needs a non-default --build-timeout" @id:run-config-timeout-persistence
+- [ ] Run-config seam: per-target persistence of build/health timeouts @trigger:"an external target again needs a non-default --build-timeout" @id:run-config-timeout-persistence @epic:eco.dark-factory
   — the recording half shipped in #10; the operator still has to pass the flag
-- [ ] L1 rule: a run/service intent must COPY the entrypoint and `package_dirs` @owner:repo:deployer @id:l1-copy-entrypoint-rule
-- [ ] Unified pip-invocation parser — `pip --no-input install` still slips past the @owner:repo:deployer @id:unified-pip-parser
+- [ ] L1 rule: a run/service intent must COPY the entrypoint and `package_dirs` @owner:repo:deployer @id:l1-copy-entrypoint-rule @epic:eco.dark-factory
+- [ ] Unified pip-invocation parser — `pip --no-input install` still slips past the @owner:repo:deployer @id:unified-pip-parser @epic:eco.dark-factory
   payload-based poetry/pip install-strategy rules
-- [ ] Compose follow-ups: logs guard on a failed `up`, per-dependency env check @owner:repo:deployer @id:compose-follow-ups
+- [ ] Compose follow-ups: logs guard on a failed `up`, per-dependency env check @owner:repo:deployer @id:compose-follow-ups @epic:eco.dark-factory
   (postgres case), shared pin-rule helper, per-section fences
-- [ ] Failure classification channel: env failures carrying no markers ("exit status 1") @owner:repo:deployer @id:failure-classification-channel
+- [ ] Failure classification channel: env failures carrying no markers ("exit status 1") @owner:repo:deployer @id:failure-classification-channel @epic:eco.dark-factory
   and exit-125 non-transport CLI errors both classify AUTHORING
-- [ ] Poetry: list-valued optional-dependency constraints (`src/deployer/facts.py:248`) @owner:repo:deployer @id:poetry-list-optional-deps
-- [ ] Bench run-dir litter on config error; document `docker system prune` for bench @owner:repo:deployer @id:bench-run-dir-litter
+- [ ] Poetry: list-valued optional-dependency constraints (`src/deployer/facts.py:248`) @owner:repo:deployer @id:poetry-list-optional-deps @epic:eco.dark-factory
+- [ ] Bench run-dir litter on config error; document `docker system prune` for bench @owner:repo:deployer @id:bench-run-dir-litter @epic:eco.dark-factory
   hosts (failed builds leave containers plus dangling intermediates)
-- [ ] podman-remote transport marker unverified @trigger:"a podman remote host is available" @id:podman-remote-marker
+- [ ] podman-remote transport marker unverified @trigger:"a podman remote host is available" @id:podman-remote-marker @epic:eco.dark-factory
   — the homelab host runs docker only
-- [ ] Stage-split / image-size signal in `bench compare` @trigger:"a golden regresses to a single-stage image" @id:bench-stage-split-signal
+- [ ] Stage-split / image-size signal in `bench compare` @trigger:"a golden regresses to a single-stage image" @id:bench-stage-split-signal @epic:eco.dark-factory
   (low urgency: the model now stage-splits unprompted)
-- [ ] Small stuff, one PR: add E501 to ruff `extend-select`; COPY JSON-array form check; @owner:repo:deployer @id:small-stuff-bundle
+- [ ] Small stuff, one PR: add E501 to ruff `extend-select`; COPY JSON-array form check; @owner:repo:deployer @id:small-stuff-bundle @epic:eco.dark-factory
   `healthcheck_path` validation; pids/cpu limits on container run; CLI `--no-docker`
   note wording; `no_progress` vs `budget_exhausted` coincidence; `DeployTarget.env`
   semantics at run stage (inert by design — decide whether to reject or document)
 
 ## Ecosystem seams
 
-- [ ] arbiter policy gate in front of any mutating action the bench grows @blocked_by:todo://deployer/seam-audit @id:arbiter-policy-gate-seam
-- [ ] ATP smoke-test of built artifacts as a verification level above L2 @blocked_by:todo://deployer/seam-audit @id:atp-smoke-test-seam
-- [ ] Keep the MLOps seams of `docs/idea-mlops-layer.md` pluggable, not built @trigger:"a target needs eval hooks or promotion gates" @id:mlops-seams-pluggable
-- [ ] Watch research-bench Stage B @trigger:"research-bench ships a stable VerificationProvider" @id:watch-research-bench-stage-b
+- [ ] arbiter policy gate in front of any mutating action the bench grows @blocked_by:todo://deployer/seam-audit @id:arbiter-policy-gate-seam @epic:eco.governance-plane
+- [ ] ATP smoke-test of built artifacts as a verification level above L2 @blocked_by:todo://deployer/seam-audit @id:atp-smoke-test-seam @epic:eco.dark-factory
+- [ ] Keep the MLOps seams of `docs/idea-mlops-layer.md` pluggable, not built @trigger:"a target needs eval hooks or promotion gates" @id:mlops-seams-pluggable @epic:eco.dark-factory
+- [ ] Watch research-bench Stage B @trigger:"research-bench ships a stable VerificationProvider" @id:watch-research-bench-stage-b @epic:eco.dark-factory
   — `../_cowork_output/plans/2026-07-25-stage-b-provider-design.md` (approved 2026-07-25):
   its `VerificationProvider` protocol, append-only verdicts and fail-closed `0/1/2` exit
   contract cover the same ground as L1/L2 here. If it stabilises, vendor a pinned copy
@@ -113,11 +113,11 @@ them is the next thing to pick up.
 
 ## Cross-repo hygiene
 
-- [ ] Drop the pilot-DAG branch-precondition task once maestro isolates Mode-1 runs @blocked_by:maestro#216 @id:pilot-dag-drop-branch-precondition
+- [ ] Drop the pilot-DAG branch-precondition task once maestro isolates Mode-1 runs @blocked_by:maestro#216 @id:pilot-dag-drop-branch-precondition @epic:eco.ops
   — the `branch-precondition` task in `tasks.yaml` is the explicitly named stopgap
   for Mode 1 silently ignoring `branch_prefix` (inbox deployer#34); when maestro#216
   ships run-level isolation, the check and the operator's manual-switch step go away
-- [ ] Neighbour docs still describe deployer as "MVP / Dockerfile authoring" @owner:github:andrei-shtanakov @id:neighbour-docs-correction
+- [ ] Neighbour docs still describe deployer as "MVP / Dockerfile authoring" @owner:github:andrei-shtanakov @id:neighbour-docs-correction @epic:eco.ops
   — `../prograph-vault/authored/registry/registry.md` and the 2026-07-22 ideas note.
   Both are read-only from here: write the correction as a handoff note, do not edit
 
