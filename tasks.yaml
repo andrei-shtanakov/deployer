@@ -117,19 +117,10 @@ defaults:
   agent_type: claude_code
 
 tasks:
-  # ---------------------------------------------------------------------------
-  # 0. PRECONDITION — verify the branch, do not create it
-  # ---------------------------------------------------------------------------
-  # Why verify instead of `git switch -c` (deployer#34): a switch inside the
-  # task would be an agent action, not a runtime guarantee — the agent can
-  # refuse or err and leave the run on `master`, and by the time task 1 starts
-  # the checkout is already treated as accepted, smearing the isolation
-  # contract across every DAG. A precondition check has no such flaw: it
-  # either confirms the state the operator already established, or stops the
-  # run before anything is written. The `validation_cmd` repeats the check
-  # deterministically, so even an agent that wrongly reports success cannot
-  # let the run proceed on the wrong branch.
-  # ---------------------------------------------------------------------------
+  # (There is deliberately no task 0. A `branch-precondition` task stood here
+  # while Mode 1 had no isolation contract; it was dropped in #38 when
+  # `git.run_branch` made the branch a runtime guarantee — see the `git:`
+  # block above for the full story.)
   # ---------------------------------------------------------------------------
   # 1. RED — the failing test, committed on its own
   # ---------------------------------------------------------------------------
