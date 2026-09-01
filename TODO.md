@@ -105,7 +105,7 @@ them is the next thing to pick up.
 - [ ] arbiter policy gate in front of any mutating action the bench grows @blocked_by:todo://deployer/seam-audit @id:arbiter-policy-gate-seam @epic:eco.governance-plane
 - [ ] ATP smoke-test of built artifacts as a verification level above L2 @blocked_by:todo://deployer/seam-audit @id:atp-smoke-test-seam @epic:eco.dark-factory
 - [ ] Keep the MLOps seams of `docs/idea-mlops-layer.md` pluggable, not built @trigger:"a target needs eval hooks or promotion gates" @id:mlops-seams-pluggable @epic:eco.dark-factory
-- [ ] Watch research-bench Stage B @trigger:"research-bench ships a stable VerificationProvider" @id:watch-research-bench-stage-b @epic:eco.dark-factory
+- [ ] Watch research-bench Stage B @trigger:"research-bench ships a stable VerificationProvider" @owner:repo:research-bench @id:watch-research-bench-stage-b @epic:eco.dark-factory
   — `../_cowork_output/plans/2026-07-25-stage-b-provider-design.md` (approved 2026-07-25):
   its `VerificationProvider` protocol, append-only verdicts and fail-closed `0/1/2` exit
   contract cover the same ground as L1/L2 here. If it stabilises, vendor a pinned copy
