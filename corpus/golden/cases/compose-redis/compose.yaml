@@ -4,12 +4,12 @@ services:
       context: "."
       dockerfile: "Dockerfile"
     environment:
-      REDIS_URL: "redis://cache:6379/0"
+      REDIS_URL: redis://cache:6379/0
     depends_on:
       cache:
         condition: service_healthy
   cache:
-    image: "redis:7-alpine"
+    image: redis:7-alpine
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s

@@ -11,9 +11,7 @@ COPY src/ci_build ./src/ci_build
 
 RUN uv sync --frozen
 
-RUN useradd --create-home appuser
-USER appuser
-
 ENV PATH="/app/.venv/bin:$PATH"
 
-CMD ["python"]
+RUN useradd --create-home appuser
+USER appuser
