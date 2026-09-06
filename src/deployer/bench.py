@@ -299,11 +299,13 @@ def run_case(
         }
     )
     hadolint_status: CheckStatus | None = None
+    atp_smoke_status: CheckStatus | None = None
     if last is not None:
         for r in last.report.results:
             if r.check_id == "hadolint":
                 hadolint_status = r.status
-                break
+            elif r.check_id == "atp_smoke":
+                atp_smoke_status = r.status
     achieved_level = run.success or (
         not case.expected.requires_l2
         and run.stopped_reason == "static_only"
@@ -325,6 +327,7 @@ def run_case(
         iterations=len(run.iterations),
         image_size_bytes=last.report.image_size_bytes if last else None,
         hadolint_status=hadolint_status,
+        atp_smoke_status=atp_smoke_status,
         wall_time_s=round(wall, 3),
         failure_kinds=failure_kinds,
         expected=case.expected,

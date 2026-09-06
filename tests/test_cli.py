@@ -738,7 +738,12 @@ def test_require_atp_ignores_unrelated_skip_reason(tmp_path, monkeypatch, capsys
                 "outcome": "skipped",
                 "skip_reason": "no fixture.Dockerfile for the offline fixture author",
             },
-            {"case": "case-two", "outcome": "matched", "success": True},
+            {
+                "case": "case-two",
+                "outcome": "matched",
+                "success": True,
+                "atp_smoke_status": "passed",
+            },
         ]
     )
     monkeypatch.setattr(
@@ -776,6 +781,83 @@ def test_require_atp_fails_when_smoke_case_skipped_before_l2(
     assert code == 1
     err = capsys.readouterr().err
     assert "case-one" in err
+
+
+def test_require_atp_fails_when_atp_smoke_failed(tmp_path, monkeypatch, capsys):
+    """A smoke case can end `outcome="matched"` with a FAILED atp_smoke: a
+    corpus case may legitimately declare `expected_success: false`, and a
+    failing run then matches that expectation. The gate must still refuse,
+    because the acceptance contract is `atp_smoke: PASSED` specifically."""
+    corpus = _make_corpus(tmp_path)
+    monkeypatch.setattr("deployer.cli.resolve_runtime", lambda *a, **k: None)
+    monkeypatch.setattr(
+        "deployer.cli.load_corpus",
+        lambda *a, **k: [_FakeSmokeCase("case-one", declares_smoke=True)],
+    )
+    report = _fake_report(
+        [
+            {
+                "case": "case-one",
+                "outcome": "matched",
+                "success": False,
+                "atp_smoke_status": "failed",
+            }
+        ]
+    )
+    monkeypatch.setattr(
+        "deployer.cli.run_bench", lambda *a, **k: (report, tmp_path / "run")
+    )
+    code = cli.main(["bench", "run", "--corpus", str(corpus), "--require-atp"])
+    assert code == 1
+    err = capsys.readouterr().err
+    assert "case-one" in err
+    assert "failed" in err
+
+
+def test_require_atp_fails_when_atp_smoke_status_absent(tmp_path, monkeypatch, capsys):
+    """A matched smoke case with no recorded `atp_smoke` check at all must
+    not satisfy `--require-atp`: an absent check is not a PASSED one."""
+    corpus = _make_corpus(tmp_path)
+    monkeypatch.setattr("deployer.cli.resolve_runtime", lambda *a, **k: None)
+    monkeypatch.setattr(
+        "deployer.cli.load_corpus",
+        lambda *a, **k: [_FakeSmokeCase("case-one", declares_smoke=True)],
+    )
+    report = _fake_report([{"case": "case-one", "outcome": "matched", "success": True}])
+    monkeypatch.setattr(
+        "deployer.cli.run_bench", lambda *a, **k: (report, tmp_path / "run")
+    )
+    code = cli.main(["bench", "run", "--corpus", str(corpus), "--require-atp"])
+    assert code == 1
+    err = capsys.readouterr().err
+    assert "case-one" in err
+    assert "no atp_smoke check recorded" in err
+
+
+def test_require_atp_passes_when_atp_smoke_passed(tmp_path, monkeypatch, capsys):
+    """The gate's success path: a matched smoke case with atp_smoke PASSED
+    exits 0."""
+    corpus = _make_corpus(tmp_path)
+    monkeypatch.setattr("deployer.cli.resolve_runtime", lambda *a, **k: None)
+    monkeypatch.setattr(
+        "deployer.cli.load_corpus",
+        lambda *a, **k: [_FakeSmokeCase("case-one", declares_smoke=True)],
+    )
+    report = _fake_report(
+        [
+            {
+                "case": "case-one",
+                "outcome": "matched",
+                "success": True,
+                "atp_smoke_status": "passed",
+            }
+        ]
+    )
+    monkeypatch.setattr(
+        "deployer.cli.run_bench", lambda *a, **k: (report, tmp_path / "run")
+    )
+    code = cli.main(["bench", "run", "--corpus", str(corpus), "--require-atp"])
+    assert code == 0
 
 
 def test_require_atp_fails_when_no_smoke_case_in_scope(tmp_path, monkeypatch, capsys):

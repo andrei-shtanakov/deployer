@@ -423,7 +423,20 @@ def _cmd_bench_run(args: argparse.Namespace) -> int:
             and c.case in smoke_case_names
             and c not in atp_skipped
         ]
-        if atp_skipped or pre_l2_skipped:
+        # The spec's acceptance contract is `atp_smoke: PASSED` specifically,
+        # not merely "the case matched its expectation": a corpus case may
+        # declare `expected_success: false`, so a FAILED atp_smoke can still
+        # end up `outcome="matched"` and slip past a check that only looks
+        # at skips. Every non-skipped smoke case in scope must show a
+        # recorded PASSED — FAILED or an absent check both fail the gate.
+        not_passed = [
+            c
+            for c in report.cases
+            if c.case in smoke_case_names
+            and c.outcome != "skipped"
+            and c.atp_smoke_status is not CheckStatus.PASSED
+        ]
+        if atp_skipped or pre_l2_skipped or not_passed:
             messages = []
             if atp_skipped:
                 names = ", ".join(c.case for c in atp_skipped)
@@ -431,6 +444,14 @@ def _cmd_bench_run(args: argparse.Namespace) -> int:
             if pre_l2_skipped:
                 names = ", ".join(c.case for c in pre_l2_skipped)
                 messages.append(f"smoke case skipped before reaching ATP: {names}")
+            if not_passed:
+                details = ", ".join(
+                    f"{c.case} ("
+                    f"{c.atp_smoke_status.value if c.atp_smoke_status is not None else 'no atp_smoke check recorded'}"
+                    ")"
+                    for c in not_passed
+                )
+                messages.append(f"atp_smoke not PASSED for: {details}")
             print(f"error: --require-atp: {'; '.join(messages)}", file=sys.stderr)
             return 1
     return 0 if report.all_matched else 1

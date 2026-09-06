@@ -460,6 +460,7 @@ class BenchCaseResult(BaseModel):
     iterations: int = 0
     image_size_bytes: int | None = None
     hadolint_status: CheckStatus | None = None
+    atp_smoke_status: CheckStatus | None = None
     wall_time_s: float = 0.0
     skip_reason: str = ""
     failure_kinds: list[FailureKind] = Field(default_factory=list)
