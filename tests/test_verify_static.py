@@ -236,6 +236,12 @@ def test_hadolint_prerelease_version_is_not_substring_matched(
         (lambda pin: f"tool {pin}-rc1", False),  # prerelease suffix
         (lambda pin: f"tool {pin}+vendor.1", False),  # build-metadata suffix
         (lambda pin: f"tool {pin}.1", False),  # extra version component
+        (lambda pin: f"tool {pin}rc1", False),  # compact prerelease, no separator
+        (lambda pin: f"tool {pin}.dev1", False),  # dev suffix
+        (
+            lambda pin: f"tool, version {pin}, built from source",
+            True,
+        ),  # embedded in a longer sentence: maximal munch stops at the pin
         (lambda pin: "tool: no version here", False),  # no version token at all
         (lambda pin: "", False),  # empty output
     ],

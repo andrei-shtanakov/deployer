@@ -43,7 +43,7 @@ _USES_REMOTE_PIN = re.compile(
 )
 _DOCKER_BUILD = re.compile(r"^docker\s+(?:buildx\s+)?build\b")
 _DOCKER_PUSH = re.compile(r"\b(?:docker(?:\s+image)?|podman)\s+push\b")
-_VERSION_TOKEN = re.compile(r"\d+(?:\.\d+)*(?:[-+][\w.]+)?")
+_VERSION_TOKEN = re.compile(r"[0-9][\w.+-]*")
 
 
 def _version_pin_matches(pinned: str, output: str) -> bool:
@@ -53,16 +53,19 @@ def _version_pin_matches(pinned: str, output: str) -> bool:
     longer version sharing the same prefix (``2.1.0`` inside ``atp,
     version 12.1.0``); a boundary-anchored regex still accepts any suffix
     an exclusion class does not happen to list yet — a prerelease
-    (``2.1.0-rc1``) once `-` was added to the class, then build metadata
-    (``2.1.0+vendor.1``) once the next suffix shape showed up, and so on
-    for whatever comes after that.
+    (``2.1.0-rc1``) once `-` was added to the class, then a compact
+    prerelease with no separator (``2.1.0rc1``) or a dev suffix
+    (``2.1.0.dev1``) once the next suffix shape showed up, and so on for
+    whatever comes after that.
 
-    Instead this extracts every version-shaped token from `output` (a run
-    of dot-separated digits, optionally followed by a `-`/`+` suffix) and
-    compares each to `pinned` for exact string equality. Equality has no
-    exclusion list to keep pace with: any suffix at all — known or not —
-    makes the token unequal to the bare pin, by construction rather than
-    by enumeration.
+    Instead this extracts every version-shaped token from `output`
+    **maximally** — starting at a digit and consuming every following
+    character that can belong to a version (letters, digits, `.`, `-`,
+    `+`) — and compares each token to `pinned` for exact string equality.
+    Because extraction is maximal, any suffix at all attached to the pin
+    — known or not, separated by punctuation or not — becomes part of the
+    same token and makes it unequal to the bare pin, by construction
+    rather than by enumeration.
     """
     return any(token == pinned for token in _VERSION_TOKEN.findall(output))
 
