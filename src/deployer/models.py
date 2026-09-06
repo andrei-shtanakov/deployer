@@ -381,10 +381,24 @@ class VerificationReport(BaseModel):
     runtime: ContainerRuntime | None = None
     runtime_versions: RuntimeVersions | None = None
     built_image: BuiltImage | None = None
+    smoke_declared: bool = False
+    """Whether the `target` this report was built for declared a smoke
+    intent. Stamped once, in `verify_static`, at the report's single point
+    of construction — an `atp_smoke` check only ever appears in `results`
+    once L2 is reached, so a declared-but-never-reached-L2 smoke case would
+    otherwise be indistinguishable from one that never declared smoke."""
 
     @property
     def passed(self) -> bool:
         return all(r.status is not CheckStatus.FAILED for r in self.results)
+
+    @property
+    def atp_smoke_status(self) -> CheckStatus | None:
+        """Recorded status of the `atp_smoke` check, or None if absent."""
+        for r in self.results:
+            if r.check_id == "atp_smoke":
+                return r.status
+        return None
 
     @property
     def environment_failures(self) -> list[CheckResult]:
@@ -460,6 +474,13 @@ class BenchCaseResult(BaseModel):
     iterations: int = 0
     image_size_bytes: int | None = None
     hadolint_status: CheckStatus | None = None
+    smoke_declared: bool = False
+    """Whether the case's `deploy_target` declared a smoke intent at all.
+
+    Set on every code path through `run_case`, including every early skip,
+    so `satisfies_declared_smoke` can tell "declared and never ran" apart
+    from "never declared" without re-reading the corpus.
+    """
     atp_smoke_status: CheckStatus | None = None
     wall_time_s: float = 0.0
     skip_reason: str = ""
@@ -513,10 +534,39 @@ class GoldenCase(BaseModel):
     failure_kinds: list[FailureKind] = Field(default_factory=list)
     image_size_bytes: int | None = None
     hadolint_status: CheckStatus | None = None
+    smoke_declared: bool = False
+    """Mirrors `BenchCaseResult.smoke_declared`; carried across promotion so
+    `satisfies_declared_smoke` reads a baseline the same way as a fresh run,
+    without inferring declared-ness from whether `checks` happens to
+    contain an `atp_smoke` entry (it will not, for a case that declared
+    smoke but never reached L2)."""
+    atp_smoke_status: CheckStatus | None = None
     checks: list[GoldenCheck] = Field(default_factory=list)
     expected: ExpectedOutcome = Field(default_factory=ExpectedOutcome)
     external_url: str | None = None
     external_commit: str | None = None
+
+
+def satisfies_declared_smoke(
+    result: BenchCaseResult | GoldenCase | VerificationReport,
+) -> bool:
+    """Whether `result` satisfies a declared smoke intent, if it has one.
+
+    True only when the case declared smoke (`smoke_declared`) and its
+    recorded `atp_smoke_status` is exactly `PASSED`. A case that never
+    declared smoke trivially satisfies it (there is nothing to satisfy);
+    SKIPPED, FAILED, an absent check, and a pre-L2 skip on a case that
+    *did* declare smoke are all False — a declared smoke intent is green
+    only on `atp_smoke: PASSED`, never on "didn't run" or "not applicable".
+
+    Shared by a fresh `BenchCaseResult` (from `run_case`), a promoted
+    `GoldenCase` baseline, and a raw `VerificationReport` (from `bench
+    verify`), so `--require-atp`, `bench compare` and `bench verify` all
+    judge "satisfied" identically instead of each re-deriving it.
+    """
+    if not result.smoke_declared:
+        return True
+    return result.atp_smoke_status is CheckStatus.PASSED
 
 
 class GoldenReport(BaseModel):

@@ -200,7 +200,7 @@ def test_verify_resolves_smoke_suite_from_target_and_forwards_it(
 
 
 def test_author_flags_reach_library(tmp_path: Path, monkeypatch) -> None:
-    from deployer.models import AuthoringRun, DeployTarget
+    from deployer.models import AuthoringRun
 
     captured = {}
 
@@ -638,6 +638,43 @@ def test_bench_verify_no_matching_cases_exits_2(tmp_path, monkeypatch, capsys):
     assert "zzz" in capsys.readouterr().err
 
 
+def test_bench_verify_declared_smoke_unsatisfied_is_fail(tmp_path, monkeypatch, capsys):
+    """`report.passed` alone treats SKIPPED as success (correct for optional
+    linters like hadolint), so a case that declares smoke must not print
+    `ok` on a SKIPPED (or FAILED, or absent) `atp_smoke` just because no
+    other check failed."""
+    corpus = _make_corpus(tmp_path)
+    monkeypatch.setattr("deployer.cli.resolve_runtime", lambda *a, **k: None)
+    report = VerificationReport(
+        results=[CheckResult(check_id="atp_smoke", status=CheckStatus.SKIPPED)],
+        smoke_declared=True,
+    )
+    monkeypatch.setattr(
+        "deployer.cli.verify_corpus", lambda *a, **k: [("case-one", report)]
+    )
+    code = cli.main(["bench", "verify", "--corpus", str(corpus)])
+    assert code == 1
+    out = capsys.readouterr().out
+    assert "[FAIL] case-one" in out
+    assert "skipped" in out
+
+
+def test_bench_verify_declared_smoke_satisfied_is_ok(tmp_path, monkeypatch, capsys):
+    """The mirror case: `atp_smoke` PASSED, so the case prints `ok`."""
+    corpus = _make_corpus(tmp_path)
+    monkeypatch.setattr("deployer.cli.resolve_runtime", lambda *a, **k: None)
+    report = VerificationReport(
+        results=[CheckResult(check_id="atp_smoke", status=CheckStatus.PASSED)],
+        smoke_declared=True,
+    )
+    monkeypatch.setattr(
+        "deployer.cli.verify_corpus", lambda *a, **k: [("case-one", report)]
+    )
+    code = cli.main(["bench", "verify", "--corpus", str(corpus)])
+    assert code == 0
+    assert "[  ok] case-one" in capsys.readouterr().out
+
+
 def test_bench_run_clone_failure_exits_2(tmp_path, monkeypatch, capsys):
     from deployer.bench import CloneError
 
@@ -663,19 +700,6 @@ def test_bench_run_clone_failure_exits_2(tmp_path, monkeypatch, capsys):
     assert "demo" in capsys.readouterr().err
 
 
-class _FakeSmokeCase:
-    """Duck-typed BenchCase stand-in: only `.name` and `.target.smoke` matter
-    to the `--require-atp` gate."""
-
-    def __init__(self, name: str, declares_smoke: bool) -> None:
-        self.name = name
-        self.target = (
-            DeployTarget(run={}, smoke={"suite": "s.yaml"})
-            if declares_smoke
-            else DeployTarget()
-        )
-
-
 def _fake_report(cases):
     from deployer.models import BenchCaseResult, BenchReport
 
@@ -688,21 +712,21 @@ def _fake_report(cases):
     )
 
 
-def test_require_atp_fails_on_atp_smoke_skip_marker(tmp_path, monkeypatch, capsys):
-    """A case skipped by `atp_smoke` itself (e.g. version mismatch) trips
-    the gate via the existing marker check."""
+def test_require_atp_fails_when_atp_smoke_skipped(tmp_path, monkeypatch, capsys):
+    """A case whose `atp_smoke` itself reported SKIPPED (e.g. version
+    mismatch) trips the gate via the recorded `atp_smoke_status`, never by
+    matching `skip_reason` prose — the scope and the verdict both come from
+    `report.cases`, with no second `load_corpus` read."""
     corpus = _make_corpus(tmp_path)
     monkeypatch.setattr("deployer.cli.resolve_runtime", lambda *a, **k: None)
-    monkeypatch.setattr(
-        "deployer.cli.load_corpus",
-        lambda *a, **k: [_FakeSmokeCase("case-one", declares_smoke=True)],
-    )
     report = _fake_report(
         [
             {
                 "case": "case-one",
                 "outcome": "skipped",
                 "skip_reason": "atp_smoke skipped: atp not installed",
+                "smoke_declared": True,
+                "atp_smoke_status": "skipped",
             }
         ]
     )
@@ -715,33 +739,28 @@ def test_require_atp_fails_on_atp_smoke_skip_marker(tmp_path, monkeypatch, capsy
     assert "case-one" in err
 
 
-def test_require_atp_ignores_unrelated_skip_reason(tmp_path, monkeypatch, capsys):
-    """A skip with a reason unconnected to smoke must not trip the gate.
+def test_require_atp_ignores_case_without_smoke_declared(tmp_path, monkeypatch, capsys):
+    """A skipped case that never declared smoke must not trip the gate.
 
-    A second, smoke-declaring case that matched cleanly keeps the corpus
-    scope non-empty, so this exercises the "unrelated skip" tolerance in
-    isolation from the separate `--require-atp`-on-empty-scope guard.
+    A second, smoke-declaring case that matched cleanly keeps the scope
+    non-empty, so this exercises the "not in scope" tolerance in isolation
+    from the separate `--require-atp`-on-empty-scope guard.
     """
     corpus = _make_corpus(tmp_path)
     monkeypatch.setattr("deployer.cli.resolve_runtime", lambda *a, **k: None)
-    monkeypatch.setattr(
-        "deployer.cli.load_corpus",
-        lambda *a, **k: [
-            _FakeSmokeCase("case-one", declares_smoke=False),
-            _FakeSmokeCase("case-two", declares_smoke=True),
-        ],
-    )
     report = _fake_report(
         [
             {
                 "case": "case-one",
                 "outcome": "skipped",
                 "skip_reason": "no fixture.Dockerfile for the offline fixture author",
+                "smoke_declared": False,
             },
             {
                 "case": "case-two",
                 "outcome": "matched",
                 "success": True,
+                "smoke_declared": True,
                 "atp_smoke_status": "passed",
             },
         ]
@@ -757,20 +776,18 @@ def test_require_atp_fails_when_smoke_case_skipped_before_l2(
     tmp_path, monkeypatch, capsys
 ):
     """A smoke case skipped for an unrelated, EARLIER reason (no container
-    runtime resolved) must also trip the gate: a SKIPPED smoke never closes
-    the seam, whatever skipped it."""
+    runtime resolved) must also trip the gate: `atp_smoke_status` stays
+    unset on this path, and an absent check on a declared-smoke case is
+    unsatisfied whatever skipped it."""
     corpus = _make_corpus(tmp_path)
     monkeypatch.setattr("deployer.cli.resolve_runtime", lambda *a, **k: None)
-    monkeypatch.setattr(
-        "deployer.cli.load_corpus",
-        lambda *a, **k: [_FakeSmokeCase("case-one", declares_smoke=True)],
-    )
     report = _fake_report(
         [
             {
                 "case": "case-one",
                 "outcome": "skipped",
                 "skip_reason": "case requires L2 but no container runtime resolved",
+                "smoke_declared": True,
             }
         ]
     )
@@ -790,16 +807,13 @@ def test_require_atp_fails_when_atp_smoke_failed(tmp_path, monkeypatch, capsys):
     because the acceptance contract is `atp_smoke: PASSED` specifically."""
     corpus = _make_corpus(tmp_path)
     monkeypatch.setattr("deployer.cli.resolve_runtime", lambda *a, **k: None)
-    monkeypatch.setattr(
-        "deployer.cli.load_corpus",
-        lambda *a, **k: [_FakeSmokeCase("case-one", declares_smoke=True)],
-    )
     report = _fake_report(
         [
             {
                 "case": "case-one",
                 "outcome": "matched",
                 "success": False,
+                "smoke_declared": True,
                 "atp_smoke_status": "failed",
             }
         ]
@@ -819,11 +833,16 @@ def test_require_atp_fails_when_atp_smoke_status_absent(tmp_path, monkeypatch, c
     not satisfy `--require-atp`: an absent check is not a PASSED one."""
     corpus = _make_corpus(tmp_path)
     monkeypatch.setattr("deployer.cli.resolve_runtime", lambda *a, **k: None)
-    monkeypatch.setattr(
-        "deployer.cli.load_corpus",
-        lambda *a, **k: [_FakeSmokeCase("case-one", declares_smoke=True)],
+    report = _fake_report(
+        [
+            {
+                "case": "case-one",
+                "outcome": "matched",
+                "success": True,
+                "smoke_declared": True,
+            }
+        ]
     )
-    report = _fake_report([{"case": "case-one", "outcome": "matched", "success": True}])
     monkeypatch.setattr(
         "deployer.cli.run_bench", lambda *a, **k: (report, tmp_path / "run")
     )
@@ -839,16 +858,13 @@ def test_require_atp_passes_when_atp_smoke_passed(tmp_path, monkeypatch, capsys)
     exits 0."""
     corpus = _make_corpus(tmp_path)
     monkeypatch.setattr("deployer.cli.resolve_runtime", lambda *a, **k: None)
-    monkeypatch.setattr(
-        "deployer.cli.load_corpus",
-        lambda *a, **k: [_FakeSmokeCase("case-one", declares_smoke=True)],
-    )
     report = _fake_report(
         [
             {
                 "case": "case-one",
                 "outcome": "matched",
                 "success": True,
+                "smoke_declared": True,
                 "atp_smoke_status": "passed",
             }
         ]
@@ -863,20 +879,56 @@ def test_require_atp_passes_when_atp_smoke_passed(tmp_path, monkeypatch, capsys)
 def test_require_atp_fails_when_no_smoke_case_in_scope(tmp_path, monkeypatch, capsys):
     """A filter that selects zero smoke-declaring cases must not let
     `report.all_matched` alone satisfy `--require-atp`: an empty scope
-    exercises nothing, closing the gate even less than a SKIPPED smoke."""
+    exercises nothing, closing the gate even less than an unsatisfied
+    smoke does."""
     corpus = _make_corpus(tmp_path)
     monkeypatch.setattr("deployer.cli.resolve_runtime", lambda *a, **k: None)
-    monkeypatch.setattr(
-        "deployer.cli.load_corpus",
-        lambda *a, **k: [_FakeSmokeCase("case-one", declares_smoke=False)],
+    report = _fake_report(
+        [
+            {
+                "case": "case-one",
+                "outcome": "matched",
+                "success": True,
+                "smoke_declared": False,
+            }
+        ]
     )
-    report = _fake_report([{"case": "case-one", "outcome": "matched", "success": True}])
     monkeypatch.setattr(
         "deployer.cli.run_bench", lambda *a, **k: (report, tmp_path / "run")
     )
     code = cli.main(["bench", "run", "--corpus", str(corpus), "--require-atp"])
     assert code == 1
     assert "no case in scope declares a smoke intent" in capsys.readouterr().err
+
+
+def test_require_atp_scope_is_report_cases_not_corpus(tmp_path, monkeypatch, capsys):
+    """The gate's scope must come from `report.cases`, never a second
+    `load_corpus` read: an external target declaring smoke is invisible to
+    `load_corpus` (it only walks `corpus/synthetic/`), so a gate that
+    re-derived scope from the corpus could never see it. Patching
+    `deployer.cli.load_corpus` here would raise (the name no longer exists
+    on the module), which is itself evidence the re-read is gone."""
+    corpus = _make_corpus(tmp_path)
+    monkeypatch.setattr("deployer.cli.resolve_runtime", lambda *a, **k: None)
+    assert not hasattr(cli, "load_corpus")
+    report = _fake_report(
+        [
+            {
+                "case": "external-one",
+                "outcome": "matched",
+                "success": True,
+                "smoke_declared": True,
+                "atp_smoke_status": "passed",
+                "external_url": "https://example.invalid/repo.git",
+                "external_commit": "deadbeef",
+            }
+        ]
+    )
+    monkeypatch.setattr(
+        "deployer.cli.run_bench", lambda *a, **k: (report, tmp_path / "run")
+    )
+    code = cli.main(["bench", "run", "--corpus", str(corpus), "--require-atp"])
+    assert code == 0
 
 
 def test_bench_promote_cli(tmp_path, monkeypatch, capsys):
@@ -1191,7 +1243,6 @@ def test_cli_author_writes_ci_workflow(tmp_path: Path, monkeypatch) -> None:
 def test_smoke_suite_resolves_against_the_target_file(tmp_path: Path) -> None:
     """Not the cwd and not project/: a target document must stay portable."""
     from deployer.cli import _resolve_smoke_suite
-    from deployer.models import DeployTarget
 
     target_dir = tmp_path / "case"
     target_dir.mkdir()
@@ -1205,7 +1256,6 @@ def test_smoke_suite_resolves_against_the_target_file(tmp_path: Path) -> None:
 
 def test_smoke_suite_is_none_without_a_smoke_intent() -> None:
     from deployer.cli import _resolve_smoke_suite
-    from deployer.models import DeployTarget
 
     assert _resolve_smoke_suite(DeployTarget(), "/anywhere/target.json") is None
 
@@ -1214,7 +1264,6 @@ def test_smoke_suite_without_a_target_file_is_an_error() -> None:
     """A smoke intent can only arrive through a --target file, so a missing
     path is a broken invocation, not a silent skip."""
     from deployer.cli import _resolve_smoke_suite
-    from deployer.models import DeployTarget
 
     with pytest.raises(ValueError, match="--target"):
         _resolve_smoke_suite(DeployTarget(run={}, smoke={"suite": "s.yaml"}), None)

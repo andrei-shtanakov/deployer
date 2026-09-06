@@ -942,7 +942,11 @@ def verify_static(
             results.append(_check_entrypoint_in_command(instructions, target))
     hadolint_result, hadolint_available = _check_hadolint(dockerfile)
     results.append(hadolint_result)
-    return VerificationReport(results=results, hadolint_available=hadolint_available)
+    return VerificationReport(
+        results=results,
+        hadolint_available=hadolint_available,
+        smoke_declared=target is not None and target.smoke is not None,
+    )
 
 
 ENVIRONMENT_MARKERS = (

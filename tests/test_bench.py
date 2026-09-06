@@ -330,6 +330,47 @@ def test_run_case_skips_ci_case_without_fixture_ci(tmp_path: Path) -> None:
     assert "fixture.ci.yml" in result.skip_reason
 
 
+def test_run_case_records_smoke_declared_on_l2_skip_without_runtime(
+    tmp_path: Path,
+) -> None:
+    """A case that declares smoke but is skipped before authoring ever
+    starts (no runtime resolved) must still record `smoke_declared=True`:
+    without this, "declared but never ran" is indistinguishable from
+    "never declared" once the case is reduced to a skip."""
+    _make_case(tmp_path, "agent", target={"run": {}, "smoke": {"suite": "suite.yaml"}})
+    case = load_corpus(tmp_path)[0]
+    result = run_case(
+        case,
+        FixtureAuthor("FROM x:1\n"),
+        None,
+        tmp_path / "out",
+        build_timeout=600,
+        health_timeout=30,
+    )
+    assert result.outcome == "skipped"
+    assert result.smoke_declared is True
+    assert result.atp_smoke_status is None
+
+
+def test_run_case_records_smoke_not_declared_on_l2_skip_without_runtime(
+    tmp_path: Path,
+) -> None:
+    """The mirror case: a case that never declared smoke records
+    `smoke_declared=False` on the same skip path."""
+    _make_case(tmp_path, "svc")
+    case = load_corpus(tmp_path)[0]
+    result = run_case(
+        case,
+        FixtureAuthor("FROM x:1\n"),
+        None,
+        tmp_path / "out",
+        build_timeout=600,
+        health_timeout=30,
+    )
+    assert result.outcome == "skipped"
+    assert result.smoke_declared is False
+
+
 def test_run_case_runs_in_scratch_and_writes_artifacts(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -446,6 +487,38 @@ def test_run_case_mismatch_when_expectation_violated(
     )
     assert result.outcome == "mismatched"
     assert result.stopped_reason == "no_progress"
+
+
+def test_run_case_final_return_records_declared_smoke_passed(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The ordinary success path: a case that declares smoke and whose
+    `atp_smoke` PASSED must reach the final (non-skip) return with both
+    facts recorded, not just the pre-existing `atp_smoke_status`."""
+    case = _make_case(
+        tmp_path,
+        "agent",
+        target={"run": {}, "smoke": {"suite": "suite.yaml"}},
+        expected={"requires_l2": False},
+    )
+    (case / "suite.yaml").write_text("test_suite: x\n")
+    run = _fake_run(True)
+    run.iterations[-1].report.results.append(
+        CheckResult(check_id="atp_smoke", status=CheckStatus.PASSED)
+    )
+    monkeypatch.setattr("deployer.bench.author_dockerfile", lambda *a, **k: run)
+
+    result = run_case(
+        load_corpus(tmp_path)[0],
+        FixtureAuthor("FROM x:1\n"),
+        None,
+        tmp_path / "out",
+        build_timeout=600,
+        health_timeout=30,
+    )
+    assert result.outcome == "matched"
+    assert result.smoke_declared is True
+    assert result.atp_smoke_status is CheckStatus.PASSED
 
 
 def test_run_bench_aggregates_and_writes_reports(tmp_path: Path, monkeypatch) -> None:
@@ -1034,6 +1107,31 @@ def test_compare_non_atp_skip_reason_keeps_missing_case_important() -> None:
     }
 
 
+def test_compare_present_candidate_smoke_unsatisfied_is_important() -> None:
+    """A case present in both baseline and candidate is not automatically
+    comparable on smoke: a baseline that declared smoke can end up
+    unsatisfied in the candidate (SKIPPED here) without the case count
+    differing at all, so `missing_case` alone cannot catch this — it never
+    fires when the case is present in both."""
+    findings = compare_runs(
+        _report(_rcase("a", smoke_declared=True, atp_smoke_status="skipped")),
+        _golden(_gcase("a", smoke_declared=True, atp_smoke_status="passed")),
+    )
+    assert ("important", "atp_smoke", "a") in {
+        (f.level, f.metric, f.case) for f in findings
+    }
+
+
+def test_compare_present_candidate_smoke_satisfied_has_no_atp_finding() -> None:
+    """The mirror case: candidate's `atp_smoke` PASSED too, so there is
+    nothing to flag."""
+    findings = compare_runs(
+        _report(_rcase("a", smoke_declared=True, atp_smoke_status="passed")),
+        _golden(_gcase("a", smoke_declared=True, atp_smoke_status="passed")),
+    )
+    assert not any(f.metric == "atp_smoke" for f in findings)
+
+
 def test_compare_backend_mismatch_is_comparability_advisory() -> None:
     candidate = _report(_rcase("a"))
     candidate.author_backend = "anthropic"
@@ -1512,3 +1610,5 @@ def test_skipped_smoke_makes_the_case_skipped_not_successful(
     assert "atp" in result.skip_reason
     assert result.iterations == 1  # run telemetry survives the skip
     assert result.wall_time_s == 0.25  # measured from the faked clock, not dropped
+    assert result.smoke_declared is True
+    assert result.atp_smoke_status is CheckStatus.SKIPPED

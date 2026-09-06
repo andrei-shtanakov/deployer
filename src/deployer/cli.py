@@ -11,13 +11,11 @@ from pydantic import ValidationError
 
 from deployer.author import author_dockerfile
 from deployer.bench import (
-    ATP_SKIPPED_PREFIX,
     CloneError,
     FixtureAuthor,
     PromoteRefusedError,
     compare_runs,
     load_baseline,
-    load_corpus,
     promote_run,
     run_bench,
     verify_corpus,
@@ -30,6 +28,7 @@ from deployer.models import (
     ContainerRuntime,
     DeployTarget,
     VerificationReport,
+    satisfies_declared_smoke,
 )
 from deployer.runtime import (
     RuntimeConfigError,
@@ -387,21 +386,15 @@ def _cmd_bench_run(args: argparse.Namespace) -> int:
     print(f"bench-report: {run_dir / 'bench-report.json'}")
     print(f"markdown: {run_dir / 'bench-report.md'}")
     if args.require_atp:
-        # Match the marker `run_case` writes, not the prose after it: a
-        # substring test against a free-text message would drift silently as
-        # the message is reworded. That marker only covers the skip `atp_smoke`
-        # itself reports (version mismatch, binary missing, ...); a smoke case
-        # can also be skipped EARLIER — e.g. no container runtime resolved —
-        # before ATP ever runs, and that skip must trip the gate too: a
-        # SKIPPED smoke never closes the seam, whatever skipped it.
-        smoke_case_names = {
-            case.name
-            for case in load_corpus(corpus, args.filter_pattern)
-            if case.target.smoke is not None
-        }
-        if not smoke_case_names:
-            # An empty scope closes the gate even less than a SKIPPED smoke
-            # does: nothing at all was exercised, so `report.all_matched`
+        # Scope and intent both come from `report.cases` — never a second
+        # `load_corpus` read, and never `skip_reason` prose. A re-read would
+        # also miss external targets (cloned into the run, never in the
+        # synthetic corpus dir); `smoke_declared` and `atp_smoke_status` are
+        # recorded on every case, external or synthetic, skipped or not.
+        smoke_cases = [c for c in report.cases if c.smoke_declared]
+        if not smoke_cases:
+            # An empty scope closes the gate even less than an unsatisfied
+            # smoke does: nothing at all was exercised, so `report.all_matched`
             # alone must not be allowed to satisfy `--require-atp`.
             print(
                 "error: --require-atp: no case in scope declares a smoke "
@@ -410,49 +403,26 @@ def _cmd_bench_run(args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
             return 1
-        atp_skipped = [
-            c
-            for c in report.cases
-            if c.outcome == "skipped"
-            and (c.skip_reason or "").startswith(ATP_SKIPPED_PREFIX)
-        ]
-        pre_l2_skipped = [
-            c
-            for c in report.cases
-            if c.outcome == "skipped"
-            and c.case in smoke_case_names
-            and c not in atp_skipped
-        ]
         # The spec's acceptance contract is `atp_smoke: PASSED` specifically,
-        # not merely "the case matched its expectation": a corpus case may
-        # declare `expected_success: false`, so a FAILED atp_smoke can still
-        # end up `outcome="matched"` and slip past a check that only looks
-        # at skips. Every non-skipped smoke case in scope must show a
-        # recorded PASSED — FAILED or an absent check both fail the gate.
-        not_passed = [
-            c
-            for c in report.cases
-            if c.case in smoke_case_names
-            and c.outcome != "skipped"
-            and c.atp_smoke_status is not CheckStatus.PASSED
-        ]
-        if atp_skipped or pre_l2_skipped or not_passed:
-            messages = []
-            if atp_skipped:
-                names = ", ".join(c.case for c in atp_skipped)
-                messages.append(f"smoke never executed for: {names}")
-            if pre_l2_skipped:
-                names = ", ".join(c.case for c in pre_l2_skipped)
-                messages.append(f"smoke case skipped before reaching ATP: {names}")
-            if not_passed:
-                details = ", ".join(
-                    f"{c.case} ("
-                    f"{c.atp_smoke_status.value if c.atp_smoke_status is not None else 'no atp_smoke check recorded'}"
-                    ")"
-                    for c in not_passed
-                )
-                messages.append(f"atp_smoke not PASSED for: {details}")
-            print(f"error: --require-atp: {'; '.join(messages)}", file=sys.stderr)
+        # not merely "the case matched its expectation" or "didn't skip": a
+        # corpus case may declare `expected_success: false`, so a FAILED
+        # atp_smoke can still end up `outcome="matched"`, and a case can be
+        # skipped either by `atp_smoke` itself (version mismatch, binary
+        # missing) or earlier still (no container runtime resolved) before
+        # ATP ever runs. `satisfies_declared_smoke` treats all of these —
+        # SKIPPED, FAILED, absent — as unsatisfied alike.
+        unsatisfied = [c for c in smoke_cases if not satisfies_declared_smoke(c)]
+        if unsatisfied:
+            details = ", ".join(
+                f"{c.case} ("
+                f"{c.atp_smoke_status.value if c.atp_smoke_status is not None else 'no atp_smoke check recorded'}"
+                ")"
+                for c in unsatisfied
+            )
+            print(
+                f"error: --require-atp: atp_smoke not satisfied for: {details}",
+                file=sys.stderr,
+            )
             return 1
     return 0 if report.all_matched else 1
 
@@ -483,11 +453,24 @@ def _cmd_bench_verify(args: argparse.Namespace) -> int:
         return 2
     failed = False
     for name, report in results:
-        status = "ok" if report.passed else "FAIL"
+        # `report.passed` alone is not enough: it treats SKIPPED as success
+        # (correct for optional linters), so a declared smoke intent whose
+        # `atp_smoke` was SKIPPED, FAILED, or never ran would print `ok`.
+        # `smoke_declared`/`atp_smoke_status` are read straight off the
+        # report's own fields — `verify_static` stamps `smoke_declared` at
+        # construction so it is available even when L2, and therefore
+        # `atp_smoke`, never ran at all.
+        ok = report.passed and satisfies_declared_smoke(report)
+        status = "ok" if ok else "FAIL"
         print(f"[{status:>4}] {name}")
-        if not report.passed:
+        if not ok:
             failed = True
-            _print_report(report)
+            if not report.passed:
+                _print_report(report)
+            elif not satisfies_declared_smoke(report):
+                atp_status = report.atp_smoke_status
+                detail = atp_status.value if atp_status is not None else "not run"
+                print(f"  atp_smoke declared but not satisfied: {detail}")
     if runtime is None:
         print("note: no container runtime found; static-only verification")
     return 1 if failed else 0

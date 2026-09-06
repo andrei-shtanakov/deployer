@@ -365,3 +365,80 @@ def test_verification_report_defaults_have_no_atp_and_no_image() -> None:
     assert report.atp_available is False
     assert report.built_image is None
     assert report.schema_version == SCHEMA_VERSION
+
+
+def test_verification_report_defaults_do_not_declare_smoke() -> None:
+    report = VerificationReport()
+    assert report.smoke_declared is False
+    assert report.atp_smoke_status is None
+
+
+def test_verification_report_atp_smoke_status_reads_the_check_result() -> None:
+    report = VerificationReport(
+        results=[
+            CheckResult(
+                check_id="atp_smoke",
+                status=CheckStatus.FAILED,
+                failure_kind=FailureKind.AUTHORING,
+            )
+        ],
+    )
+    assert report.atp_smoke_status is CheckStatus.FAILED
+
+
+def test_satisfies_declared_smoke_true_when_smoke_never_declared() -> None:
+    """A case that never declared smoke has nothing to satisfy: it must
+    not be flagged as violating an invariant that never applied to it."""
+    from deployer.models import BenchCaseResult, satisfies_declared_smoke
+
+    result = BenchCaseResult(case="a", outcome="matched", success=True)
+    assert result.smoke_declared is False
+    assert satisfies_declared_smoke(result) is True
+
+
+@pytest.mark.parametrize(
+    ("atp_smoke_status", "expected"),
+    [
+        (CheckStatus.PASSED, True),
+        (CheckStatus.SKIPPED, False),
+        (CheckStatus.FAILED, False),
+        (CheckStatus.WARNING, False),
+        (None, False),
+    ],
+)
+def test_satisfies_declared_smoke_requires_passed_when_declared(
+    atp_smoke_status: CheckStatus | None, expected: bool
+) -> None:
+    """A declared smoke intent is green only on `atp_smoke: PASSED` — every
+    other recorded status, including no recorded check at all, is a miss."""
+    from deployer.models import BenchCaseResult, satisfies_declared_smoke
+
+    result = BenchCaseResult(
+        case="a",
+        outcome="matched",
+        success=True,
+        smoke_declared=True,
+        atp_smoke_status=atp_smoke_status,
+    )
+    assert satisfies_declared_smoke(result) is expected
+
+
+def test_satisfies_declared_smoke_reads_golden_case_the_same_way() -> None:
+    """`GoldenCase` mirrors the two `BenchCaseResult` fields the predicate
+    reads, so a promoted baseline is judged identically to a fresh run."""
+    from deployer.models import GoldenCase, satisfies_declared_smoke
+
+    unsatisfied = GoldenCase(
+        case="a",
+        success=True,
+        smoke_declared=True,
+        atp_smoke_status=CheckStatus.SKIPPED,
+    )
+    satisfied = GoldenCase(
+        case="a",
+        success=True,
+        smoke_declared=True,
+        atp_smoke_status=CheckStatus.PASSED,
+    )
+    assert satisfies_declared_smoke(unsatisfied) is False
+    assert satisfies_declared_smoke(satisfied) is True
