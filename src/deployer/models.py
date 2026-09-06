@@ -320,6 +320,27 @@ class ExternalTarget(BaseModel):
             )
         return value
 
+    @model_validator(mode="after")
+    def _smoke_unsupported_for_external(self) -> "ExternalTarget":
+        """An external suite path has nowhere to resolve against.
+
+        `SmokeSpec.suite` is resolved relative to the `target.json` that
+        declared it (see `SmokeSpec`); a cloned external target has no such
+        file, so there is no directory to resolve `suite` against. Silently
+        dropping the intent would let a declared smoke check no-op instead
+        of running, so it is refused here instead — the same rule as
+        `_ci_incompatible_with_dependencies` and `CISpec`'s "unknown keys
+        rejected loudly": an unworkable intent fails the config, it never
+        no-ops. Resolving external suites is a separate feature.
+        """
+        if self.target.smoke is not None:
+            raise ValueError(
+                "ExternalTarget.target.smoke is unsupported: the suite path "
+                "cannot be resolved for a cloned external repository (there "
+                "is no target.json directory to resolve it against)"
+            )
+        return self
+
 
 class CheckStatus(StrEnum):
     """Outcome status of a verification check."""

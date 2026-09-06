@@ -710,6 +710,24 @@ def test_load_external_rejects_traversal_name(tmp_path: Path) -> None:
         load_external(tmp_path)
 
 
+def test_load_external_rejects_smoke_target(tmp_path: Path) -> None:
+    """`smoke` needs `target.json`'s directory to resolve `suite` against;
+    a cloned external target has no such file, so the config must be
+    refused at load rather than accepted and left to fail every attempt
+    once L2 discovers there is no suite path to run."""
+    (tmp_path / "external.toml").write_text(
+        "[[targets]]\n"
+        'name = "demo"\n'
+        'url = "https://example.invalid/demo.git"\n'
+        'commit = "abc123"\n'
+        "[targets.target.run]\n"
+        "[targets.target.smoke]\n"
+        'suite = "suite.yaml"\n'
+    )
+    with pytest.raises(ValueError, match="smoke"):
+        load_external(tmp_path)
+
+
 def test_create_run_dir_retries_past_same_second_collision(tmp_path: Path) -> None:
     stamp = "20260721-120000"
     label = "unit"
