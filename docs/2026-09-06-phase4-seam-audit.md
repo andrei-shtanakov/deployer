@@ -91,12 +91,17 @@ the neighbour's PR (ADR-ECO-006, `repo-boundaries.md`).
    behind a trigger — deployer has nothing mutating to gate — but its wording
    should not imply arbiter's half is waiting.
 
-7. **A duplicated concept worth naming before it hardens.** deployer's
-   `runtime.py` `ContainerRuntime` (docker/podman, `ssh://` remote) and
-   proctor's `infra/docker.py` `ContainerRuntime` (docker/podman,
-   `ssh_host` remote) are the same abstraction built twice. Neither repo
-   references the other. Not actionable inside this audit; recorded so the
-   third copy does not get built.
+7. **A duplicated concept worth naming before it hardens — but a narrower
+   one than the shared class name suggests.** deployer's `ContainerRuntime`
+   (`src/deployer/models.py:195`, resolved and invoked from `runtime.py`) is
+   a config record: `tool` (docker/podman), `host`, `host_source`, with a
+   single subprocess chokepoint `container_run` over it. proctor's
+   same-named class (`src/proctor/infra/docker.py:84`) is a lifecycle
+   wrapper — `run(ContainerSpec) -> container_id`, `inspect`, `logs`,
+   `stop`, `remove`. These are different kinds of object; what is actually
+   built twice is the docker-vs-podman-plus-remote-host selection. Neither
+   repo references the other. Not actionable inside this audit; recorded so
+   the third copy is a decision rather than an accident.
 
 ## Shortlist for #52
 

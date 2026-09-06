@@ -110,13 +110,19 @@ them is the next thing to pick up.
 
 ## Ecosystem seams
 
-- [ ] arbiter policy gate in front of any mutating action the bench grows @trigger:"deployer grows a mutating action AND arbiter exposes an allow/deny tool" @id:arbiter-policy-gate-seam @epic:eco.governance-plane
-  — the seam audit (2026-09-06) found the premise does not hold yet on either side:
+- [ ] arbiter policy gate in front of any mutating action the bench grows @trigger:"deployer grows a mutating action" @id:arbiter-policy-gate-seam @epic:eco.governance-plane
+  — the trigger is deliberately the event on **this** side only: a mutating contour here
+  (e.g. the registry push of `todo://deployer/ci-test-kind-target`) must wake this item,
+  because `CLAUDE.md` gates mutating actions behind arbiter policy. arbiter's readiness is
+  a separate condition and must not be ANDed into the trigger, or the event that most needs
+  the reminder would silently fail to raise it. That readiness is missing:
   arbiter's MCP surface is six tools — `route_task`, `report_benchmark`, `report_outcome`,
   `get_agent_status`, `get_metrics`, `get_budget_status` — agent routing and telemetry, no
   deploy decision. Its half is a handoff and their PR; do not plan here as if it exists
-- [ ] ATP smoke-test of built artifacts as a verification level above L2 @id:atp-smoke-test-seam @epic:eco.dark-factory
-  — shortlist #1 of the seam audit, and the same work as `todo://deployer/first-consumer-seam`.
+- [ ] ATP smoke-test of built artifacts as a verification level above L2 @blocked_by:todo://deployer/first-consumer-seam @id:atp-smoke-test-seam @epic:eco.dark-factory
+  — shortlist #1 of the seam audit, and the same work as `todo://deployer/first-consumer-seam`;
+  the `@blocked_by` tag is what makes that duplication machine-visible, since a line-wise
+  consumer never sees this prose. Closing the seam closes this item with it.
   Consumer half is shipped and needs no change: `atp test <suite> --adapter=container
   --adapter-config='image=<tag>'`. Two scoping constraints from the audit: ATP's container
   adapter has no remote-host support (local runtime only, not `--container-host ssh://`),
@@ -138,11 +144,13 @@ them is the next thing to pick up.
   builds its acceptance argument on "its only workflow is the governance caller"; deployer
   gained `.github/workflows/ci.yml` (`uv run pytest -q` on every PR, commit `c836cbc`).
   Their repo, their fix: inbox issue or handoff note, do not edit
-- [ ] `ContainerRuntime` is built twice in the fleet @trigger:"a third repo needs a container-runtime wrapper" @id:container-runtime-duplication @epic:eco.ops
-  — this repo's `src/deployer/runtime.py` (docker/podman, `ssh://` remote) and
-  `proctor/src/proctor/infra/docker.py` (docker/podman, `ssh_host` remote) are the same
-  abstraction; neither references the other. Recorded by the seam audit so a third copy
-  is a decision, not an accident
+- [ ] Container-runtime selection is built twice in the fleet @trigger:"a third repo needs a container-runtime wrapper" @id:container-runtime-duplication @epic:eco.ops
+  — the overlap is narrower than the name suggests: this repo's `ContainerRuntime`
+  (`src/deployer/models.py:195`, resolved and invoked from `runtime.py`) is a config record —
+  docker/podman plus a remote host — while proctor's same-named class
+  (`proctor/src/proctor/infra/docker.py:84`) is a lifecycle wrapper (`run`/`inspect`/`logs`/
+  `stop`/`remove`). What is genuinely duplicated is the docker-vs-podman + remote-host
+  choice. Neither repo references the other; recorded so a third copy is a decision
 
 ## Shipped
 
