@@ -348,6 +348,20 @@ class CheckResult(BaseModel):
         return self
 
 
+class BuiltImage(BaseModel):
+    """The image L2 built, and what became of it.
+
+    `lifecycle` is the contract a consumer reads: `ephemeral` means the image
+    does not outlive the run, so the reference answers "what was tested", not
+    "what is on your machine".
+    """
+
+    tag: str
+    runtime: ContainerRuntime
+    lifecycle: Literal["ephemeral"] = "ephemeral"
+    cleanup_status: Literal["removed", "failed", "not_attempted"] = "not_attempted"
+
+
 class VerificationReport(BaseModel):
     """Aggregated check results for one Dockerfile candidate."""
 
@@ -356,9 +370,11 @@ class VerificationReport(BaseModel):
     hadolint_available: bool = False
     actionlint_available: bool = False
     docker_available: bool = False
+    atp_available: bool = False
     image_size_bytes: int | None = None
     runtime: ContainerRuntime | None = None
     runtime_versions: RuntimeVersions | None = None
+    built_image: BuiltImage | None = None
 
     @property
     def passed(self) -> bool:

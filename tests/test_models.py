@@ -2,9 +2,11 @@ import pytest
 from pydantic import ValidationError
 
 from deployer.models import (
+    SCHEMA_VERSION,
     AuthoringRun,
     CheckResult,
     CheckStatus,
+    ContainerRuntime,
     DeployTarget,
     FailureKind,
     IterationRecord,
@@ -329,3 +331,23 @@ def test_smoke_spec_defaults_and_rejects_unknown_keys() -> None:
 def test_smoke_spec_rejects_an_empty_suite_path() -> None:
     with pytest.raises(ValidationError):
         DeployTarget(smoke={"suite": ""}, run={})
+
+
+def test_built_image_defaults_to_unattempted_cleanup() -> None:
+    """cleanup_status records what happened, so it cannot default to success.
+
+    `rmi` is best-effort and may fail; a hardcoded "removed" would be a claim
+    the code never checks.
+    """
+    from deployer.models import BuiltImage
+
+    image = BuiltImage(tag="localhost/x", runtime=ContainerRuntime(tool="docker"))
+    assert image.lifecycle == "ephemeral"
+    assert image.cleanup_status == "not_attempted"
+
+
+def test_verification_report_defaults_have_no_atp_and_no_image() -> None:
+    report = VerificationReport()
+    assert report.atp_available is False
+    assert report.built_image is None
+    assert report.schema_version == SCHEMA_VERSION
