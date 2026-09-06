@@ -1412,3 +1412,5 @@ def test_skipped_smoke_makes_the_case_skipped_not_successful(
 
     assert result.outcome == "skipped"
     assert "atp" in result.skip_reason
+    assert result.iterations == 1  # run telemetry survives the skip
+    assert result.wall_time_s is not None and result.wall_time_s > 0

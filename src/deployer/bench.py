@@ -273,6 +273,9 @@ def run_case(
                 case=case.name,
                 outcome="skipped",
                 skip_reason=f"atp_smoke skipped: {smoke[0].message}",
+                iterations=len(run.iterations),
+                image_size_bytes=last.report.image_size_bytes if last else None,
+                wall_time_s=round(wall, 3),
                 expected=case.expected,
             )
     failure_kinds = sorted(
