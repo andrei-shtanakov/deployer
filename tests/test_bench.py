@@ -1368,3 +1368,47 @@ def test_baseline_of_a_later_minor_version_still_reads(
     golden_file.write_text(json.dumps(raw, indent=2))
 
     assert load_baseline("golden", tmp_path).schema_version == "1.7"
+
+
+def test_load_corpus_resolves_the_smoke_suite_beside_target_json(
+    tmp_path: Path,
+) -> None:
+    case = _make_case(
+        tmp_path, "agent", target={"run": {}, "smoke": {"suite": "suite.yaml"}}
+    )
+    (case / "suite.yaml").write_text("test_suite: x\n")
+
+    loaded = load_corpus(tmp_path)[0]
+
+    assert loaded.smoke_suite == case / "suite.yaml"
+
+
+def test_skipped_smoke_makes_the_case_skipped_not_successful(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A run where the seam never executed must not read as a pass."""
+    case = _make_case(
+        tmp_path, "agent", target={"run": {}, "smoke": {"suite": "suite.yaml"}}
+    )
+    (case / "suite.yaml").write_text("test_suite: x\n")
+    run = _fake_run(True)
+    run.iterations[-1].report.results.append(
+        CheckResult(
+            check_id="atp_smoke",
+            status=CheckStatus.SKIPPED,
+            message="atp 2.1.0 not installed; run is non-comparable",
+        )
+    )
+    monkeypatch.setattr("deployer.bench.author_dockerfile", lambda *a, **k: run)
+
+    result = run_case(
+        load_corpus(tmp_path)[0],
+        FixtureAuthor("FROM x:1\n"),
+        ContainerRuntime(tool="docker"),
+        tmp_path / "out",
+        build_timeout=600,
+        health_timeout=30,
+    )
+
+    assert result.outcome == "skipped"
+    assert "atp" in result.skip_reason

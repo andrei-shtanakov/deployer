@@ -384,6 +384,23 @@ def _cmd_bench_run(args: argparse.Namespace) -> int:
     print(f"success rate: {rate if rate is not None else 'n/a'}")
     print(f"bench-report: {run_dir / 'bench-report.json'}")
     print(f"markdown: {run_dir / 'bench-report.md'}")
+    if args.require_atp:
+        # Match the marker `run_case` writes, not the prose after it: a
+        # substring test against a free-text message would drift silently as
+        # the message is reworded.
+        unexecuted = [
+            c
+            for c in report.cases
+            if c.outcome == "skipped"
+            and (c.skip_reason or "").startswith("atp_smoke skipped:")
+        ]
+        if unexecuted:
+            names = ", ".join(c.case for c in unexecuted)
+            print(
+                f"error: --require-atp: smoke never executed for: {names}",
+                file=sys.stderr,
+            )
+            return 1
     return 0 if report.all_matched else 1
 
 
@@ -523,6 +540,14 @@ def main(argv: list[str] | None = None) -> int:
         "--include-external",
         action="store_true",
         help="also clone and run corpus/external.toml targets",
+    )
+    p_bench_run.add_argument(
+        "--require-atp",
+        action="store_true",
+        help=(
+            "fail if a case declaring a smoke intent was skipped for a missing "
+            "or mismatched atp; acceptance of the ATP seam requires it"
+        ),
     )
     _add_runtime_flags(p_bench_run)
     _add_timeout_flags(p_bench_run)

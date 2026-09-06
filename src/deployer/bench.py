@@ -101,6 +101,7 @@ class BenchCase(BaseModel):
     fixture_dockerfile: Path | None = None
     fixture_compose: Path | None = None
     fixture_ci: Path | None = None
+    smoke_suite: Path | None = None
     external_url: str | None = None
     external_commit: str | None = None
 
@@ -141,6 +142,9 @@ def load_corpus(corpus_root: Path, pattern: str = "*") -> list[BenchCase]:
                 fixture_dockerfile=fixture if fixture.is_file() else None,
                 fixture_compose=fixture_compose if fixture_compose.is_file() else None,
                 fixture_ci=fixture_ci if fixture_ci.is_file() else None,
+                smoke_suite=(
+                    case_dir / target.smoke.suite if target.smoke is not None else None
+                ),
             )
         )
     return cases
@@ -248,6 +252,7 @@ def run_case(
             runtime=runtime,
             build_timeout=build_timeout,
             health_timeout=health_timeout,
+            smoke_suite=case.smoke_suite,
         )
     wall = time.monotonic() - started
     case_out_dir.mkdir(parents=True, exist_ok=True)
@@ -259,6 +264,17 @@ def run_case(
             (case_out_dir / "compose.yaml").write_text(last.compose + "\n")
         if last.ci is not None:
             (case_out_dir / "ci.yml").write_text(last.ci + "\n")
+    if case.target.smoke is not None and run.iterations:
+        smoke = [
+            r for r in run.iterations[-1].report.results if r.check_id == "atp_smoke"
+        ]
+        if smoke and smoke[0].status is CheckStatus.SKIPPED:
+            return BenchCaseResult(
+                case=case.name,
+                outcome="skipped",
+                skip_reason=f"atp_smoke skipped: {smoke[0].message}",
+                expected=case.expected,
+            )
     failure_kinds = sorted(
         {
             r.failure_kind
