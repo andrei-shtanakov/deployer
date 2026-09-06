@@ -1391,6 +1391,12 @@ atp plugins list --type=adapter      # must list `container`
 
 In `CLAUDE.md`, update the sentence that lists what verification does, so the L2 description mentions the ATP smoke level, and update the corpus case count from 11 to 12.
 
+In `docs/superpowers/specs/2026-09-06-atp-smoke-seam-design.md` §5, drop the
+caveat "(reported in review; not verified here)" from the empty-suite paragraph
+and state the verification first-hand: a suite with `tests: []` makes `atp` exit
+2 without writing a report, which `_atp_verdict` classifies as ENVIRONMENT.
+This was confirmed by a live run during Task 6, so the spec must stop hedging.
+
 In `TODO.md`, the `install-atp` item gets the same install procedure by
 reference (`README.md`, "Installing `atp` 2.1.0"), plus the note that it is a
 temporary workaround pending atp-platform#320. **Do not tick `install-atp`
