@@ -2,6 +2,7 @@
 
 import fnmatch
 import hashlib
+import json
 import shutil
 import subprocess
 import tempfile
@@ -10,6 +11,7 @@ import tomllib
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -22,6 +24,8 @@ from deployer.author import (
 )
 from deployer.facts import analyze_project
 from deployer.models import (
+    LEGACY_SCHEMA_VERSION,
+    SCHEMA_VERSION,
     AuthorInfo,
     AuthoringRun,
     BenchCaseResult,
@@ -474,12 +478,67 @@ class PromoteRefusedError(ValueError):
     """Raised when `promote_run` refuses to promote a mismatched run."""
 
 
+_KNOWN_SCHEMA_MAJORS = frozenset(
+    {LEGACY_SCHEMA_VERSION, SCHEMA_VERSION.partition(".")[0]}
+)
+"""Report majors this deployer can read: the pre-versioning shape and its own.
+
+Only the major is checked. Additive fields are compatible within a major by
+policy, so a later minor stays readable; an unknown major does not.
+"""
+
+
+def _versioned(text: str) -> dict[str, Any]:
+    """Parse a report document, marking a pre-versioning one as legacy.
+
+    The absent key is what identifies a legacy document, so the decision has
+    to happen here on the raw mapping: by the time pydantic sees it, an
+    omitted key and an omitted argument look the same. Every read of a report
+    written by an earlier deployer must go through here — a plain
+    `model_validate_json` would silently upgrade it to the current version.
+    """
+    raw = json.loads(text)
+    if not isinstance(raw, dict):
+        raise ValueError(
+            "report document must be a JSON object, got "
+            f"{type(raw).__name__}: the file is not a deployer report"
+        )
+    raw.setdefault("schema_version", LEGACY_SCHEMA_VERSION)
+    major = str(raw["schema_version"]).partition(".")[0]
+    if major not in _KNOWN_SCHEMA_MAJORS:
+        raise ValueError(
+            f"unsupported schema_version {raw['schema_version']!r}: this "
+            f"deployer reads majors {sorted(_KNOWN_SCHEMA_MAJORS)}. Reading a "
+            "document from an unknown major would compare shapes it does not "
+            "understand and call the result green"
+        )
+    return raw
+
+
 def _load_bench_report(run_dir: Path) -> BenchReport:
     """Parse `<run_dir>/bench-report.json`; raise if the run dir is bogus."""
     report_file = run_dir / "bench-report.json"
     if not report_file.is_file():
         raise ValueError(f"not a bench run dir: missing {report_file}")
-    return BenchReport.model_validate_json(report_file.read_text())
+    return BenchReport.model_validate(_versioned(report_file.read_text()))
+
+
+def _load_authoring_run(run_file: Path) -> AuthoringRun:
+    """Parse a per-case `authoring-run.json`, honouring the legacy rule.
+
+    The rule has to reach `iterations[*].report`: a `VerificationReport` is
+    both a document of its own and a record nested here, so a model default
+    would let the nested one claim the current version inside a legacy
+    document. A nested report inherits the version of the document holding it.
+    """
+    raw = _versioned(run_file.read_text())
+    for iteration in raw.get("iterations") or []:
+        if not isinstance(iteration, dict):
+            continue
+        report = iteration.get("report")
+        if isinstance(report, dict):
+            report.setdefault("schema_version", raw["schema_version"])
+    return AuthoringRun.model_validate(raw)
 
 
 def _normalize_from_report(report: BenchReport, run_dir: Path) -> GoldenReport:
@@ -496,7 +555,7 @@ def _normalize_from_report(report: BenchReport, run_dir: Path) -> GoldenReport:
         checks: list[GoldenCheck] = []
         run_file = run_dir / "cases" / result.case / "authoring-run.json"
         if run_file.is_file():
-            authoring = AuthoringRun.model_validate_json(run_file.read_text())
+            authoring = _load_authoring_run(run_file)
             if authoring.iterations:
                 last_report = authoring.iterations[-1].report
                 checks = [
@@ -601,7 +660,7 @@ def load_baseline(source: Path | str, corpus_root: Path) -> BenchReport | Golden
         golden_file = corpus_root / "golden" / "golden.json"
         if not golden_file.is_file():
             raise ValueError(f"no golden baseline at {golden_file}")
-        return GoldenReport.model_validate_json(golden_file.read_text())
+        return GoldenReport.model_validate(_versioned(golden_file.read_text()))
     return _load_bench_report(Path(source))
 
 

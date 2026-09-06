@@ -62,6 +62,27 @@ invalid runtime configuration).
 `verify` writes its full report to `<project>/.deployer/verify-report.json`
 (latest run only).
 
+### Report schema version
+
+Every report deployer writes — `verify-report.json`, `authoring-run.json`,
+`bench-report.json`, `golden.json` — carries `schema_version`, currently
+`"1.0"`. A consumer should pin against it rather than against the shape.
+
+The compatibility rules:
+
+- A document with **no** `schema_version` key predates versioning and reads
+  as `"0"`. deployer applies that when it reads such a file back; a consumer
+  parsing these documents should do the same.
+- Within a major version, **added fields are compatible**: a new report field
+  does not bump the version. Only a breaking change to an existing field does.
+- Because v1 is purely additive over v0, `bench compare` still diffs a v0
+  baseline against a v1 run, and does not report the version gap as a
+  finding.
+- deployer holds itself to the same rule when reading a report back: a
+  document whose **major** is neither `0` nor `1` is refused (`error:` and
+  exit 2) rather than compared as if understood. A later *minor* stays
+  readable, since additive fields are compatible within a major.
+
 `author` and `bench run --author anthropic` auto-load `./.env`
 (KEY=VALUE lines) for the Anthropic API key; real environment variables
 always win, and runtime flags (`DEPLOYER_CONTAINER_*`) are NOT read
