@@ -23,6 +23,7 @@ from deployer.facts import (
     validate_target_against_facts,
 )
 from deployer.models import (
+    BuiltImage,
     CheckResult,
     CheckStatus,
     ContainerRuntime,
@@ -1577,16 +1578,26 @@ def verify_docker(
     *,
     build_timeout: int = DEFAULT_BUILD_TIMEOUT,
     health_timeout: int = DEFAULT_HEALTH_TIMEOUT,
-) -> tuple[list[CheckResult], int | None]:
-    """L2: real sandboxed build; then service healthcheck or job run-completes.
+    smoke_suite: Path | None = None,
+) -> tuple[list[CheckResult], int | None, BuiltImage, bool]:
+    """L2: real sandboxed build; then service healthcheck, ATP smoke, or job run.
 
     The healthcheck probes over the container's loopback via `exec python -c`,
     so `--network=none` still works. This assumes a Python base image — true
     for every artifact this MVP authors.
+
+    For a `smoke` target ATP is the runtime check and `_run_completes` is not
+    invoked: that helper starts the container with no stdin, and an ATP agent
+    reading stdin would legitimately fail on EOF.
+
+    The tag is fully qualified with `localhost/` so no consumer of it — ATP
+    included — treats a short name as something to pull.
     """
-    tag = f"deployer-verify-{uuid.uuid4().hex[:8]}"
+    tag = f"localhost/deployer-verify-{uuid.uuid4().hex[:8]}"
     results: list[CheckResult] = []
     image_size: int | None = None
+    atp_available = False
+    built = BuiltImage(tag=tag, runtime=runtime)
     try:
         with _isolated_context(project_path) as context:
             build_result = _build(
@@ -1597,14 +1608,40 @@ def verify_docker(
             image_size = _image_size(runtime, tag)
             if target.service is not None:
                 results.append(_run_healthcheck(target, runtime, tag, health_timeout))
+            elif target.smoke is not None and smoke_suite is not None:
+                if runtime.remote:
+                    results.append(
+                        CheckResult(
+                            check_id="atp_smoke",
+                            status=CheckStatus.SKIPPED,
+                            message=(
+                                "ATP's container adapter has no remote-host "
+                                "support; the image built on a remote host is "
+                                "not visible to it. Run is non-comparable"
+                            ),
+                        )
+                    )
+                else:
+                    smoke_result, atp_available = _check_atp_smoke(
+                        smoke_suite, runtime, tag, target.smoke.timeout_s
+                    )
+                    results.append(smoke_result)
             elif target.run is not None:
                 results.append(_run_completes(target, runtime, tag, health_timeout))
     finally:
+        # Best-effort cleanup that must never clobber the return value — but
+        # `container_run` does not pass `check=True`, so a failed `rmi` returns
+        # non-zero silently. Record the actual outcome: claiming "removed"
+        # without reading the return code would be exactly the unchecked claim
+        # `cleanup_status` exists to prevent.
         try:
-            container_run(runtime, ["rmi", "-f", tag], capture_output=True, timeout=60)
-        except (subprocess.TimeoutExpired, OSError):
-            pass  # best-effort cleanup; must never clobber the return value
-    return results, image_size
+            removal = container_run(
+                runtime, ["rmi", "-f", tag], capture_output=True, timeout=60
+            )
+            built.cleanup_status = "removed" if removal.returncode == 0 else "failed"
+        except (subprocess.TimeoutExpired, OSError, AttributeError):
+            built.cleanup_status = "failed"
+    return results, image_size, built, atp_available
 
 
 def verify(
@@ -1618,6 +1655,7 @@ def verify(
     health_timeout: int = DEFAULT_HEALTH_TIMEOUT,
     compose: str | None = None,
     ci: str | None = None,
+    smoke_suite: Path | None = None,
 ) -> VerificationReport:
     """Full verification: L1 static always; L2 docker when available and L1 passed.
 
@@ -1667,16 +1705,19 @@ def verify(
                     )
                 )
         elif report.passed:
-            docker_results, image_size = verify_docker(
+            docker_results, image_size, built, atp_available = verify_docker(
                 dockerfile,
                 project_path,
                 target,
                 runtime,
                 build_timeout=build_timeout,
                 health_timeout=health_timeout,
+                smoke_suite=smoke_suite,
             )
             report.results.extend(docker_results)
             report.image_size_bytes = image_size
+            report.built_image = built
+            report.atp_available = atp_available
     if target.run is not None and target.run.expect_stdout:
         marker = target.run.expect_stdout
         report.results = [

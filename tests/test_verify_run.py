@@ -190,7 +190,7 @@ def test_verify_docker_dispatches_run_completes(
         return _proc(0)
 
     monkeypatch.setattr(verify_mod, "container_run", fake)
-    results, _ = verify_mod.verify_docker(
+    results, _size, _image, _available = verify_mod.verify_docker(
         "FROM python:3.12-slim", tmp_path, _target(), RUNTIME
     )
     assert [r.check_id for r in results] == ["build", "run_completes"]

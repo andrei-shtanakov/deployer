@@ -4,6 +4,7 @@ from typing import Literal
 import pytest
 
 from deployer.models import (
+    BuiltImage,
     CheckResult,
     CheckStatus,
     ContainerRuntime,
@@ -415,11 +416,23 @@ def _spy_docker(captured: dict):
     """verify_docker replacement that records the timeout kwargs it got."""
 
     def spy(
-        dockerfile, project_path, target, runtime, *, build_timeout, health_timeout
+        dockerfile,
+        project_path,
+        target,
+        runtime,
+        *,
+        build_timeout,
+        health_timeout,
+        smoke_suite=None,
     ):
         captured["build_timeout"] = build_timeout
         captured["health_timeout"] = health_timeout
-        return [CheckResult(check_id="build", status=CheckStatus.PASSED)], None
+        return (
+            [CheckResult(check_id="build", status=CheckStatus.PASSED)],
+            None,
+            BuiltImage(tag="localhost/deployer-verify-spy", runtime=runtime),
+            False,
+        )
 
     return spy
 
@@ -588,12 +601,13 @@ def test_verify_docker_cleanup_timeout_does_not_clobber_result(
         "rmi": subprocess.TimeoutExpired("rmi", 1),
     }
     monkeypatch.setattr("deployer.verify.container_run", _fake_container_run(responses))
-    results, image_size = verify_docker(
+    results, image_size, built, _available = verify_docker(
         GOOD, hello_service, DeployTarget(), ContainerRuntime(tool="podman")
     )
     assert results[0].check_id == "build"
     assert results[0].status is CheckStatus.PASSED
     assert image_size == 1234
+    assert built.cleanup_status == "failed"  # rmi timed out
 
 
 # -- Fix 2: mid-run transport loss during the healthcheck poll --
@@ -702,7 +716,7 @@ def test_build_oserror_classifies_as_environment(
         "rmi": subprocess.CompletedProcess(["rmi"], 0, stdout="", stderr=""),
     }
     monkeypatch.setattr("deployer.verify.container_run", _fake_container_run(responses))
-    results, image_size = verify_docker(
+    results, image_size, _built, _available = verify_docker(
         GOOD, hello_service, DeployTarget(), ContainerRuntime(tool="podman")
     )
     assert results[0].check_id == "build"
