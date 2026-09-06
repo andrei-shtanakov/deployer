@@ -74,12 +74,6 @@ them is the next thing to pick up.
 
 ## Verification hardening
 
-- [ ] Pinned-tool version check is a substring match, not exact @owner:repo:deployer @id:pinned-version-substring-match @epic:eco.research-bench
-  `verify.py` gates hadolint, actionlint and atp alike on `PINNED_VERSION not in version`,
-  so `"2.1.0"` also matches `"12.1.0"` and `"2.1.0-rc1"`. Bounded consequence — a
-  non-comparable run reported as comparable — but it now governs three tools instead of
-  one. Not fixed here; needs an exact-version parse (or a regex boundary) shared by all
-  three checks
 - [ ] Run-config seam: per-target persistence of build/health timeouts @trigger:"an external target again needs a non-default --build-timeout" @id:run-config-timeout-persistence @epic:eco.dark-factory
   — the recording half shipped in #10; the operator still has to pass the flag
 - [ ] L1 rule: a run/service intent must COPY the entrypoint and `package_dirs` @owner:repo:deployer @id:l1-copy-entrypoint-rule @epic:eco.dark-factory
@@ -145,6 +139,13 @@ them is the next thing to pick up.
 Merged work, plus the decisions that closed an open item without being code — those are
 prefixed `Decision:` so the ledger does not imply shipped behaviour.
 
+- [x] Pinned-tool version check was a substring match, not exact @owner:repo:deployer @id:pinned-version-substring-match @epic:eco.research-bench
+  `verify.py` gated hadolint, actionlint and atp alike on `PINNED_VERSION not in version`,
+  so `"2.1.0"` also matched `"12.1.0"` and `"2.1.0-rc1"`, reporting a non-comparable run
+  as comparable. Replaced with a shared `_version_pin_matches` helper (whole-token regex,
+  boundary excludes word chars, `.` and `-` on both sides so a prerelease suffix like
+  `-rc1` is rejected too) used by all three checks; SKIPPED/non-comparable wording on
+  mismatch is unchanged.
 - [x] Install `atp` 2.1.0 on the bench machine @owner:github:andrei-shtanakov @id:install-atp @epic:eco.research-bench
   The temporary tagged-source procedure in `README.md` was reproduced from a clean
   directory with isolated uv tool, bin and cache directories. The resulting CLI reported

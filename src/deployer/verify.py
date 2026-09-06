@@ -43,6 +43,23 @@ _USES_REMOTE_PIN = re.compile(
 )
 _DOCKER_BUILD = re.compile(r"^docker\s+(?:buildx\s+)?build\b")
 _DOCKER_PUSH = re.compile(r"\b(?:docker(?:\s+image)?|podman)\s+push\b")
+
+
+def _version_pin_matches(pinned: str, output: str) -> bool:
+    """Whether `output` names `pinned` as a whole version token.
+
+    A plain substring test (``pinned in output``) also accepts an unrelated
+    longer version sharing the same prefix (``2.1.0`` inside ``atp, version
+    12.1.0``) or a prerelease build (``2.1.0-rc1``) as if it matched the
+    pin, even though neither is comparable to a golden baseline captured at
+    the exact pinned version. The boundary excludes ``-`` as well as
+    word characters and ``.``: a lookaround of ``[\\w.]`` alone still lets
+    ``2.1.0-rc1`` match (``-`` is neither), so it would not actually reject
+    the prerelease case it is meant to catch.
+    """
+    return re.search(rf"(?<![\w.-]){re.escape(pinned)}(?![\w.-])", output) is not None
+
+
 _DOCKER_LOGIN = re.compile(r"\bdocker\s+login\b")
 _SECRETS_REF = re.compile(r"\bsecrets[.\[]")
 DEFAULT_BUILD_TIMEOUT = 600
@@ -682,7 +699,7 @@ def _check_actionlint(ci: str) -> tuple[CheckResult, bool]:
         version = subprocess.run(
             [binary, "--version"], capture_output=True, text=True, timeout=10
         ).stdout
-        if ACTIONLINT_VERSION not in version:
+        if not _version_pin_matches(ACTIONLINT_VERSION, version):
             return (
                 CheckResult(
                     check_id="actionlint",
@@ -841,7 +858,7 @@ def _check_hadolint(dockerfile: str) -> tuple[CheckResult, bool]:
         version = subprocess.run(
             [binary, "--version"], capture_output=True, text=True, timeout=10
         ).stdout
-        if HADOLINT_VERSION not in version:
+        if not _version_pin_matches(HADOLINT_VERSION, version):
             return (
                 CheckResult(
                     check_id="hadolint",
@@ -1058,7 +1075,7 @@ def _check_atp_smoke(
         ).stdout
     except (subprocess.TimeoutExpired, OSError) as exc:
         return (_atp_env_failure(f"atp --version failed: {exc}"), False)
-    if ATP_VERSION not in version:
+    if not _version_pin_matches(ATP_VERSION, version):
         first = version.strip().splitlines()[0] if version.strip() else "?"
         return (
             CheckResult(

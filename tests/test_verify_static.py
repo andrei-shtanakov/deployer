@@ -156,6 +156,89 @@ def test_hadolint_garbage_output_degrades_to_skipped(
     assert report.hadolint_available is False
 
 
+def test_hadolint_exact_pinned_version_is_accepted(
+    hello_service: Path, monkeypatch
+) -> None:
+    import subprocess
+
+    from deployer.verify import HADOLINT_VERSION
+
+    monkeypatch.setattr("deployer.verify.shutil.which", lambda _: "/usr/bin/hadolint")
+
+    def _fake_run(cmd, **kwargs):
+        if "--version" in cmd:
+            return subprocess.CompletedProcess(
+                cmd,
+                0,
+                stdout=f"Haskell Dockerfile Linter {HADOLINT_VERSION}",
+                stderr="",
+            )
+        return subprocess.CompletedProcess(cmd, 0, stdout="[]", stderr="")
+
+    monkeypatch.setattr("deployer.verify.subprocess.run", _fake_run)
+    report = verify_static(GOOD, hello_service)
+    assert _by_id(report, "hadolint").status is CheckStatus.PASSED
+    assert report.hadolint_available is True
+
+
+def test_hadolint_longer_version_is_not_substring_matched(
+    hello_service: Path, monkeypatch
+) -> None:
+    """`"2.12.0"` must not accept `"12.12.0"` just because it contains it."""
+    import subprocess
+
+    monkeypatch.setattr("deployer.verify.shutil.which", lambda _: "/usr/bin/hadolint")
+    calls: list[list[str]] = []
+
+    def _fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(
+            cmd, 0, stdout="Haskell Dockerfile Linter 12.12.0", stderr=""
+        )
+
+    monkeypatch.setattr("deployer.verify.subprocess.run", _fake_run)
+    report = verify_static(GOOD, hello_service)
+    assert _by_id(report, "hadolint").status is CheckStatus.SKIPPED
+    assert report.hadolint_available is False
+    assert len(calls) == 1  # only --version; hadolint itself never ran
+
+
+def test_hadolint_prerelease_version_is_not_substring_matched(
+    hello_service: Path, monkeypatch
+) -> None:
+    """`"2.12.0"` must not accept a `"2.12.0-rc1"` prerelease build."""
+    import subprocess
+
+    monkeypatch.setattr("deployer.verify.shutil.which", lambda _: "/usr/bin/hadolint")
+
+    def _fake_run(cmd, **kwargs):
+        return subprocess.CompletedProcess(
+            cmd, 0, stdout="Haskell Dockerfile Linter 2.12.0-rc1", stderr=""
+        )
+
+    monkeypatch.setattr("deployer.verify.subprocess.run", _fake_run)
+    report = verify_static(GOOD, hello_service)
+    assert _by_id(report, "hadolint").status is CheckStatus.SKIPPED
+    assert report.hadolint_available is False
+
+
+@pytest.mark.parametrize(
+    ("output", "expected"),
+    [
+        ("atp, version 2.1.0", True),
+        ("atp, version 12.1.0", False),
+        ("atp, version 2.1.0-rc1", False),
+        ("atp, version 2.1.0.1", False),
+    ],
+)
+def test_version_pin_matches_whole_token_only(output: str, expected: bool) -> None:
+    """The shared helper behind all three pinned-version checks: a whole-token
+    match only, never a substring of a longer or prerelease version."""
+    from deployer.verify import _version_pin_matches
+
+    assert _version_pin_matches("2.1.0", output) is expected
+
+
 def test_install_strategy_skipped_without_facts(hello_service: Path) -> None:
     report = verify_static(GOOD, hello_service)
     assert _by_id(report, "install_strategy").status is CheckStatus.SKIPPED
@@ -1491,6 +1574,37 @@ def test_actionlint_version_mismatch_skips_without_running(monkeypatch) -> None:
     assert len(calls) == 1  # only --version; the linter itself never ran
 
 
+def test_actionlint_longer_version_is_not_substring_matched(monkeypatch) -> None:
+    """`"1.7.12"` must not accept `"11.7.12"` just because it contains it."""
+    import subprocess
+
+    monkeypatch.setattr("deployer.verify.shutil.which", lambda _: "/usr/bin/actionlint")
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout="11.7.12", stderr="")
+
+    monkeypatch.setattr("deployer.verify.subprocess.run", fake_run)
+    checks = _ci_checks(CI_GOOD)
+    assert checks["actionlint"].status is CheckStatus.SKIPPED
+    assert len(calls) == 1  # only --version; the linter itself never ran
+
+
+def test_actionlint_prerelease_version_is_not_substring_matched(monkeypatch) -> None:
+    """`"1.7.12"` must not accept a `"1.7.12-rc1"` prerelease build."""
+    import subprocess
+
+    monkeypatch.setattr("deployer.verify.shutil.which", lambda _: "/usr/bin/actionlint")
+
+    def fake_run(cmd, **kwargs):
+        return subprocess.CompletedProcess(cmd, 0, stdout="1.7.12-rc1", stderr="")
+
+    monkeypatch.setattr("deployer.verify.subprocess.run", fake_run)
+    checks = _ci_checks(CI_GOOD)
+    assert checks["actionlint"].status is CheckStatus.SKIPPED
+
+
 def test_actionlint_runs_against_real_workflow_path(monkeypatch) -> None:
     import subprocess
 
@@ -1717,6 +1831,55 @@ def test_atp_smoke_version_mismatch_skips_without_running(
     assert result.status is CheckStatus.SKIPPED
     assert available is False
     assert len(calls) == 1  # only --version; the suite never ran
+
+
+def test_atp_smoke_longer_version_is_not_substring_matched(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """`"2.1.0"` must not accept `"12.1.0"` just because it contains it."""
+    import subprocess
+
+    from deployer.verify import _check_atp_smoke
+
+    monkeypatch.setattr("deployer.verify.shutil.which", lambda _: "/usr/bin/atp")
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(
+            cmd, 0, stdout="atp, version 12.1.0", stderr=""
+        )
+
+    monkeypatch.setattr("deployer.verify.subprocess.run", fake_run)
+    result, available = _check_atp_smoke(
+        tmp_path / "suite.yaml", ContainerRuntime(tool="docker"), "localhost/x", 300
+    )
+    assert result.status is CheckStatus.SKIPPED
+    assert available is False
+    assert len(calls) == 1  # only --version; the suite never ran
+
+
+def test_atp_smoke_prerelease_version_is_not_substring_matched(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """`"2.1.0"` must not accept a `"2.1.0-rc1"` prerelease build."""
+    import subprocess
+
+    from deployer.verify import _check_atp_smoke
+
+    monkeypatch.setattr("deployer.verify.shutil.which", lambda _: "/usr/bin/atp")
+
+    def fake_run(cmd, **kwargs):
+        return subprocess.CompletedProcess(
+            cmd, 0, stdout="atp, version 2.1.0-rc1", stderr=""
+        )
+
+    monkeypatch.setattr("deployer.verify.subprocess.run", fake_run)
+    result, available = _check_atp_smoke(
+        tmp_path / "suite.yaml", ContainerRuntime(tool="docker"), "localhost/x", 300
+    )
+    assert result.status is CheckStatus.SKIPPED
+    assert available is False
 
 
 def test_atp_smoke_passes_runtime_and_tag_explicitly(
