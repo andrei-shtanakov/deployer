@@ -1179,18 +1179,21 @@ import sys
 
 
 def main() -> int:
-    """Read an ATPRequest on stdin, write an ATPResponse on stdout."""
+    """Read an ATPRequest on stdin, write an ATPResponse on stdout.
+
+    The response shape is not free-form: ATP validates stdout against its
+    `ATPResponse` model, which requires `task_id` (echoed from the request)
+    and a `status` from its own enum. There is no `output` field.
+    """
     raw = sys.stdin.read()
     if not raw.strip():
         print("empty request on stdin", file=sys.stderr)
         return 1
     request = json.loads(raw)
-    task = request.get("task") or {}
     json.dump(
         {
-            "request_id": request.get("request_id", "unknown"),
+            "task_id": request["task_id"],
             "status": "completed",
-            "output": f"handled: {task.get('description', '')}",
             "artifacts": [],
         },
         sys.stdout,
@@ -1201,6 +1204,15 @@ def main() -> int:
 if __name__ == "__main__":
     raise SystemExit(main())
 ```
+
+The field names above are verified against the pinned ATP, not guessed.
+`ATPRequest` carries `version`, `task_id`, `task`, `constraints`, `context`,
+`metadata`; `ATPResponse` requires `task_id` and `status`, accepts `artifacts`,
+`metrics`, `error`, `trace_id`, and has **no** `output` field. `status` must be
+one of `completed`, `failed`, `timeout`, `cancelled`, `partial`. Validating an
+earlier draft of this fixture — which emitted `request_id` and `output` —
+against the real `ATPResponse` model failed with a missing-`task_id` error, so
+do not "improve" these names.
 
 `corpus/synthetic/atp-agent/project/pyproject.toml`:
 
