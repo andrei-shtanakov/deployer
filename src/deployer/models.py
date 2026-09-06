@@ -196,6 +196,12 @@ class DeployTarget(BaseModel):
                 "DeployTarget.smoke requires a run intent: the target must "
                 "declare that it is a job"
             )
+        if self.run.expect_stdout is not None:
+            raise ValueError(
+                "DeployTarget.smoke with run.expect_stdout is unsupported: "
+                "for an ATP agent stdout is the ATPResponse JSON, so a "
+                "substring oracle over it is meaningless"
+            )
         return self
 
     @field_validator("extras")

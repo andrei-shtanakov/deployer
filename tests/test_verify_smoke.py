@@ -133,6 +133,32 @@ def test_built_image_records_a_failed_cleanup(monkeypatch, tmp_path) -> None:
     assert image.cleanup_status == "failed"
 
 
+def test_failed_build_leaves_cleanup_not_attempted(monkeypatch, tmp_path) -> None:
+    """No image was ever tagged, so there is nothing to `rmi` and no leak
+    to report: `cleanup_status` must stay at its `not_attempted` default,
+    not misreport a `failed` cleanup for an image that never existed."""
+    monkeypatch.setattr(
+        "deployer.verify._build",
+        lambda *a, **k: CheckResult(
+            check_id="build",
+            status=CheckStatus.FAILED,
+            failure_kind=FailureKind.AUTHORING,
+            message="boom",
+        ),
+    )
+
+    def must_not_be_called(*a, **k):
+        pytest.fail("rmi must not be attempted when the build never tagged an image")
+
+    monkeypatch.setattr("deployer.verify.container_run", must_not_be_called)
+
+    _results, _size, image, _available = verify_docker(
+        "FROM x:1\n", tmp_path, DeployTarget(), ContainerRuntime(tool="docker")
+    )
+
+    assert image.cleanup_status == "not_attempted"
+
+
 def test_smoke_on_a_remote_runtime_is_skipped(monkeypatch, tmp_path) -> None:
     """ATP's container adapter has no remote-host support, so it must not
     silently test whatever image happens to be local."""

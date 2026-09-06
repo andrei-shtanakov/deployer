@@ -11,6 +11,7 @@ from pydantic import ValidationError
 
 from deployer.author import author_dockerfile
 from deployer.bench import (
+    ATP_SKIPPED_PREFIX,
     CloneError,
     FixtureAuthor,
     PromoteRefusedError,
@@ -398,11 +399,22 @@ def _cmd_bench_run(args: argparse.Namespace) -> int:
             for case in load_corpus(corpus, args.filter_pattern)
             if case.target.smoke is not None
         }
+        if not smoke_case_names:
+            # An empty scope closes the gate even less than a SKIPPED smoke
+            # does: nothing at all was exercised, so `report.all_matched`
+            # alone must not be allowed to satisfy `--require-atp`.
+            print(
+                "error: --require-atp: no case in scope declares a smoke "
+                f"intent (filter {args.filter_pattern!r} matched none); the "
+                "gate has nothing to enforce",
+                file=sys.stderr,
+            )
+            return 1
         atp_skipped = [
             c
             for c in report.cases
             if c.outcome == "skipped"
-            and (c.skip_reason or "").startswith("atp_smoke skipped:")
+            and (c.skip_reason or "").startswith(ATP_SKIPPED_PREFIX)
         ]
         pre_l2_skipped = [
             c

@@ -138,7 +138,16 @@ The suite path is resolved relative to the `target.json` that declares it.
 The check id is `atp_smoke`; it needs `atp` 2.1.0 on `PATH` and a local
 container runtime (ATP's container adapter has no remote-host support), and
 reports `SKIPPED` otherwise. `deployer bench run --require-atp` turns such a
-skip into a failure, which is how the seam is accepted.
+skip into a failure, which is how the seam is accepted; it also fails if the
+filtered corpus declares no `smoke`-intent case at all, since an empty scope
+closes the gate even less than a SKIPPED smoke does.
+
+Once accepted, `bench promote` puts the smoke case into the golden baseline.
+An ordinary machine without `atp` on `PATH` still reports `atp_smoke:
+SKIPPED` for that case and `bench compare` stays green: a candidate case
+dropped only because of that marker is reported as an advisory
+`missing_case`, not a hard/important one — that is what keeps an ordinary
+run portable. A case missing for any other reason is still `important`.
 
 ### Installing `atp` 2.1.0 (temporary source-install workaround)
 
@@ -175,6 +184,10 @@ mismatched cases unless `--force`. `compare` reports regressions by level:
 hard (green→red), important (iteration growth, failure-kind flip, missing
 case), advisory (image size, hadolint status, new case; wall time only for
 raw-vs-raw). Exit 1 on hard/important findings, 0 otherwise.
+
+Promote only a full-corpus run unless replacing the baseline with a subset is
+intentional: `bench promote` replaces the entire `corpus/golden/` tree, and a
+filtered run can therefore erase otherwise healthy golden cases.
 
 ## Development
 

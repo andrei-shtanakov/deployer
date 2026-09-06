@@ -319,6 +319,20 @@ def test_smoke_target_rejects_a_service_intent() -> None:
         )
 
 
+def test_smoke_target_rejects_an_expect_stdout_oracle() -> None:
+    """Stdout on an ATP agent is the ATPResponse JSON, not job output.
+
+    A substring oracle over it is meaningless, so the combination must be
+    rejected rather than silently ignored (the `CISpec`/`dependencies`
+    precedent for a dropped intent failing the config, not no-opping).
+    """
+    with pytest.raises(ValidationError, match="expect_stdout"):
+        DeployTarget(
+            run={"expect_stdout": "ready"},
+            smoke={"suite": "suite.yaml"},
+        )
+
+
 def test_smoke_spec_defaults_and_rejects_unknown_keys() -> None:
     target = DeployTarget(smoke={"suite": "suite.yaml"}, run={})
     assert target.smoke is not None

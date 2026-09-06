@@ -716,12 +716,20 @@ def test_require_atp_fails_on_atp_smoke_skip_marker(tmp_path, monkeypatch, capsy
 
 
 def test_require_atp_ignores_unrelated_skip_reason(tmp_path, monkeypatch, capsys):
-    """A skip with a reason unconnected to smoke must not trip the gate."""
+    """A skip with a reason unconnected to smoke must not trip the gate.
+
+    A second, smoke-declaring case that matched cleanly keeps the corpus
+    scope non-empty, so this exercises the "unrelated skip" tolerance in
+    isolation from the separate `--require-atp`-on-empty-scope guard.
+    """
     corpus = _make_corpus(tmp_path)
     monkeypatch.setattr("deployer.cli.resolve_runtime", lambda *a, **k: None)
     monkeypatch.setattr(
         "deployer.cli.load_corpus",
-        lambda *a, **k: [_FakeSmokeCase("case-one", declares_smoke=False)],
+        lambda *a, **k: [
+            _FakeSmokeCase("case-one", declares_smoke=False),
+            _FakeSmokeCase("case-two", declares_smoke=True),
+        ],
     )
     report = _fake_report(
         [
@@ -729,7 +737,8 @@ def test_require_atp_ignores_unrelated_skip_reason(tmp_path, monkeypatch, capsys
                 "case": "case-one",
                 "outcome": "skipped",
                 "skip_reason": "no fixture.Dockerfile for the offline fixture author",
-            }
+            },
+            {"case": "case-two", "outcome": "matched", "success": True},
         ]
     )
     monkeypatch.setattr(
@@ -767,6 +776,25 @@ def test_require_atp_fails_when_smoke_case_skipped_before_l2(
     assert code == 1
     err = capsys.readouterr().err
     assert "case-one" in err
+
+
+def test_require_atp_fails_when_no_smoke_case_in_scope(tmp_path, monkeypatch, capsys):
+    """A filter that selects zero smoke-declaring cases must not let
+    `report.all_matched` alone satisfy `--require-atp`: an empty scope
+    exercises nothing, closing the gate even less than a SKIPPED smoke."""
+    corpus = _make_corpus(tmp_path)
+    monkeypatch.setattr("deployer.cli.resolve_runtime", lambda *a, **k: None)
+    monkeypatch.setattr(
+        "deployer.cli.load_corpus",
+        lambda *a, **k: [_FakeSmokeCase("case-one", declares_smoke=False)],
+    )
+    report = _fake_report([{"case": "case-one", "outcome": "matched", "success": True}])
+    monkeypatch.setattr(
+        "deployer.cli.run_bench", lambda *a, **k: (report, tmp_path / "run")
+    )
+    code = cli.main(["bench", "run", "--corpus", str(corpus), "--require-atp"])
+    assert code == 1
+    assert "no case in scope declares a smoke intent" in capsys.readouterr().err
 
 
 def test_bench_promote_cli(tmp_path, monkeypatch, capsys):

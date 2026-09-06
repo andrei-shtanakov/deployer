@@ -990,6 +990,48 @@ def test_compare_skipped_candidate_case_is_missing() -> None:
     }
 
 
+def test_compare_atp_skipped_missing_case_is_advisory() -> None:
+    """After the documented `--require-atp` promote, an ordinary machine's
+    `atp_smoke` SKIPPED (no `atp` on PATH) must not turn `bench compare` red:
+    that path is the README's "keeps an ordinary run portable" case."""
+    findings = compare_runs(
+        _report(
+            _rcase(
+                "a",
+                outcome="skipped",
+                success=False,
+                skip_reason=f"{bench.ATP_SKIPPED_PREFIX} atp not installed",
+            )
+        ),
+        _golden(_gcase("a")),
+    )
+    assert ("advisory", "missing_case", "a") in {
+        (f.level, f.metric, f.case) for f in findings
+    }
+    assert not any(
+        f.level == "important" and f.metric == "missing_case" for f in findings
+    )
+
+
+def test_compare_non_atp_skip_reason_keeps_missing_case_important() -> None:
+    """Only the atp_smoke-SKIPPED marker is exempt; any other skip reason
+    (or the case never running at all) must still be `important`."""
+    findings = compare_runs(
+        _report(
+            _rcase(
+                "a",
+                outcome="skipped",
+                success=False,
+                skip_reason="case requires L2 but no container runtime resolved",
+            )
+        ),
+        _golden(_gcase("a")),
+    )
+    assert ("important", "missing_case", "a") in {
+        (f.level, f.metric, f.case) for f in findings
+    }
+
+
 def test_compare_backend_mismatch_is_comparability_advisory() -> None:
     candidate = _report(_rcase("a"))
     candidate.author_backend = "anthropic"

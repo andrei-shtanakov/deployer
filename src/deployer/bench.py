@@ -191,6 +191,14 @@ def clone_external(ext: ExternalTarget, dest_root: Path) -> BenchCase:
     )
 
 
+ATP_SKIPPED_PREFIX = "atp_smoke skipped:"
+"""Marker prefix `run_case` writes when `atp_smoke` itself reports SKIPPED.
+
+Shared with `cli.py` (the `--require-atp` gate) and `compare_runs` (the
+`missing_case` severity below), so the two never drift against each other.
+"""
+
+
 def run_case(
     case: BenchCase,
     author: DockerfileAuthor | None,
@@ -274,7 +282,7 @@ def run_case(
             return BenchCaseResult(
                 case=case.name,
                 outcome="skipped",
-                skip_reason=f"atp_smoke skipped: {smoke[0].message}",
+                skip_reason=f"{ATP_SKIPPED_PREFIX} {smoke[0].message}",
                 iterations=len(run.iterations),
                 image_size_bytes=last.report.image_size_bytes if last else None,
                 wall_time_s=round(wall, 3),
@@ -745,17 +753,33 @@ def compare_runs(
     findings: list[CompareFinding] = _comparability_findings(candidate, baseline)
     base = _baseline_cases(baseline)
     cand = {c.case: c for c in candidate.cases if c.outcome != "skipped"}
+    skipped_cand = {c.case: c for c in candidate.cases if c.outcome == "skipped"}
     raw_baseline = isinstance(baseline, BenchReport)
 
     for name, b in base.items():
         c = cand.get(name)
         if c is None:
+            skipped = skipped_cand.get(name)
+            # A candidate case dropped only because `atp_smoke` itself
+            # reported SKIPPED (no `atp` on this machine, say) is the
+            # documented portable path (README), not a regression: demote
+            # to advisory so `bench compare` stays green after the
+            # `--require-atp`-gated promote. Any other reason a case is
+            # missing (never ran, skipped for an unrelated cause) stays
+            # `important` — a genuine absence must not be waved through.
+            atp_skip = skipped is not None and skipped.skip_reason.startswith(
+                ATP_SKIPPED_PREFIX
+            )
             findings.append(
                 CompareFinding(
-                    level="important",
+                    level="advisory" if atp_skip else "important",
                     case=name,
                     metric="missing_case",
-                    detail="present in baseline but absent or skipped in candidate",
+                    detail=(
+                        f"skipped: {skipped.skip_reason}"
+                        if atp_skip and skipped is not None
+                        else "present in baseline but absent or skipped in candidate"
+                    ),
                 )
             )
             continue
