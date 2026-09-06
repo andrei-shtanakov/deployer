@@ -88,6 +88,22 @@ def _load_target(path: str | None) -> DeployTarget | str:
         return f"--target is not a valid DeployTarget: {exc}"
 
 
+def _resolve_smoke_suite(target: DeployTarget, target_path: str | None) -> Path | None:
+    """Absolute path of the ATP suite, resolved against the target document.
+
+    Resolving against the cwd would make a target non-portable, and against
+    the project directory would put a test suite inside the build context.
+    """
+    if target.smoke is None:
+        return None
+    if target_path is None:
+        raise ValueError(
+            "a smoke intent requires --target: the suite path is resolved "
+            "relative to the target file"
+        )
+    return (Path(target_path).parent / target.smoke.suite).resolve()
+
+
 def _add_timeout_flags(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--build-timeout",
@@ -179,6 +195,11 @@ def _cmd_verify(args: argparse.Namespace) -> int:
     if isinstance(target, str):
         print(f"error: {target}", file=sys.stderr)
         return 2
+    try:
+        smoke_suite = _resolve_smoke_suite(target, args.target)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
     dockerfile_path = project / "Dockerfile"
     if not dockerfile_path.is_file():
         print(f"error: {dockerfile_path} not found", file=sys.stderr)
@@ -208,6 +229,7 @@ def _cmd_verify(args: argparse.Namespace) -> int:
             ci=ci,
             build_timeout=args.build_timeout,
             health_timeout=args.health_timeout,
+            smoke_suite=smoke_suite,
         )
     except TargetConfigError as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -253,6 +275,11 @@ def _cmd_author(args: argparse.Namespace) -> int:
     if isinstance(target, str):
         print(f"error: {target}", file=sys.stderr)
         return 2
+    try:
+        smoke_suite = _resolve_smoke_suite(target, args.target)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
     runtime = None
     if not args.no_docker:
         runtime = _resolve_runtime_or_error(args)
@@ -269,6 +296,7 @@ def _cmd_author(args: argparse.Namespace) -> int:
             runtime=runtime,
             build_timeout=args.build_timeout,
             health_timeout=args.health_timeout,
+            smoke_suite=smoke_suite,
         )
     except TargetConfigError as exc:
         print(f"error: {exc}", file=sys.stderr)

@@ -124,6 +124,7 @@ def test_verify_flags_reach_library(
         health_timeout,
         compose=None,
         ci=None,
+        smoke_suite=None,
     ):
         captured["timeouts"] = (build_timeout, health_timeout)
         return VerificationReport(
@@ -159,6 +160,7 @@ def test_author_flags_reach_library(tmp_path: Path, monkeypatch) -> None:
         runtime,
         build_timeout,
         health_timeout,
+        smoke_suite=None,
     ):
         captured["timeouts"] = (build_timeout, health_timeout)
         return AuthoringRun(
@@ -915,3 +917,35 @@ def test_cli_author_writes_ci_workflow(tmp_path: Path, monkeypatch) -> None:
     main(["author", str(tmp_path), "--no-docker", "--target", str(target_file)])
     ci_path = tmp_path / ".github" / "workflows" / "ci.yml"
     assert ci_path.read_text() == "name: ci\n"
+
+
+def test_smoke_suite_resolves_against_the_target_file(tmp_path: Path) -> None:
+    """Not the cwd and not project/: a target document must stay portable."""
+    from deployer.cli import _resolve_smoke_suite
+    from deployer.models import DeployTarget
+
+    target_dir = tmp_path / "case"
+    target_dir.mkdir()
+    (target_dir / "suite.yaml").write_text("test_suite: x\n")
+    target = DeployTarget(run={}, smoke={"suite": "suite.yaml"})
+
+    resolved = _resolve_smoke_suite(target, str(target_dir / "target.json"))
+
+    assert resolved == target_dir / "suite.yaml"
+
+
+def test_smoke_suite_is_none_without_a_smoke_intent() -> None:
+    from deployer.cli import _resolve_smoke_suite
+    from deployer.models import DeployTarget
+
+    assert _resolve_smoke_suite(DeployTarget(), "/anywhere/target.json") is None
+
+
+def test_smoke_suite_without_a_target_file_is_an_error() -> None:
+    """A smoke intent can only arrive through a --target file, so a missing
+    path is a broken invocation, not a silent skip."""
+    from deployer.cli import _resolve_smoke_suite
+    from deployer.models import DeployTarget
+
+    with pytest.raises(ValueError, match="--target"):
+        _resolve_smoke_suite(DeployTarget(run={}, smoke={"suite": "s.yaml"}), None)
