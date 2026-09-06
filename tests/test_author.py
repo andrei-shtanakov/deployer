@@ -316,6 +316,59 @@ def test_author_forwards_timeouts_to_both_verify_calls(
     assert run.stopped_reason == "success"
 
 
+def test_author_forwards_smoke_suite_to_both_verify_calls(
+    hello_service: Path, monkeypatch, tmp_path: Path
+) -> None:
+    """Regression: environment retry must not drop the smoke suite path —
+    both verify calls (main + retry) get the same resolved suite path.
+    """
+    from deployer.models import FailureKind
+
+    suite_path = tmp_path / "suite.yaml"
+    captured: list[Path | None] = []
+
+    def spy_verify(
+        dockerfile,
+        project_path,
+        target,
+        runtime,
+        facts=None,
+        *,
+        build_timeout,
+        health_timeout,
+        compose=None,
+        ci=None,
+        smoke_suite=None,
+    ):
+        captured.append(smoke_suite)
+        if len(captured) == 1:  # first call: environment flake -> triggers retry
+            return VerificationReport(
+                results=[
+                    CheckResult(
+                        check_id="build",
+                        status=CheckStatus.FAILED,
+                        failure_kind=FailureKind.ENVIRONMENT,
+                        message="connection reset",
+                    )
+                ]
+            )
+        return VerificationReport(
+            results=[CheckResult(check_id="build", status=CheckStatus.PASSED)]
+        )
+
+    monkeypatch.setattr("deployer.author.verify", spy_verify)
+    run = author_dockerfile(
+        hello_service,
+        DeployTarget(),
+        ScriptedAuthor(GOOD),
+        runtime=ContainerRuntime(tool="podman"),
+        smoke_suite=suite_path,
+    )
+    assert len(captured) == 2  # main call + environment-retry call
+    assert all(c == suite_path for c in captured)
+    assert run.stopped_reason == "success"
+
+
 def test_run_records_effective_config(hello_service: Path) -> None:
     run = author_dockerfile(
         hello_service,

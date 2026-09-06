@@ -146,6 +146,53 @@ def test_verify_flags_reach_library(
     assert captured["timeouts"] == (1200, 45)
 
 
+def test_verify_resolves_smoke_suite_from_target_and_forwards_it(
+    hello_service: Path, tmp_path: Path, monkeypatch
+) -> None:
+    """The CLI must pass verify() the RESOLVED absolute suite path — not the
+    relative string from the document, and not None — resolved against the
+    target file's own directory, not the project directory.
+    """
+    from deployer.models import VerificationReport
+
+    project = tmp_path / "proj"
+    project.mkdir()
+    for name in ("pyproject.toml", "main.py"):
+        (project / name).write_text((hello_service / name).read_text())
+    (project / "Dockerfile").write_text((hello_service / "Dockerfile.good").read_text())
+
+    target_dir = tmp_path / "targetdir"
+    target_dir.mkdir()
+    (target_dir / "suite.yaml").write_text("test_suite: x\n")
+    target_file = target_dir / "target.json"
+    target_file.write_text('{"run": {}, "smoke": {"suite": "suite.yaml"}}')
+
+    captured = {}
+
+    def spy_verify(
+        dockerfile,
+        project_path,
+        target,
+        runtime,
+        facts=None,
+        *,
+        build_timeout,
+        health_timeout,
+        compose=None,
+        ci=None,
+        smoke_suite=None,
+    ):
+        captured["smoke_suite"] = smoke_suite
+        return VerificationReport(
+            results=[CheckResult(check_id="parses", status=CheckStatus.PASSED)]
+        )
+
+    monkeypatch.setattr("deployer.cli.verify", spy_verify)
+    exit_code = cli.main(["verify", str(project), "--target", str(target_file)])
+    assert exit_code == 0
+    assert captured["smoke_suite"] == (target_dir / "suite.yaml").resolve()
+
+
 def test_author_flags_reach_library(tmp_path: Path, monkeypatch) -> None:
     from deployer.models import AuthoringRun, DeployTarget
 
