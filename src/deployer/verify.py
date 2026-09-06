@@ -1027,6 +1027,80 @@ def _atp_verdict(report_path: Path, returncode: int) -> CheckResult:
     )
 
 
+def _check_atp_smoke(
+    suite: Path,
+    runtime: ContainerRuntime,
+    tag: str,
+    timeout: int,
+) -> tuple[CheckResult, bool]:
+    """Run an ATP suite against the built image; (result, atp_available).
+    The runtime is named explicitly because ATP's `auto` detection prefers
+    podman when both are installed, which would look for a docker-built image
+    in the wrong engine. `--no-save` plus a temporary cwd keep an external
+    verification step from writing into the operator's dashboard database and
+    `.atp-runs/checkpoints/`.
+    """
+    binary = shutil.which("atp")
+    if binary is None:
+        return (
+            CheckResult(
+                check_id="atp_smoke",
+                status=CheckStatus.SKIPPED,
+                message=f"atp {ATP_VERSION} not installed; run is non-comparable",
+            ),
+            False,
+        )
+    try:
+        version = subprocess.run(
+            [binary, "--version"], capture_output=True, text=True, timeout=10
+        ).stdout
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        return (_atp_env_failure(f"atp --version failed: {exc}"), False)
+    if ATP_VERSION not in version:
+        first = version.strip().splitlines()[0] if version.strip() else "?"
+        return (
+            CheckResult(
+                check_id="atp_smoke",
+                status=CheckStatus.SKIPPED,
+                message=(
+                    f"atp version mismatch (want {ATP_VERSION}, got: {first}); "
+                    "run is non-comparable"
+                ),
+            ),
+            False,
+        )
+    with tempfile.TemporaryDirectory(prefix="deployer-atp-") as tmp:
+        report_path = Path(tmp) / "atp-report.json"
+        try:
+            proc = subprocess.run(
+                [
+                    binary,
+                    "test",
+                    str(suite),
+                    "--adapter",
+                    "container",
+                    "--adapter-config",
+                    f"image={tag}",
+                    "--adapter-config",
+                    f"runtime={runtime.tool}",
+                    "--output",
+                    "json",
+                    "--output-file",
+                    str(report_path),
+                    "--no-save",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                cwd=tmp,
+            )
+        except subprocess.TimeoutExpired:
+            return (_atp_env_failure(f"atp timed out after {timeout}s"), True)
+        except OSError as exc:
+            return (_atp_env_failure(f"running atp failed: {exc}"), True)
+        return (_atp_verdict(report_path, proc.returncode), True)
+
+
 def _tail(text: str, lines: int = 15) -> str:
     return "\n".join(text.strip().splitlines()[-lines:])
 

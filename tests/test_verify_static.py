@@ -1652,3 +1652,103 @@ def test_atp_verdict_boolean_total_tests_is_environment(tmp_path: Path) -> None:
     result = _atp_verdict(path, 0)
     assert result.status is CheckStatus.FAILED
     assert result.failure_kind is FailureKind.ENVIRONMENT
+
+
+# -- Task 4: ATP smoke check wrapper --
+
+
+def test_atp_smoke_skips_when_binary_absent(tmp_path: Path, monkeypatch) -> None:
+    from deployer.verify import _check_atp_smoke
+
+    monkeypatch.setattr("deployer.verify.shutil.which", lambda _: None)
+    result, available = _check_atp_smoke(
+        tmp_path / "suite.yaml", ContainerRuntime(tool="docker"), "localhost/x", 300
+    )
+    assert result.status is CheckStatus.SKIPPED
+    assert available is False
+    assert "non-comparable" in result.message
+
+
+def test_atp_smoke_version_mismatch_skips_without_running(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import subprocess
+
+    from deployer.verify import _check_atp_smoke
+
+    monkeypatch.setattr("deployer.verify.shutil.which", lambda _: "/usr/bin/atp")
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout="atp 9.9.9", stderr="")
+
+    monkeypatch.setattr("deployer.verify.subprocess.run", fake_run)
+    result, available = _check_atp_smoke(
+        tmp_path / "suite.yaml", ContainerRuntime(tool="docker"), "localhost/x", 300
+    )
+    assert result.status is CheckStatus.SKIPPED
+    assert available is False
+    assert len(calls) == 1  # only --version; the suite never ran
+
+
+def test_atp_smoke_passes_runtime_and_tag_explicitly(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """ATP's auto-detection prefers podman, so the runtime we built with must
+    be named explicitly, and the tag must be fully qualified."""
+    import json
+    import subprocess
+
+    from deployer.verify import ATP_VERSION, _check_atp_smoke
+
+    monkeypatch.setattr("deployer.verify.shutil.which", lambda _: "/usr/bin/atp")
+    seen: list[list[str]] = []
+
+    def fake_run(cmd, **kwargs):
+        if "--version" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, stdout=ATP_VERSION, stderr="")
+        seen.append(cmd)
+        out = cmd[cmd.index("--output-file") + 1]
+        Path(out).write_text(
+            json.dumps(
+                {"version": "1.0", "summary": {"total_tests": 1, "success": True}}
+            )
+        )
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("deployer.verify.subprocess.run", fake_run)
+    suite = tmp_path / "suite.yaml"
+    suite.write_text("test_suite: x\n")
+    result, available = _check_atp_smoke(
+        suite, ContainerRuntime(tool="docker"), "localhost/deployer-verify-abc", 300
+    )
+
+    assert result.status is CheckStatus.PASSED
+    assert available is True
+    command = seen[0]
+    assert "image=localhost/deployer-verify-abc" in command
+    assert "runtime=docker" in command
+    assert "--no-save" in command
+    assert str(suite) in command
+
+
+def test_atp_smoke_timeout_is_environment(tmp_path: Path, monkeypatch) -> None:
+    import subprocess
+
+    from deployer.verify import ATP_VERSION, _check_atp_smoke
+
+    monkeypatch.setattr("deployer.verify.shutil.which", lambda _: "/usr/bin/atp")
+
+    def fake_run(cmd, **kwargs):
+        if "--version" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, stdout=ATP_VERSION, stderr="")
+        raise subprocess.TimeoutExpired(cmd, 300)
+
+    monkeypatch.setattr("deployer.verify.subprocess.run", fake_run)
+    result, available = _check_atp_smoke(
+        tmp_path / "suite.yaml", ContainerRuntime(tool="docker"), "localhost/x", 300
+    )
+    assert result.status is CheckStatus.FAILED
+    assert result.failure_kind is FailureKind.ENVIRONMENT
+    assert available is True
