@@ -12,6 +12,7 @@ from deployer.verify import verify
 
 CORPUS = Path(__file__).parent.parent / "corpus"
 EXPECTED_CASES = [
+    "atp-agent",
     "ci-build",
     "compose-redis",
     "entrypoint-override",
@@ -24,6 +25,12 @@ EXPECTED_CASES = [
     "system-deps-psycopg2",
     "uv-minimal",
 ]
+
+# `atp-agent` needs `smoke_suite` forwarded (see
+# test_atp_agent_case_builds_and_answers in test_verify_docker.py); the
+# generic verify() call below doesn't thread it through, so it's exercised
+# by its own dedicated end-to-end test instead of this parametrization.
+GENERIC_DOCKER_CASES = [name for name in EXPECTED_CASES if name != "atp-agent"]
 
 
 def test_corpus_parses_and_is_complete() -> None:
@@ -61,7 +68,7 @@ def runtime() -> ContainerRuntime:
 
 
 @pytest.mark.docker
-@pytest.mark.parametrize("name", EXPECTED_CASES)
+@pytest.mark.parametrize("name", GENERIC_DOCKER_CASES)
 def test_corpus_fixture_verifies_end_to_end(name: str, runtime) -> None:
     case = {c.name: c for c in load_corpus(CORPUS)}[name]
     assert case.fixture_dockerfile is not None
@@ -129,3 +136,15 @@ def test_checkout_pin_matches_llm_constant() -> None:
 
     fixture = CORPUS / "synthetic" / "ci-build" / "fixture.ci.yml"
     assert ACTIONS_CHECKOUT_PIN in fixture.read_text()
+
+
+def test_atp_agent_case_declares_a_smoke_intent_and_ships_its_suite() -> None:
+    """The suite is fixture-owned input and lives beside target.json."""
+    from deployer.bench import load_corpus
+
+    corpus_root = Path(__file__).resolve().parent.parent / "corpus"
+    case = [c for c in load_corpus(corpus_root) if c.name == "atp-agent"][0]
+
+    assert case.target.smoke is not None
+    assert case.target.run is not None
+    assert case.smoke_suite is not None and case.smoke_suite.is_file()

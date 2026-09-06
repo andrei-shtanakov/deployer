@@ -76,7 +76,12 @@ them is the next thing to pick up.
 - [ ] Install `atp` 2.1.0 on the bench machine @owner:github:andrei-shtanakov @id:install-atp @epic:eco.research-bench
   — the ATP smoke seam is accepted only on `atp_smoke: PASSED`; `SKIPPED` keeps an ordinary
   run portable but does not close the seam, so acceptance needs the binary present. Version
-  pinned to the fleet manifest (`workspace-manifest.toml:49`)
+  pinned to the fleet manifest (`workspace-manifest.toml:49`). Install procedure: `README.md`,
+  "Installing `atp` 2.1.0" — a temporary source-install workaround pending
+  atp-platform#320 (`publish-installable-container-cli`); the published `atp-platform==2.1.0`
+  release is not installable as-is. **Do not tick this item until the README instructions
+  have been reproduced from a clean temporary directory** — not from an existing
+  atp-platform checkout and not from a leftover scratch tree
   It is not on PATH here, so every golden so far is non-comparable on the hadolint axis
 - [ ] Test-kind CI target and registry-push contour @owner:repo:deployer @id:ci-test-kind-target @epic:eco.research-bench
   The current `{"ci": {}}` intent authors build-image only; registry push is deliberately default-deny today

@@ -1,0 +1,7 @@
+{
+  "requires_l2": true,
+  "expected_success": true,
+  "max_iterations": 2,
+  "capabilities": ["run", "smoke"],
+  "notes": "ATP smoke seam: the packaged agent must still answer an ATPRequest"
+}

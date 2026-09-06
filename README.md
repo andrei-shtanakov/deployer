@@ -101,7 +101,9 @@ the research output.
 ## Bench
 
 The corpus (`corpus/synthetic/`) is a set of small target projects with
-declared intent (`target.json`) and expectations (`expected.json`).
+declared intent (`target.json`) and expectations (`expected.json`), e.g.
+`atp-agent` — a minimal ATP-compatible agent whose target declares a
+`smoke` intent.
 
     uv run deployer bench run [--corpus corpus] [--filter GLOB] [--label NAME] \
         [--author fixture|anthropic] [runtime/timeout flags]
@@ -119,6 +121,41 @@ fixtures (corpus smoke). Exit codes: 0 all matched/passed, 1 mismatch/fail,
 failed) when no container runtime is available. `--filter` applies to synthetic
 and (with `--include-external`) external targets alike; non-matching
 externals are not even cloned.
+
+`smoke` in a target requests an ATP smoke test of the built image:
+
+```json
+{"run": {}, "smoke": {"suite": "suite.yaml", "timeout_s": 300}}
+```
+
+The suite path is resolved relative to the `target.json` that declares it.
+The check id is `atp_smoke`; it needs `atp` 2.1.0 on `PATH` and a local
+container runtime (ATP's container adapter has no remote-host support), and
+reports `SKIPPED` otherwise. `deployer bench run --require-atp` turns such a
+skip into a failure, which is how the seam is accepted.
+
+#### Installing `atp` 2.1.0 (temporary source-install workaround)
+
+The published release cannot be installed: `atp-platform==2.1.0` requires
+`atp-adapters`, which was never published to PyPI, and its CLI additionally
+imports `fastapi` and `atp_sdk` without declaring them. Tracked as
+atp-platform#320 (`publish-installable-container-cli`). **Until that closes,
+install from the tagged source.** Do not assume a checkout of atp-platform is
+already on disk:
+
+```bash
+tmp=$(mktemp -d)
+git clone --depth 1 --branch v2.1.0 \
+    git@github.com:andrei-shtanakov/atp-platform.git "$tmp/atp"
+cd "$tmp/atp" && uv tool install '.[dashboard]' --with ./packages/atp-sdk
+```
+
+Verify both, not just the first:
+
+```bash
+atp --version                        # atp, version 2.1.0
+atp plugins list --type=adapter      # must list `container`
+```
 
 ### Golden baseline
 

@@ -161,7 +161,9 @@ today. ATP computes `summary.success` as `passed_tests == total_tests`
 report **success** — but ATP's own CLI closes the routes there: a mis-resolved
 path is rejected by `click.Path(exists=True)` before anything runs
 (`atp/cli/main.py:382`, verified), and an empty suite is rejected ahead of
-report generation (reported in review; not verified here).
+report generation: a suite with `tests: []` makes `atp` exit 2 without
+writing a report, which `_atp_verdict` classifies as `ENVIRONMENT`. This
+was confirmed by a live run during Task 6, so this is no longer a hedge.
 
 The guard stays because the invariant this seam depends on is "a passing
 smoke check means tests actually ran", and that invariant currently lives in

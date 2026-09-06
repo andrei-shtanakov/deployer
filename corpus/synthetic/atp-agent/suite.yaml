@@ -1,0 +1,15 @@
+test_suite: atp_agent_smoke
+description: The packaged agent answers an ATPRequest
+version: "1.0"
+
+defaults:
+  timeout_seconds: 30
+
+tests:
+  - id: answers
+    name: Agent answers a request
+    tags: [smoke]
+    task:
+      description: "say hello"
+    assertions:
+      - type: no_errors
