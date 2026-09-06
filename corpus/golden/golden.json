@@ -1,6 +1,7 @@
 {
-  "promoted_from_label": "llm-ci",
-  "corpus_commit": "e28ed0c66619f171f86c7ddedade17c61f77d6cb",
+  "schema_version": "1.0",
+  "promoted_from_label": "atp-smoke-anthropic-full",
+  "corpus_commit": "82621168c2fc19717bd8e52644f288b6d8afa462",
   "deployer_version": "0.1.0",
   "author_backend": "anthropic",
   "runtime_tool": "podman",
@@ -10,12 +11,73 @@
   "health_timeout_s": 30,
   "cases": [
     {
+      "case": "atp-agent",
+      "success": true,
+      "stopped_reason": "success",
+      "iterations": 1,
+      "failure_kinds": [],
+      "image_size_bytes": 156661240,
+      "hadolint_status": "skipped",
+      "smoke_declared": true,
+      "atp_smoke_status": "passed",
+      "checks": [
+        {
+          "check_id": "parses",
+          "status": "passed",
+          "failure_kind": null
+        },
+        {
+          "check_id": "copy_sources",
+          "status": "passed",
+          "failure_kind": null
+        },
+        {
+          "check_id": "base_pinned",
+          "status": "passed",
+          "failure_kind": null
+        },
+        {
+          "check_id": "install_strategy",
+          "status": "passed",
+          "failure_kind": null
+        },
+        {
+          "check_id": "hadolint",
+          "status": "skipped",
+          "failure_kind": null
+        },
+        {
+          "check_id": "build",
+          "status": "passed",
+          "failure_kind": null
+        },
+        {
+          "check_id": "atp_smoke",
+          "status": "passed",
+          "failure_kind": null
+        }
+      ],
+      "expected": {
+        "expected_success": true,
+        "max_iterations": 2,
+        "requires_l2": true,
+        "expected_failure_kind": null,
+        "capabilities": [
+          "run",
+          "smoke"
+        ],
+        "notes": "ATP smoke seam: the packaged agent must still answer an ATPRequest"
+      },
+      "external_url": null,
+      "external_commit": null
+    },
+    {
       "case": "ci-build",
       "success": true,
       "stopped_reason": "success",
       "iterations": 1,
       "failure_kinds": [],
-      "image_size_bytes": 181326447,
+      "image_size_bytes": 189885446,
       "hadolint_status": "skipped",
       "checks": [
         {
@@ -172,7 +234,7 @@
       "stopped_reason": "success",
       "iterations": 1,
       "failure_kinds": [],
-      "image_size_bytes": 148565484,
+      "image_size_bytes": 156662259,
       "hadolint_status": "skipped",
       "checks": [
         {
@@ -236,7 +298,7 @@
       "stopped_reason": "success",
       "iterations": 1,
       "failure_kinds": [],
-      "image_size_bytes": 176916716,
+      "image_size_bytes": 185013435,
       "hadolint_status": "skipped",
       "checks": [
         {
@@ -294,11 +356,9 @@
       "case": "no-build-system",
       "success": true,
       "stopped_reason": "success",
-      "iterations": 2,
-      "failure_kinds": [
-        "authoring"
-      ],
-      "image_size_bytes": 176789159,
+      "iterations": 1,
+      "failure_kinds": [],
+      "image_size_bytes": 184885936,
       "hadolint_status": "skipped",
       "checks": [
         {
@@ -357,7 +417,7 @@
       "stopped_reason": "success",
       "iterations": 1,
       "failure_kinds": [],
-      "image_size_bytes": 157048312,
+      "image_size_bytes": 165149700,
       "hadolint_status": "skipped",
       "checks": [
         {
@@ -416,7 +476,7 @@
       "stopped_reason": "success",
       "iterations": 1,
       "failure_kinds": [],
-      "image_size_bytes": 157150886,
+      "image_size_bytes": 165314737,
       "hadolint_status": "skipped",
       "checks": [
         {
@@ -475,7 +535,7 @@
       "stopped_reason": "success",
       "iterations": 1,
       "failure_kinds": [],
-      "image_size_bytes": 148564471,
+      "image_size_bytes": 156661239,
       "hadolint_status": "skipped",
       "checks": [
         {
@@ -533,7 +593,7 @@
       "stopped_reason": "success",
       "iterations": 1,
       "failure_kinds": [],
-      "image_size_bytes": 158551034,
+      "image_size_bytes": 166464002,
       "hadolint_status": "skipped",
       "checks": [
         {
@@ -594,7 +654,7 @@
       "stopped_reason": "success",
       "iterations": 1,
       "failure_kinds": [],
-      "image_size_bytes": 367803491,
+      "image_size_bytes": 375739491,
       "hadolint_status": "skipped",
       "checks": [
         {
@@ -654,7 +714,7 @@
       "stopped_reason": "success",
       "iterations": 1,
       "failure_kinds": [],
-      "image_size_bytes": 180962417,
+      "image_size_bytes": 189885604,
       "hadolint_status": "skipped",
       "checks": [
         {

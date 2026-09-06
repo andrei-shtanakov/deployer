@@ -23,6 +23,7 @@ from deployer.facts import (
     validate_target_against_facts,
 )
 from deployer.models import (
+    BuiltImage,
     CheckResult,
     CheckStatus,
     ContainerRuntime,
@@ -35,11 +36,40 @@ from deployer.runtime import compose_available, container_run
 
 HADOLINT_VERSION = "2.12.0"
 ACTIONLINT_VERSION = "1.7.12"
+ATP_VERSION = "2.1.0"
+ATP_REPORT_FORMAT = "1.0"
 _USES_REMOTE_PIN = re.compile(
     r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_./-]+)?@[0-9a-f]{40}$"
 )
 _DOCKER_BUILD = re.compile(r"^docker\s+(?:buildx\s+)?build\b")
 _DOCKER_PUSH = re.compile(r"\b(?:docker(?:\s+image)?|podman)\s+push\b")
+_VERSION_TOKEN = re.compile(r"[0-9][\w.+-]*")
+
+
+def _version_pin_matches(pinned: str, output: str) -> bool:
+    """Whether `output` names exactly `pinned` as its version.
+
+    A plain substring test (``pinned in output``) accepts an unrelated
+    longer version sharing the same prefix (``2.1.0`` inside ``atp,
+    version 12.1.0``); a boundary-anchored regex still accepts any suffix
+    an exclusion class does not happen to list yet — a prerelease
+    (``2.1.0-rc1``) once `-` was added to the class, then a compact
+    prerelease with no separator (``2.1.0rc1``) or a dev suffix
+    (``2.1.0.dev1``) once the next suffix shape showed up, and so on for
+    whatever comes after that.
+
+    Instead this extracts every version-shaped token from `output`
+    **maximally** — starting at a digit and consuming every following
+    character that can belong to a version (letters, digits, `.`, `-`,
+    `+`) — and compares each token to `pinned` for exact string equality.
+    Because extraction is maximal, any suffix at all attached to the pin
+    — known or not, separated by punctuation or not — becomes part of the
+    same token and makes it unequal to the bare pin, by construction
+    rather than by enumeration.
+    """
+    return any(token == pinned for token in _VERSION_TOKEN.findall(output))
+
+
 _DOCKER_LOGIN = re.compile(r"\bdocker\s+login\b")
 _SECRETS_REF = re.compile(r"\bsecrets[.\[]")
 DEFAULT_BUILD_TIMEOUT = 600
@@ -679,7 +709,7 @@ def _check_actionlint(ci: str) -> tuple[CheckResult, bool]:
         version = subprocess.run(
             [binary, "--version"], capture_output=True, text=True, timeout=10
         ).stdout
-        if ACTIONLINT_VERSION not in version:
+        if not _version_pin_matches(ACTIONLINT_VERSION, version):
             return (
                 CheckResult(
                     check_id="actionlint",
@@ -838,7 +868,7 @@ def _check_hadolint(dockerfile: str) -> tuple[CheckResult, bool]:
         version = subprocess.run(
             [binary, "--version"], capture_output=True, text=True, timeout=10
         ).stdout
-        if HADOLINT_VERSION not in version:
+        if not _version_pin_matches(HADOLINT_VERSION, version):
             return (
                 CheckResult(
                     check_id="hadolint",
@@ -915,7 +945,11 @@ def verify_static(
             results.append(_check_entrypoint_in_command(instructions, target))
     hadolint_result, hadolint_available = _check_hadolint(dockerfile)
     results.append(hadolint_result)
-    return VerificationReport(results=results, hadolint_available=hadolint_available)
+    return VerificationReport(
+        results=results,
+        hadolint_available=hadolint_available,
+        smoke_declared=target is not None and target.smoke is not None,
+    )
 
 
 ENVIRONMENT_MARKERS = (
@@ -964,6 +998,140 @@ def _is_transport_failure(output: str) -> bool:
     """
     lowered = output.lower()
     return any(marker in lowered for marker in _TRANSPORT_MARKERS)
+
+
+def _atp_env_failure(message: str) -> CheckResult:
+    """An ATP outcome that says nothing about the authored artifact."""
+    return CheckResult(
+        check_id="atp_smoke",
+        status=CheckStatus.FAILED,
+        failure_kind=FailureKind.ENVIRONMENT,
+        message=message,
+    )
+
+
+def _atp_verdict(report_path: Path, returncode: int) -> CheckResult:
+    """Map an ATP run onto a check result; the JSON report is authoritative.
+
+    The exit code is only a consistency check: when the two disagree, neither
+    is trusted and the run is environmental. A suite that ran zero tests is
+    rejected because ATP computes `summary.success` as
+    `passed_tests == total_tests`, so an empty suite reports success by
+    arithmetic — the seam's strongest signal would become its cheapest false
+    positive.
+    """
+    if not report_path.is_file():
+        return _atp_env_failure(f"atp wrote no JSON report (exit {returncode})")
+    try:
+        document = json.loads(report_path.read_text())
+    except (OSError, ValueError) as exc:
+        return _atp_env_failure(f"atp report unreadable: {exc}")
+    if not isinstance(document, dict):
+        return _atp_env_failure("atp report is not a JSON object")
+    version = document.get("version")
+    if version != ATP_REPORT_FORMAT:
+        return _atp_env_failure(
+            f"unsupported atp report format {version!r} "
+            f"(this deployer reads {ATP_REPORT_FORMAT})"
+        )
+    summary = document.get("summary")
+    if not isinstance(summary, dict):
+        return _atp_env_failure("atp report has no summary")
+    total = summary.get("total_tests")
+    if not isinstance(total, int) or isinstance(total, bool) or total < 1:
+        return _atp_env_failure(
+            "atp suite ran no tests; an empty suite reports success by "
+            "arithmetic and proves nothing about the image"
+        )
+    success = summary.get("success")
+    if success is True and returncode == 0:
+        return CheckResult(check_id="atp_smoke", status=CheckStatus.PASSED)
+    if success is False and returncode == 1:
+        failed = summary.get("failed_tests", "some")
+        return CheckResult(
+            check_id="atp_smoke",
+            status=CheckStatus.FAILED,
+            failure_kind=FailureKind.AUTHORING,
+            message=f"{failed} of {total} ATP test(s) failed against the built image",
+        )
+    return _atp_env_failure(
+        f"atp report and exit code disagree: success={success!r}, exit {returncode}"
+    )
+
+
+def _check_atp_smoke(
+    suite: Path,
+    runtime: ContainerRuntime,
+    tag: str,
+    timeout: int,
+) -> tuple[CheckResult, bool]:
+    """Run an ATP suite against the built image; (result, atp_available).
+
+    The runtime is named explicitly because ATP's `auto` detection prefers
+    podman when both are installed, which would look for a docker-built image
+    in the wrong engine. `--no-save` plus a temporary cwd keep an external
+    verification step from writing into the operator's dashboard database and
+    `.atp-runs/checkpoints/`.
+    """
+    binary = shutil.which("atp")
+    if binary is None:
+        return (
+            CheckResult(
+                check_id="atp_smoke",
+                status=CheckStatus.SKIPPED,
+                message=f"atp {ATP_VERSION} not installed; run is non-comparable",
+            ),
+            False,
+        )
+    try:
+        version = subprocess.run(
+            [binary, "--version"], capture_output=True, text=True, timeout=10
+        ).stdout
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        return (_atp_env_failure(f"atp --version failed: {exc}"), False)
+    if not _version_pin_matches(ATP_VERSION, version):
+        first = version.strip().splitlines()[0] if version.strip() else "?"
+        return (
+            CheckResult(
+                check_id="atp_smoke",
+                status=CheckStatus.SKIPPED,
+                message=(
+                    f"atp version mismatch (want {ATP_VERSION}, got: {first}); "
+                    "run is non-comparable"
+                ),
+            ),
+            False,
+        )
+    with tempfile.TemporaryDirectory(prefix="deployer-atp-") as tmp:
+        report_path = Path(tmp) / "atp-report.json"
+        try:
+            proc = subprocess.run(
+                [
+                    binary,
+                    "test",
+                    str(suite.resolve()),
+                    "--adapter",
+                    "container",
+                    "--adapter-config",
+                    f"image={tag}",
+                    "--adapter-config",
+                    f"runtime={runtime.tool}",
+                    "--output",
+                    "json",
+                    "--output-file",
+                    str(report_path),
+                    "--no-save",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                cwd=tmp,
+            )
+        except subprocess.TimeoutExpired:
+            return (_atp_env_failure(f"atp timed out after {timeout}s"), True)
+        except OSError as exc:
+            return (_atp_env_failure(f"running atp failed: {exc}"), True)
+        return (_atp_verdict(report_path, proc.returncode), True)
 
 
 def _tail(text: str, lines: int = 15) -> str:
@@ -1442,16 +1610,27 @@ def verify_docker(
     *,
     build_timeout: int = DEFAULT_BUILD_TIMEOUT,
     health_timeout: int = DEFAULT_HEALTH_TIMEOUT,
-) -> tuple[list[CheckResult], int | None]:
-    """L2: real sandboxed build; then service healthcheck or job run-completes.
+    smoke_suite: Path | None = None,
+) -> tuple[list[CheckResult], int | None, BuiltImage, bool]:
+    """L2: real sandboxed build; then service healthcheck, ATP smoke, or job run.
 
     The healthcheck probes over the container's loopback via `exec python -c`,
     so `--network=none` still works. This assumes a Python base image — true
     for every artifact this MVP authors.
+
+    For a `smoke` target ATP is the runtime check and `_run_completes` is not
+    invoked: that helper starts the container with no stdin, and an ATP agent
+    reading stdin would legitimately fail on EOF.
+
+    The tag is fully qualified with `localhost/` so no consumer of it — ATP
+    included — treats a short name as something to pull.
     """
-    tag = f"deployer-verify-{uuid.uuid4().hex[:8]}"
+    tag = f"localhost/deployer-verify-{uuid.uuid4().hex[:8]}"
     results: list[CheckResult] = []
     image_size: int | None = None
+    atp_available = False
+    image_built = False
+    built = BuiltImage(tag=tag, runtime=runtime)
     try:
         with _isolated_context(project_path) as context:
             build_result = _build(
@@ -1459,17 +1638,56 @@ def verify_docker(
             )
         results.append(build_result)
         if build_result.status is CheckStatus.PASSED:
+            image_built = True
             image_size = _image_size(runtime, tag)
             if target.service is not None:
                 results.append(_run_healthcheck(target, runtime, tag, health_timeout))
+            elif target.smoke is not None:
+                if smoke_suite is None:
+                    results.append(
+                        _atp_env_failure(
+                            "a smoke target reached L2 without a resolved suite path"
+                        )
+                    )
+                elif runtime.remote:
+                    results.append(
+                        CheckResult(
+                            check_id="atp_smoke",
+                            status=CheckStatus.SKIPPED,
+                            message=(
+                                "ATP's container adapter has no remote-host "
+                                "support; the image built on a remote host is "
+                                "not visible to it. Run is non-comparable"
+                            ),
+                        )
+                    )
+                else:
+                    smoke_result, atp_available = _check_atp_smoke(
+                        smoke_suite, runtime, tag, target.smoke.timeout_s
+                    )
+                    results.append(smoke_result)
             elif target.run is not None:
                 results.append(_run_completes(target, runtime, tag, health_timeout))
     finally:
-        try:
-            container_run(runtime, ["rmi", "-f", tag], capture_output=True, timeout=60)
-        except (subprocess.TimeoutExpired, OSError):
-            pass  # best-effort cleanup; must never clobber the return value
-    return results, image_size
+        # Best-effort cleanup that must never clobber the return value — but
+        # `container_run` does not pass `check=True`, so a failed `rmi` returns
+        # non-zero silently. Record the actual outcome: claiming "removed"
+        # without reading the return code would be exactly the unchecked claim
+        # `cleanup_status` exists to prevent. Skip it entirely when the build
+        # never tagged an image (failed, or raised before tagging): there is
+        # nothing to remove, and `cleanup_status` must stay `not_attempted`
+        # rather than misreport a leak that never happened.
+        if image_built:
+            try:
+                removal = container_run(
+                    runtime, ["rmi", "-f", tag], capture_output=True, timeout=60
+                )
+                built.cleanup_status = (
+                    "removed" if removal.returncode == 0 else "failed"
+                )
+            except (subprocess.TimeoutExpired, OSError):
+                built.cleanup_status = "failed"
+    return results, image_size, built, atp_available
 
 
 def verify(
@@ -1483,10 +1701,14 @@ def verify(
     health_timeout: int = DEFAULT_HEALTH_TIMEOUT,
     compose: str | None = None,
     ci: str | None = None,
+    smoke_suite: Path | None = None,
 ) -> VerificationReport:
     """Full verification: L1 static always; L2 docker when available and L1 passed.
 
     The timeouts bound the L2 build and healthcheck subprocesses (seconds).
+    `smoke_suite` is the resolved ATP suite path for a `smoke`-intent target;
+    without it, L2 reports the smoke check as an environment failure rather
+    than silently falling back to a different check.
     """
     if facts is not None:
         validate_target_against_facts(target, facts)
@@ -1532,16 +1754,19 @@ def verify(
                     )
                 )
         elif report.passed:
-            docker_results, image_size = verify_docker(
+            docker_results, image_size, built, atp_available = verify_docker(
                 dockerfile,
                 project_path,
                 target,
                 runtime,
                 build_timeout=build_timeout,
                 health_timeout=health_timeout,
+                smoke_suite=smoke_suite,
             )
             report.results.extend(docker_results)
             report.image_size_bytes = image_size
+            report.built_image = built
+            report.atp_available = atp_available
     if target.run is not None and target.run.expect_stdout:
         marker = target.run.expect_stdout
         report.results = [

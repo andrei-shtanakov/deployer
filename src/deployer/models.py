@@ -116,6 +116,20 @@ class CISpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class SmokeSpec(BaseModel):
+    """Request an ATP smoke test of the built image. Presence is the request.
+
+    `suite` is a path to an ATP suite YAML, resolved relative to the
+    `target.json` that declared it — never to the current directory and never
+    to the project directory, so a target document stays portable.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    suite: str = Field(min_length=1)
+    timeout_s: int = Field(default=300, gt=0)
+
+
 class DeployTarget(BaseModel):
     """Declarative deploy intent: what is wanted, never how."""
 
@@ -129,6 +143,7 @@ class DeployTarget(BaseModel):
     entrypoint: str | None = Field(default=None, min_length=1)
     dependencies: list[ServiceDependency] = Field(default_factory=list)
     ci: CISpec | None = None
+    smoke: SmokeSpec | None = None
 
     @model_validator(mode="after")
     def _service_and_run_exclusive(self) -> "DeployTarget":
@@ -158,6 +173,34 @@ class DeployTarget(BaseModel):
             raise ValueError(
                 "DeployTarget.ci with dependencies is unsupported: "
                 "compose-aware CI is a later iteration"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _smoke_is_a_job_intent(self) -> "DeployTarget":
+        """ATP's container adapter talks to a job over stdin/stdout.
+
+        `service` is refused rather than supported: the http adapter needs a
+        published port, a readiness wait and guaranteed teardown — a separate
+        seam. Loosening this later is backward compatible.
+        """
+        if self.smoke is None:
+            return self
+        if self.service is not None:
+            raise ValueError(
+                "DeployTarget.smoke with a service intent is unsupported: "
+                "the ATP container adapter drives a job over stdin/stdout"
+            )
+        if self.run is None:
+            raise ValueError(
+                "DeployTarget.smoke requires a run intent: the target must "
+                "declare that it is a job"
+            )
+        if self.run.expect_stdout is not None:
+            raise ValueError(
+                "DeployTarget.smoke with run.expect_stdout is unsupported: "
+                "for an ATP agent stdout is the ATPResponse JSON, so a "
+                "substring oracle over it is meaningless"
             )
         return self
 
@@ -277,6 +320,27 @@ class ExternalTarget(BaseModel):
             )
         return value
 
+    @model_validator(mode="after")
+    def _smoke_unsupported_for_external(self) -> "ExternalTarget":
+        """An external suite path has nowhere to resolve against.
+
+        `SmokeSpec.suite` is resolved relative to the `target.json` that
+        declared it (see `SmokeSpec`); a cloned external target has no such
+        file, so there is no directory to resolve `suite` against. Silently
+        dropping the intent would let a declared smoke check no-op instead
+        of running, so it is refused here instead — the same rule as
+        `_ci_incompatible_with_dependencies` and `CISpec`'s "unknown keys
+        rejected loudly": an unworkable intent fails the config, it never
+        no-ops. Resolving external suites is a separate feature.
+        """
+        if self.target.smoke is not None:
+            raise ValueError(
+                "ExternalTarget.target.smoke is unsupported: the suite path "
+                "cannot be resolved for a cloned external repository (there "
+                "is no target.json directory to resolve it against)"
+            )
+        return self
+
 
 class CheckStatus(StrEnum):
     """Outcome status of a verification check."""
@@ -311,6 +375,20 @@ class CheckResult(BaseModel):
         return self
 
 
+class BuiltImage(BaseModel):
+    """The image L2 built, and what became of it.
+
+    `lifecycle` is the contract a consumer reads: `ephemeral` means the image
+    does not outlive the run, so the reference answers "what was tested", not
+    "what is on your machine".
+    """
+
+    tag: str
+    runtime: ContainerRuntime
+    lifecycle: Literal["ephemeral"] = "ephemeral"
+    cleanup_status: Literal["removed", "failed", "not_attempted"] = "not_attempted"
+
+
 class VerificationReport(BaseModel):
     """Aggregated check results for one Dockerfile candidate."""
 
@@ -319,13 +397,29 @@ class VerificationReport(BaseModel):
     hadolint_available: bool = False
     actionlint_available: bool = False
     docker_available: bool = False
+    atp_available: bool = False
     image_size_bytes: int | None = None
     runtime: ContainerRuntime | None = None
     runtime_versions: RuntimeVersions | None = None
+    built_image: BuiltImage | None = None
+    smoke_declared: bool = False
+    """Whether the `target` this report was built for declared a smoke
+    intent. Stamped once, in `verify_static`, at the report's single point
+    of construction — an `atp_smoke` check only ever appears in `results`
+    once L2 is reached, so a declared-but-never-reached-L2 smoke case would
+    otherwise be indistinguishable from one that never declared smoke."""
 
     @property
     def passed(self) -> bool:
         return all(r.status is not CheckStatus.FAILED for r in self.results)
+
+    @property
+    def atp_smoke_status(self) -> CheckStatus | None:
+        """Recorded status of the `atp_smoke` check, or None if absent."""
+        for r in self.results:
+            if r.check_id == "atp_smoke":
+                return r.status
+        return None
 
     @property
     def environment_failures(self) -> list[CheckResult]:
@@ -401,6 +495,14 @@ class BenchCaseResult(BaseModel):
     iterations: int = 0
     image_size_bytes: int | None = None
     hadolint_status: CheckStatus | None = None
+    smoke_declared: bool = False
+    """Whether the case's `deploy_target` declared a smoke intent at all.
+
+    Set on every code path through `run_case`, including every early skip,
+    so `satisfies_declared_smoke` can tell "declared and never ran" apart
+    from "never declared" without re-reading the corpus.
+    """
+    atp_smoke_status: CheckStatus | None = None
     wall_time_s: float = 0.0
     skip_reason: str = ""
     failure_kinds: list[FailureKind] = Field(default_factory=list)
@@ -453,10 +555,39 @@ class GoldenCase(BaseModel):
     failure_kinds: list[FailureKind] = Field(default_factory=list)
     image_size_bytes: int | None = None
     hadolint_status: CheckStatus | None = None
+    smoke_declared: bool = False
+    """Mirrors `BenchCaseResult.smoke_declared`; carried across promotion so
+    `satisfies_declared_smoke` reads a baseline the same way as a fresh run,
+    without inferring declared-ness from whether `checks` happens to
+    contain an `atp_smoke` entry (it will not, for a case that declared
+    smoke but never reached L2)."""
+    atp_smoke_status: CheckStatus | None = None
     checks: list[GoldenCheck] = Field(default_factory=list)
     expected: ExpectedOutcome = Field(default_factory=ExpectedOutcome)
     external_url: str | None = None
     external_commit: str | None = None
+
+
+def satisfies_declared_smoke(
+    result: BenchCaseResult | GoldenCase | VerificationReport,
+) -> bool:
+    """Whether `result` satisfies a declared smoke intent, if it has one.
+
+    True only when the case declared smoke (`smoke_declared`) and its
+    recorded `atp_smoke_status` is exactly `PASSED`. A case that never
+    declared smoke trivially satisfies it (there is nothing to satisfy);
+    SKIPPED, FAILED, an absent check, and a pre-L2 skip on a case that
+    *did* declare smoke are all False — a declared smoke intent is green
+    only on `atp_smoke: PASSED`, never on "didn't run" or "not applicable".
+
+    Shared by a fresh `BenchCaseResult` (from `run_case`), a promoted
+    `GoldenCase` baseline, and a raw `VerificationReport` (from `bench
+    verify`), so `--require-atp`, `bench compare` and `bench verify` all
+    judge "satisfied" identically instead of each re-deriving it.
+    """
+    if not result.smoke_declared:
+        return True
+    return result.atp_smoke_status is CheckStatus.PASSED
 
 
 class GoldenReport(BaseModel):

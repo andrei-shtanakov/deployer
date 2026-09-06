@@ -76,6 +76,7 @@ def author_dockerfile(
     runtime: ContainerRuntime | None,
     build_timeout: int = DEFAULT_BUILD_TIMEOUT,
     health_timeout: int = DEFAULT_HEALTH_TIMEOUT,
+    smoke_suite: Path | None = None,
 ) -> AuthoringRun:
     """Generate -> verify -> repair until success, budget, or no progress.
 
@@ -88,6 +89,8 @@ def author_dockerfile(
     Pass `runtime=None` to opt into static-only (L1) verification; passing a
     `ContainerRuntime` opts into full L2 verification. There is no default,
     so a caller can never silently downgrade to static-only by omission.
+    `smoke_suite` is the resolved ATP suite path for a `smoke`-intent target;
+    it is forwarded unchanged to every `verify` call across the loop.
     """
     facts = analyze_project(project_path)
     validate_target_against_facts(target, facts)
@@ -141,6 +144,7 @@ def author_dockerfile(
                     ci=ci,
                     build_timeout=build_timeout,
                     health_timeout=health_timeout,
+                    smoke_suite=smoke_suite,
                 )
                 if report.environment_failures and environment_retries == 0:
                     environment_retries += 1
@@ -154,6 +158,7 @@ def author_dockerfile(
                         ci=ci,
                         build_timeout=build_timeout,
                         health_timeout=health_timeout,
+                        smoke_suite=smoke_suite,
                     )
             iterations.append(
                 IterationRecord(

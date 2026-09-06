@@ -41,6 +41,7 @@ from deployer.models import (
     GoldenReport,
     ProjectFacts,
     VerificationReport,
+    satisfies_declared_smoke,
 )
 from deployer.runtime import probe_runtime_versions
 from deployer.verify import (
@@ -101,6 +102,7 @@ class BenchCase(BaseModel):
     fixture_dockerfile: Path | None = None
     fixture_compose: Path | None = None
     fixture_ci: Path | None = None
+    smoke_suite: Path | None = None
     external_url: str | None = None
     external_commit: str | None = None
 
@@ -141,6 +143,11 @@ def load_corpus(corpus_root: Path, pattern: str = "*") -> list[BenchCase]:
                 fixture_dockerfile=fixture if fixture.is_file() else None,
                 fixture_compose=fixture_compose if fixture_compose.is_file() else None,
                 fixture_ci=fixture_ci if fixture_ci.is_file() else None,
+                smoke_suite=(
+                    (case_dir / target.smoke.suite).resolve()
+                    if target.smoke is not None
+                    else None
+                ),
             )
         )
     return cases
@@ -185,6 +192,18 @@ def clone_external(ext: ExternalTarget, dest_root: Path) -> BenchCase:
     )
 
 
+ATP_SKIPPED_PREFIX = "atp_smoke skipped:"
+"""Marker prefix `run_case` writes to `skip_reason` when `atp_smoke` itself
+reports SKIPPED — human-readable context only.
+
+`BenchCaseResult.smoke_declared` and `.atp_smoke_status` carry the
+machine-readable facts for this same case (the latter set to SKIPPED
+alongside this prefix), so `--require-atp`, `compare_runs` and `bench
+verify` judge the case from those recorded fields via
+`satisfies_declared_smoke`, never by matching this prefix's prose.
+"""
+
+
 def run_case(
     case: BenchCase,
     author: DockerfileAuthor | None,
@@ -195,12 +214,14 @@ def run_case(
     health_timeout: int,
 ) -> BenchCaseResult:
     """Author one corpus case in a scratch copy; never mutates the corpus."""
+    smoke_declared = case.target.smoke is not None
     if case.expected.requires_l2 and runtime is None:
         return BenchCaseResult(
             case=case.name,
             outcome="skipped",
             skip_reason="case requires L2 but no container runtime resolved",
             expected=case.expected,
+            smoke_declared=smoke_declared,
         )
     if author is None:
         return BenchCaseResult(
@@ -208,6 +229,7 @@ def run_case(
             outcome="skipped",
             skip_reason="no fixture.Dockerfile for the offline fixture author",
             expected=case.expected,
+            smoke_declared=smoke_declared,
         )
     if (
         case.target.dependencies
@@ -219,6 +241,7 @@ def run_case(
             outcome="skipped",
             skip_reason="dependencies target has no fixture.compose.yaml",
             expected=case.expected,
+            smoke_declared=smoke_declared,
         )
     if (
         case.target.ci is not None
@@ -230,6 +253,7 @@ def run_case(
             outcome="skipped",
             skip_reason="ci target has no fixture.ci.yml",
             expected=case.expected,
+            smoke_declared=smoke_declared,
         )
     started = time.monotonic()
     with tempfile.TemporaryDirectory(prefix=f"deployer-bench-{case.name}-") as tmp:
@@ -248,6 +272,7 @@ def run_case(
             runtime=runtime,
             build_timeout=build_timeout,
             health_timeout=health_timeout,
+            smoke_suite=case.smoke_suite,
         )
     wall = time.monotonic() - started
     case_out_dir.mkdir(parents=True, exist_ok=True)
@@ -259,6 +284,22 @@ def run_case(
             (case_out_dir / "compose.yaml").write_text(last.compose + "\n")
         if last.ci is not None:
             (case_out_dir / "ci.yml").write_text(last.ci + "\n")
+    if case.target.smoke is not None and run.iterations:
+        smoke = [
+            r for r in run.iterations[-1].report.results if r.check_id == "atp_smoke"
+        ]
+        if smoke and smoke[0].status is CheckStatus.SKIPPED:
+            return BenchCaseResult(
+                case=case.name,
+                outcome="skipped",
+                skip_reason=f"{ATP_SKIPPED_PREFIX} {smoke[0].message}",
+                iterations=len(run.iterations),
+                image_size_bytes=last.report.image_size_bytes if last else None,
+                atp_smoke_status=smoke[0].status,
+                wall_time_s=round(wall, 3),
+                expected=case.expected,
+                smoke_declared=smoke_declared,
+            )
     failure_kinds = sorted(
         {
             r.failure_kind
@@ -268,11 +309,13 @@ def run_case(
         }
     )
     hadolint_status: CheckStatus | None = None
+    atp_smoke_status: CheckStatus | None = None
     if last is not None:
         for r in last.report.results:
             if r.check_id == "hadolint":
                 hadolint_status = r.status
-                break
+            elif r.check_id == "atp_smoke":
+                atp_smoke_status = r.status
     achieved_level = run.success or (
         not case.expected.requires_l2
         and run.stopped_reason == "static_only"
@@ -294,11 +337,13 @@ def run_case(
         iterations=len(run.iterations),
         image_size_bytes=last.report.image_size_bytes if last else None,
         hadolint_status=hadolint_status,
+        atp_smoke_status=atp_smoke_status,
         wall_time_s=round(wall, 3),
         failure_kinds=failure_kinds,
         expected=case.expected,
         external_url=case.external_url,
         external_commit=case.external_commit,
+        smoke_declared=smoke_declared,
     )
 
 
@@ -469,6 +514,7 @@ def verify_corpus(
                 case.fixture_compose.read_text() if case.fixture_compose else None
             ),
             ci=case.fixture_ci.read_text() if case.fixture_ci else None,
+            smoke_suite=case.smoke_suite,
         )
         results.append((case.name, report))
     return results
@@ -575,6 +621,8 @@ def _normalize_from_report(report: BenchReport, run_dir: Path) -> GoldenReport:
                 failure_kinds=result.failure_kinds,
                 image_size_bytes=result.image_size_bytes,
                 hadolint_status=result.hadolint_status,
+                smoke_declared=result.smoke_declared,
+                atp_smoke_status=result.atp_smoke_status,
                 checks=checks,
                 expected=result.expected,
                 external_url=result.external_url,
@@ -723,17 +771,28 @@ def compare_runs(
     findings: list[CompareFinding] = _comparability_findings(candidate, baseline)
     base = _baseline_cases(baseline)
     cand = {c.case: c for c in candidate.cases if c.outcome != "skipped"}
+    skipped_cand = {c.case: c for c in candidate.cases if c.outcome == "skipped"}
     raw_baseline = isinstance(baseline, BenchReport)
 
     for name, b in base.items():
         c = cand.get(name)
         if c is None:
+            skipped = skipped_cand.get(name)
+            # A case present in the baseline but missing (or skipped) in
+            # the candidate is an unknown result, not a pass: `atp_smoke`
+            # reporting SKIPPED (no `atp` on this machine, say) means the
+            # seam was never checked here, so it must not read as green.
+            # This stays `important` regardless of why the case is missing.
             findings.append(
                 CompareFinding(
                     level="important",
                     case=name,
                     metric="missing_case",
-                    detail="present in baseline but absent or skipped in candidate",
+                    detail=(
+                        f"skipped: {skipped.skip_reason}"
+                        if skipped is not None
+                        else "present in baseline but absent or skipped in candidate"
+                    ),
                 )
             )
             continue
@@ -791,6 +850,26 @@ def compare_runs(
                     case=name,
                     metric="hadolint",
                     detail="hadolint status worsened vs baseline",
+                )
+            )
+        # A case present in both is not automatically comparable on smoke: a
+        # baseline that declared smoke can still be unsatisfied in the
+        # candidate (SKIPPED, FAILED, or the check absent entirely) without
+        # the case count differing, so this cannot be folded into the
+        # missing_case check above. `important`, never `advisory`: an
+        # unsatisfied smoke check must never render as a passing comparison.
+        if b.smoke_declared and not satisfies_declared_smoke(c):
+            status = (
+                c.atp_smoke_status.value
+                if c.atp_smoke_status is not None
+                else "not run"
+            )
+            findings.append(
+                CompareFinding(
+                    level="important",
+                    case=name,
+                    metric="atp_smoke",
+                    detail=f"declared smoke unsatisfied in candidate: {status}",
                 )
             )
         if (

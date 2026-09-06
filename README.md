@@ -60,7 +60,11 @@ missing `Dockerfile` for `verify`); `2` invalid invocation (bad flag
 values, project path not a directory, unreadable or invalid `--target`,
 invalid runtime configuration).
 `verify` writes its full report to `<project>/.deployer/verify-report.json`
-(latest run only).
+(latest run only). Alongside `hadolint_available`/`actionlint_available`/
+`docker_available`, the report carries `atp_available` (whether the `atp_smoke`
+check actually ran `atp`, as opposed to reporting `SKIPPED`) and `built_image`
+(the L2 image's tag, runtime and cleanup outcome — see "Bench" below for the
+`smoke` intent that consumes it).
 
 ### Report schema version
 
@@ -93,6 +97,8 @@ from `.env`.
 `{"system_packages": ["libpq5"]}` in the target requires apt packages unconditionally.
 `{"extras": ["gui"]}` installs optional-dependency groups.
 `{"entrypoint": "app.py"}` specifies the bare filename or [project.scripts] name to run.
+`{"run": {}, "smoke": {"suite": "suite.yaml"}}` requests an ATP smoke test of the
+built image in place of the plain job-completes check (details under Bench below).
 Design: `docs/superpowers/specs/2026-07-04-facts-v2-design.md`.
 Every `author` run writes `.deployer/authoring-run.json` — iteration count,
 per-check outcomes, authoring-vs-environment failure taxonomy. That file is
@@ -101,7 +107,9 @@ the research output.
 ## Bench
 
 The corpus (`corpus/synthetic/`) is a set of small target projects with
-declared intent (`target.json`) and expectations (`expected.json`).
+declared intent (`target.json`) and expectations (`expected.json`), e.g.
+`atp-agent` — a minimal ATP-compatible agent whose target declares a
+`smoke` intent.
 
     uv run deployer bench run [--corpus corpus] [--filter GLOB] [--label NAME] \
         [--author fixture|anthropic] [runtime/timeout flags]
@@ -120,6 +128,50 @@ failed) when no container runtime is available. `--filter` applies to synthetic
 and (with `--include-external`) external targets alike; non-matching
 externals are not even cloned.
 
+`smoke` in a target requests an ATP smoke test of the built image:
+
+```json
+{"run": {}, "smoke": {"suite": "suite.yaml", "timeout_s": 300}}
+```
+
+The suite path is resolved relative to the `target.json` that declares it.
+The check id is `atp_smoke`; it needs `atp` 2.1.0 on `PATH` and a local
+container runtime (ATP's container adapter has no remote-host support), and
+reports `SKIPPED` otherwise. `deployer bench run --require-atp` turns such a
+skip into a failure, which is how the seam is accepted; it also fails if the
+filtered corpus declares no `smoke`-intent case at all, since an empty scope
+closes the gate even less than a SKIPPED smoke does.
+
+Once accepted, `bench promote` puts the smoke case into the golden baseline.
+From then on, comparing against that baseline on a machine without `atp` on
+`PATH` reports an `important` `missing_case` finding: `atp_smoke` reports
+`SKIPPED`, the case is dropped from the candidate before comparison, and its
+absence is `important` like any other missing case — the seam's result is
+unknown on that machine, not passing, so it must not read as green.
+
+### Installing `atp` 2.1.0 (temporary source-install workaround)
+
+The published release cannot be installed: `atp-platform==2.1.0` requires
+`atp-adapters`, which was never published to PyPI, and its CLI additionally
+imports `fastapi` and `atp_sdk` without declaring them. Tracked as
+atp-platform#320 (`publish-installable-container-cli`). **Until that closes,
+install from the tagged source.** Do not assume a checkout of atp-platform is
+already on disk:
+
+```bash
+tmp=$(mktemp -d)
+git clone --depth 1 --branch v2.1.0 \
+    git@github.com:andrei-shtanakov/atp-platform.git "$tmp/atp"
+cd "$tmp/atp" && uv tool install '.[dashboard]' --with ./packages/atp-sdk
+```
+
+Verify both, not just the first:
+
+```bash
+atp --version                        # atp, version 2.1.0
+atp plugins list --type=adapter      # must list `container`
+```
+
 ### Golden baseline
 
     uv run deployer bench promote .deployer-runs/<ts>-<label> [--corpus corpus] [--force]
@@ -132,6 +184,10 @@ mismatched cases unless `--force`. `compare` reports regressions by level:
 hard (green→red), important (iteration growth, failure-kind flip, missing
 case), advisory (image size, hadolint status, new case; wall time only for
 raw-vs-raw). Exit 1 on hard/important findings, 0 otherwise.
+
+Promote only a full-corpus run unless replacing the baseline with a subset is
+intentional: `bench promote` replaces the entire `corpus/golden/` tree, and a
+filtered run can therefore erase otherwise healthy golden cases.
 
 ## Development
 

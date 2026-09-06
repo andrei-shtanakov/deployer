@@ -4,6 +4,7 @@ from typing import Literal
 import pytest
 
 from deployer.models import (
+    BuiltImage,
     CheckResult,
     CheckStatus,
     ContainerRuntime,
@@ -14,9 +15,13 @@ from deployer.models import (
     ServiceSpec,
 )
 from deployer.verify import (
+    ACTIONLINT_VERSION,
+    ATP_VERSION,
+    HADOLINT_VERSION,
     _classify,
     _isolated_context,
     _run_healthcheck,
+    _version_pin_matches,
     parse_dockerfile,
     verify,
     verify_docker,
@@ -153,6 +158,103 @@ def test_hadolint_garbage_output_degrades_to_skipped(
     check = _by_id(report, "hadolint")
     assert check.status is CheckStatus.SKIPPED
     assert report.hadolint_available is False
+
+
+def test_hadolint_exact_pinned_version_is_accepted(
+    hello_service: Path, monkeypatch
+) -> None:
+    import subprocess
+
+    from deployer.verify import HADOLINT_VERSION
+
+    monkeypatch.setattr("deployer.verify.shutil.which", lambda _: "/usr/bin/hadolint")
+
+    def _fake_run(cmd, **kwargs):
+        if "--version" in cmd:
+            return subprocess.CompletedProcess(
+                cmd,
+                0,
+                stdout=f"Haskell Dockerfile Linter {HADOLINT_VERSION}",
+                stderr="",
+            )
+        return subprocess.CompletedProcess(cmd, 0, stdout="[]", stderr="")
+
+    monkeypatch.setattr("deployer.verify.subprocess.run", _fake_run)
+    report = verify_static(GOOD, hello_service)
+    assert _by_id(report, "hadolint").status is CheckStatus.PASSED
+    assert report.hadolint_available is True
+
+
+def test_hadolint_longer_version_is_not_substring_matched(
+    hello_service: Path, monkeypatch
+) -> None:
+    """`"2.12.0"` must not accept `"12.12.0"` just because it contains it."""
+    import subprocess
+
+    monkeypatch.setattr("deployer.verify.shutil.which", lambda _: "/usr/bin/hadolint")
+    calls: list[list[str]] = []
+
+    def _fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(
+            cmd, 0, stdout="Haskell Dockerfile Linter 12.12.0", stderr=""
+        )
+
+    monkeypatch.setattr("deployer.verify.subprocess.run", _fake_run)
+    report = verify_static(GOOD, hello_service)
+    assert _by_id(report, "hadolint").status is CheckStatus.SKIPPED
+    assert report.hadolint_available is False
+    assert len(calls) == 1  # only --version; hadolint itself never ran
+
+
+def test_hadolint_prerelease_version_is_not_substring_matched(
+    hello_service: Path, monkeypatch
+) -> None:
+    """`"2.12.0"` must not accept a `"2.12.0-rc1"` prerelease build."""
+    import subprocess
+
+    monkeypatch.setattr("deployer.verify.shutil.which", lambda _: "/usr/bin/hadolint")
+
+    def _fake_run(cmd, **kwargs):
+        return subprocess.CompletedProcess(
+            cmd, 0, stdout="Haskell Dockerfile Linter 2.12.0-rc1", stderr=""
+        )
+
+    monkeypatch.setattr("deployer.verify.subprocess.run", _fake_run)
+    report = verify_static(GOOD, hello_service)
+    assert _by_id(report, "hadolint").status is CheckStatus.SKIPPED
+    assert report.hadolint_available is False
+
+
+@pytest.mark.parametrize("pin", [HADOLINT_VERSION, ACTIONLINT_VERSION, ATP_VERSION])
+@pytest.mark.parametrize(
+    ("make_output", "expected"),
+    [
+        (lambda pin: f"tool {pin}", True),
+        (lambda pin: f"tool {pin}\n", True),
+        (lambda pin: f"tool 1{pin}", False),  # unrelated longer version
+        (lambda pin: f"tool {pin}-rc1", False),  # prerelease suffix
+        (lambda pin: f"tool {pin}+vendor.1", False),  # build-metadata suffix
+        (lambda pin: f"tool {pin}.1", False),  # extra version component
+        (lambda pin: f"tool {pin}rc1", False),  # compact prerelease, no separator
+        (lambda pin: f"tool {pin}.dev1", False),  # dev suffix
+        (
+            lambda pin: f"tool, version {pin}, built from source",
+            True,
+        ),  # embedded in a longer sentence: maximal munch stops at the pin
+        (lambda pin: "tool: no version here", False),  # no version token at all
+        (lambda pin: "", False),  # empty output
+    ],
+)
+def test_version_pin_matches_whole_token_only(
+    pin: str, make_output, expected: bool
+) -> None:
+    """The shared helper behind all three pinned-version checks (hadolint,
+    actionlint, atp): exact equality against the extracted version token,
+    never a substring or boundary match — so no suffix shape, known or not,
+    can slip past it. Runs against each tool's real pinned constant so the
+    table stays true if a pin moves."""
+    assert _version_pin_matches(pin, make_output(pin)) is expected
 
 
 def test_install_strategy_skipped_without_facts(hello_service: Path) -> None:
@@ -415,11 +517,23 @@ def _spy_docker(captured: dict):
     """verify_docker replacement that records the timeout kwargs it got."""
 
     def spy(
-        dockerfile, project_path, target, runtime, *, build_timeout, health_timeout
+        dockerfile,
+        project_path,
+        target,
+        runtime,
+        *,
+        build_timeout,
+        health_timeout,
+        smoke_suite=None,
     ):
         captured["build_timeout"] = build_timeout
         captured["health_timeout"] = health_timeout
-        return [CheckResult(check_id="build", status=CheckStatus.PASSED)], None
+        return (
+            [CheckResult(check_id="build", status=CheckStatus.PASSED)],
+            None,
+            BuiltImage(tag="localhost/deployer-verify-spy", runtime=runtime),
+            False,
+        )
 
     return spy
 
@@ -588,12 +702,13 @@ def test_verify_docker_cleanup_timeout_does_not_clobber_result(
         "rmi": subprocess.TimeoutExpired("rmi", 1),
     }
     monkeypatch.setattr("deployer.verify.container_run", _fake_container_run(responses))
-    results, image_size = verify_docker(
+    results, image_size, built, _available = verify_docker(
         GOOD, hello_service, DeployTarget(), ContainerRuntime(tool="podman")
     )
     assert results[0].check_id == "build"
     assert results[0].status is CheckStatus.PASSED
     assert image_size == 1234
+    assert built.cleanup_status == "failed"  # rmi timed out
 
 
 # -- Fix 2: mid-run transport loss during the healthcheck poll --
@@ -702,7 +817,7 @@ def test_build_oserror_classifies_as_environment(
         "rmi": subprocess.CompletedProcess(["rmi"], 0, stdout="", stderr=""),
     }
     monkeypatch.setattr("deployer.verify.container_run", _fake_container_run(responses))
-    results, image_size = verify_docker(
+    results, image_size, _built, _available = verify_docker(
         GOOD, hello_service, DeployTarget(), ContainerRuntime(tool="podman")
     )
     assert results[0].check_id == "build"
@@ -1477,6 +1592,37 @@ def test_actionlint_version_mismatch_skips_without_running(monkeypatch) -> None:
     assert len(calls) == 1  # only --version; the linter itself never ran
 
 
+def test_actionlint_longer_version_is_not_substring_matched(monkeypatch) -> None:
+    """`"1.7.12"` must not accept `"11.7.12"` just because it contains it."""
+    import subprocess
+
+    monkeypatch.setattr("deployer.verify.shutil.which", lambda _: "/usr/bin/actionlint")
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout="11.7.12", stderr="")
+
+    monkeypatch.setattr("deployer.verify.subprocess.run", fake_run)
+    checks = _ci_checks(CI_GOOD)
+    assert checks["actionlint"].status is CheckStatus.SKIPPED
+    assert len(calls) == 1  # only --version; the linter itself never ran
+
+
+def test_actionlint_prerelease_version_is_not_substring_matched(monkeypatch) -> None:
+    """`"1.7.12"` must not accept a `"1.7.12-rc1"` prerelease build."""
+    import subprocess
+
+    monkeypatch.setattr("deployer.verify.shutil.which", lambda _: "/usr/bin/actionlint")
+
+    def fake_run(cmd, **kwargs):
+        return subprocess.CompletedProcess(cmd, 0, stdout="1.7.12-rc1", stderr="")
+
+    monkeypatch.setattr("deployer.verify.subprocess.run", fake_run)
+    checks = _ci_checks(CI_GOOD)
+    assert checks["actionlint"].status is CheckStatus.SKIPPED
+
+
 def test_actionlint_runs_against_real_workflow_path(monkeypatch) -> None:
     import subprocess
 
@@ -1544,3 +1690,288 @@ def test_verify_reports_actionlint_available_via_public_api(
     target = DeployTarget(ci=CISpec())
     report = verify(GOOD, hello_service, target, None, ci=CI_GOOD)
     assert report.actionlint_available is True
+
+
+# -- Task 3: ATP verdict mapping --
+
+
+def _atp_report(tmp_path: Path, **summary: object) -> Path:
+    """Write an ATP JSON report with the given summary fields."""
+    import json
+
+    path = tmp_path / "atp-report.json"
+    body = {"version": "1.0", "summary": {"total_tests": 1, **summary}}
+    path.write_text(json.dumps(body))
+    return path
+
+
+def test_atp_verdict_passes_when_report_and_exit_code_agree(tmp_path: Path) -> None:
+    from deployer.verify import _atp_verdict
+
+    result = _atp_verdict(_atp_report(tmp_path, success=True), 0)
+    assert result.check_id == "atp_smoke"
+    assert result.status is CheckStatus.PASSED
+
+
+def test_atp_verdict_failed_assertions_are_authoring(tmp_path: Path) -> None:
+    """Packaging is what deployer controls, so a failed assertion is on us."""
+    from deployer.verify import _atp_verdict
+
+    report = _atp_report(tmp_path, success=False, failed_tests=1)
+    result = _atp_verdict(report, 1)
+    assert result.status is CheckStatus.FAILED
+    assert result.failure_kind is FailureKind.AUTHORING
+
+
+def test_atp_verdict_empty_suite_is_environment(tmp_path: Path) -> None:
+    """ATP computes success as passed == total, so 0 == 0 reports success.
+
+    A suite that ran nothing says nothing about the artifact, and must never
+    be the strongest signal in the seam.
+    """
+    from deployer.verify import _atp_verdict
+
+    report = _atp_report(tmp_path, total_tests=0, success=True)
+    result = _atp_verdict(report, 0)
+    assert result.status is CheckStatus.FAILED
+    assert result.failure_kind is FailureKind.ENVIRONMENT
+
+
+def test_atp_verdict_missing_report_is_environment(tmp_path: Path) -> None:
+    from deployer.verify import _atp_verdict
+
+    result = _atp_verdict(tmp_path / "absent.json", 0)
+    assert result.status is CheckStatus.FAILED
+    assert result.failure_kind is FailureKind.ENVIRONMENT
+
+
+def test_atp_verdict_unparseable_report_is_environment(tmp_path: Path) -> None:
+    from deployer.verify import _atp_verdict
+
+    path = tmp_path / "atp-report.json"
+    path.write_text("{not json")
+    result = _atp_verdict(path, 0)
+    assert result.status is CheckStatus.FAILED
+    assert result.failure_kind is FailureKind.ENVIRONMENT
+
+
+def test_atp_verdict_unknown_report_version_is_environment(tmp_path: Path) -> None:
+    import json
+
+    from deployer.verify import _atp_verdict
+
+    path = tmp_path / "atp-report.json"
+    path.write_text(json.dumps({"version": "9.9", "summary": {"total_tests": 1}}))
+    result = _atp_verdict(path, 0)
+    assert result.status is CheckStatus.FAILED
+    assert result.failure_kind is FailureKind.ENVIRONMENT
+
+
+def test_atp_verdict_disagreement_between_report_and_exit_code(
+    tmp_path: Path,
+) -> None:
+    """The JSON is authoritative; the exit code is a consistency check."""
+    from deployer.verify import _atp_verdict
+
+    result = _atp_verdict(_atp_report(tmp_path, success=True), 1)
+    assert result.status is CheckStatus.FAILED
+    assert result.failure_kind is FailureKind.ENVIRONMENT
+    assert "disagree" in result.message
+
+
+def test_atp_verdict_failed_report_with_cli_error_is_environment(
+    tmp_path: Path,
+) -> None:
+    """Only ATP's assertion-failure exit code makes a failure authoring."""
+    from deployer.verify import _atp_verdict
+
+    report = _atp_report(tmp_path, success=False, failed_tests=1)
+    result = _atp_verdict(report, 2)
+    assert result.status is CheckStatus.FAILED
+    assert result.failure_kind is FailureKind.ENVIRONMENT
+    assert "disagree" in result.message
+
+
+def test_atp_verdict_boolean_total_tests_is_environment(tmp_path: Path) -> None:
+    """A boolean total_tests (JSON true/false) is malformed, not empty suite.
+
+    isinstance(total, int) accepts bool since bool is a subclass of int in Python.
+    The empty-suite guard must reject it as malformed, not skip the guard entirely.
+    """
+    import json
+
+    from deployer.verify import _atp_verdict
+
+    path = tmp_path / "atp-report.json"
+    path.write_text(
+        json.dumps(
+            {"version": "1.0", "summary": {"total_tests": True, "success": True}}
+        )
+    )
+    result = _atp_verdict(path, 0)
+    assert result.status is CheckStatus.FAILED
+    assert result.failure_kind is FailureKind.ENVIRONMENT
+
+
+# -- Task 4: ATP smoke check wrapper --
+
+
+def test_atp_smoke_skips_when_binary_absent(tmp_path: Path, monkeypatch) -> None:
+    from deployer.verify import _check_atp_smoke
+
+    monkeypatch.setattr("deployer.verify.shutil.which", lambda _: None)
+    result, available = _check_atp_smoke(
+        tmp_path / "suite.yaml", ContainerRuntime(tool="docker"), "localhost/x", 300
+    )
+    assert result.status is CheckStatus.SKIPPED
+    assert available is False
+    assert "non-comparable" in result.message
+
+
+def test_atp_smoke_version_mismatch_skips_without_running(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import subprocess
+
+    from deployer.verify import _check_atp_smoke
+
+    monkeypatch.setattr("deployer.verify.shutil.which", lambda _: "/usr/bin/atp")
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout="atp 9.9.9", stderr="")
+
+    monkeypatch.setattr("deployer.verify.subprocess.run", fake_run)
+    result, available = _check_atp_smoke(
+        tmp_path / "suite.yaml", ContainerRuntime(tool="docker"), "localhost/x", 300
+    )
+    assert result.status is CheckStatus.SKIPPED
+    assert available is False
+    assert len(calls) == 1  # only --version; the suite never ran
+
+
+def test_atp_smoke_longer_version_is_not_substring_matched(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """`"2.1.0"` must not accept `"12.1.0"` just because it contains it."""
+    import subprocess
+
+    from deployer.verify import _check_atp_smoke
+
+    monkeypatch.setattr("deployer.verify.shutil.which", lambda _: "/usr/bin/atp")
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(
+            cmd, 0, stdout="atp, version 12.1.0", stderr=""
+        )
+
+    monkeypatch.setattr("deployer.verify.subprocess.run", fake_run)
+    result, available = _check_atp_smoke(
+        tmp_path / "suite.yaml", ContainerRuntime(tool="docker"), "localhost/x", 300
+    )
+    assert result.status is CheckStatus.SKIPPED
+    assert available is False
+    assert len(calls) == 1  # only --version; the suite never ran
+
+
+def test_atp_smoke_prerelease_version_is_not_substring_matched(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """`"2.1.0"` must not accept a `"2.1.0-rc1"` prerelease build."""
+    import subprocess
+
+    from deployer.verify import _check_atp_smoke
+
+    monkeypatch.setattr("deployer.verify.shutil.which", lambda _: "/usr/bin/atp")
+
+    def fake_run(cmd, **kwargs):
+        return subprocess.CompletedProcess(
+            cmd, 0, stdout="atp, version 2.1.0-rc1", stderr=""
+        )
+
+    monkeypatch.setattr("deployer.verify.subprocess.run", fake_run)
+    result, available = _check_atp_smoke(
+        tmp_path / "suite.yaml", ContainerRuntime(tool="docker"), "localhost/x", 300
+    )
+    assert result.status is CheckStatus.SKIPPED
+    assert available is False
+
+
+def test_atp_smoke_passes_runtime_and_tag_explicitly(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """ATP's auto-detection prefers podman, so the runtime we built with must
+    be named explicitly, and the tag must be fully qualified.
+
+    The suite path is passed in RELATIVE (as `load_corpus` would hand it to
+    a caller that forgot to resolve it) while cwd is elsewhere, pinning that
+    `_check_atp_smoke` resolves it before handing it to `atp` — which runs
+    with its own cwd in a fresh temp dir and would not see a relative path.
+    """
+    import json
+    import subprocess
+
+    from deployer.verify import ATP_VERSION, _check_atp_smoke
+
+    monkeypatch.setattr("deployer.verify.shutil.which", lambda _: "/usr/bin/atp")
+    seen: list[list[str]] = []
+
+    def fake_run(cmd, **kwargs):
+        if "--version" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, stdout=ATP_VERSION, stderr="")
+        seen.append(cmd)
+        out = cmd[cmd.index("--output-file") + 1]
+        Path(out).write_text(
+            json.dumps(
+                {"version": "1.0", "summary": {"total_tests": 1, "success": True}}
+            )
+        )
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("deployer.verify.subprocess.run", fake_run)
+    suite_dir = tmp_path / "suites"
+    suite_dir.mkdir()
+    (suite_dir / "suite.yaml").write_text("test_suite: x\n")
+    monkeypatch.chdir(suite_dir)
+    relative_suite = Path("suite.yaml")
+    assert not relative_suite.is_absolute()
+    result, available = _check_atp_smoke(
+        relative_suite,
+        ContainerRuntime(tool="docker"),
+        "localhost/deployer-verify-abc",
+        300,
+    )
+
+    assert result.status is CheckStatus.PASSED
+    assert available is True
+    command = seen[0]
+    assert "image=localhost/deployer-verify-abc" in command
+    assert "runtime=docker" in command
+    assert "--no-save" in command
+    suite_arg = command[command.index("test") + 1]
+    assert Path(suite_arg).is_absolute()
+    assert Path(suite_arg) == relative_suite.resolve()
+
+
+def test_atp_smoke_timeout_is_environment(tmp_path: Path, monkeypatch) -> None:
+    import subprocess
+
+    from deployer.verify import ATP_VERSION, _check_atp_smoke
+
+    monkeypatch.setattr("deployer.verify.shutil.which", lambda _: "/usr/bin/atp")
+
+    def fake_run(cmd, **kwargs):
+        if "--version" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, stdout=ATP_VERSION, stderr="")
+        raise subprocess.TimeoutExpired(cmd, 300)
+
+    monkeypatch.setattr("deployer.verify.subprocess.run", fake_run)
+    result, available = _check_atp_smoke(
+        tmp_path / "suite.yaml", ContainerRuntime(tool="docker"), "localhost/x", 300
+    )
+    assert result.status is CheckStatus.FAILED
+    assert result.failure_kind is FailureKind.ENVIRONMENT
+    assert available is True

@@ -1,0 +1,5 @@
+{
+  "run": {},
+  "smoke": {"suite": "suite.yaml"},
+  "base_image": "python:3.12-slim"
+}

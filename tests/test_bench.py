@@ -1,5 +1,6 @@
 """Bench: models, offline fixture author, corpus loading, orchestration."""
 
+import itertools
 import json
 import subprocess
 from pathlib import Path
@@ -23,6 +24,7 @@ from deployer.bench import (
     render_markdown,
     run_bench,
     run_case,
+    verify_corpus,
 )
 from deployer.models import (
     LEGACY_SCHEMA_VERSION,
@@ -208,6 +210,49 @@ def _fake_run(success: bool) -> AuthoringRun:
     )
 
 
+def test_verify_corpus_forwards_smoke_suite(tmp_path: Path, monkeypatch) -> None:
+    """Regression: `verify_corpus` must thread `smoke_suite` through to
+    `verify()`, exactly like it already does for `compose` and `ci`.
+
+    Without it, a `smoke` case reaching a real runtime silently falls
+    through `verify_docker`'s `elif target.run is not None` branch and runs
+    `_run_completes` instead of the ATP check — a false failure on a
+    healthy case, not a skip.
+    """
+    case_dir = _make_case(
+        tmp_path,
+        "smoke-case",
+        target={"run": {}, "smoke": {"suite": "suite.yaml"}},
+    )
+    (case_dir / "suite.yaml").write_text("test_suite: x\n")
+
+    captured: list[Path | None] = []
+
+    def spy_verify(
+        dockerfile,
+        project_path,
+        target,
+        runtime,
+        facts=None,
+        *,
+        build_timeout,
+        health_timeout,
+        compose=None,
+        ci=None,
+        smoke_suite=None,
+    ):
+        captured.append(smoke_suite)
+        return VerificationReport(
+            results=[CheckResult(check_id="parses", status=CheckStatus.PASSED)]
+        )
+
+    monkeypatch.setattr("deployer.bench.verify", spy_verify)
+    results = verify_corpus(tmp_path, ContainerRuntime(tool="podman"))
+
+    assert captured == [case_dir / "suite.yaml"]
+    assert results[0][1].passed
+
+
 def test_run_case_skips_l2_case_without_runtime(tmp_path: Path) -> None:
     _make_case(tmp_path, "svc")
     case = load_corpus(tmp_path)[0]
@@ -283,6 +328,47 @@ def test_run_case_skips_ci_case_without_fixture_ci(tmp_path: Path) -> None:
     )
     assert result.outcome == "skipped"
     assert "fixture.ci.yml" in result.skip_reason
+
+
+def test_run_case_records_smoke_declared_on_l2_skip_without_runtime(
+    tmp_path: Path,
+) -> None:
+    """A case that declares smoke but is skipped before authoring ever
+    starts (no runtime resolved) must still record `smoke_declared=True`:
+    without this, "declared but never ran" is indistinguishable from
+    "never declared" once the case is reduced to a skip."""
+    _make_case(tmp_path, "agent", target={"run": {}, "smoke": {"suite": "suite.yaml"}})
+    case = load_corpus(tmp_path)[0]
+    result = run_case(
+        case,
+        FixtureAuthor("FROM x:1\n"),
+        None,
+        tmp_path / "out",
+        build_timeout=600,
+        health_timeout=30,
+    )
+    assert result.outcome == "skipped"
+    assert result.smoke_declared is True
+    assert result.atp_smoke_status is None
+
+
+def test_run_case_records_smoke_not_declared_on_l2_skip_without_runtime(
+    tmp_path: Path,
+) -> None:
+    """The mirror case: a case that never declared smoke records
+    `smoke_declared=False` on the same skip path."""
+    _make_case(tmp_path, "svc")
+    case = load_corpus(tmp_path)[0]
+    result = run_case(
+        case,
+        FixtureAuthor("FROM x:1\n"),
+        None,
+        tmp_path / "out",
+        build_timeout=600,
+        health_timeout=30,
+    )
+    assert result.outcome == "skipped"
+    assert result.smoke_declared is False
 
 
 def test_run_case_runs_in_scratch_and_writes_artifacts(
@@ -401,6 +487,38 @@ def test_run_case_mismatch_when_expectation_violated(
     )
     assert result.outcome == "mismatched"
     assert result.stopped_reason == "no_progress"
+
+
+def test_run_case_final_return_records_declared_smoke_passed(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The ordinary success path: a case that declares smoke and whose
+    `atp_smoke` PASSED must reach the final (non-skip) return with both
+    facts recorded, not just the pre-existing `atp_smoke_status`."""
+    case = _make_case(
+        tmp_path,
+        "agent",
+        target={"run": {}, "smoke": {"suite": "suite.yaml"}},
+        expected={"requires_l2": False},
+    )
+    (case / "suite.yaml").write_text("test_suite: x\n")
+    run = _fake_run(True)
+    run.iterations[-1].report.results.append(
+        CheckResult(check_id="atp_smoke", status=CheckStatus.PASSED)
+    )
+    monkeypatch.setattr("deployer.bench.author_dockerfile", lambda *a, **k: run)
+
+    result = run_case(
+        load_corpus(tmp_path)[0],
+        FixtureAuthor("FROM x:1\n"),
+        None,
+        tmp_path / "out",
+        build_timeout=600,
+        health_timeout=30,
+    )
+    assert result.outcome == "matched"
+    assert result.smoke_declared is True
+    assert result.atp_smoke_status is CheckStatus.PASSED
 
 
 def test_run_bench_aggregates_and_writes_reports(tmp_path: Path, monkeypatch) -> None:
@@ -589,6 +707,24 @@ def test_load_external_rejects_traversal_name(tmp_path: Path) -> None:
         'commit = "abc123"\n'
     )
     with pytest.raises(ValueError):
+        load_external(tmp_path)
+
+
+def test_load_external_rejects_smoke_target(tmp_path: Path) -> None:
+    """`smoke` needs `target.json`'s directory to resolve `suite` against;
+    a cloned external target has no such file, so the config must be
+    refused at load rather than accepted and left to fail every attempt
+    once L2 discovers there is no suite path to run."""
+    (tmp_path / "external.toml").write_text(
+        "[[targets]]\n"
+        'name = "demo"\n'
+        'url = "https://example.invalid/demo.git"\n'
+        'commit = "abc123"\n'
+        "[targets.target.run]\n"
+        "[targets.target.smoke]\n"
+        'suite = "suite.yaml"\n'
+    )
+    with pytest.raises(ValueError, match="smoke"):
         load_external(tmp_path)
 
 
@@ -842,6 +978,22 @@ def test_promote_writes_golden_tree(tmp_path: Path, monkeypatch) -> None:
     )
 
 
+def test_committed_golden_atp_agent_records_smoke_fields() -> None:
+    """The committed golden baseline predates `smoke_declared`/
+    `atp_smoke_status`; both must be backfilled onto its `atp-agent` entry
+    so the smoke invariant in `compare_runs` actually fires against the
+    real baseline instead of silently no-op'ing on a case that declared
+    smoke. The two fields must also agree with the `atp_smoke` entry the
+    case already recorded in `checks`, so they can't drift apart again."""
+    golden_path = Path(__file__).parent.parent / "corpus" / "golden" / "golden.json"
+    golden = GoldenReport.model_validate_json(golden_path.read_text())
+    case = next(c for c in golden.cases if c.case == "atp-agent")
+    assert case.smoke_declared is True
+    assert case.atp_smoke_status is CheckStatus.PASSED
+    atp_smoke_check = next(c for c in case.checks if c.check_id == "atp_smoke")
+    assert atp_smoke_check.status is case.atp_smoke_status
+
+
 def test_promote_refuses_mismatch_without_force(tmp_path: Path, monkeypatch) -> None:
     _make_case(
         tmp_path, "bad", expected={"requires_l2": False, "expected_success": False}
@@ -943,6 +1095,75 @@ def test_compare_skipped_candidate_case_is_missing() -> None:
     assert ("important", "missing_case", "a") in {
         (f.level, f.metric, f.case) for f in findings
     }
+
+
+def test_compare_atp_skipped_missing_case_is_important() -> None:
+    """A candidate case dropped because `atp_smoke` itself reported SKIPPED
+    (no `atp` on PATH) is an unknown result, not a pass: the seam was never
+    checked on this machine, so it must stay `important` and `bench compare`
+    (exit 1 on any important/hard finding, see `_cmd_bench_compare`) must not
+    read this as green."""
+    findings = compare_runs(
+        _report(
+            _rcase(
+                "a",
+                outcome="skipped",
+                success=False,
+                skip_reason=f"{bench.ATP_SKIPPED_PREFIX} atp not installed",
+            )
+        ),
+        _golden(_gcase("a")),
+    )
+    assert ("important", "missing_case", "a") in {
+        (f.level, f.metric, f.case) for f in findings
+    }
+    assert not any(
+        f.level == "advisory" and f.metric == "missing_case" for f in findings
+    )
+
+
+def test_compare_non_atp_skip_reason_keeps_missing_case_important() -> None:
+    """Only the atp_smoke-SKIPPED marker is exempt; any other skip reason
+    (or the case never running at all) must still be `important`."""
+    findings = compare_runs(
+        _report(
+            _rcase(
+                "a",
+                outcome="skipped",
+                success=False,
+                skip_reason="case requires L2 but no container runtime resolved",
+            )
+        ),
+        _golden(_gcase("a")),
+    )
+    assert ("important", "missing_case", "a") in {
+        (f.level, f.metric, f.case) for f in findings
+    }
+
+
+def test_compare_present_candidate_smoke_unsatisfied_is_important() -> None:
+    """A case present in both baseline and candidate is not automatically
+    comparable on smoke: a baseline that declared smoke can end up
+    unsatisfied in the candidate (SKIPPED here) without the case count
+    differing at all, so `missing_case` alone cannot catch this — it never
+    fires when the case is present in both."""
+    findings = compare_runs(
+        _report(_rcase("a", smoke_declared=True, atp_smoke_status="skipped")),
+        _golden(_gcase("a", smoke_declared=True, atp_smoke_status="passed")),
+    )
+    assert ("important", "atp_smoke", "a") in {
+        (f.level, f.metric, f.case) for f in findings
+    }
+
+
+def test_compare_present_candidate_smoke_satisfied_has_no_atp_finding() -> None:
+    """The mirror case: candidate's `atp_smoke` PASSED too, so there is
+    nothing to flag."""
+    findings = compare_runs(
+        _report(_rcase("a", smoke_declared=True, atp_smoke_status="passed")),
+        _golden(_gcase("a", smoke_declared=True, atp_smoke_status="passed")),
+    )
+    assert not any(f.metric == "atp_smoke" for f in findings)
 
 
 def test_compare_backend_mismatch_is_comparability_advisory() -> None:
@@ -1368,3 +1589,60 @@ def test_baseline_of_a_later_minor_version_still_reads(
     golden_file.write_text(json.dumps(raw, indent=2))
 
     assert load_baseline("golden", tmp_path).schema_version == "1.7"
+
+
+def test_load_corpus_resolves_the_smoke_suite_beside_target_json(
+    tmp_path: Path,
+) -> None:
+    case = _make_case(
+        tmp_path, "agent", target={"run": {}, "smoke": {"suite": "suite.yaml"}}
+    )
+    (case / "suite.yaml").write_text("test_suite: x\n")
+
+    loaded = load_corpus(tmp_path)[0]
+
+    assert loaded.smoke_suite == case / "suite.yaml"
+
+
+def test_skipped_smoke_makes_the_case_skipped_not_successful(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A run where the seam never executed must not read as a pass.
+
+    The clock is faked because the telemetry assertion below must not depend on
+    how fast the machine is: everything this test exercises is monkeypatched, so
+    real elapsed time rounds to 0.0 on a quick runner and a `> 0` assertion goes
+    flaky. A clock that advances a fixed step per call makes the same intent —
+    the measured wall time survives the skip — deterministic.
+    """
+    ticks = itertools.count(start=100.0, step=0.25)
+    monkeypatch.setattr("deployer.bench.time.monotonic", lambda: next(ticks))
+    case = _make_case(
+        tmp_path, "agent", target={"run": {}, "smoke": {"suite": "suite.yaml"}}
+    )
+    (case / "suite.yaml").write_text("test_suite: x\n")
+    run = _fake_run(True)
+    run.iterations[-1].report.results.append(
+        CheckResult(
+            check_id="atp_smoke",
+            status=CheckStatus.SKIPPED,
+            message="atp 2.1.0 not installed; run is non-comparable",
+        )
+    )
+    monkeypatch.setattr("deployer.bench.author_dockerfile", lambda *a, **k: run)
+
+    result = run_case(
+        load_corpus(tmp_path)[0],
+        FixtureAuthor("FROM x:1\n"),
+        ContainerRuntime(tool="docker"),
+        tmp_path / "out",
+        build_timeout=600,
+        health_timeout=30,
+    )
+
+    assert result.outcome == "skipped"
+    assert "atp" in result.skip_reason
+    assert result.iterations == 1  # run telemetry survives the skip
+    assert result.wall_time_s == 0.25  # measured from the faked clock, not dropped
+    assert result.smoke_declared is True
+    assert result.atp_smoke_status is CheckStatus.SKIPPED

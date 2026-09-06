@@ -2,9 +2,11 @@ import pytest
 from pydantic import ValidationError
 
 from deployer.models import (
+    SCHEMA_VERSION,
     AuthoringRun,
     CheckResult,
     CheckStatus,
+    ContainerRuntime,
     DeployTarget,
     FailureKind,
     IterationRecord,
@@ -300,3 +302,143 @@ def test_iteration_record_ci_defaults_none() -> None:
 def test_ci_spec_rejects_unknown_keys() -> None:
     with pytest.raises(ValidationError):
         DeployTarget.model_validate_json('{"ci": {"kind": "x"}}')
+
+
+def test_smoke_target_requires_a_run_intent() -> None:
+    """A smoke target is a job; ATP drives it, so the job intent must be declared."""
+    with pytest.raises(ValidationError, match="run"):
+        DeployTarget(smoke={"suite": "suite.yaml"})
+
+
+def test_smoke_target_rejects_a_service_intent() -> None:
+    """The http-adapter path is a separate seam with a different lifecycle."""
+    with pytest.raises(ValidationError, match="service"):
+        DeployTarget(
+            smoke={"suite": "suite.yaml"},
+            service={"port": 8000},
+        )
+
+
+def test_smoke_target_rejects_an_expect_stdout_oracle() -> None:
+    """Stdout on an ATP agent is the ATPResponse JSON, not job output.
+
+    A substring oracle over it is meaningless, so the combination must be
+    rejected rather than silently ignored (the `CISpec`/`dependencies`
+    precedent for a dropped intent failing the config, not no-opping).
+    """
+    with pytest.raises(ValidationError, match="expect_stdout"):
+        DeployTarget(
+            run={"expect_stdout": "ready"},
+            smoke={"suite": "suite.yaml"},
+        )
+
+
+def test_smoke_spec_defaults_and_rejects_unknown_keys() -> None:
+    target = DeployTarget(smoke={"suite": "suite.yaml"}, run={})
+    assert target.smoke is not None
+    assert target.smoke.suite == "suite.yaml"
+    assert target.smoke.timeout_s == 300
+    with pytest.raises(ValidationError):
+        DeployTarget(smoke={"suite": "s.yaml", "kind": "x"}, run={})
+
+
+def test_smoke_spec_rejects_an_empty_suite_path() -> None:
+    with pytest.raises(ValidationError):
+        DeployTarget(smoke={"suite": ""}, run={})
+
+
+def test_built_image_defaults_to_unattempted_cleanup() -> None:
+    """cleanup_status records what happened, so it cannot default to success.
+
+    `rmi` is best-effort and may fail; a hardcoded "removed" would be a claim
+    the code never checks.
+    """
+    from deployer.models import BuiltImage
+
+    image = BuiltImage(tag="localhost/x", runtime=ContainerRuntime(tool="docker"))
+    assert image.lifecycle == "ephemeral"
+    assert image.cleanup_status == "not_attempted"
+
+
+def test_verification_report_defaults_have_no_atp_and_no_image() -> None:
+    report = VerificationReport()
+    assert report.atp_available is False
+    assert report.built_image is None
+    assert report.schema_version == SCHEMA_VERSION
+
+
+def test_verification_report_defaults_do_not_declare_smoke() -> None:
+    report = VerificationReport()
+    assert report.smoke_declared is False
+    assert report.atp_smoke_status is None
+
+
+def test_verification_report_atp_smoke_status_reads_the_check_result() -> None:
+    report = VerificationReport(
+        results=[
+            CheckResult(
+                check_id="atp_smoke",
+                status=CheckStatus.FAILED,
+                failure_kind=FailureKind.AUTHORING,
+            )
+        ],
+    )
+    assert report.atp_smoke_status is CheckStatus.FAILED
+
+
+def test_satisfies_declared_smoke_true_when_smoke_never_declared() -> None:
+    """A case that never declared smoke has nothing to satisfy: it must
+    not be flagged as violating an invariant that never applied to it."""
+    from deployer.models import BenchCaseResult, satisfies_declared_smoke
+
+    result = BenchCaseResult(case="a", outcome="matched", success=True)
+    assert result.smoke_declared is False
+    assert satisfies_declared_smoke(result) is True
+
+
+@pytest.mark.parametrize(
+    ("atp_smoke_status", "expected"),
+    [
+        (CheckStatus.PASSED, True),
+        (CheckStatus.SKIPPED, False),
+        (CheckStatus.FAILED, False),
+        (CheckStatus.WARNING, False),
+        (None, False),
+    ],
+)
+def test_satisfies_declared_smoke_requires_passed_when_declared(
+    atp_smoke_status: CheckStatus | None, expected: bool
+) -> None:
+    """A declared smoke intent is green only on `atp_smoke: PASSED` — every
+    other recorded status, including no recorded check at all, is a miss."""
+    from deployer.models import BenchCaseResult, satisfies_declared_smoke
+
+    result = BenchCaseResult(
+        case="a",
+        outcome="matched",
+        success=True,
+        smoke_declared=True,
+        atp_smoke_status=atp_smoke_status,
+    )
+    assert satisfies_declared_smoke(result) is expected
+
+
+def test_satisfies_declared_smoke_reads_golden_case_the_same_way() -> None:
+    """`GoldenCase` mirrors the two `BenchCaseResult` fields the predicate
+    reads, so a promoted baseline is judged identically to a fresh run."""
+    from deployer.models import GoldenCase, satisfies_declared_smoke
+
+    unsatisfied = GoldenCase(
+        case="a",
+        success=True,
+        smoke_declared=True,
+        atp_smoke_status=CheckStatus.SKIPPED,
+    )
+    satisfied = GoldenCase(
+        case="a",
+        success=True,
+        smoke_declared=True,
+        atp_smoke_status=CheckStatus.PASSED,
+    )
+    assert satisfies_declared_smoke(unsatisfied) is False
+    assert satisfies_declared_smoke(satisfied) is True

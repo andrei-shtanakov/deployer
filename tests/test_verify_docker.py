@@ -195,3 +195,42 @@ def test_inert_cmd_fails_run_completes_without_leaking_oracle(
     assert check.failure_kind == "authoring"
     assert "container command" in check.message
     assert "hello from no-build-system" not in check.message
+
+
+@pytest.mark.docker
+def test_atp_agent_case_builds_and_answers(tmp_path: Path) -> None:
+    """End-to-end on a real runtime: build the fixture, then have ATP drive it.
+
+    Skips when the smoke check itself reports SKIPPED (`atp` absent, or a
+    DIFFERENT version installed) — the acceptance bench run is where a skip
+    is rejected, not here. Gating on the check's own status rather than on
+    `shutil.which("atp")` matters: a machine with a mismatched atp version
+    still has the binary on PATH, so a presence-only gate would hard-fail
+    here instead of skipping.
+    """
+    from deployer.bench import load_corpus
+    from deployer.runtime import resolve_runtime
+    from deployer.verify import verify_docker
+
+    corpus_root = Path(__file__).resolve().parent.parent / "corpus"
+    case = [c for c in load_corpus(corpus_root) if c.name == "atp-agent"][0]
+    assert case.fixture_dockerfile is not None
+    dockerfile = case.fixture_dockerfile.read_text()
+    runtime = resolve_runtime()
+    if runtime is None:
+        pytest.skip("no container runtime resolved")
+
+    results, _size, image, available = verify_docker(
+        dockerfile,
+        case.project_dir,
+        case.target,
+        runtime,
+        smoke_suite=case.smoke_suite,
+    )
+
+    smoke = [r for r in results if r.check_id == "atp_smoke"][0]
+    if smoke.status is CheckStatus.SKIPPED:
+        pytest.skip(smoke.message)
+    assert available is True
+    assert smoke.status is CheckStatus.PASSED, smoke.message
+    assert image.cleanup_status == "removed"

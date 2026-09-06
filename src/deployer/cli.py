@@ -28,6 +28,7 @@ from deployer.models import (
     ContainerRuntime,
     DeployTarget,
     VerificationReport,
+    satisfies_declared_smoke,
 )
 from deployer.runtime import (
     RuntimeConfigError,
@@ -86,6 +87,22 @@ def _load_target(path: str | None) -> DeployTarget | str:
         return f"cannot read --target file: {exc}"
     except ValidationError as exc:
         return f"--target is not a valid DeployTarget: {exc}"
+
+
+def _resolve_smoke_suite(target: DeployTarget, target_path: str | None) -> Path | None:
+    """Absolute path of the ATP suite, resolved against the target document.
+
+    Resolving against the cwd would make a target non-portable, and against
+    the project directory would put a test suite inside the build context.
+    """
+    if target.smoke is None:
+        return None
+    if target_path is None:
+        raise ValueError(
+            "a smoke intent requires --target: the suite path is resolved "
+            "relative to the target file"
+        )
+    return (Path(target_path).parent / target.smoke.suite).resolve()
 
 
 def _add_timeout_flags(parser: argparse.ArgumentParser) -> None:
@@ -179,6 +196,11 @@ def _cmd_verify(args: argparse.Namespace) -> int:
     if isinstance(target, str):
         print(f"error: {target}", file=sys.stderr)
         return 2
+    try:
+        smoke_suite = _resolve_smoke_suite(target, args.target)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
     dockerfile_path = project / "Dockerfile"
     if not dockerfile_path.is_file():
         print(f"error: {dockerfile_path} not found", file=sys.stderr)
@@ -208,6 +230,7 @@ def _cmd_verify(args: argparse.Namespace) -> int:
             ci=ci,
             build_timeout=args.build_timeout,
             health_timeout=args.health_timeout,
+            smoke_suite=smoke_suite,
         )
     except TargetConfigError as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -253,6 +276,11 @@ def _cmd_author(args: argparse.Namespace) -> int:
     if isinstance(target, str):
         print(f"error: {target}", file=sys.stderr)
         return 2
+    try:
+        smoke_suite = _resolve_smoke_suite(target, args.target)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
     runtime = None
     if not args.no_docker:
         runtime = _resolve_runtime_or_error(args)
@@ -269,6 +297,7 @@ def _cmd_author(args: argparse.Namespace) -> int:
             runtime=runtime,
             build_timeout=args.build_timeout,
             health_timeout=args.health_timeout,
+            smoke_suite=smoke_suite,
         )
     except TargetConfigError as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -356,6 +385,45 @@ def _cmd_bench_run(args: argparse.Namespace) -> int:
     print(f"success rate: {rate if rate is not None else 'n/a'}")
     print(f"bench-report: {run_dir / 'bench-report.json'}")
     print(f"markdown: {run_dir / 'bench-report.md'}")
+    if args.require_atp:
+        # Scope and intent both come from `report.cases` — never a second
+        # `load_corpus` read, and never `skip_reason` prose. A re-read would
+        # also miss external targets (cloned into the run, never in the
+        # synthetic corpus dir); `smoke_declared` and `atp_smoke_status` are
+        # recorded on every case, external or synthetic, skipped or not.
+        smoke_cases = [c for c in report.cases if c.smoke_declared]
+        if not smoke_cases:
+            # An empty scope closes the gate even less than an unsatisfied
+            # smoke does: nothing at all was exercised, so `report.all_matched`
+            # alone must not be allowed to satisfy `--require-atp`.
+            print(
+                "error: --require-atp: no case in scope declares a smoke "
+                f"intent (filter {args.filter_pattern!r} matched none); the "
+                "gate has nothing to enforce",
+                file=sys.stderr,
+            )
+            return 1
+        # The spec's acceptance contract is `atp_smoke: PASSED` specifically,
+        # not merely "the case matched its expectation" or "didn't skip": a
+        # corpus case may declare `expected_success: false`, so a FAILED
+        # atp_smoke can still end up `outcome="matched"`, and a case can be
+        # skipped either by `atp_smoke` itself (version mismatch, binary
+        # missing) or earlier still (no container runtime resolved) before
+        # ATP ever runs. `satisfies_declared_smoke` treats all of these —
+        # SKIPPED, FAILED, absent — as unsatisfied alike.
+        unsatisfied = [c for c in smoke_cases if not satisfies_declared_smoke(c)]
+        if unsatisfied:
+            details = ", ".join(
+                f"{c.case} ("
+                f"{c.atp_smoke_status.value if c.atp_smoke_status is not None else 'no atp_smoke check recorded'}"
+                ")"
+                for c in unsatisfied
+            )
+            print(
+                f"error: --require-atp: atp_smoke not satisfied for: {details}",
+                file=sys.stderr,
+            )
+            return 1
     return 0 if report.all_matched else 1
 
 
@@ -385,11 +453,24 @@ def _cmd_bench_verify(args: argparse.Namespace) -> int:
         return 2
     failed = False
     for name, report in results:
-        status = "ok" if report.passed else "FAIL"
+        # `report.passed` alone is not enough: it treats SKIPPED as success
+        # (correct for optional linters), so a declared smoke intent whose
+        # `atp_smoke` was SKIPPED, FAILED, or never ran would print `ok`.
+        # `smoke_declared`/`atp_smoke_status` are read straight off the
+        # report's own fields — `verify_static` stamps `smoke_declared` at
+        # construction so it is available even when L2, and therefore
+        # `atp_smoke`, never ran at all.
+        ok = report.passed and satisfies_declared_smoke(report)
+        status = "ok" if ok else "FAIL"
         print(f"[{status:>4}] {name}")
-        if not report.passed:
+        if not ok:
             failed = True
-            _print_report(report)
+            if not report.passed:
+                _print_report(report)
+            elif not satisfies_declared_smoke(report):
+                atp_status = report.atp_smoke_status
+                detail = atp_status.value if atp_status is not None else "not run"
+                print(f"  atp_smoke declared but not satisfied: {detail}")
     if runtime is None:
         print("note: no container runtime found; static-only verification")
     return 1 if failed else 0
@@ -495,6 +576,14 @@ def main(argv: list[str] | None = None) -> int:
         "--include-external",
         action="store_true",
         help="also clone and run corpus/external.toml targets",
+    )
+    p_bench_run.add_argument(
+        "--require-atp",
+        action="store_true",
+        help=(
+            "fail if a case declaring a smoke intent was skipped for a missing "
+            "or mismatched atp; acceptance of the ATP seam requires it"
+        ),
     )
     _add_runtime_flags(p_bench_run)
     _add_timeout_flags(p_bench_run)

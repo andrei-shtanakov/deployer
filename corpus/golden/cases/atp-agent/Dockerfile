@@ -4,8 +4,8 @@ WORKDIR /app
 
 RUN useradd --create-home appuser
 
-COPY main.py ./
+COPY agent.py ./
 
 USER appuser
 
-CMD ["python", "main.py"]
+CMD ["python", "agent.py"]

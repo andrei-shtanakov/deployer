@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this project is
 
-`deployer` is a deploy-oriented AI-agent subproject within the `all_ai_orchestrators` lab ecosystem (ATP, arbiter, proctor, Maestro). It is now a working research bench: the `deployer` CLI authors deploy artifacts from deterministic project facts + a declarative `deploy_target`, then verifies them through static checks (L1) and optional sandboxed container build/run/healthcheck loops (L2).
+`deployer` is a deploy-oriented AI-agent subproject within the `all_ai_orchestrators` lab ecosystem (ATP, arbiter, proctor, Maestro). It is now a working research bench: the `deployer` CLI authors deploy artifacts from deterministic project facts + a declarative `deploy_target`, then verifies them through static checks (L1) and optional sandboxed container build/run/healthcheck/ATP-smoke loops (L2) — a `smoke` target intent runs an external ATP suite against the built image instead of a healthcheck or job run.
 
 Three artifact types are authored today, selected by the target's intent and returned by the model in one text response split on line-anchored sentinels (`=== Dockerfile ===`, `=== compose.yaml ===`, `=== ci.yml ===`): the Dockerfile always; a `compose.yaml` when the target declares pinned infra `dependencies`; a build-only `.github/workflows/ci.yml` when it declares `{"ci": {}}`.
 
@@ -40,7 +40,7 @@ Python 3.12+, managed exclusively with `uv` (never pip):
 - Lint: `uv run ruff check . --fix`
 - Type check: `uv run pyrefly check` after every change (run `uv run pyrefly init` once if not yet configured)
 
-The shipped package lives under `src/deployer/`: `facts` (project scan), `models` (`DeployTarget`, reports), `hints` (curated apt table), `llm` + `author` (prompt and the authoring loop), `artifacts` (sentinel parse/render), `verify` (L1/L2), `runtime` (`ContainerRuntime`, the single container-subprocess chokepoint), `bench`, `cli`. Tests live under `tests/`; container- and LLM-dependent checks are marker-gated. The corpus and the committed golden baseline live under `corpus/`; raw bench runs land in gitignored `.deployer-runs/`.
+The shipped package lives under `src/deployer/`: `facts` (project scan), `models` (`DeployTarget`, reports), `hints` (curated apt table), `llm` + `author` (prompt and the authoring loop), `artifacts` (sentinel parse/render), `verify` (L1/L2), `runtime` (`ContainerRuntime`, the single container-subprocess chokepoint), `bench`, `cli`. Tests live under `tests/`; container- and LLM-dependent checks are marker-gated. The corpus (12 synthetic cases, up from 11 with the `atp-agent` ATP-smoke case) and the committed golden baseline live under `corpus/`; raw bench runs land in gitignored `.deployer-runs/`.
 
 The Anthropic API key comes from `./.env` (gitignored; real env vars win). Runtime flags are never read from `.env`.
 

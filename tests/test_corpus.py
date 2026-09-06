@@ -12,6 +12,7 @@ from deployer.verify import verify
 
 CORPUS = Path(__file__).parent.parent / "corpus"
 EXPECTED_CASES = [
+    "atp-agent",
     "ci-build",
     "compose-redis",
     "entrypoint-override",
@@ -73,6 +74,7 @@ def test_corpus_fixture_verifies_end_to_end(name: str, runtime) -> None:
         analyze_project(case.project_dir),
         compose=case.fixture_compose.read_text() if case.fixture_compose else None,
         ci=case.fixture_ci.read_text() if case.fixture_ci else None,
+        smoke_suite=case.smoke_suite,
     )
     assert report.passed, f"{name}: {report.model_dump_json(indent=2)}"
 
@@ -129,3 +131,15 @@ def test_checkout_pin_matches_llm_constant() -> None:
 
     fixture = CORPUS / "synthetic" / "ci-build" / "fixture.ci.yml"
     assert ACTIONS_CHECKOUT_PIN in fixture.read_text()
+
+
+def test_atp_agent_case_declares_a_smoke_intent_and_ships_its_suite() -> None:
+    """The suite is fixture-owned input and lives beside target.json."""
+    from deployer.bench import load_corpus
+
+    corpus_root = Path(__file__).resolve().parent.parent / "corpus"
+    case = [c for c in load_corpus(corpus_root) if c.name == "atp-agent"][0]
+
+    assert case.target.smoke is not None
+    assert case.target.run is not None
+    assert case.smoke_suite is not None and case.smoke_suite.is_file()

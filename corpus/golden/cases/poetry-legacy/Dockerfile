@@ -17,7 +17,6 @@ WORKDIR /app
 RUN useradd --create-home appuser
 
 COPY --from=builder /app/.venv /app/.venv
-
 ENV PATH="/app/.venv/bin:$PATH"
 
 COPY main.py ./
