@@ -1352,9 +1352,40 @@ The check id is `atp_smoke`; it needs `atp` 2.1.0 on `PATH` and a local
 container runtime (ATP's container adapter has no remote-host support), and
 reports `SKIPPED` otherwise. `deployer bench run --require-atp` turns such a
 skip into a failure, which is how the seam is accepted.
+
+#### Installing `atp` 2.1.0 (temporary source-install workaround)
+
+The published release cannot be installed: `atp-platform==2.1.0` requires
+`atp-adapters`, which was never published to PyPI, and its CLI additionally
+imports `fastapi` and `atp_sdk` without declaring them. Tracked as
+atp-platform#320 (`publish-installable-container-cli`). **Until that closes,
+install from the tagged source.** Do not assume a checkout of atp-platform is
+already on disk:
+
+```bash
+tmp=$(mktemp -d)
+git clone --depth 1 --branch v2.1.0 \
+    git@github.com:andrei-shtanakov/atp-platform.git "$tmp/atp"
+cd "$tmp/atp" && uv tool install '.[dashboard]' --with ./packages/atp-sdk
+```
+
+Verify both, not just the first:
+
+```bash
+atp --version                        # atp, version 2.1.0
+atp plugins list --type=adapter      # must list `container`
+```
 ```
 
 In `CLAUDE.md`, update the sentence that lists what verification does, so the L2 description mentions the ATP smoke level, and update the corpus case count from 11 to 12.
+
+In `TODO.md`, the `install-atp` item gets the same install procedure by
+reference (`README.md`, "Installing `atp` 2.1.0"), plus the note that it is a
+temporary workaround pending atp-platform#320. **Do not tick `install-atp`
+until the README instructions have been reproduced from a clean temporary
+directory** — not from an existing atp-platform checkout and not from a
+leftover scratch tree. An instruction that only works on the machine that
+wrote it is not an instruction.
 
 - [ ] **Step 6: Run everything and commit**
 
