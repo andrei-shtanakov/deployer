@@ -1639,7 +1639,7 @@ def verify_docker(
                 runtime, ["rmi", "-f", tag], capture_output=True, timeout=60
             )
             built.cleanup_status = "removed" if removal.returncode == 0 else "failed"
-        except (subprocess.TimeoutExpired, OSError, AttributeError):
+        except (subprocess.TimeoutExpired, OSError):
             built.cleanup_status = "failed"
     return results, image_size, built, atp_available
 
