@@ -1,5 +1,6 @@
 """Bench: models, offline fixture author, corpus loading, orchestration."""
 
+import itertools
 import json
 import subprocess
 from pathlib import Path
@@ -1430,7 +1431,16 @@ def test_load_corpus_resolves_the_smoke_suite_beside_target_json(
 def test_skipped_smoke_makes_the_case_skipped_not_successful(
     tmp_path: Path, monkeypatch
 ) -> None:
-    """A run where the seam never executed must not read as a pass."""
+    """A run where the seam never executed must not read as a pass.
+
+    The clock is faked because the telemetry assertion below must not depend on
+    how fast the machine is: everything this test exercises is monkeypatched, so
+    real elapsed time rounds to 0.0 on a quick runner and a `> 0` assertion goes
+    flaky. A clock that advances a fixed step per call makes the same intent —
+    the measured wall time survives the skip — deterministic.
+    """
+    ticks = itertools.count(start=100.0, step=0.25)
+    monkeypatch.setattr("deployer.bench.time.monotonic", lambda: next(ticks))
     case = _make_case(
         tmp_path, "agent", target={"run": {}, "smoke": {"suite": "suite.yaml"}}
     )
@@ -1457,4 +1467,4 @@ def test_skipped_smoke_makes_the_case_skipped_not_successful(
     assert result.outcome == "skipped"
     assert "atp" in result.skip_reason
     assert result.iterations == 1  # run telemetry survives the skip
-    assert result.wall_time_s is not None and result.wall_time_s > 0
+    assert result.wall_time_s == 0.25  # measured from the faked clock, not dropped
