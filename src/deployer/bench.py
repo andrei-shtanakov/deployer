@@ -659,6 +659,28 @@ def normalize_run(run_dir: Path) -> GoldenReport:
     return _normalize_from_report(report, run_dir)
 
 
+def _cases_erased_by(golden: GoldenReport, corpus_root: Path) -> list[str]:
+    """Baseline case names this promotion would delete.
+
+    `promote_run` replaces `corpus/golden/` wholesale and normalisation drops
+    skipped cases, so a filtered or partly-skipped run silently shrinks the
+    baseline: healthy cases that were never re-measured disappear, and a case
+    that later returns is scored only as an advisory `new_case`. Naming the
+    losses lets the caller refuse instead of discovering them afterwards.
+
+    An unreadable baseline is not treated as erasure — there is nothing
+    trustworthy to lose, and `promote_run` replaces it either way.
+    """
+    existing = corpus_root / "golden" / "golden.json"
+    if not existing.is_file():
+        return []
+    try:
+        prior = GoldenReport.model_validate(_versioned(existing.read_text()))
+    except (OSError, ValueError):
+        return []
+    return sorted({c.case for c in prior.cases} - {c.case for c in golden.cases})
+
+
 def promote_run(run_dir: Path, corpus_root: Path, *, force: bool = False) -> Path:
     """Promote a raw run to the committed golden baseline in corpus/golden.
 
@@ -667,11 +689,27 @@ def promote_run(run_dir: Path, corpus_root: Path, *, force: bool = False) -> Pat
     """
     report = _load_bench_report(run_dir)
     golden = _normalize_from_report(report, run_dir)
+    refusals: list[str] = []
     mismatched = [c.case for c in report.cases if c.outcome == "mismatched"]
-    if mismatched and not force:
+    if mismatched:
+        refusals.append(f"mismatched cases ({', '.join(mismatched)})")
+    unsatisfied = [
+        c.case
+        for c in report.cases
+        if c.smoke_declared and not satisfies_declared_smoke(c)
+    ]
+    if unsatisfied:
+        refusals.append(
+            f"cases whose declared smoke never passed ({', '.join(unsatisfied)})"
+        )
+    dropped = _cases_erased_by(golden, corpus_root)
+    if dropped:
+        refusals.append(f"cases erased from the baseline ({', '.join(dropped)})")
+    if refusals and not force:
         raise PromoteRefusedError(
-            "refusing to promote a run with mismatched cases "
-            f"({', '.join(mismatched)}); use --force to override"
+            "refusing to promote a run with "
+            + "; ".join(refusals)
+            + "; use --force to override"
         )
     golden_dir = corpus_root / "golden"
     if golden_dir.exists():

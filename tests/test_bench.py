@@ -13,6 +13,7 @@ import deployer.bench as bench
 from deployer.bench import (
     BenchCase,
     FixtureAuthor,
+    PromoteRefusedError,
     _create_run_dir,
     clone_external,
     compare_runs,
@@ -1646,3 +1647,90 @@ def test_skipped_smoke_makes_the_case_skipped_not_successful(
     assert result.wall_time_s == 0.25  # measured from the faked clock, not dropped
     assert result.smoke_declared is True
     assert result.atp_smoke_status is CheckStatus.SKIPPED
+
+
+def _run_dir_with_smoke_case(
+    tmp_path: Path, monkeypatch, *, smoke_passed: bool
+) -> Path:
+    """A raw run dir whose single case declares smoke, passing or skipped."""
+    case = _make_case(
+        tmp_path, "agent", target={"run": {}, "smoke": {"suite": "suite.yaml"}}
+    )
+    (case / "suite.yaml").write_text("test_suite: x\n")
+    run = _fake_run(True)
+    run.iterations[-1].report.smoke_declared = True
+    run.iterations[-1].report.results.append(
+        CheckResult(
+            check_id="atp_smoke",
+            status=CheckStatus.PASSED if smoke_passed else CheckStatus.SKIPPED,
+            message="" if smoke_passed else "atp 2.1.0 not installed",
+        )
+    )
+    monkeypatch.setattr("deployer.bench.author_dockerfile", lambda *a, **k: run)
+    _, run_dir = run_bench(
+        tmp_path,
+        lambda case: FixtureAuthor("FROM x:1\n"),
+        ContainerRuntime(tool="docker"),
+        label="smoke",
+        author_backend="fixture",
+        runs_root=tmp_path / "runs",
+    )
+    return run_dir
+
+
+def test_promote_refuses_a_run_whose_declared_smoke_never_passed(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A SKIPPED smoke must not be promotable.
+
+    Normalisation drops skipped cases and promote replaces the whole tree, so
+    promoting such a run silently deletes an already-accepted ATP baseline —
+    the evidence a paid acceptance run produced.
+    """
+    run_dir = _run_dir_with_smoke_case(tmp_path, monkeypatch, smoke_passed=False)
+
+    with pytest.raises(PromoteRefusedError, match="smoke"):
+        promote_run(run_dir, tmp_path)
+
+
+def test_promote_refuses_to_erase_a_case_the_baseline_already_has(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A run covering different cases must not silently shrink the baseline.
+
+    `bench promote` replaces `corpus/golden/` wholesale, so a filtered or
+    partial run erases healthy golden cases that were never re-measured — and
+    a case that later returns is scored only as an advisory `new_case`.
+    """
+    full = _bench_run_on_disk(tmp_path, monkeypatch)
+    promote_run(full, tmp_path)
+    baseline = GoldenReport.model_validate_json(
+        (tmp_path / "golden" / "golden.json").read_text()
+    )
+    assert [c.case for c in baseline.cases] == ["a-ok"]
+
+    other_corpus = tmp_path / "second"
+    _make_case(other_corpus, "z-other", expected={"requires_l2": False})
+    monkeypatch.setattr(
+        "deployer.bench.author_dockerfile", lambda *a, **k: _fake_run(True)
+    )
+    _, partial = run_bench(
+        other_corpus,
+        lambda case: FixtureAuthor("FROM x:1\n"),
+        None,
+        label="partial",
+        author_backend="fixture",
+        runs_root=other_corpus / "runs",
+    )
+
+    with pytest.raises(PromoteRefusedError, match="erase"):
+        promote_run(partial, tmp_path)
+
+
+def test_promote_force_overrides_the_new_guards(tmp_path: Path, monkeypatch) -> None:
+    """`--force` stays the single deliberate override, as it is for mismatches."""
+    run_dir = _run_dir_with_smoke_case(tmp_path, monkeypatch, smoke_passed=False)
+
+    promote_run(run_dir, tmp_path, force=True)
+
+    assert (tmp_path / "golden" / "golden.json").is_file()
