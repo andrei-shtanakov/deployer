@@ -18,6 +18,8 @@
       "failure_kinds": [],
       "image_size_bytes": 156661240,
       "hadolint_status": "skipped",
+      "smoke_declared": true,
+      "atp_smoke_status": "passed",
       "checks": [
         {
           "check_id": "parses",

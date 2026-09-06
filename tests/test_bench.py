@@ -960,6 +960,22 @@ def test_promote_writes_golden_tree(tmp_path: Path, monkeypatch) -> None:
     )
 
 
+def test_committed_golden_atp_agent_records_smoke_fields() -> None:
+    """The committed golden baseline predates `smoke_declared`/
+    `atp_smoke_status`; both must be backfilled onto its `atp-agent` entry
+    so the smoke invariant in `compare_runs` actually fires against the
+    real baseline instead of silently no-op'ing on a case that declared
+    smoke. The two fields must also agree with the `atp_smoke` entry the
+    case already recorded in `checks`, so they can't drift apart again."""
+    golden_path = Path(__file__).parent.parent / "corpus" / "golden" / "golden.json"
+    golden = GoldenReport.model_validate_json(golden_path.read_text())
+    case = next(c for c in golden.cases if c.case == "atp-agent")
+    assert case.smoke_declared is True
+    assert case.atp_smoke_status is CheckStatus.PASSED
+    atp_smoke_check = next(c for c in case.checks if c.check_id == "atp_smoke")
+    assert atp_smoke_check.status is case.atp_smoke_status
+
+
 def test_promote_refuses_mismatch_without_force(tmp_path: Path, monkeypatch) -> None:
     _make_case(
         tmp_path, "bad", expected={"requires_l2": False, "expected_success": False}
