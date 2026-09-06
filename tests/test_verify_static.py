@@ -1631,3 +1631,24 @@ def test_atp_verdict_disagreement_between_report_and_exit_code(
     assert result.status is CheckStatus.FAILED
     assert result.failure_kind is FailureKind.ENVIRONMENT
     assert "disagree" in result.message
+
+
+def test_atp_verdict_boolean_total_tests_is_environment(tmp_path: Path) -> None:
+    """A boolean total_tests (JSON true/false) is malformed, not empty suite.
+
+    isinstance(total, int) accepts bool since bool is a subclass of int in Python.
+    The empty-suite guard must reject it as malformed, not skip the guard entirely.
+    """
+    import json
+
+    from deployer.verify import _atp_verdict
+
+    path = tmp_path / "atp-report.json"
+    path.write_text(
+        json.dumps(
+            {"version": "1.0", "summary": {"total_tests": True, "success": True}}
+        )
+    )
+    result = _atp_verdict(path, 0)
+    assert result.status is CheckStatus.FAILED
+    assert result.failure_kind is FailureKind.ENVIRONMENT

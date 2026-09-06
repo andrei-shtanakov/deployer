@@ -1006,7 +1006,7 @@ def _atp_verdict(report_path: Path, returncode: int) -> CheckResult:
     if not isinstance(summary, dict):
         return _atp_env_failure("atp report has no summary")
     total = summary.get("total_tests")
-    if not isinstance(total, int) or total < 1:
+    if not isinstance(total, int) or isinstance(total, bool) or total < 1:
         return _atp_env_failure(
             "atp suite ran no tests; an empty suite reports success by "
             "arithmetic and proves nothing about the image"
