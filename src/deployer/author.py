@@ -89,6 +89,8 @@ def author_dockerfile(
     Pass `runtime=None` to opt into static-only (L1) verification; passing a
     `ContainerRuntime` opts into full L2 verification. There is no default,
     so a caller can never silently downgrade to static-only by omission.
+    `smoke_suite` is the resolved ATP suite path for a `smoke`-intent target;
+    it is forwarded unchanged to every `verify` call across the loop.
     """
     facts = analyze_project(project_path)
     validate_target_against_facts(target, facts)

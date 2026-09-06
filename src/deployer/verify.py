@@ -1035,6 +1035,7 @@ def _check_atp_smoke(
     timeout: int,
 ) -> tuple[CheckResult, bool]:
     """Run an ATP suite against the built image; (result, atp_available).
+
     The runtime is named explicitly because ATP's `auto` detection prefers
     podman when both are installed, which would look for a docker-built image
     in the wrong engine. `--no-save` plus a temporary cwd keep an external
@@ -1612,8 +1613,7 @@ def verify_docker(
                 if smoke_suite is None:
                     results.append(
                         _atp_env_failure(
-                            "a smoke target reached L2 without a resolved "
-                            "suite path"
+                            "a smoke target reached L2 without a resolved suite path"
                         )
                     )
                 elif runtime.remote:
@@ -1667,6 +1667,9 @@ def verify(
     """Full verification: L1 static always; L2 docker when available and L1 passed.
 
     The timeouts bound the L2 build and healthcheck subprocesses (seconds).
+    `smoke_suite` is the resolved ATP suite path for a `smoke`-intent target;
+    without it, L2 reports the smoke check as an environment failure rather
+    than silently falling back to a different check.
     """
     if facts is not None:
         validate_target_against_facts(target, facts)

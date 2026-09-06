@@ -60,7 +60,11 @@ missing `Dockerfile` for `verify`); `2` invalid invocation (bad flag
 values, project path not a directory, unreadable or invalid `--target`,
 invalid runtime configuration).
 `verify` writes its full report to `<project>/.deployer/verify-report.json`
-(latest run only).
+(latest run only). Alongside `hadolint_available`/`actionlint_available`/
+`docker_available`, the report carries `atp_available` (whether the `atp_smoke`
+check actually ran `atp`, as opposed to reporting `SKIPPED`) and `built_image`
+(the L2 image's tag, runtime and cleanup outcome — see "Bench" below for the
+`smoke` intent that consumes it).
 
 ### Report schema version
 
@@ -93,6 +97,8 @@ from `.env`.
 `{"system_packages": ["libpq5"]}` in the target requires apt packages unconditionally.
 `{"extras": ["gui"]}` installs optional-dependency groups.
 `{"entrypoint": "app.py"}` specifies the bare filename or [project.scripts] name to run.
+`{"run": {}, "smoke": {"suite": "suite.yaml"}}` requests an ATP smoke test of the
+built image in place of the plain job-completes check (details under Bench below).
 Design: `docs/superpowers/specs/2026-07-04-facts-v2-design.md`.
 Every `author` run writes `.deployer/authoring-run.json` — iteration count,
 per-check outcomes, authoring-vs-environment failure taxonomy. That file is
@@ -134,7 +140,7 @@ container runtime (ATP's container adapter has no remote-host support), and
 reports `SKIPPED` otherwise. `deployer bench run --require-atp` turns such a
 skip into a failure, which is how the seam is accepted.
 
-#### Installing `atp` 2.1.0 (temporary source-install workaround)
+### Installing `atp` 2.1.0 (temporary source-install workaround)
 
 The published release cannot be installed: `atp-platform==2.1.0` requires
 `atp-adapters`, which was never published to PyPI, and its CLI additionally
