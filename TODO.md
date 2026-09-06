@@ -22,14 +22,16 @@ a continuation line is invisible to it and a `@trigger:"…"` broken across line
 as the garbage value `"a`. Keep the first line self-contained and tagged; put the
 elaboration on the lines below it.
 
-## Status (2026-07-26)
+## Status (2026-09-06)
 
 Phases 1–4 of `docs/superpowers/specs/2026-07-21-bench-remote-verify-design.md` are
 shipped and merged (PRs #10–#22). Bench: 11 synthetic corpus cases across three
 artifact types (Dockerfile / compose.yaml / ci.yml), LLM-authored golden at success
 rate 1.0 with every case converging in one iteration. Remote L2 over `ssh://` is
-accepted on the homelab docker host. The post-Phase-4 direction is decided (below); the
-seam audit is the item that unblocks the rest.
+accepted on the homelab docker host. The post-Phase-4 direction is decided (below), and
+the seam audit that gated it is done (`docs/2026-09-06-phase4-seam-audit.md`): no
+neighbour consumes a deploy artifact today, and the one pair whose consumer half already
+exists is the ATP smoke-test by image tag. `first-consumer-seam` is now the open front.
 
 ## Direction
 
@@ -41,16 +43,18 @@ contract was wrong only after it has users. The order below is deliberate — ea
 tagged with what blocks it, so the sequencing survives without anyone re-reading this
 paragraph.
 
-- [ ] Seam audit of the Phase-4 artifacts @owner:github:andrei-shtanakov @id:seam-audit — producer/consumer pairs, @epic:eco.dark-factory
-  artifact paths, status and error channels. Short and factual; its output is the
-  shortlist the next item picks from. Covers the candidate consumers (Maestro, Robin,
-  spec-runner) plus the two seams already listed below (arbiter, ATP)
-- [ ] Define and implement the first production consumer seam for Phase-4 deploy artifacts @blocked_by:todo://deployer/seam-audit @id:first-consumer-seam @epic:eco.dark-factory
+- [ ] Define and implement the first production consumer seam for Phase-4 deploy artifacts @id:first-consumer-seam @epic:eco.dark-factory
   — one executable vertical seam with a real consumer, not a survey. Spec first, per the
   usual rhythm. **Boundary check before committing to a consumer:** deployer may only
   build its own half. If the seam needs a change on the consumer's side, that is a
   handoff plus their PR, so prefer a consumer whose half already exists or whose owner
-  has agreed — otherwise the "real consumer" is aspirational and the seam stalls half-built
+  has agreed — otherwise the "real consumer" is aspirational and the seam stalls half-built.
+  **Shortlist delivered** by `docs/2026-09-06-phase4-seam-audit.md` (2026-09-06): #1 is the
+  ATP smoke-test by image tag — the only pair whose consumer half already exists and needs
+  no change, so the whole seam is buildable inside this repo with no handoff. It is the
+  same work as `todo://deployer/atp-smoke-test-seam`, so the two close together. Producer
+  half to build: L2 destroys its image (`rmi -f`, `verify.py:1469`) — keep it under a
+  stable tag and put the tag in the run report
 - [ ] CI-failure diagnosis — read a failed run, author the fix @blocked_by:todo://deployer/first-consumer-seam @id:ci-failure-diagnosis @epic:eco.dark-factory
   — the founding doc's other half, and the next applied slice once a seam is proven
 - [ ] Further artifact types: Helm, Terraform @blocked_by:todo://deployer/first-consumer-seam @id:further-artifact-types @epic:eco.dark-factory
@@ -81,6 +85,10 @@ them is the next thing to pick up.
 
 - [ ] Run-config seam: per-target persistence of build/health timeouts @trigger:"an external target again needs a non-default --build-timeout" @id:run-config-timeout-persistence @epic:eco.dark-factory
   — the recording half shipped in #10; the operator still has to pass the flag
+- [ ] Report schema carries no version — a consumer has nothing to pin against @owner:repo:deployer @id:report-schema-version @epic:eco.dark-factory
+  — found by the seam audit (2026-09-06). `deployer_version` is stamped on run records, but
+  `VerificationReport` / `AuthoringRun` have no schema field, so the first consumer of
+  `.deployer/*.json` would couple to an unversioned shape. Cheap now, expensive after a consumer
 - [ ] L1 rule: a run/service intent must COPY the entrypoint and `package_dirs` @owner:repo:deployer @id:l1-copy-entrypoint-rule @epic:eco.dark-factory
 - [ ] Unified pip-invocation parser — `pip --no-input install` still slips past the @owner:repo:deployer @id:unified-pip-parser @epic:eco.dark-factory
   payload-based poetry/pip install-strategy rules
@@ -102,8 +110,25 @@ them is the next thing to pick up.
 
 ## Ecosystem seams
 
-- [ ] arbiter policy gate in front of any mutating action the bench grows @blocked_by:todo://deployer/seam-audit @id:arbiter-policy-gate-seam @epic:eco.governance-plane
-- [ ] ATP smoke-test of built artifacts as a verification level above L2 @blocked_by:todo://deployer/seam-audit @id:atp-smoke-test-seam @epic:eco.dark-factory
+- [ ] arbiter policy gate in front of any mutating action the bench grows @trigger:"deployer grows a mutating action" @id:arbiter-policy-gate-seam @epic:eco.governance-plane
+  — the trigger is deliberately the event on **this** side only: a mutating contour here
+  (e.g. the registry push of `todo://deployer/ci-test-kind-target`) must wake this item,
+  because `CLAUDE.md` gates mutating actions behind arbiter policy. arbiter's readiness is
+  a separate condition and must not be ANDed into the trigger, or the event that most needs
+  the reminder would silently fail to raise it. That readiness is missing:
+  arbiter's MCP surface is six tools — `route_task`, `report_benchmark`, `report_outcome`,
+  `get_agent_status`, `get_metrics`, `get_budget_status` — agent routing and telemetry, no
+  deploy decision. Its half is a handoff and their PR — raised as inbox issue arbiter#104
+  (2026-09-06, slug `deploy-action-decision-tool`). Deliberately **not** a `@blocked_by`:
+  their answer, including "not planned", must not stop this item from waking on our event
+- [ ] ATP smoke-test of built artifacts as a verification level above L2 @blocked_by:todo://deployer/first-consumer-seam @id:atp-smoke-test-seam @epic:eco.dark-factory
+  — shortlist #1 of the seam audit, and the same work as `todo://deployer/first-consumer-seam`;
+  the `@blocked_by` tag is what makes that duplication machine-visible, since a line-wise
+  consumer never sees this prose. Closing the seam closes this item with it.
+  Consumer half is shipped and needs no change: `atp test <suite> --adapter=container
+  --adapter-config='image=<tag>'`. Two scoping constraints from the audit: ATP's container
+  adapter has no remote-host support (local runtime only, not `--container-host ssh://`),
+  and its assertions are agent-shaped, so scope the first slice to a `run`-intent target
 - [ ] Keep the MLOps seams of `docs/idea-mlops-layer.md` pluggable, not built @trigger:"a target needs eval hooks or promotion gates" @id:mlops-seams-pluggable @epic:eco.dark-factory
 - [ ] Watch research-bench Stage B @trigger:"research-bench ships a stable VerificationProvider" @owner:repo:research-bench @id:watch-research-bench-stage-b @epic:eco.dark-factory
   — `../_cowork_output/plans/2026-07-25-stage-b-provider-design.md` (approved 2026-07-25):
@@ -116,12 +141,33 @@ them is the next thing to pick up.
 - [ ] Neighbour docs still describe deployer as "MVP / Dockerfile authoring" @owner:github:andrei-shtanakov @id:neighbour-docs-correction @epic:eco.ops
   — `../prograph-vault/authored/registry/registry.md` and the 2026-07-22 ideas note.
   Both are read-only from here: write the correction as a handoff note, do not edit
+- [ ] dispatcher's slice-0 design says deployer's CI runs no tests — stale since 2026-09-01 @blocked_by:dispatcher#256 @id:dispatcher-ci-doc-stale @epic:eco.ops
+  — `dispatcher/docs/superpowers/specs/2026-08-22-dark-factory-control-plane-slice0-design.md:557-565`
+  builds its acceptance argument on "its only workflow is the governance caller"; deployer
+  gained `.github/workflows/ci.yml` (`uv run pytest -q` on every PR, commit `c836cbc`).
+  Our half is done — inbox issue dispatcher#256 filed 2026-09-06, slug
+  `deployer-ci-signal-doc-stale`. The fix is theirs; this checkbox is the wait
+- [ ] Container-runtime selection is built twice in the fleet @trigger:"a third repo needs a container-runtime wrapper" @id:container-runtime-duplication @epic:eco.ops
+  — the overlap is narrower than the name suggests: this repo's `ContainerRuntime`
+  (`src/deployer/models.py:195`, resolved and invoked from `runtime.py`) is a config record —
+  docker/podman plus a remote host — while proctor's same-named class
+  (`proctor/src/proctor/infra/docker.py:84`) is a lifecycle wrapper (`run`/`inspect`/`logs`/
+  `stop`/`remove`). What is genuinely duplicated is the docker-vs-podman + remote-host
+  choice. Neither repo references the other; recorded so a third copy is a decision
 
 ## Shipped
 
 Merged work, plus the decisions that closed an open item without being code — those are
 prefixed `Decision:` so the ledger does not imply shipped behaviour.
 
+- [x] Seam audit of the Phase-4 artifacts — #51, `docs/2026-09-06-phase4-seam-audit.md` @owner:github:andrei-shtanakov @id:seam-audit @epic:eco.dark-factory
+  Producer/consumer inventory across the fleet. Headline: no neighbour consumes a deploy
+  artifact today — the existing integrations (Robin digest, dispatcher Dark Factory) run
+  on the work-item axis, not the artifact axis. Exactly one pair has a consumer half that
+  needs no change (ATP by image tag), which is the shortlist #1 it hands to
+  `first-consumer-seam`. Unblocked that item plus `arbiter-policy-gate-seam` and
+  `atp-smoke-test-seam`; corrected the arbiter item's premise; opened
+  `report-schema-version`, `dispatcher-ci-doc-stale`, `container-runtime-duplication`
 - [x] Drop the pilot-DAG branch-precondition task — #38, closed by #44 @owner:github:andrei-shtanakov @id:pilot-dag-drop-branch-precondition @epic:eco.ops
   The stopgap task guarded Mode 1 silently ignoring `branch_prefix` (inbox #34);
   `git.run_branch` (maestro#216 phase A) made isolation a runtime guarantee and
