@@ -128,8 +128,8 @@ handoff by construction), spec-runner (no pairing at all).
 
 ## Handoffs
 
-Neither is an edit to a neighbour's repo; both are recorded per
-`repo-boundaries.md`.
+Neither is an edit to a neighbour's repo; both were raised as inbox issues
+per ADR-ECO-006 on 2026-09-06.
 
 - **dispatcher** — the slice-0 design states "deployer's CI runs **no
   tests**: its only workflow is the governance caller"
@@ -137,8 +137,12 @@ Neither is an edit to a neighbour's repo; both are recorded per
   and builds its acceptance argument on that. Stale since 2026-09-01:
   deployer gained `.github/workflows/ci.yml` running `uv run pytest -q` on
   every PR (commit `c836cbc`, the devtools wave). A future pass can read a
-  green signal deployer now does emit.
+  green signal deployer now does emit. → **dispatcher#256**, slug
+  `deployer-ci-signal-doc-stale`; the wait is `todo://deployer/dispatcher-ci-doc-stale`.
 - **arbiter** — finding 6. If the ecosystem still wants a policy gate in
   front of deploy actions, arbiter needs a decision tool it does not have;
   that is arbiter's half and their PR, and nothing should be planned here as
-  though it exists.
+  though it exists. → **arbiter#104**, slug `deploy-action-decision-tool`.
+  Filed without a blocking tag on this side: deployer has nothing mutating to
+  gate yet, and "not planned" is a legitimate answer that should not freeze
+  `todo://deployer/arbiter-policy-gate-seam` — that item wakes on our own event.

@@ -118,7 +118,9 @@ them is the next thing to pick up.
   the reminder would silently fail to raise it. That readiness is missing:
   arbiter's MCP surface is six tools — `route_task`, `report_benchmark`, `report_outcome`,
   `get_agent_status`, `get_metrics`, `get_budget_status` — agent routing and telemetry, no
-  deploy decision. Its half is a handoff and their PR; do not plan here as if it exists
+  deploy decision. Its half is a handoff and their PR — raised as inbox issue arbiter#104
+  (2026-09-06, slug `deploy-action-decision-tool`). Deliberately **not** a `@blocked_by`:
+  their answer, including "not planned", must not stop this item from waking on our event
 - [ ] ATP smoke-test of built artifacts as a verification level above L2 @blocked_by:todo://deployer/first-consumer-seam @id:atp-smoke-test-seam @epic:eco.dark-factory
   — shortlist #1 of the seam audit, and the same work as `todo://deployer/first-consumer-seam`;
   the `@blocked_by` tag is what makes that duplication machine-visible, since a line-wise
@@ -139,11 +141,12 @@ them is the next thing to pick up.
 - [ ] Neighbour docs still describe deployer as "MVP / Dockerfile authoring" @owner:github:andrei-shtanakov @id:neighbour-docs-correction @epic:eco.ops
   — `../prograph-vault/authored/registry/registry.md` and the 2026-07-22 ideas note.
   Both are read-only from here: write the correction as a handoff note, do not edit
-- [ ] dispatcher's slice-0 design says deployer's CI runs no tests — stale since 2026-09-01 @owner:github:andrei-shtanakov @id:dispatcher-ci-doc-stale @epic:eco.ops
+- [ ] dispatcher's slice-0 design says deployer's CI runs no tests — stale since 2026-09-01 @blocked_by:dispatcher#256 @id:dispatcher-ci-doc-stale @epic:eco.ops
   — `dispatcher/docs/superpowers/specs/2026-08-22-dark-factory-control-plane-slice0-design.md:557-565`
   builds its acceptance argument on "its only workflow is the governance caller"; deployer
   gained `.github/workflows/ci.yml` (`uv run pytest -q` on every PR, commit `c836cbc`).
-  Their repo, their fix: inbox issue or handoff note, do not edit
+  Our half is done — inbox issue dispatcher#256 filed 2026-09-06, slug
+  `deployer-ci-signal-doc-stale`. The fix is theirs; this checkbox is the wait
 - [ ] Container-runtime selection is built twice in the fleet @trigger:"a third repo needs a container-runtime wrapper" @id:container-runtime-duplication @epic:eco.ops
   — the overlap is narrower than the name suggests: this repo's `ContainerRuntime`
   (`src/deployer/models.py:195`, resolved and invoked from `runtime.py`) is a config record —
