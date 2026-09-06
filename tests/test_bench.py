@@ -23,6 +23,7 @@ from deployer.bench import (
     render_markdown,
     run_bench,
     run_case,
+    verify_corpus,
 )
 from deployer.models import (
     LEGACY_SCHEMA_VERSION,
@@ -206,6 +207,49 @@ def _fake_run(success: bool) -> AuthoringRun:
         stopped_reason="success" if success else "no_progress",
         success=success,
     )
+
+
+def test_verify_corpus_forwards_smoke_suite(tmp_path: Path, monkeypatch) -> None:
+    """Regression: `verify_corpus` must thread `smoke_suite` through to
+    `verify()`, exactly like it already does for `compose` and `ci`.
+
+    Without it, a `smoke` case reaching a real runtime silently falls
+    through `verify_docker`'s `elif target.run is not None` branch and runs
+    `_run_completes` instead of the ATP check — a false failure on a
+    healthy case, not a skip.
+    """
+    case_dir = _make_case(
+        tmp_path,
+        "smoke-case",
+        target={"run": {}, "smoke": {"suite": "suite.yaml"}},
+    )
+    (case_dir / "suite.yaml").write_text("test_suite: x\n")
+
+    captured: list[Path | None] = []
+
+    def spy_verify(
+        dockerfile,
+        project_path,
+        target,
+        runtime,
+        facts=None,
+        *,
+        build_timeout,
+        health_timeout,
+        compose=None,
+        ci=None,
+        smoke_suite=None,
+    ):
+        captured.append(smoke_suite)
+        return VerificationReport(
+            results=[CheckResult(check_id="parses", status=CheckStatus.PASSED)]
+        )
+
+    monkeypatch.setattr("deployer.bench.verify", spy_verify)
+    results = verify_corpus(tmp_path, ContainerRuntime(tool="podman"))
+
+    assert captured == [case_dir / "suite.yaml"]
+    assert results[0][1].passed
 
 
 def test_run_case_skips_l2_case_without_runtime(tmp_path: Path) -> None:

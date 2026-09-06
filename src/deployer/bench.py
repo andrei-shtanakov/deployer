@@ -488,6 +488,7 @@ def verify_corpus(
                 case.fixture_compose.read_text() if case.fixture_compose else None
             ),
             ci=case.fixture_ci.read_text() if case.fixture_ci else None,
+            smoke_suite=case.smoke_suite,
         )
         results.append((case.name, report))
     return results

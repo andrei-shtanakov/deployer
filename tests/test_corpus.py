@@ -26,12 +26,6 @@ EXPECTED_CASES = [
     "uv-minimal",
 ]
 
-# `atp-agent` needs `smoke_suite` forwarded (see
-# test_atp_agent_case_builds_and_answers in test_verify_docker.py); the
-# generic verify() call below doesn't thread it through, so it's exercised
-# by its own dedicated end-to-end test instead of this parametrization.
-GENERIC_DOCKER_CASES = [name for name in EXPECTED_CASES if name != "atp-agent"]
-
 
 def test_corpus_parses_and_is_complete() -> None:
     cases = load_corpus(CORPUS)
@@ -68,7 +62,7 @@ def runtime() -> ContainerRuntime:
 
 
 @pytest.mark.docker
-@pytest.mark.parametrize("name", GENERIC_DOCKER_CASES)
+@pytest.mark.parametrize("name", EXPECTED_CASES)
 def test_corpus_fixture_verifies_end_to_end(name: str, runtime) -> None:
     case = {c.name: c for c in load_corpus(CORPUS)}[name]
     assert case.fixture_dockerfile is not None
@@ -80,6 +74,7 @@ def test_corpus_fixture_verifies_end_to_end(name: str, runtime) -> None:
         analyze_project(case.project_dir),
         compose=case.fixture_compose.read_text() if case.fixture_compose else None,
         ci=case.fixture_ci.read_text() if case.fixture_ci else None,
+        smoke_suite=case.smoke_suite,
     )
     assert report.passed, f"{name}: {report.model_dump_json(indent=2)}"
 
