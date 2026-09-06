@@ -31,7 +31,9 @@ rate 1.0 with every case converging in one iteration. Remote L2 over `ssh://` is
 accepted on the homelab docker host. The post-Phase-4 direction is decided (below), and
 the seam audit that gated it is done (`docs/2026-09-06-phase4-seam-audit.md`): no
 neighbour consumes a deploy artifact today, and the one pair whose consumer half already
-exists is the ATP smoke-test by image tag. `first-consumer-seam` is now the open front.
+exists is the ATP smoke-test by image tag. `first-consumer-seam` /
+`atp-smoke-test-seam` shipped that pair (verified with a real `atp` + container run:
+`atp_smoke: PASSED`); `ci-failure-diagnosis` is now the open front.
 
 ## Direction
 
@@ -43,21 +45,10 @@ contract was wrong only after it has users. The order below is deliberate — ea
 tagged with what blocks it, so the sequencing survives without anyone re-reading this
 paragraph.
 
-- [ ] Define and implement the first production consumer seam for Phase-4 deploy artifacts @id:first-consumer-seam @epic:eco.dark-factory
-  — one executable vertical seam with a real consumer, not a survey. Spec first, per the
-  usual rhythm. **Boundary check before committing to a consumer:** deployer may only
-  build its own half. If the seam needs a change on the consumer's side, that is a
-  handoff plus their PR, so prefer a consumer whose half already exists or whose owner
-  has agreed — otherwise the "real consumer" is aspirational and the seam stalls half-built.
-  **Shortlist delivered** by `docs/2026-09-06-phase4-seam-audit.md` (2026-09-06): #1 is the
-  ATP smoke-test by image tag — the only pair whose consumer half already exists and needs
-  no change, so the whole seam is buildable inside this repo with no handoff. It is the
-  same work as `todo://deployer/atp-smoke-test-seam`, so the two close together. Producer
-  half to build: L2 destroys its image (`rmi -f`, `verify.py:1469`) — keep it under a
-  stable tag and put the tag in the run report
-- [ ] CI-failure diagnosis — read a failed run, author the fix @blocked_by:todo://deployer/first-consumer-seam @id:ci-failure-diagnosis @epic:eco.dark-factory
-  — the founding doc's other half, and the next applied slice once a seam is proven
-- [ ] Further artifact types: Helm, Terraform @blocked_by:todo://deployer/first-consumer-seam @id:further-artifact-types @epic:eco.dark-factory
+- [ ] CI-failure diagnosis — read a failed run, author the fix @id:ci-failure-diagnosis @epic:eco.dark-factory
+  — the founding doc's other half, and the next applied slice now that the first seam
+  (`todo://deployer/first-consumer-seam`, shipped — see `## Shipped`) is proven
+- [ ] Further artifact types: Helm, Terraform @id:further-artifact-types @epic:eco.dark-factory
   — deliberately last; wait until the extension contract is confirmed by a live consumer
 
 ## Research bench
@@ -73,6 +64,7 @@ them is the next thing to pick up.
   agent adds over the vendor template
 - [ ] Second CI corpus case, then `actionlint_status` in bench compare @trigger:"a second ci corpus case exists" @id:second-ci-corpus-case @epic:eco.research-bench
 - [ ] Install `hadolint` 2.12.0 on the bench machine @owner:github:andrei-shtanakov @id:install-hadolint @epic:eco.research-bench
+  It is not on PATH here, so every golden so far is non-comparable on the hadolint axis
 - [ ] Install `atp` 2.1.0 on the bench machine @owner:github:andrei-shtanakov @id:install-atp @epic:eco.research-bench
   — the ATP smoke seam is accepted only on `atp_smoke: PASSED`; `SKIPPED` keeps an ordinary
   run portable but does not close the seam, so acceptance needs the binary present. Version
@@ -82,7 +74,6 @@ them is the next thing to pick up.
   release is not installable as-is. **Do not tick this item until the README instructions
   have been reproduced from a clean temporary directory** — not from an existing
   atp-platform checkout and not from a leftover scratch tree
-  It is not on PATH here, so every golden so far is non-comparable on the hadolint axis
 - [ ] Test-kind CI target and registry-push contour @owner:repo:deployer @id:ci-test-kind-target @epic:eco.research-bench
   The current `{"ci": {}}` intent authors build-image only; registry push is deliberately default-deny today
 - [ ] Adopt the harness-eval discipline for the comparison arms above @owner:github:andrei-shtanakov @id:harness-eval-discipline — @epic:eco.research-bench
@@ -92,6 +83,12 @@ them is the next thing to pick up.
 
 ## Verification hardening
 
+- [ ] Pinned-tool version check is a substring match, not exact @owner:repo:deployer @id:pinned-version-substring-match @epic:eco.research-bench
+  `verify.py` gates hadolint, actionlint and atp alike on `PINNED_VERSION not in version`,
+  so `"2.1.0"` also matches `"12.1.0"` and `"2.1.0-rc1"`. Bounded consequence — a
+  non-comparable run reported as comparable — but it now governs three tools instead of
+  one. Not fixed here; needs an exact-version parse (or a regex boundary) shared by all
+  three checks
 - [ ] Run-config seam: per-target persistence of build/health timeouts @trigger:"an external target again needs a non-default --build-timeout" @id:run-config-timeout-persistence @epic:eco.dark-factory
   — the recording half shipped in #10; the operator still has to pass the flag
 - [ ] L1 rule: a run/service intent must COPY the entrypoint and `package_dirs` @owner:repo:deployer @id:l1-copy-entrypoint-rule @epic:eco.dark-factory
@@ -126,14 +123,6 @@ them is the next thing to pick up.
   deploy decision. Its half is a handoff and their PR — raised as inbox issue arbiter#104
   (2026-09-06, slug `deploy-action-decision-tool`). Deliberately **not** a `@blocked_by`:
   their answer, including "not planned", must not stop this item from waking on our event
-- [ ] ATP smoke-test of built artifacts as a verification level above L2 @blocked_by:todo://deployer/first-consumer-seam @id:atp-smoke-test-seam @epic:eco.dark-factory
-  — shortlist #1 of the seam audit, and the same work as `todo://deployer/first-consumer-seam`;
-  the `@blocked_by` tag is what makes that duplication machine-visible, since a line-wise
-  consumer never sees this prose. Closing the seam closes this item with it.
-  Consumer half is shipped and needs no change: `atp test <suite> --adapter=container
-  --adapter-config='image=<tag>'`. Two scoping constraints from the audit: ATP's container
-  adapter has no remote-host support (local runtime only, not `--container-host ssh://`),
-  and its assertions are agent-shaped, so scope the first slice to a `run`-intent target
 - [ ] Keep the MLOps seams of `docs/idea-mlops-layer.md` pluggable, not built @trigger:"a target needs eval hooks or promotion gates" @id:mlops-seams-pluggable @epic:eco.dark-factory
 - [ ] Watch research-bench Stage B @trigger:"research-bench ships a stable VerificationProvider" @owner:repo:research-bench @id:watch-research-bench-stage-b @epic:eco.dark-factory
   — `../_cowork_output/plans/2026-07-25-stage-b-provider-design.md` (approved 2026-07-25):
@@ -165,6 +154,23 @@ them is the next thing to pick up.
 Merged work, plus the decisions that closed an open item without being code — those are
 prefixed `Decision:` so the ledger does not imply shipped behaviour.
 
+- [x] First production consumer seam: ATP smoke-test by image tag @owner:repo:deployer @id:first-consumer-seam @epic:eco.dark-factory
+  Shortlist #1 of the seam audit — the only pair whose consumer half already existed and
+  needed no change. `verify_docker` runs a smoke target's `atp` suite against the built
+  image over `--adapter container --adapter-config image=<tag>`, naming the runtime
+  explicitly (ATP's `auto` detection prefers podman over docker) and keeping the image
+  alive under its L2 tag instead of destroying it before ATP can see it. Same work as
+  `atp-smoke-test-seam`, closed with it. Verified end-to-end with a real `atp` binary and
+  container runtime: `deployer bench verify --filter atp-agent` reaches `atp_smoke: PASSED`
+- [x] ATP smoke-test of built artifacts as a verification level above L2 @owner:repo:deployer @id:atp-smoke-test-seam @epic:eco.dark-factory
+  Same change as `first-consumer-seam`, recorded separately because it was opened
+  separately by the seam audit. Two scoping constraints carried over from the audit: ATP's
+  container adapter has no remote-host support (a `--container-host ssh://` build is
+  reported SKIPPED, not silently tested against whatever image happens to be local), and
+  its assertions are agent-shaped, so the first slice is scoped to a `run`-intent target.
+  A `SKIPPED` smoke result (missing/mismatched `atp` binary, no resolved runtime) does not
+  close the seam — `bench run --require-atp` fails the run on any such skip, not only the
+  ones `atp_smoke` itself reports
 - [x] Seam audit of the Phase-4 artifacts — #51, `docs/2026-09-06-phase4-seam-audit.md` @owner:github:andrei-shtanakov @id:seam-audit @epic:eco.dark-factory
   Producer/consumer inventory across the fleet. Headline: no neighbour consumes a deploy
   artifact today — the existing integrations (Robin digest, dispatcher Dark Factory) run
