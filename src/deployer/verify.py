@@ -43,21 +43,28 @@ _USES_REMOTE_PIN = re.compile(
 )
 _DOCKER_BUILD = re.compile(r"^docker\s+(?:buildx\s+)?build\b")
 _DOCKER_PUSH = re.compile(r"\b(?:docker(?:\s+image)?|podman)\s+push\b")
+_VERSION_TOKEN = re.compile(r"\d+(?:\.\d+)*(?:[-+][\w.]+)?")
 
 
 def _version_pin_matches(pinned: str, output: str) -> bool:
-    """Whether `output` names `pinned` as a whole version token.
+    """Whether `output` names exactly `pinned` as its version.
 
-    A plain substring test (``pinned in output``) also accepts an unrelated
-    longer version sharing the same prefix (``2.1.0`` inside ``atp, version
-    12.1.0``) or a prerelease build (``2.1.0-rc1``) as if it matched the
-    pin, even though neither is comparable to a golden baseline captured at
-    the exact pinned version. The boundary excludes ``-`` as well as
-    word characters and ``.``: a lookaround of ``[\\w.]`` alone still lets
-    ``2.1.0-rc1`` match (``-`` is neither), so it would not actually reject
-    the prerelease case it is meant to catch.
+    A plain substring test (``pinned in output``) accepts an unrelated
+    longer version sharing the same prefix (``2.1.0`` inside ``atp,
+    version 12.1.0``); a boundary-anchored regex still accepts any suffix
+    an exclusion class does not happen to list yet — a prerelease
+    (``2.1.0-rc1``) once `-` was added to the class, then build metadata
+    (``2.1.0+vendor.1``) once the next suffix shape showed up, and so on
+    for whatever comes after that.
+
+    Instead this extracts every version-shaped token from `output` (a run
+    of dot-separated digits, optionally followed by a `-`/`+` suffix) and
+    compares each to `pinned` for exact string equality. Equality has no
+    exclusion list to keep pace with: any suffix at all — known or not —
+    makes the token unequal to the bare pin, by construction rather than
+    by enumeration.
     """
-    return re.search(rf"(?<![\w.-]){re.escape(pinned)}(?![\w.-])", output) is not None
+    return any(token == pinned for token in _VERSION_TOKEN.findall(output))
 
 
 _DOCKER_LOGIN = re.compile(r"\bdocker\s+login\b")

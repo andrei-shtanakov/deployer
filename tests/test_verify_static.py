@@ -15,9 +15,13 @@ from deployer.models import (
     ServiceSpec,
 )
 from deployer.verify import (
+    ACTIONLINT_VERSION,
+    ATP_VERSION,
+    HADOLINT_VERSION,
     _classify,
     _isolated_context,
     _run_healthcheck,
+    _version_pin_matches,
     parse_dockerfile,
     verify,
     verify_docker,
@@ -222,21 +226,29 @@ def test_hadolint_prerelease_version_is_not_substring_matched(
     assert report.hadolint_available is False
 
 
+@pytest.mark.parametrize("pin", [HADOLINT_VERSION, ACTIONLINT_VERSION, ATP_VERSION])
 @pytest.mark.parametrize(
-    ("output", "expected"),
+    ("make_output", "expected"),
     [
-        ("atp, version 2.1.0", True),
-        ("atp, version 12.1.0", False),
-        ("atp, version 2.1.0-rc1", False),
-        ("atp, version 2.1.0.1", False),
+        (lambda pin: f"tool {pin}", True),
+        (lambda pin: f"tool {pin}\n", True),
+        (lambda pin: f"tool 1{pin}", False),  # unrelated longer version
+        (lambda pin: f"tool {pin}-rc1", False),  # prerelease suffix
+        (lambda pin: f"tool {pin}+vendor.1", False),  # build-metadata suffix
+        (lambda pin: f"tool {pin}.1", False),  # extra version component
+        (lambda pin: "tool: no version here", False),  # no version token at all
+        (lambda pin: "", False),  # empty output
     ],
 )
-def test_version_pin_matches_whole_token_only(output: str, expected: bool) -> None:
-    """The shared helper behind all three pinned-version checks: a whole-token
-    match only, never a substring of a longer or prerelease version."""
-    from deployer.verify import _version_pin_matches
-
-    assert _version_pin_matches("2.1.0", output) is expected
+def test_version_pin_matches_whole_token_only(
+    pin: str, make_output, expected: bool
+) -> None:
+    """The shared helper behind all three pinned-version checks (hadolint,
+    actionlint, atp): exact equality against the extracted version token,
+    never a substring or boundary match — so no suffix shape, known or not,
+    can slip past it. Runs against each tool's real pinned constant so the
+    table stays true if a pin moves."""
+    assert _version_pin_matches(pin, make_output(pin)) is expected
 
 
 def test_install_strategy_skipped_without_facts(hello_service: Path) -> None:
