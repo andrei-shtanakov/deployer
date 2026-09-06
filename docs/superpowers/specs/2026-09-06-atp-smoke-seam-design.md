@@ -4,8 +4,8 @@ Date: 2026-09-06
 Status: approved for implementation (external spec review 2026-09-06)
 Closes: `todo://deployer/first-consumer-seam` (#52) and
 `todo://deployer/atp-smoke-test-seam`
-Depends on: `todo://deployer/report-schema-version`, which ships **first, as
-its own PR** — see §6
+Depends on: `todo://deployer/report-schema-version` — **shipped** in PR #59
+(merge `bcfeebc`), ahead of this seam as §6 requires
 Prior art: `docs/2026-09-06-phase4-seam-audit.md` (the inventory that
 produced this shortlist); founding doc `docs/idea-deployer-subproject.md`
 ("ATP = validation/smoke-test of built artifacts")
@@ -176,25 +176,29 @@ correct agent stop answering. The existing two-value taxonomy is sufficient;
 
 ## 6. Report shape
 
-### Report versioning ships first, separately
+### Report versioning shipped first, separately (done)
 
 `schema_version` is **not** part of this slice. It is its own contract, with
 its own compatibility policy and its own migration of existing files, and it
-must land as a prerequisite PR before the seam.
+landed as a prerequisite PR ahead of the seam — PR #59, merge `bcfeebc`.
 
-Its scope is all four root JSON artifacts, not the two this seam happens to
-touch: `VerificationReport` (`models.py:298`), `AuthoringRun` (`:353`),
-`BenchReport` (`:394`), `GoldenReport` (`:443`).
+It covers all four root JSON artifacts, not just the two this seam touches:
+`VerificationReport`, `AuthoringRun`, `BenchReport`, `GoldenReport`. The
+policy: a missing field reads as **legacy v0**, and **additive fields are
+compatible within v1**. That second half is what keeps this seam cheap —
+`atp_available` and the built-image reference are additions, so they do not
+force a v2.
 
-The policy it must state: a missing field reads as **legacy v0**, and
-**additive fields are compatible within v1**. That second half is what keeps
-this seam cheap — `atp_available` and the built-image reference are additions,
-so they do not force a v2.
+Two things that PR settled, which this slice now builds on:
 
-Sequencing the two changes rather than mixing them keeps each golden movement
-attributable: first the format version alone, then the new corpus case and
-`atp_smoke` alone. `bench promote` / `compare` must treat the version as a
-normalized constant, not a diff.
+- The legacy rule reaches reports nested in an `AuthoringRun`, so a nested
+  `VerificationReport` never claims a version its document does not have.
+- Readers refuse a document whose **major** is unknown, so a future v2 report
+  cannot be compared as if understood. A later minor stays readable.
+
+Sequencing the two changes rather than mixing them kept each golden movement
+attributable: the format version alone, then the new corpus case and
+`atp_smoke` alone. `bench compare` treats the version as metadata, not a diff.
 
 ### This slice's additions
 
