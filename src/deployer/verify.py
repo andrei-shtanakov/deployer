@@ -1015,7 +1015,7 @@ def _atp_verdict(report_path: Path, returncode: int) -> CheckResult:
     success = summary.get("success")
     if success is True and returncode == 0:
         return CheckResult(check_id="atp_smoke", status=CheckStatus.PASSED)
-    if success is False and returncode != 0:
+    if success is False and returncode == 1:
         failed = summary.get("failed_tests", "some")
         return CheckResult(
             check_id="atp_smoke",
@@ -1598,6 +1598,7 @@ def verify_docker(
     results: list[CheckResult] = []
     image_size: int | None = None
     atp_available = False
+    image_built = False
     built = BuiltImage(tag=tag, runtime=runtime)
     try:
         with _isolated_context(project_path) as context:
@@ -1606,6 +1607,7 @@ def verify_docker(
             )
         results.append(build_result)
         if build_result.status is CheckStatus.PASSED:
+            image_built = True
             image_size = _image_size(runtime, tag)
             if target.service is not None:
                 results.append(_run_healthcheck(target, runtime, tag, health_timeout))
@@ -1640,14 +1642,20 @@ def verify_docker(
         # `container_run` does not pass `check=True`, so a failed `rmi` returns
         # non-zero silently. Record the actual outcome: claiming "removed"
         # without reading the return code would be exactly the unchecked claim
-        # `cleanup_status` exists to prevent.
-        try:
-            removal = container_run(
-                runtime, ["rmi", "-f", tag], capture_output=True, timeout=60
-            )
-            built.cleanup_status = "removed" if removal.returncode == 0 else "failed"
-        except (subprocess.TimeoutExpired, OSError):
-            built.cleanup_status = "failed"
+        # `cleanup_status` exists to prevent. Skip it entirely when the build
+        # never tagged an image (failed, or raised before tagging): there is
+        # nothing to remove, and `cleanup_status` must stay `not_attempted`
+        # rather than misreport a leak that never happened.
+        if image_built:
+            try:
+                removal = container_run(
+                    runtime, ["rmi", "-f", tag], capture_output=True, timeout=60
+                )
+                built.cleanup_status = (
+                    "removed" if removal.returncode == 0 else "failed"
+                )
+            except (subprocess.TimeoutExpired, OSError):
+                built.cleanup_status = "failed"
     return results, image_size, built, atp_available
 
 

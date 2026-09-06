@@ -1647,6 +1647,19 @@ def test_atp_verdict_disagreement_between_report_and_exit_code(
     assert "disagree" in result.message
 
 
+def test_atp_verdict_failed_report_with_cli_error_is_environment(
+    tmp_path: Path,
+) -> None:
+    """Only ATP's assertion-failure exit code makes a failure authoring."""
+    from deployer.verify import _atp_verdict
+
+    report = _atp_report(tmp_path, success=False, failed_tests=1)
+    result = _atp_verdict(report, 2)
+    assert result.status is CheckStatus.FAILED
+    assert result.failure_kind is FailureKind.ENVIRONMENT
+    assert "disagree" in result.message
+
+
 def test_atp_verdict_boolean_total_tests_is_environment(tmp_path: Path) -> None:
     """A boolean total_tests (JSON true/false) is malformed, not empty suite.
 
