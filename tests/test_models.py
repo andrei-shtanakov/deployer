@@ -300,3 +300,32 @@ def test_iteration_record_ci_defaults_none() -> None:
 def test_ci_spec_rejects_unknown_keys() -> None:
     with pytest.raises(ValidationError):
         DeployTarget.model_validate_json('{"ci": {"kind": "x"}}')
+
+
+def test_smoke_target_requires_a_run_intent() -> None:
+    """A smoke target is a job; ATP drives it, so the job intent must be declared."""
+    with pytest.raises(ValidationError, match="run"):
+        DeployTarget(smoke={"suite": "suite.yaml"})
+
+
+def test_smoke_target_rejects_a_service_intent() -> None:
+    """The http-adapter path is a separate seam with a different lifecycle."""
+    with pytest.raises(ValidationError, match="service"):
+        DeployTarget(
+            smoke={"suite": "suite.yaml"},
+            service={"port": 8000},
+        )
+
+
+def test_smoke_spec_defaults_and_rejects_unknown_keys() -> None:
+    target = DeployTarget(smoke={"suite": "suite.yaml"}, run={})
+    assert target.smoke is not None
+    assert target.smoke.suite == "suite.yaml"
+    assert target.smoke.timeout_s == 300
+    with pytest.raises(ValidationError):
+        DeployTarget(smoke={"suite": "s.yaml", "kind": "x"}, run={})
+
+
+def test_smoke_spec_rejects_an_empty_suite_path() -> None:
+    with pytest.raises(ValidationError):
+        DeployTarget(smoke={"suite": ""}, run={})

@@ -116,6 +116,20 @@ class CISpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class SmokeSpec(BaseModel):
+    """Request an ATP smoke test of the built image. Presence is the request.
+
+    `suite` is a path to an ATP suite YAML, resolved relative to the
+    `target.json` that declared it — never to the current directory and never
+    to the project directory, so a target document stays portable.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    suite: str = Field(min_length=1)
+    timeout_s: int = Field(default=300, gt=0)
+
+
 class DeployTarget(BaseModel):
     """Declarative deploy intent: what is wanted, never how."""
 
@@ -129,6 +143,7 @@ class DeployTarget(BaseModel):
     entrypoint: str | None = Field(default=None, min_length=1)
     dependencies: list[ServiceDependency] = Field(default_factory=list)
     ci: CISpec | None = None
+    smoke: SmokeSpec | None = None
 
     @model_validator(mode="after")
     def _service_and_run_exclusive(self) -> "DeployTarget":
@@ -158,6 +173,28 @@ class DeployTarget(BaseModel):
             raise ValueError(
                 "DeployTarget.ci with dependencies is unsupported: "
                 "compose-aware CI is a later iteration"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _smoke_is_a_job_intent(self) -> "DeployTarget":
+        """ATP's container adapter talks to a job over stdin/stdout.
+
+        `service` is refused rather than supported: the http adapter needs a
+        published port, a readiness wait and guaranteed teardown — a separate
+        seam. Loosening this later is backward compatible.
+        """
+        if self.smoke is None:
+            return self
+        if self.service is not None:
+            raise ValueError(
+                "DeployTarget.smoke with a service intent is unsupported: "
+                "the ATP container adapter drives a job over stdin/stdout"
+            )
+        if self.run is None:
+            raise ValueError(
+                "DeployTarget.smoke requires a run intent: the target must "
+                "declare that it is a job"
             )
         return self
 
