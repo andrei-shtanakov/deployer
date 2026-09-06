@@ -1,10 +1,11 @@
 # ATP smoke-test seam (first production consumer seam) — design
 
 Date: 2026-09-06
-Status: draft, awaiting external spec review
+Status: approved for implementation (external spec review 2026-09-06)
 Closes: `todo://deployer/first-consumer-seam` (#52) and
-`todo://deployer/atp-smoke-test-seam`; folds in
-`todo://deployer/report-schema-version`
+`todo://deployer/atp-smoke-test-seam`
+Depends on: `todo://deployer/report-schema-version`, which ships **first, as
+its own PR** — see §6
 Prior art: `docs/2026-09-06-phase4-seam-audit.md` (the inventory that
 produced this shortlist); founding doc `docs/idea-deployer-subproject.md`
 ("ATP = validation/smoke-test of built artifacts")
@@ -69,7 +70,22 @@ Validation (pydantic `model_validator` on `DeployTarget`):
 
 - `smoke` requires `run` — the target still declares that this is a job, not
   a service.
-- `smoke` forbids `service` — the http adapter path is a non-goal here.
+- `smoke` forbids `service`.
+
+The second rule is not a shortcut, and the http path it closes is not a cheap
+extension of this design. A service container today runs with
+`--network=none`, publishes no port, is probed from *inside* via
+`exec python -c`, and is removed as soon as the healthcheck returns
+(`verify.py:1075`). ATP's http adapter works from *outside* and would need a
+different lifecycle altogether: hold the container up, publish a port, pick a
+free host port, wait for readiness, hand over the endpoint with
+`allow_internal=true`, then guarantee cleanup. That is a second vertical seam
+with its own security surface, not a flag on this one.
+
+Loosening a validator later is backward compatible, so the cost of deciding
+this now is zero. When a real service-shaped agent appears, `smoke` can grow a
+transport discriminator with two implemented variants to generalize from —
+rather than a second variant designed from guesswork.
 
 ## 3. Control flow: ATP replaces `_run_completes`, it does not follow it
 
@@ -139,14 +155,19 @@ substitute for the report.
 | binary absent or version mismatch | — | `atp_smoke: SKIPPED`, `atp_available: false` |
 | timeout / launch error | — | `atp_smoke: FAILED`, `ENVIRONMENT` |
 
-The `total_tests == 0` row is not defensive padding. ATP computes
-`summary.success` as `passed_tests == total_tests`
-(`atp/reporters/json_reporter.py:101`), so an empty suite — a mis-resolved
-path, a suite whose tests were all filtered out — yields `0 == 0` and reports
-**success**. Without that guard the strongest signal in this seam is also its
-easiest false positive: a suite that never ran would close the seam.
-Classified `ENVIRONMENT`, because an empty suite says nothing about the
-authored artifact.
+The `total_tests == 0` row guards a contract invariant, not a reachable bug
+today. ATP computes `summary.success` as `passed_tests == total_tests`
+(`atp/reporters/json_reporter.py:101`), so a zero-test suite would arithmetically
+report **success** — but ATP's own CLI closes the routes there: a mis-resolved
+path is rejected by `click.Path(exists=True)` before anything runs
+(`atp/cli/main.py:382`, verified), and an empty suite is rejected ahead of
+report generation (reported in review; not verified here).
+
+The guard stays because the invariant this seam depends on is "a passing
+smoke check means tests actually ran", and that invariant currently lives in
+someone else's CLI. If ATP's validation drifts, this seam's strongest signal
+becomes its cheapest false positive. Classified `ENVIRONMENT`, because a suite
+that ran no tests says nothing about the authored artifact.
 
 Assertion failure is `AUTHORING` because packaging is what deployer controls:
 a wrong entrypoint, workdir or missing COPY is precisely what makes a
@@ -155,14 +176,30 @@ correct agent stop answering. The existing two-value taxonomy is sufficient;
 
 ## 6. Report shape
 
+### Report versioning ships first, separately
+
+`schema_version` is **not** part of this slice. It is its own contract, with
+its own compatibility policy and its own migration of existing files, and it
+must land as a prerequisite PR before the seam.
+
+Its scope is all four root JSON artifacts, not the two this seam happens to
+touch: `VerificationReport` (`models.py:298`), `AuthoringRun` (`:353`),
+`BenchReport` (`:394`), `GoldenReport` (`:443`).
+
+The policy it must state: a missing field reads as **legacy v0**, and
+**additive fields are compatible within v1**. That second half is what keeps
+this seam cheap — `atp_available` and the built-image reference are additions,
+so they do not force a v2.
+
+Sequencing the two changes rather than mixing them keeps each golden movement
+attributable: first the format version alone, then the new corpus case and
+`atp_smoke` alone. `bench promote` / `compare` must treat the version as a
+normalized constant, not a diff.
+
+### This slice's additions
+
 `VerificationReport` gains:
 
-- `schema_version: str` — folded in from
-  `todo://deployer/report-schema-version`. The first cross-component contract
-  must not ship in an unversioned document, which is the whole point of that
-  item. Added to `AuthoringRun` as well, since both are written to
-  `.deployer/`. Implementation note: `bench promote` / `compare` must treat it
-  as a normalized constant, not a diff.
 - `atp_available: bool`, beside `hadolint_available` / `actionlint_available`,
   with the same "tool absent ⇒ run is non-comparable" meaning.
 - A built-image reference: `tag`, `runtime`, `lifecycle: "ephemeral"`, and
@@ -232,11 +269,20 @@ with the diff reviewed before promoting, per the usual rhythm.
 - `docker`-marked: the real build plus a real ATP run against the fixture.
 - Acceptance: the bench run above.
 
-## Open questions for review
+## Decisions from spec review (2026-09-06)
 
-1. `schema_version` is folded into this slice at the reviewer's request. It
-   touches every written report and the golden baseline; is doing it here
-   right, or does it deserve its own PR ahead of this one?
-2. `smoke` forbidding `service` closes the http-adapter path by construction.
-   If a service-shaped agent is a near-term case, the field should be shaped
-   to allow it now rather than be widened later.
+Both questions this spec raised were settled in review; recorded here so the
+reasoning survives without re-reading the thread.
+
+1. **Report versioning ships as its own prerequisite PR** covering all four
+   root artifacts, with "missing field = legacy v0, additive fields compatible
+   within v1" as the stated policy. Two attributable golden movements beat one
+   mixed movement. See §6.
+2. **`smoke` keeps forbidding `service`.** The http path needs a different
+   container lifecycle and security surface — a separate seam, not a flag.
+   Loosening the validator later is backward compatible, so nothing is lost by
+   deciding it now. See §2.
+
+A third, smaller correction: the `total_tests == 0` guard stays, but its
+justification is narrowed to protecting a contract invariant against future
+ATP drift, rather than a false positive reachable today. See §5.

@@ -73,6 +73,10 @@ them is the next thing to pick up.
   agent adds over the vendor template
 - [ ] Second CI corpus case, then `actionlint_status` in bench compare @trigger:"a second ci corpus case exists" @id:second-ci-corpus-case @epic:eco.research-bench
 - [ ] Install `hadolint` 2.12.0 on the bench machine @owner:github:andrei-shtanakov @id:install-hadolint @epic:eco.research-bench
+- [ ] Install `atp` 2.1.0 on the bench machine @owner:github:andrei-shtanakov @id:install-atp @epic:eco.research-bench
+  — the ATP smoke seam is accepted only on `atp_smoke: PASSED`; `SKIPPED` keeps an ordinary
+  run portable but does not close the seam, so acceptance needs the binary present. Version
+  pinned to the fleet manifest (`workspace-manifest.toml:49`)
   It is not on PATH here, so every golden so far is non-comparable on the hadolint axis
 - [ ] Test-kind CI target and registry-push contour @owner:repo:deployer @id:ci-test-kind-target @epic:eco.research-bench
   The current `{"ci": {}}` intent authors build-image only; registry push is deliberately default-deny today
