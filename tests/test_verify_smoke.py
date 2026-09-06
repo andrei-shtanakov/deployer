@@ -14,6 +14,7 @@ from deployer.models import (
     CheckStatus,
     ContainerRuntime,
     DeployTarget,
+    FailureKind,
 )
 from deployer.verify import verify_docker
 
@@ -63,6 +64,53 @@ def test_smoke_target_does_not_run_the_job_itself(monkeypatch, tmp_path) -> None
     assert [r.check_id for r in results] == ["build", "atp_smoke"]
     assert available is True
     assert image.tag.startswith("localhost/deployer-verify-")
+
+
+def test_smoke_target_without_resolved_suite_fails_environment(
+    monkeypatch, tmp_path
+) -> None:
+    """A smoke target must never fall through to `_run_completes`.
+
+    Without a resolved `smoke_suite` there is nothing to run ATP against;
+    the old `elif` chain fell through to the job check instead, which starts
+    the container with no stdin and fails a healthy ATP agent on EOF.
+    """
+    called: list[str] = []
+    monkeypatch.setattr(
+        "deployer.verify._run_completes",
+        lambda *a, **k: (
+            called.append("run")
+            or CheckResult(check_id="run_completes", status=CheckStatus.PASSED)
+        ),
+    )
+    monkeypatch.setattr(
+        "deployer.verify._build",
+        lambda *a, **k: CheckResult(check_id="build", status=CheckStatus.PASSED),
+    )
+    monkeypatch.setattr("deployer.verify._image_size", lambda *a, **k: 1)
+    monkeypatch.setattr(
+        "deployer.verify.container_run",
+        lambda *a, **k: subprocess.CompletedProcess(args=[], returncode=0),
+    )
+    monkeypatch.setattr(
+        "deployer.verify._check_atp_smoke",
+        lambda *a, **k: pytest.fail("no suite to run ATP against"),
+    )
+    target = DeployTarget(run={}, smoke={"suite": "s.yaml"})
+
+    results, _size, _image, available = verify_docker(
+        "FROM x:1\n",
+        tmp_path,
+        target,
+        ContainerRuntime(tool="docker"),
+        smoke_suite=None,
+    )
+
+    assert called == []  # the job check never ran either
+    smoke = [r for r in results if r.check_id == "atp_smoke"][0]
+    assert smoke.status is CheckStatus.FAILED
+    assert smoke.failure_kind is FailureKind.ENVIRONMENT
+    assert available is False
 
 
 def test_built_image_records_a_failed_cleanup(monkeypatch, tmp_path) -> None:

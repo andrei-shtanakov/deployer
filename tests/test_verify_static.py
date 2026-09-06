@@ -1710,7 +1710,13 @@ def test_atp_smoke_passes_runtime_and_tag_explicitly(
     tmp_path: Path, monkeypatch
 ) -> None:
     """ATP's auto-detection prefers podman, so the runtime we built with must
-    be named explicitly, and the tag must be fully qualified."""
+    be named explicitly, and the tag must be fully qualified.
+
+    The suite path is passed in RELATIVE (as `load_corpus` would hand it to
+    a caller that forgot to resolve it) while cwd is elsewhere, pinning that
+    `_check_atp_smoke` resolves it before handing it to `atp` — which runs
+    with its own cwd in a fresh temp dir and would not see a relative path.
+    """
     import json
     import subprocess
 
@@ -1732,10 +1738,17 @@ def test_atp_smoke_passes_runtime_and_tag_explicitly(
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
     monkeypatch.setattr("deployer.verify.subprocess.run", fake_run)
-    suite = tmp_path / "suite.yaml"
-    suite.write_text("test_suite: x\n")
+    suite_dir = tmp_path / "suites"
+    suite_dir.mkdir()
+    (suite_dir / "suite.yaml").write_text("test_suite: x\n")
+    monkeypatch.chdir(suite_dir)
+    relative_suite = Path("suite.yaml")
+    assert not relative_suite.is_absolute()
     result, available = _check_atp_smoke(
-        suite, ContainerRuntime(tool="docker"), "localhost/deployer-verify-abc", 300
+        relative_suite,
+        ContainerRuntime(tool="docker"),
+        "localhost/deployer-verify-abc",
+        300,
     )
 
     assert result.status is CheckStatus.PASSED
@@ -1744,7 +1757,9 @@ def test_atp_smoke_passes_runtime_and_tag_explicitly(
     assert "image=localhost/deployer-verify-abc" in command
     assert "runtime=docker" in command
     assert "--no-save" in command
-    assert str(suite) in command
+    suite_arg = command[command.index("test") + 1]
+    assert Path(suite_arg).is_absolute()
+    assert Path(suite_arg) == relative_suite.resolve()
 
 
 def test_atp_smoke_timeout_is_environment(tmp_path: Path, monkeypatch) -> None:

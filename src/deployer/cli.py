@@ -16,6 +16,7 @@ from deployer.bench import (
     PromoteRefusedError,
     compare_runs,
     load_baseline,
+    load_corpus,
     promote_run,
     run_bench,
     verify_corpus,
@@ -387,19 +388,38 @@ def _cmd_bench_run(args: argparse.Namespace) -> int:
     if args.require_atp:
         # Match the marker `run_case` writes, not the prose after it: a
         # substring test against a free-text message would drift silently as
-        # the message is reworded.
-        unexecuted = [
+        # the message is reworded. That marker only covers the skip `atp_smoke`
+        # itself reports (version mismatch, binary missing, ...); a smoke case
+        # can also be skipped EARLIER — e.g. no container runtime resolved —
+        # before ATP ever runs, and that skip must trip the gate too: a
+        # SKIPPED smoke never closes the seam, whatever skipped it.
+        smoke_case_names = {
+            case.name
+            for case in load_corpus(corpus, args.filter_pattern)
+            if case.target.smoke is not None
+        }
+        atp_skipped = [
             c
             for c in report.cases
             if c.outcome == "skipped"
             and (c.skip_reason or "").startswith("atp_smoke skipped:")
         ]
-        if unexecuted:
-            names = ", ".join(c.case for c in unexecuted)
-            print(
-                f"error: --require-atp: smoke never executed for: {names}",
-                file=sys.stderr,
-            )
+        pre_l2_skipped = [
+            c
+            for c in report.cases
+            if c.outcome == "skipped"
+            and c.case in smoke_case_names
+            and c not in atp_skipped
+        ]
+        if atp_skipped or pre_l2_skipped:
+            messages = []
+            if atp_skipped:
+                names = ", ".join(c.case for c in atp_skipped)
+                messages.append(f"smoke never executed for: {names}")
+            if pre_l2_skipped:
+                names = ", ".join(c.case for c in pre_l2_skipped)
+                messages.append(f"smoke case skipped before reaching ATP: {names}")
+            print(f"error: --require-atp: {'; '.join(messages)}", file=sys.stderr)
             return 1
     return 0 if report.all_matched else 1
 

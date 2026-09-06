@@ -6,7 +6,13 @@ import pytest
 from deployer import cli
 from deployer.artifacts import render_artifact_response
 from deployer.cli import main
-from deployer.models import CheckResult, CheckStatus, FailureKind, VerificationReport
+from deployer.models import (
+    CheckResult,
+    CheckStatus,
+    DeployTarget,
+    FailureKind,
+    VerificationReport,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -655,6 +661,112 @@ def test_bench_run_clone_failure_exits_2(tmp_path, monkeypatch, capsys):
     )
     assert code == 2
     assert "demo" in capsys.readouterr().err
+
+
+class _FakeSmokeCase:
+    """Duck-typed BenchCase stand-in: only `.name` and `.target.smoke` matter
+    to the `--require-atp` gate."""
+
+    def __init__(self, name: str, declares_smoke: bool) -> None:
+        self.name = name
+        self.target = (
+            DeployTarget(run={}, smoke={"suite": "s.yaml"})
+            if declares_smoke
+            else DeployTarget()
+        )
+
+
+def _fake_report(cases):
+    from deployer.models import BenchCaseResult, BenchReport
+
+    return BenchReport(
+        label="t",
+        author_backend="fixture",
+        build_timeout_s=600,
+        health_timeout_s=30,
+        cases=[BenchCaseResult(**c) for c in cases],
+    )
+
+
+def test_require_atp_fails_on_atp_smoke_skip_marker(tmp_path, monkeypatch, capsys):
+    """A case skipped by `atp_smoke` itself (e.g. version mismatch) trips
+    the gate via the existing marker check."""
+    corpus = _make_corpus(tmp_path)
+    monkeypatch.setattr("deployer.cli.resolve_runtime", lambda *a, **k: None)
+    monkeypatch.setattr(
+        "deployer.cli.load_corpus",
+        lambda *a, **k: [_FakeSmokeCase("case-one", declares_smoke=True)],
+    )
+    report = _fake_report(
+        [
+            {
+                "case": "case-one",
+                "outcome": "skipped",
+                "skip_reason": "atp_smoke skipped: atp not installed",
+            }
+        ]
+    )
+    monkeypatch.setattr(
+        "deployer.cli.run_bench", lambda *a, **k: (report, tmp_path / "run")
+    )
+    code = cli.main(["bench", "run", "--corpus", str(corpus), "--require-atp"])
+    assert code == 1
+    err = capsys.readouterr().err
+    assert "case-one" in err
+
+
+def test_require_atp_ignores_unrelated_skip_reason(tmp_path, monkeypatch, capsys):
+    """A skip with a reason unconnected to smoke must not trip the gate."""
+    corpus = _make_corpus(tmp_path)
+    monkeypatch.setattr("deployer.cli.resolve_runtime", lambda *a, **k: None)
+    monkeypatch.setattr(
+        "deployer.cli.load_corpus",
+        lambda *a, **k: [_FakeSmokeCase("case-one", declares_smoke=False)],
+    )
+    report = _fake_report(
+        [
+            {
+                "case": "case-one",
+                "outcome": "skipped",
+                "skip_reason": "no fixture.Dockerfile for the offline fixture author",
+            }
+        ]
+    )
+    monkeypatch.setattr(
+        "deployer.cli.run_bench", lambda *a, **k: (report, tmp_path / "run")
+    )
+    code = cli.main(["bench", "run", "--corpus", str(corpus), "--require-atp"])
+    assert code == 0
+
+
+def test_require_atp_fails_when_smoke_case_skipped_before_l2(
+    tmp_path, monkeypatch, capsys
+):
+    """A smoke case skipped for an unrelated, EARLIER reason (no container
+    runtime resolved) must also trip the gate: a SKIPPED smoke never closes
+    the seam, whatever skipped it."""
+    corpus = _make_corpus(tmp_path)
+    monkeypatch.setattr("deployer.cli.resolve_runtime", lambda *a, **k: None)
+    monkeypatch.setattr(
+        "deployer.cli.load_corpus",
+        lambda *a, **k: [_FakeSmokeCase("case-one", declares_smoke=True)],
+    )
+    report = _fake_report(
+        [
+            {
+                "case": "case-one",
+                "outcome": "skipped",
+                "skip_reason": "case requires L2 but no container runtime resolved",
+            }
+        ]
+    )
+    monkeypatch.setattr(
+        "deployer.cli.run_bench", lambda *a, **k: (report, tmp_path / "run")
+    )
+    code = cli.main(["bench", "run", "--corpus", str(corpus), "--require-atp"])
+    assert code == 1
+    err = capsys.readouterr().err
+    assert "case-one" in err
 
 
 def test_bench_promote_cli(tmp_path, monkeypatch, capsys):

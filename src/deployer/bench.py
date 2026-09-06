@@ -143,7 +143,9 @@ def load_corpus(corpus_root: Path, pattern: str = "*") -> list[BenchCase]:
                 fixture_compose=fixture_compose if fixture_compose.is_file() else None,
                 fixture_ci=fixture_ci if fixture_ci.is_file() else None,
                 smoke_suite=(
-                    case_dir / target.smoke.suite if target.smoke is not None else None
+                    (case_dir / target.smoke.suite).resolve()
+                    if target.smoke is not None
+                    else None
                 ),
             )
         )

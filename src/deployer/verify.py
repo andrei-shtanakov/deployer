@@ -1077,7 +1077,7 @@ def _check_atp_smoke(
                 [
                     binary,
                     "test",
-                    str(suite),
+                    str(suite.resolve()),
                     "--adapter",
                     "container",
                     "--adapter-config",
@@ -1608,8 +1608,15 @@ def verify_docker(
             image_size = _image_size(runtime, tag)
             if target.service is not None:
                 results.append(_run_healthcheck(target, runtime, tag, health_timeout))
-            elif target.smoke is not None and smoke_suite is not None:
-                if runtime.remote:
+            elif target.smoke is not None:
+                if smoke_suite is None:
+                    results.append(
+                        _atp_env_failure(
+                            "a smoke target reached L2 without a resolved "
+                            "suite path"
+                        )
+                    )
+                elif runtime.remote:
                     results.append(
                         CheckResult(
                             check_id="atp_smoke",
