@@ -194,8 +194,10 @@ def clone_external(ext: ExternalTarget, dest_root: Path) -> BenchCase:
 ATP_SKIPPED_PREFIX = "atp_smoke skipped:"
 """Marker prefix `run_case` writes when `atp_smoke` itself reports SKIPPED.
 
-Shared with `cli.py` (the `--require-atp` gate) and `compare_runs` (the
-`missing_case` severity below), so the two never drift against each other.
+Read by `cli.py`'s `--require-atp` gate to name the reason a case failed
+the gate. `compare_runs` does not special-case this prefix: a case missing
+from the candidate is `important` there regardless of why it is missing —
+an unknown result must never read as green.
 """
 
 
@@ -760,24 +762,19 @@ def compare_runs(
         c = cand.get(name)
         if c is None:
             skipped = skipped_cand.get(name)
-            # A candidate case dropped only because `atp_smoke` itself
-            # reported SKIPPED (no `atp` on this machine, say) is the
-            # documented portable path (README), not a regression: demote
-            # to advisory so `bench compare` stays green after the
-            # `--require-atp`-gated promote. Any other reason a case is
-            # missing (never ran, skipped for an unrelated cause) stays
-            # `important` — a genuine absence must not be waved through.
-            atp_skip = skipped is not None and skipped.skip_reason.startswith(
-                ATP_SKIPPED_PREFIX
-            )
+            # A case present in the baseline but missing (or skipped) in
+            # the candidate is an unknown result, not a pass: `atp_smoke`
+            # reporting SKIPPED (no `atp` on this machine, say) means the
+            # seam was never checked here, so it must not read as green.
+            # This stays `important` regardless of why the case is missing.
             findings.append(
                 CompareFinding(
-                    level="advisory" if atp_skip else "important",
+                    level="important",
                     case=name,
                     metric="missing_case",
                     detail=(
                         f"skipped: {skipped.skip_reason}"
-                        if atp_skip and skipped is not None
+                        if skipped is not None
                         else "present in baseline but absent or skipped in candidate"
                     ),
                 )

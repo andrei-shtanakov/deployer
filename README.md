@@ -143,11 +143,11 @@ filtered corpus declares no `smoke`-intent case at all, since an empty scope
 closes the gate even less than a SKIPPED smoke does.
 
 Once accepted, `bench promote` puts the smoke case into the golden baseline.
-An ordinary machine without `atp` on `PATH` still reports `atp_smoke:
-SKIPPED` for that case and `bench compare` stays green: a candidate case
-dropped only because of that marker is reported as an advisory
-`missing_case`, not a hard/important one — that is what keeps an ordinary
-run portable. A case missing for any other reason is still `important`.
+From then on, comparing against that baseline on a machine without `atp` on
+`PATH` reports an `important` `missing_case` finding: `atp_smoke` reports
+`SKIPPED`, the case is dropped from the candidate before comparison, and its
+absence is `important` like any other missing case — the seam's result is
+unknown on that machine, not passing, so it must not read as green.
 
 ### Installing `atp` 2.1.0 (temporary source-install workaround)
 

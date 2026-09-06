@@ -990,10 +990,12 @@ def test_compare_skipped_candidate_case_is_missing() -> None:
     }
 
 
-def test_compare_atp_skipped_missing_case_is_advisory() -> None:
-    """After the documented `--require-atp` promote, an ordinary machine's
-    `atp_smoke` SKIPPED (no `atp` on PATH) must not turn `bench compare` red:
-    that path is the README's "keeps an ordinary run portable" case."""
+def test_compare_atp_skipped_missing_case_is_important() -> None:
+    """A candidate case dropped because `atp_smoke` itself reported SKIPPED
+    (no `atp` on PATH) is an unknown result, not a pass: the seam was never
+    checked on this machine, so it must stay `important` and `bench compare`
+    (exit 1 on any important/hard finding, see `_cmd_bench_compare`) must not
+    read this as green."""
     findings = compare_runs(
         _report(
             _rcase(
@@ -1005,11 +1007,11 @@ def test_compare_atp_skipped_missing_case_is_advisory() -> None:
         ),
         _golden(_gcase("a")),
     )
-    assert ("advisory", "missing_case", "a") in {
+    assert ("important", "missing_case", "a") in {
         (f.level, f.metric, f.case) for f in findings
     }
     assert not any(
-        f.level == "important" and f.metric == "missing_case" for f in findings
+        f.level == "advisory" and f.metric == "missing_case" for f in findings
     )
 
 
