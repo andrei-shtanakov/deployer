@@ -1544,3 +1544,90 @@ def test_verify_reports_actionlint_available_via_public_api(
     target = DeployTarget(ci=CISpec())
     report = verify(GOOD, hello_service, target, None, ci=CI_GOOD)
     assert report.actionlint_available is True
+
+
+# -- Task 3: ATP verdict mapping --
+
+
+def _atp_report(tmp_path: Path, **summary: object) -> Path:
+    """Write an ATP JSON report with the given summary fields."""
+    import json
+
+    path = tmp_path / "atp-report.json"
+    body = {"version": "1.0", "summary": {"total_tests": 1, **summary}}
+    path.write_text(json.dumps(body))
+    return path
+
+
+def test_atp_verdict_passes_when_report_and_exit_code_agree(tmp_path: Path) -> None:
+    from deployer.verify import _atp_verdict
+
+    result = _atp_verdict(_atp_report(tmp_path, success=True), 0)
+    assert result.check_id == "atp_smoke"
+    assert result.status is CheckStatus.PASSED
+
+
+def test_atp_verdict_failed_assertions_are_authoring(tmp_path: Path) -> None:
+    """Packaging is what deployer controls, so a failed assertion is on us."""
+    from deployer.verify import _atp_verdict
+
+    report = _atp_report(tmp_path, success=False, failed_tests=1)
+    result = _atp_verdict(report, 1)
+    assert result.status is CheckStatus.FAILED
+    assert result.failure_kind is FailureKind.AUTHORING
+
+
+def test_atp_verdict_empty_suite_is_environment(tmp_path: Path) -> None:
+    """ATP computes success as passed == total, so 0 == 0 reports success.
+
+    A suite that ran nothing says nothing about the artifact, and must never
+    be the strongest signal in the seam.
+    """
+    from deployer.verify import _atp_verdict
+
+    report = _atp_report(tmp_path, total_tests=0, success=True)
+    result = _atp_verdict(report, 0)
+    assert result.status is CheckStatus.FAILED
+    assert result.failure_kind is FailureKind.ENVIRONMENT
+
+
+def test_atp_verdict_missing_report_is_environment(tmp_path: Path) -> None:
+    from deployer.verify import _atp_verdict
+
+    result = _atp_verdict(tmp_path / "absent.json", 0)
+    assert result.status is CheckStatus.FAILED
+    assert result.failure_kind is FailureKind.ENVIRONMENT
+
+
+def test_atp_verdict_unparseable_report_is_environment(tmp_path: Path) -> None:
+    from deployer.verify import _atp_verdict
+
+    path = tmp_path / "atp-report.json"
+    path.write_text("{not json")
+    result = _atp_verdict(path, 0)
+    assert result.status is CheckStatus.FAILED
+    assert result.failure_kind is FailureKind.ENVIRONMENT
+
+
+def test_atp_verdict_unknown_report_version_is_environment(tmp_path: Path) -> None:
+    import json
+
+    from deployer.verify import _atp_verdict
+
+    path = tmp_path / "atp-report.json"
+    path.write_text(json.dumps({"version": "9.9", "summary": {"total_tests": 1}}))
+    result = _atp_verdict(path, 0)
+    assert result.status is CheckStatus.FAILED
+    assert result.failure_kind is FailureKind.ENVIRONMENT
+
+
+def test_atp_verdict_disagreement_between_report_and_exit_code(
+    tmp_path: Path,
+) -> None:
+    """The JSON is authoritative; the exit code is a consistency check."""
+    from deployer.verify import _atp_verdict
+
+    result = _atp_verdict(_atp_report(tmp_path, success=True), 1)
+    assert result.status is CheckStatus.FAILED
+    assert result.failure_kind is FailureKind.ENVIRONMENT
+    assert "disagree" in result.message

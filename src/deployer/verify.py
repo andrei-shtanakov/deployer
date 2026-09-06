@@ -35,6 +35,8 @@ from deployer.runtime import compose_available, container_run
 
 HADOLINT_VERSION = "2.12.0"
 ACTIONLINT_VERSION = "1.7.12"
+ATP_VERSION = "2.1.0"
+ATP_REPORT_FORMAT = "1.0"
 _USES_REMOTE_PIN = re.compile(
     r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_./-]+)?@[0-9a-f]{40}$"
 )
@@ -964,6 +966,65 @@ def _is_transport_failure(output: str) -> bool:
     """
     lowered = output.lower()
     return any(marker in lowered for marker in _TRANSPORT_MARKERS)
+
+
+def _atp_env_failure(message: str) -> CheckResult:
+    """An ATP outcome that says nothing about the authored artifact."""
+    return CheckResult(
+        check_id="atp_smoke",
+        status=CheckStatus.FAILED,
+        failure_kind=FailureKind.ENVIRONMENT,
+        message=message,
+    )
+
+
+def _atp_verdict(report_path: Path, returncode: int) -> CheckResult:
+    """Map an ATP run onto a check result; the JSON report is authoritative.
+
+    The exit code is only a consistency check: when the two disagree, neither
+    is trusted and the run is environmental. A suite that ran zero tests is
+    rejected because ATP computes `summary.success` as
+    `passed_tests == total_tests`, so an empty suite reports success by
+    arithmetic — the seam's strongest signal would become its cheapest false
+    positive.
+    """
+    if not report_path.is_file():
+        return _atp_env_failure(f"atp wrote no JSON report (exit {returncode})")
+    try:
+        document = json.loads(report_path.read_text())
+    except (OSError, ValueError) as exc:
+        return _atp_env_failure(f"atp report unreadable: {exc}")
+    if not isinstance(document, dict):
+        return _atp_env_failure("atp report is not a JSON object")
+    version = document.get("version")
+    if version != ATP_REPORT_FORMAT:
+        return _atp_env_failure(
+            f"unsupported atp report format {version!r} "
+            f"(this deployer reads {ATP_REPORT_FORMAT})"
+        )
+    summary = document.get("summary")
+    if not isinstance(summary, dict):
+        return _atp_env_failure("atp report has no summary")
+    total = summary.get("total_tests")
+    if not isinstance(total, int) or total < 1:
+        return _atp_env_failure(
+            "atp suite ran no tests; an empty suite reports success by "
+            "arithmetic and proves nothing about the image"
+        )
+    success = summary.get("success")
+    if success is True and returncode == 0:
+        return CheckResult(check_id="atp_smoke", status=CheckStatus.PASSED)
+    if success is False and returncode != 0:
+        failed = summary.get("failed_tests", "some")
+        return CheckResult(
+            check_id="atp_smoke",
+            status=CheckStatus.FAILED,
+            failure_kind=FailureKind.AUTHORING,
+            message=f"{failed} of {total} ATP test(s) failed against the built image",
+        )
+    return _atp_env_failure(
+        f"atp report and exit code disagree: success={success!r}, exit {returncode}"
+    )
 
 
 def _tail(text: str, lines: int = 15) -> str:
