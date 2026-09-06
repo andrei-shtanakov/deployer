@@ -65,15 +65,6 @@ them is the next thing to pick up.
 - [ ] Second CI corpus case, then `actionlint_status` in bench compare @trigger:"a second ci corpus case exists" @id:second-ci-corpus-case @epic:eco.research-bench
 - [ ] Install `hadolint` 2.12.0 on the bench machine @owner:github:andrei-shtanakov @id:install-hadolint @epic:eco.research-bench
   It is not on PATH here, so every golden so far is non-comparable on the hadolint axis
-- [ ] Install `atp` 2.1.0 on the bench machine @owner:github:andrei-shtanakov @id:install-atp @epic:eco.research-bench
-  — the ATP smoke seam is accepted only on `atp_smoke: PASSED`; `SKIPPED` keeps an ordinary
-  run portable but does not close the seam, so acceptance needs the binary present. Version
-  pinned to the fleet manifest (`workspace-manifest.toml:49`). Install procedure: `README.md`,
-  "Installing `atp` 2.1.0" — a temporary source-install workaround pending
-  atp-platform#320 (`publish-installable-container-cli`); the published `atp-platform==2.1.0`
-  release is not installable as-is. **Do not tick this item until the README instructions
-  have been reproduced from a clean temporary directory** — not from an existing
-  atp-platform checkout and not from a leftover scratch tree
 - [ ] Test-kind CI target and registry-push contour @owner:repo:deployer @id:ci-test-kind-target @epic:eco.research-bench
   The current `{"ci": {}}` intent authors build-image only; registry push is deliberately default-deny today
 - [ ] Adopt the harness-eval discipline for the comparison arms above @owner:github:andrei-shtanakov @id:harness-eval-discipline — @epic:eco.research-bench
@@ -154,14 +145,21 @@ them is the next thing to pick up.
 Merged work, plus the decisions that closed an open item without being code — those are
 prefixed `Decision:` so the ledger does not imply shipped behaviour.
 
+- [x] Install `atp` 2.1.0 on the bench machine @owner:github:andrei-shtanakov @id:install-atp @epic:eco.research-bench
+  The temporary tagged-source procedure in `README.md` was reproduced from a clean
+  directory with isolated uv tool, bin and cache directories. The resulting CLI reported
+  `atp, version 2.1.0` and listed the `container` adapter. The source workaround remains
+  necessary until atp-platform#320 (`publish-installable-container-cli`) ships.
 - [x] First production consumer seam: ATP smoke-test by image tag @owner:repo:deployer @id:first-consumer-seam @epic:eco.dark-factory
   Shortlist #1 of the seam audit — the only pair whose consumer half already existed and
   needed no change. `verify_docker` runs a smoke target's `atp` suite against the built
   image over `--adapter container --adapter-config image=<tag>`, naming the runtime
   explicitly (ATP's `auto` detection prefers podman over docker) and keeping the image
   alive under its L2 tag instead of destroying it before ATP can see it. Same work as
-  `atp-smoke-test-seam`, closed with it. Verified end-to-end with a real `atp` binary and
-  container runtime: `deployer bench verify --filter atp-agent` reaches `atp_smoke: PASSED`
+  `atp-smoke-test-seam`, closed with it. Accepted end-to-end against corpus commit
+  `8262116` by the full 12-case Anthropic/Podman run labelled
+  `atp-smoke-anthropic-full`: every case matched, and `atp-agent` reached
+  `atp_smoke: PASSED` with image cleanup reported as `removed`.
 - [x] ATP smoke-test of built artifacts as a verification level above L2 @owner:repo:deployer @id:atp-smoke-test-seam @epic:eco.dark-factory
   Same change as `first-consumer-seam`, recorded separately because it was opened
   separately by the seam audit. Two scoping constraints carried over from the audit: ATP's

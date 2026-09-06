@@ -260,8 +260,10 @@ does not close the seam.
 
 That implies `atp` 2.1.0 must be installed on the bench machine — a new open
 item, paired with the existing `todo://deployer/install-hadolint`. The new
-corpus case moves the golden baseline, so acceptance runs `bench promote`
-with the diff reviewed before promoting, per the usual rhythm.
+corpus case moves the golden baseline, so acceptance runs a full-corpus bench
+and promotes that run after reviewing its diff, per the usual rhythm. The
+targeted `--filter atp-agent` proof must not be promoted: `bench promote`
+replaces the whole golden tree and a filtered run would erase the other cases.
 
 ## 10. Testing
 

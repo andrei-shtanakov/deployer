@@ -388,7 +388,7 @@ def _atp_verdict(report_path: Path, returncode: int) -> CheckResult:
     success = summary.get("success")
     if success is True and returncode == 0:
         return CheckResult(check_id="atp_smoke", status=CheckStatus.PASSED)
-    if success is False and returncode != 0:
+    if success is False and returncode == 1:
         failed = summary.get("failed_tests", "some")
         return CheckResult(
             check_id="atp_smoke",
@@ -1423,14 +1423,21 @@ The seam is closed only by an end-to-end bench run reporting `atp_smoke: PASSED`
 `SKIPPED` keeps an ordinary run portable but does not close it.
 
 ```bash
-uv run deployer bench run --filter 'atp-agent' --require-atp
+# Cheap targeted proof; inspect its report but do not promote this filtered run.
+uv run deployer bench run --author anthropic --filter 'atp-agent' --require-atp
+
+# Golden promotion must come from a full-corpus run: promote replaces the
+# entire golden tree, so promoting the filtered proof would erase other cases.
+uv run deployer bench run --author anthropic --require-atp --label <label>
 uv run deployer bench compare .deployer-runs/<ts>-<label> golden
 uv run deployer bench promote .deployer-runs/<ts>-<label>   # after reviewing the diff
+uv run deployer bench compare .deployer-runs/<ts>-<label> golden
 ```
 
 This requires `atp` 2.1.0 on the bench machine — `todo://deployer/install-atp`.
-The new corpus case moves the golden baseline, so the diff is reviewed before
-promoting, per the usual rhythm.
+The new corpus case moves the golden baseline, so the full-corpus diff is
+reviewed before promoting, per the usual rhythm. Never promote the filtered
+proof: `bench promote` replaces `corpus/golden/` wholesale.
 
 ## Follow-ups this plan deliberately leaves open
 
