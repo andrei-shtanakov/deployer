@@ -78,6 +78,10 @@ The compatibility rules:
 - Because v1 is purely additive over v0, `bench compare` still diffs a v0
   baseline against a v1 run, and does not report the version gap as a
   finding.
+- deployer holds itself to the same rule when reading a report back: a
+  document whose **major** is neither `0` nor `1` is refused (`error:` and
+  exit 2) rather than compared as if understood. A later *minor* stays
+  readable, since additive fields are compatible within a major.
 
 `author` and `bench run --author anthropic` auto-load `./.env`
 (KEY=VALUE lines) for the Anthropic API key; real environment variables

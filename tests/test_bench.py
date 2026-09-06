@@ -1296,3 +1296,75 @@ def test_legacy_authoring_run_is_not_read_as_current_version(
     loaded = bench._load_authoring_run(run_file)
 
     assert loaded.schema_version == LEGACY_SCHEMA_VERSION
+
+
+def test_legacy_rule_reaches_reports_nested_in_an_authoring_run(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A legacy document must not read as v0 outside and v1 inside.
+
+    `VerificationReport` is both a document of its own and a record nested in
+    `AuthoringRun.iterations[*].report`; marking only the root would let the
+    nested one silently claim the current version.
+    """
+    run_dir = _bench_run_on_disk(tmp_path, monkeypatch)
+    run_file = next(run_dir.glob("cases/*/authoring-run.json"))
+    raw = json.loads(run_file.read_text())
+    raw.pop("schema_version", None)
+    for iteration in raw["iterations"]:
+        iteration["report"].pop("schema_version", None)
+    run_file.write_text(json.dumps(raw, indent=2))
+
+    loaded = bench._load_authoring_run(run_file)
+
+    assert loaded.schema_version == LEGACY_SCHEMA_VERSION
+    assert loaded.iterations[-1].report.schema_version == LEGACY_SCHEMA_VERSION
+
+
+def test_report_with_non_object_root_is_a_value_error(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A corrupt report must still exit 2, not raise AttributeError.
+
+    The CLI catches only ValueError around `load_baseline` (`cli.py:430`), so
+    a non-object JSON root has to arrive as one.
+    """
+    run_dir = _bench_run_on_disk(tmp_path, monkeypatch)
+    promote_run(run_dir, tmp_path)
+    (tmp_path / "golden" / "golden.json").write_text("null")
+
+    with pytest.raises(ValueError):
+        load_baseline("golden", tmp_path)
+
+
+def test_baseline_of_an_unknown_major_version_is_refused(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Reading a document from a future major must fail, not compare as usual.
+
+    Within a major, additive fields keep documents compatible, so a minor
+    bump stays readable; an unknown major means the shape is not understood.
+    """
+    run_dir = _bench_run_on_disk(tmp_path, monkeypatch)
+    promote_run(run_dir, tmp_path)
+    golden_file = tmp_path / "golden" / "golden.json"
+    raw = json.loads(golden_file.read_text())
+    raw["schema_version"] = "2.0"
+    golden_file.write_text(json.dumps(raw, indent=2))
+
+    with pytest.raises(ValueError, match="schema_version"):
+        load_baseline("golden", tmp_path)
+
+
+def test_baseline_of_a_later_minor_version_still_reads(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Additive-within-major is the stated policy, so a minor bump is readable."""
+    run_dir = _bench_run_on_disk(tmp_path, monkeypatch)
+    promote_run(run_dir, tmp_path)
+    golden_file = tmp_path / "golden" / "golden.json"
+    raw = json.loads(golden_file.read_text())
+    raw["schema_version"] = "1.7"
+    golden_file.write_text(json.dumps(raw, indent=2))
+
+    assert load_baseline("golden", tmp_path).schema_version == "1.7"
