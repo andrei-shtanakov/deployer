@@ -25,6 +25,8 @@ from deployer.bench import (
     run_case,
 )
 from deployer.models import (
+    LEGACY_SCHEMA_VERSION,
+    SCHEMA_VERSION,
     AuthoringRun,
     BenchCaseResult,
     BenchReport,
@@ -1187,3 +1189,110 @@ def test_bench_filter_synthetic_only_still_raises(tmp_path: Path) -> None:
             runs_root=tmp_path / "runs",
             include_external=False,
         )
+
+
+def test_golden_without_schema_version_reads_as_legacy_v0(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A golden file predating versioning loads as v0, not as the current version.
+
+    The key must be absent from the document, so the reader — not the model
+    default — is what decides the legacy reading.
+    """
+    run_dir = _bench_run_on_disk(tmp_path, monkeypatch)
+    promote_run(run_dir, tmp_path)
+    golden_file = tmp_path / "golden" / "golden.json"
+    raw = json.loads(golden_file.read_text())
+    raw.pop("schema_version", None)
+    golden_file.write_text(json.dumps(raw, indent=2))
+
+    golden = load_baseline("golden", tmp_path)
+
+    assert golden.schema_version == LEGACY_SCHEMA_VERSION
+
+
+def test_raw_bench_report_without_schema_version_reads_as_legacy_v0(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The legacy rule covers raw run reports, not just the golden baseline."""
+    run_dir = _bench_run_on_disk(tmp_path, monkeypatch)
+    report_file = run_dir / "bench-report.json"
+    raw = json.loads(report_file.read_text())
+    raw.pop("schema_version", None)
+    report_file.write_text(json.dumps(raw, indent=2))
+
+    baseline = load_baseline(run_dir, tmp_path)
+
+    assert baseline.schema_version == LEGACY_SCHEMA_VERSION
+
+
+def test_committed_golden_baseline_still_loads() -> None:
+    """Regression: versioning must not orphan the golden already in the repo.
+
+    Guards the choice of a defaulted field over a required one — a required
+    `schema_version` would have broken `bench compare` against the committed
+    baseline the moment it was added.
+
+    Asserts loadability and a readable version, deliberately not a specific
+    one: the committed baseline reads as v0 today, but the next promotion
+    rewrites it as current, and that must not be a test failure.
+    """
+    corpus_root = Path(__file__).resolve().parent.parent / "corpus"
+    baseline = load_baseline("golden", corpus_root)
+    assert baseline.schema_version in {LEGACY_SCHEMA_VERSION, SCHEMA_VERSION}
+    assert baseline.cases
+
+
+def test_compare_does_not_report_schema_version_as_a_difference() -> None:
+    """v1 is additive over v0, so a version gap is not a comparability finding.
+
+    Pinned because the behaviour is implemented by absence: `schema_version`
+    is simply not among the fields `_comparability_findings` diffs. Adding it
+    there would make every run against the committed golden noisy.
+    """
+    candidate = _report(_rcase("a"))
+    baseline = _golden(_gcase("a"))
+    baseline.schema_version = LEGACY_SCHEMA_VERSION
+
+    findings = compare_runs(candidate, baseline)
+
+    assert not [f for f in findings if "schema_version" in f.detail]
+
+
+def test_promoting_a_legacy_run_writes_a_current_version_golden(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A golden is newly written here, so it carries this deployer's version.
+
+    The legacy reading applies to the document on disk, not to what promotion
+    then produces from it.
+    """
+    run_dir = _bench_run_on_disk(tmp_path, monkeypatch)
+    report_file = run_dir / "bench-report.json"
+    raw = json.loads(report_file.read_text())
+    raw.pop("schema_version", None)
+    report_file.write_text(json.dumps(raw, indent=2))
+
+    golden = normalize_run(run_dir)
+
+    assert golden.schema_version == SCHEMA_VERSION
+
+
+def test_legacy_authoring_run_is_not_read_as_current_version(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A pre-versioning authoring-run.json must not claim to be v1.
+
+    Normalization reads these files back (`bench.py:501`), so the legacy rule
+    has to cover them too: a defaulted field would silently upgrade an old
+    document instead of marking it legacy.
+    """
+    run_dir = _bench_run_on_disk(tmp_path, monkeypatch)
+    run_file = next(run_dir.glob("cases/*/authoring-run.json"))
+    raw = json.loads(run_file.read_text())
+    raw.pop("schema_version", None)
+    run_file.write_text(json.dumps(raw, indent=2))
+
+    loaded = bench._load_authoring_run(run_file)
+
+    assert loaded.schema_version == LEGACY_SCHEMA_VERSION

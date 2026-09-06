@@ -85,10 +85,6 @@ them is the next thing to pick up.
 
 - [ ] Run-config seam: per-target persistence of build/health timeouts @trigger:"an external target again needs a non-default --build-timeout" @id:run-config-timeout-persistence @epic:eco.dark-factory
   — the recording half shipped in #10; the operator still has to pass the flag
-- [ ] Report schema carries no version — a consumer has nothing to pin against @owner:repo:deployer @id:report-schema-version @epic:eco.dark-factory
-  — found by the seam audit (2026-09-06). `deployer_version` is stamped on run records, but
-  `VerificationReport` / `AuthoringRun` have no schema field, so the first consumer of
-  `.deployer/*.json` would couple to an unversioned shape. Cheap now, expensive after a consumer
 - [ ] L1 rule: a run/service intent must COPY the entrypoint and `package_dirs` @owner:repo:deployer @id:l1-copy-entrypoint-rule @epic:eco.dark-factory
 - [ ] Unified pip-invocation parser — `pip --no-input install` still slips past the @owner:repo:deployer @id:unified-pip-parser @epic:eco.dark-factory
   payload-based poetry/pip install-strategy rules
@@ -168,6 +164,15 @@ prefixed `Decision:` so the ledger does not imply shipped behaviour.
   `first-consumer-seam`. Unblocked that item plus `arbiter-policy-gate-seam` and
   `atp-smoke-test-seam`; corrected the arbiter item's premise; opened
   `report-schema-version`, `dispatcher-ci-doc-stale`, `container-runtime-duplication`
+- [x] Report schema version on all four root artifacts @owner:repo:deployer @id:report-schema-version @epic:eco.dark-factory
+  Prerequisite of `todo://deployer/first-consumer-seam`, shipped ahead of it so each golden
+  movement stays attributable. `schema_version` on `VerificationReport`, `AuthoringRun`,
+  `BenchReport`, `GoldenReport`; policy is "missing key = legacy v0, additive fields
+  compatible within v1", so the seam's own report additions will not force a v2. The legacy
+  reading is decided by the file readers, not a model default — pydantic cannot tell an
+  absent JSON key from an omitted argument. Found while implementing: `authoring-run.json`
+  is read back during normalization, so it needed the same rule or an old file would have
+  claimed to be v1
 - [x] Drop the pilot-DAG branch-precondition task — #38, closed by #44 @owner:github:andrei-shtanakov @id:pilot-dag-drop-branch-precondition @epic:eco.ops
   The stopgap task guarded Mode 1 silently ignoring `branch_prefix` (inbox #34);
   `git.run_branch` (maestro#216 phase A) made isolation a runtime guarantee and

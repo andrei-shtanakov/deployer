@@ -14,6 +14,22 @@ from pydantic import (
     model_validator,
 )
 
+SCHEMA_VERSION = "1.0"
+"""Version stamped on every report this deployer writes.
+
+Compatibility policy: a document with no `schema_version` key reads as
+`LEGACY_SCHEMA_VERSION` — the shape that predates versioning — and within a
+major version additive fields are compatible, so a new report field does not
+force a version bump. Only a breaking change to an existing field does.
+"""
+
+LEGACY_SCHEMA_VERSION = "0"
+"""What a report written before versioning reads as.
+
+Decided by the reader from the raw document, never by a model default: pydantic
+cannot tell an absent JSON key from an argument the caller omitted.
+"""
+
 _SAFE_NAME_RE = re.compile(r"[A-Za-z0-9._-]+")
 _EXTRA_SEPARATOR_RUN_RE = re.compile(r"[-_.]+")
 
@@ -298,6 +314,7 @@ class CheckResult(BaseModel):
 class VerificationReport(BaseModel):
     """Aggregated check results for one Dockerfile candidate."""
 
+    schema_version: str = SCHEMA_VERSION
     results: list[CheckResult] = Field(default_factory=list)
     hadolint_available: bool = False
     actionlint_available: bool = False
@@ -353,6 +370,7 @@ StopReason = Literal[
 class AuthoringRun(BaseModel):
     """Research artifact: the full record of one authoring loop."""
 
+    schema_version: str = SCHEMA_VERSION
     project: str
     target: DeployTarget
     iterations: list[IterationRecord] = Field(default_factory=list)
@@ -394,6 +412,7 @@ class BenchCaseResult(BaseModel):
 class BenchReport(BaseModel):
     """Aggregate research artifact for one bench run over the corpus."""
 
+    schema_version: str = SCHEMA_VERSION
     label: str
     author_backend: str
     corpus_commit: str | None = None
@@ -443,6 +462,7 @@ class GoldenCase(BaseModel):
 class GoldenReport(BaseModel):
     """Committed golden baseline. Never stores hostnames or wall-clock data."""
 
+    schema_version: str = SCHEMA_VERSION
     promoted_from_label: str
     corpus_commit: str | None = None
     deployer_version: str | None = None
