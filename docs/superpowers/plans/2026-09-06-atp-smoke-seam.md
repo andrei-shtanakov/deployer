@@ -813,12 +813,20 @@ def verify_docker(
             elif target.run is not None:
                 results.append(_run_completes(target, runtime, tag, health_timeout))
     finally:
+        # Best-effort cleanup that must never clobber the return value — but
+        # `container_run` does not pass `check=True`, so a failed `rmi` returns
+        # non-zero silently. Record the actual outcome: claiming "removed"
+        # without reading the return code would be exactly the unchecked claim
+        # `cleanup_status` exists to prevent.
         try:
-            container_run(runtime, ["rmi", "-f", tag], capture_output=True, timeout=60)
-            built.cleanup_status = "removed"
+            removal = container_run(
+                runtime, ["rmi", "-f", tag], capture_output=True, timeout=60
+            )
+            built.cleanup_status = (
+                "removed" if removal.returncode == 0 else "failed"
+            )
         except (subprocess.TimeoutExpired, OSError):
             built.cleanup_status = "failed"
-            # best-effort cleanup; must never clobber the return value
     return results, image_size, built, atp_available
 ```
 
@@ -1110,8 +1118,14 @@ and in `_cmd_bench_run`, after the report is built and before returning:
 
 ```python
     if args.require_atp:
+        # Match the marker `run_case` writes, not the prose after it: a
+        # substring test against a free-text message would drift silently as
+        # the message is reworded.
         unexecuted = [
-            c for c in report.cases if c.outcome == "skipped" and "atp" in (c.skip_reason or "")
+            c
+            for c in report.cases
+            if c.outcome == "skipped"
+            and (c.skip_reason or "").startswith("atp_smoke skipped:")
         ]
         if unexecuted:
             names = ", ".join(c.case for c in unexecuted)
