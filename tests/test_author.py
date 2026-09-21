@@ -9,6 +9,7 @@ from deployer.models import (
     CheckStatus,
     ContainerRuntime,
     DeployTarget,
+    FailureKind,
     ProjectFacts,
     ServiceDependency,
     ServiceSpec,
@@ -571,3 +572,193 @@ def test_author_ci_parse_failure_is_artifact_format(tmp_path: Path) -> None:
     run = author_dockerfile(tmp_path, CI_TARGET, _Broken(), runtime=None)
     assert [r.check_id for r in run.iterations[0].report.results] == ["artifact_format"]
     assert run.iterations[0].ci is None
+
+
+# --- stop-reason priority: UNKNOWN and PROJECT stop the loop instead of
+# --- being handed to repair(), per the owner's ruling that repair is only
+# --- permitted when every remaining failed check is AUTHORING. ---
+
+
+class _SpyAuthor:
+    """Author double whose repair() calls are counted.
+
+    Unlike `ScriptedAuthor`, its output content never matters here: these
+    tests replace `verify` with a scripted sequence of reports (via
+    `author_loop`), so what `generate`/`repair` return is irrelevant beyond
+    being a parseable Dockerfile.
+    """
+
+    def __init__(self) -> None:
+        self.repair_calls = 0
+
+    def generate(self, facts: ProjectFacts, target: DeployTarget) -> str:
+        return GOOD
+
+    def repair(
+        self,
+        facts: ProjectFacts,
+        target: DeployTarget,
+        dockerfile: str,
+        report: VerificationReport,
+    ) -> str:
+        self.repair_calls += 1
+        return GOOD
+
+
+@pytest.fixture
+def spy_author() -> _SpyAuthor:
+    return _SpyAuthor()
+
+
+@pytest.fixture
+def author_loop(monkeypatch):
+    """Runs `author_dockerfile` against a scripted sequence of reports.
+
+    Stubs `deployer.author.verify` so each iteration returns the next
+    report from `reports` (the last one repeats if `verify` is called more
+    times than `reports` supplies — e.g. the built-in ENVIRONMENT retry).
+    This isolates failure-kind/stop-reason handling from the real L1/L2
+    checks, which can't be made to report arbitrary `FailureKind`s directly.
+    """
+
+    def _run(
+        project_path: Path,
+        target: DeployTarget,
+        *,
+        author,
+        reports: list[VerificationReport],
+        max_iterations: int = 3,
+    ):
+        queue = list(reports)
+
+        def fake_verify(
+            dockerfile,
+            project_path,
+            target,
+            runtime,
+            facts=None,
+            *,
+            build_timeout,
+            health_timeout,
+            compose=None,
+            ci=None,
+            smoke_suite=None,
+        ):
+            return queue.pop(0) if len(queue) > 1 else queue[0]
+
+        monkeypatch.setattr("deployer.author.verify", fake_verify)
+        return author_dockerfile(
+            project_path,
+            target,
+            author,
+            runtime=None,
+            max_iterations=max_iterations,
+        )
+
+    return _run
+
+
+def report_with(*kinds: FailureKind) -> VerificationReport:
+    """A report with one FAILED check per failure kind given."""
+    return VerificationReport(
+        results=[
+            CheckResult(
+                check_id=f"check_{kind.value}",
+                status=CheckStatus.FAILED,
+                failure_kind=kind,
+                message=f"{kind.value} failure",
+            )
+            for kind in kinds
+        ]
+    )
+
+
+def passing() -> VerificationReport:
+    return VerificationReport(
+        results=[CheckResult(check_id="parses", status=CheckStatus.PASSED)]
+    )
+
+
+def test_unknown_failure_stops_without_repair(
+    hello_service: Path, author_loop, spy_author: _SpyAuthor
+) -> None:
+    """The loop broke only on ENVIRONMENT, so UNKNOWN fell through to repair."""
+    run = author_loop(
+        hello_service,
+        DeployTarget(),
+        author=spy_author,
+        reports=[report_with(FailureKind.UNKNOWN)],
+    )
+    assert run.stopped_reason == "unknown_failure"
+    assert spy_author.repair_calls == 0
+
+
+def test_project_failure_stops_without_repair(
+    hello_service: Path, author_loop, spy_author: _SpyAuthor
+) -> None:
+    run = author_loop(
+        hello_service,
+        DeployTarget(),
+        author=spy_author,
+        reports=[report_with(FailureKind.PROJECT)],
+    )
+    assert run.stopped_reason == "project_failure"
+    assert spy_author.repair_calls == 0
+
+
+def test_authoring_beside_unknown_does_not_permit_repair(
+    hello_service: Path, author_loop, spy_author: _SpyAuthor
+) -> None:
+    """Editing the shared artifact can also affect the unestablished cause,
+    so "that failure was not addressed" cannot be promised."""
+    run = author_loop(
+        hello_service,
+        DeployTarget(),
+        author=spy_author,
+        reports=[report_with(FailureKind.AUTHORING, FailureKind.UNKNOWN)],
+    )
+    assert run.stopped_reason == "unknown_failure"
+    assert spy_author.repair_calls == 0
+
+
+def test_all_authoring_still_repairs(
+    hello_service: Path, author_loop, spy_author: _SpyAuthor
+) -> None:
+    author_loop(
+        hello_service,
+        DeployTarget(),
+        author=spy_author,
+        reports=[report_with(FailureKind.AUTHORING), passing()],
+    )
+    assert spy_author.repair_calls == 1
+
+
+def test_stop_priority_environment_before_unknown_before_project(
+    hello_service: Path, author_loop, spy_author: _SpyAuthor
+) -> None:
+    run = author_loop(
+        hello_service,
+        DeployTarget(),
+        author=spy_author,
+        reports=[
+            report_with(
+                FailureKind.ENVIRONMENT, FailureKind.UNKNOWN, FailureKind.PROJECT
+            )
+        ],
+    )
+    assert run.stopped_reason == "environment_failure"
+
+
+def test_all_failures_are_kept_in_the_report(
+    hello_service: Path, author_loop, spy_author: _SpyAuthor
+) -> None:
+    run = author_loop(
+        hello_service,
+        DeployTarget(),
+        author=spy_author,
+        reports=[report_with(FailureKind.AUTHORING, FailureKind.UNKNOWN)],
+    )
+    kinds = {
+        r.failure_kind for r in run.iterations[-1].report.results if r.failure_kind
+    }
+    assert kinds == {FailureKind.AUTHORING, FailureKind.UNKNOWN}

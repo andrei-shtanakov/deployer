@@ -463,6 +463,8 @@ StopReason = Literal[
     "budget_exhausted",
     "no_progress",
     "environment_failure",
+    "unknown_failure",
+    "project_failure",
     "static_only",
     "llm_error",
 ]
@@ -490,6 +492,23 @@ class AuthoringRun(BaseModel):
     author_info: AuthorInfo | None = None
     deployer_version: str | None = None
     deployer_git_sha: str | None = None
+
+    @staticmethod
+    def repairable(report: VerificationReport) -> bool:
+        """Whether the authoring loop may call `repair()` for this report.
+
+        Repair edits the shared artifact, which can also affect a failure
+        whose cause was never established — so "that failure was not
+        addressed" cannot be promised unless every remaining failed check
+        is `FailureKind.AUTHORING`. A single non-AUTHORING failure blocks
+        repair even alongside AUTHORING failures; there is no partial or
+        addressed-only repair.
+        """
+        return all(
+            r.failure_kind is FailureKind.AUTHORING
+            for r in report.results
+            if r.status is CheckStatus.FAILED
+        )
 
 
 class BenchCaseResult(BaseModel):
