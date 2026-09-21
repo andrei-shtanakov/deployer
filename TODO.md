@@ -109,10 +109,6 @@ them is the next thing to pick up.
   payload-based poetry/pip install-strategy rules
 - [ ] Compose follow-ups: logs guard on a failed `up`, per-dependency env check @owner:repo:deployer @id:compose-follow-ups @epic:eco.dark-factory
   (postgres case), shared pin-rule helper, per-section fences
-- [ ] Failure classification channel: env failures carrying no markers ("exit status 1") @owner:repo:deployer @blocked_by:todo://deployer/ci-failure-diagnosis @id:failure-classification-channel @epic:eco.dark-factory
-  and exit-125 non-transport CLI errors both classify AUTHORING. Both holes sit on the
-  input of CI-failure diagnosis and are closed inside that slice (owner,
-  2026-09-21), so this item now waits on it rather than being picked up on its own
 - [ ] Poetry: list-valued optional-dependency constraints (`src/deployer/facts.py:248`) @owner:repo:deployer @id:poetry-list-optional-deps @epic:eco.dark-factory
 - [ ] Bench run-dir litter on config error; document `docker system prune` for bench @owner:repo:deployer @id:bench-run-dir-litter @epic:eco.dark-factory
   hosts (failed builds leave containers plus dangling intermediates)
@@ -169,6 +165,22 @@ them is the next thing to pick up.
   choice. Neither repo references the other; recorded so a third copy is a decision
 
 ## Shipped
+
+- [x] Failure classification channel: an exit code alone no longer establishes a cause @owner:repo:deployer @id:failure-classification-channel @epic:eco.research-bench
+  Closed by the taxonomy work of `todo://deployer/ci-failure-diagnosis` (PR-1), which found the
+  hole at THREE sites, not the two the design named:
+  - `_classify()` — anything without an ENVIRONMENT marker fell through to AUTHORING;
+  - the exit 125/126 branch — anything without a transport marker fell through to AUTHORING;
+  - the tail of `_run_completes` — **any other nonzero exit, including exit 1** — returned
+    AUTHORING unconditionally, without consulting the output at all. This third site was found
+    by review, not by the design; without it the item would have read as closed while still open.
+  All three now yield `FailureKind.UNKNOWN` absent positive evidence, while a positively evidenced
+  cause keeps its justified class. The fallthrough existed because `CheckResult` forbids a FAILED
+  result without a class, so "failure established, cause unknown" was inexpressible until
+  `FailureKind.UNKNOWN` was added; widening that field's value set is a breaking wire-format
+  change, so reports moved to schema 2.0 (readers accept majors 0/1/2).
+  The rest of `todo://deployer/ci-failure-diagnosis` stays OPEN — reading a real failed run, the
+  classifier, the CLI and the live acceptance are all still ahead.
 
 Merged work, plus the decisions that closed an open item without being code — those are
 prefixed `Decision:` so the ledger does not imply shipped behaviour.
