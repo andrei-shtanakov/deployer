@@ -706,6 +706,20 @@ def test_project_failure_stops_without_repair(
     assert spy_author.repair_calls == 0
 
 
+def test_unknown_beside_project_stops_on_unknown(
+    hello_service: Path, author_loop, spy_author: _SpyAuthor
+) -> None:
+    """With ENVIRONMENT absent, UNKNOWN still outranks PROJECT."""
+    run = author_loop(
+        hello_service,
+        DeployTarget(),
+        author=spy_author,
+        reports=[report_with(FailureKind.UNKNOWN, FailureKind.PROJECT)],
+    )
+    assert run.stopped_reason == "unknown_failure"
+    assert spy_author.repair_calls == 0
+
+
 def test_authoring_beside_unknown_does_not_permit_repair(
     hello_service: Path, author_loop, spy_author: _SpyAuthor
 ) -> None:

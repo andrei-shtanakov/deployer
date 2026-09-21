@@ -1408,8 +1408,10 @@ def _run_completes(
     With an `expect_stdout` oracle, stdout must also contain the marker.
     ENVIRONMENT is deliberately narrow: a foreground run interleaves app
     and CLI output, so only an explicit CLI failure (OSError, or exit
-    125/126 plus transport markers) counts — an app that prints
-    "connection refused" and exits non-zero stays AUTHORING.
+    125/126 plus transport markers) counts — an app's own transport-shaped
+    output (e.g. a traceback saying "connection refused") must not flip a
+    failure to ENVIRONMENT. Absent AUTHORING's own positive marker too,
+    the honest class is UNKNOWN, not an invented AUTHORING.
     """
     assert target.run is not None
     container = f"deployer-check-{uuid.uuid4().hex[:8]}"
