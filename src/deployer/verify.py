@@ -1013,11 +1013,21 @@ AUTHORING_MARKERS = (
 
 
 def _classify_exit(returncode: int, output: str) -> FailureKind:
-    """Classify a 125/126 "runtime failed to start the job" exit.
+    """Classify any nonzero `run_completes` exit.
 
-    A 125/126 alone does not establish a cause. ENVIRONMENT requires a
-    transport marker; AUTHORING requires its own positive marker; absent
-    either, the honest answer is UNKNOWN — not an invented AUTHORING.
+    An exit code alone does not establish a cause. AUTHORING requires its
+    own positive marker (AUTHORING_MARKERS); absent that, the honest answer
+    is UNKNOWN — not an invented AUTHORING.
+
+    The transport-marker check for ENVIRONMENT is deliberately gated to
+    125/126: those are the container-runtime CLI's own reserved codes for
+    "the runtime failed to start the job", not codes the containerized
+    command chose. Outside that range the exit code came from the process
+    under test, so a transport-shaped string in its output is more likely
+    the app's own text (e.g. a traceback saying "connection refused") than
+    real transport loss — treating it as ENVIRONMENT there would repeat the
+    class of bug `_run_completes`'s narrow marker set already guards
+    against for the app-output case.
     """
     lowered = output.lower()
     if returncode in (125, 126) and _is_transport_failure(output):
@@ -1461,19 +1471,14 @@ def _run_completes(
         return CheckResult(check_id="run_completes", status=CheckStatus.PASSED)
 
     output = _redact_oracle(proc.stdout + "\n" + proc.stderr, marker)
-    if proc.returncode in (125, 126):
-        kind = _classify_exit(proc.returncode, output)
-        if kind is FailureKind.ENVIRONMENT:
-            return _failed(
-                kind,
-                f"container runtime failed to start the job: {_tail(output, 3)}",
-            )
+    kind = _classify_exit(proc.returncode, output)
+    if kind is FailureKind.ENVIRONMENT:
         return _failed(
             kind,
-            f"container exited {proc.returncode}\noutput tail:\n{_tail(output)}",
+            f"container runtime failed to start the job: {_tail(output, 3)}",
         )
     return _failed(
-        FailureKind.AUTHORING,
+        kind,
         f"container exited {proc.returncode}\noutput tail:\n{_tail(output)}",
     )
 

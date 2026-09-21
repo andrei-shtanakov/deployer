@@ -86,28 +86,37 @@ def test_inert_cmd_exit_zero_missing_marker_is_authoring(
     assert MARKER not in result.message
 
 
-def test_nonzero_exit_is_authoring_with_output_tail(
+def test_nonzero_exit_without_markers_is_unknown_with_output_tail(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """A bare traceback cites no AUTHORING_MARKERS, so exit 1 alone does not
+    establish a cause — the honest class is UNKNOWN, with the raw output
+    still surfaced in the message."""
     _patch_container_run(
         monkeypatch, _proc(1, stderr="Traceback ...\nValueError: boom")
     )
     result = _run_completes(_target(), RUNTIME, "tag", 30)
     assert result.status is CheckStatus.FAILED
-    assert result.failure_kind is FailureKind.AUTHORING
+    assert result.failure_kind is FailureKind.UNKNOWN
     assert "ValueError: boom" in result.message
 
 
-def test_app_connection_refused_stays_authoring(
+def test_app_connection_refused_is_unknown_not_environment(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Counter-case: app output must not trip broad ENVIRONMENT markers."""
+    """Counter-case: app output must not trip broad ENVIRONMENT markers.
+
+    "connection refused" here is the app's own traceback text (its port
+    refusing a connection), not container-runtime transport loss — and
+    exit 1 is outside the 125/126 range `_classify_exit` trusts for a
+    transport marker. It carries no AUTHORING_MARKERS either, so UNKNOWN
+    is the honest answer, not an invented AUTHORING or ENVIRONMENT."""
     _patch_container_run(
         monkeypatch,
         _proc(1, stderr="ConnectionRefusedError: connection refused"),
     )
     result = _run_completes(_target(), RUNTIME, "tag", 30)
-    assert result.failure_kind is FailureKind.AUTHORING
+    assert result.failure_kind is FailureKind.UNKNOWN
 
 
 def test_cli_transport_failure_is_environment(
@@ -162,6 +171,42 @@ def test_125_with_other_positive_evidence_keeps_its_class() -> None:
         returncode=125, output='exec: "/app/start": stat /app/start: no such file'
     )
     assert result.failure_kind is FailureKind.AUTHORING
+
+
+def test_exit_1_without_markers_is_unknown() -> None:
+    """Headline case: the second AUTHORING fallthrough, outside 125/126.
+    An ordinary exit 1 with no citable evidence is UNKNOWN, not AUTHORING."""
+    result = _run_completes_result(returncode=1, output="something went wrong")
+    assert result.failure_kind is FailureKind.UNKNOWN
+
+
+def test_exit_1_with_authoring_marker_is_authoring() -> None:
+    """A positive AUTHORING_MARKERS hit still classifies outside 125/126."""
+    result = _run_completes_result(
+        returncode=1, output='exec: "/app/start": stat /app/start: no such file'
+    )
+    assert result.failure_kind is FailureKind.AUTHORING
+
+
+def test_exit_137_without_markers_is_unknown() -> None:
+    """The rule is not special-cased to exit 1: any nonzero exit without
+    positive evidence is UNKNOWN."""
+    result = _run_completes_result(returncode=137, output="something went wrong")
+    assert result.failure_kind is FailureKind.UNKNOWN
+
+
+def test_exit_1_with_transport_marker_is_not_environment() -> None:
+    """Decision: the transport-marker check stays gated to 125/126 — those
+    are the container-runtime CLI's own reserved codes for "failed to start
+    the job". Outside that range the exit code came from the process under
+    test, so a transport-shaped string is more likely the app's own output
+    (as in test_app_connection_refused_is_unknown_not_environment) than
+    real transport loss. A transport marker on exit 1 is therefore UNKNOWN,
+    not ENVIRONMENT — it carries no AUTHORING_MARKERS hit either."""
+    result = _run_completes_result(
+        returncode=1, output="cannot connect to the docker daemon"
+    )
+    assert result.failure_kind is FailureKind.UNKNOWN
 
 
 def test_timeout_is_authoring_and_names_command(
