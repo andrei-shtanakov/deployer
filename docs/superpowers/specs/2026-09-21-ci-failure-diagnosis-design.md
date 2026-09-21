@@ -67,7 +67,9 @@ unnoticed.
 
 It **gets facts**; it does not interpret them.
 
-- **Identity.** `repo`, run id, **attempt**, head SHA, run URL, job and step ids.
+- **Identity.** `repo`, run id, **attempt**, head SHA, run URL, job ids, and a
+  step identified by the composite key `job_id` + `step.number` (the API gives
+  steps no id of their own).
   A re-run must not mix evidence from different attempts. **When `--attempt` is
   omitted the chosen attempt is fixed once, before any jobs or logs are read**,
   and is recorded in the snapshot; nothing downstream re-resolves it.
@@ -139,10 +141,19 @@ collapsed into one.
 - **Established causes of individual failures are never lost**, whatever the
   summary says. A summary of `UNCLASSIFIED` still carries the `PROJECT` cause
   that was established for job A.
+- **The empty set is not `CLASSIFIED`.** A failed run with no diagnosable failed
+  job/step must not satisfy "every element is classified" vacuously. Lost data →
+  `EVIDENCE_UNAVAILABLE`; a complete snapshot with no localised cause →
+  `UNCLASSIFIED` with a run-level observation.
+- **A failed job without a failed step keeps a job-level failure**; a job whose
+  failed steps are itemised must **not** emit a duplicate of the same error at
+  job level.
 
 Fixtures: two independent failures (e.g. `PROJECT` in tests and `ENVIRONMENT`
 fetching a dependency), and "known cause + unclassified failure" — both asserting
-that **job order does not change the result**.
+that **job order does not change the result**. Plus the degenerate shapes above:
+failed run with an empty diagnosable set, failed job without failed steps, and a
+job with itemised failed steps (no duplicate at job level).
 
 ## 5. `FailureKind`, its consumers, and the report contract
 
@@ -150,7 +161,8 @@ Today (`src/deployer/models.py`) the enum has two members, and
 `CheckResult.enforce_failure_taxonomy` requires a `FAILED` result to carry one —
 so "failed, cause not established" is **currently inexpressible**, which is why
 the code falls through to `AUTHORING`. Overloading `None` is not available: the
-invariant gives `None` the meaning "this check did not fail".
+invariant is one-way: a `FAILED` result without a class is forbidden. It says
+nothing about non-failed results, and must not be read as "`None` means passed".
 
 Two members are added:
 
@@ -267,7 +279,7 @@ is named:
 1. **preparatory PR** — `trigger_mode` support plus a **safe** dispatch-only
    workflow at its own path on `master`. It does **not** close the slice;
 2. authoring and placement of the failing content on the **experiment commit**;
-3. four dispatches (§7.2);
+3. four dispatches (§8.2);
 4. evidence captured;
 5. final PR.
 
@@ -333,8 +345,10 @@ live acceptance call goes through it, not through a one-off script.
 - rule conflict on a crafted snapshot in the pure classifier;
 - adapter refusal on an unfinished run and on a successful run;
 - **rule soundness**: similar messages with a different cause do not yield the same class;
-- both `verify.py` holes: unknown failure → `UNKNOWN`; 125/126 without a transport
-  marker → `UNKNOWN`;
+- both `verify.py` holes, each with a negative **and** a positive twin:
+  an unknown failure → `UNKNOWN`; 125/126 without a transport marker **and
+  without any other positive evidence** → `UNKNOWN`, while a 125/126 whose cause
+  *is* positively evidenced keeps its justified classification;
 - authoring loop (§5.3): spy author asserting repair-call count and stop reason,
   including a mixed `AUTHORING` + `UNKNOWN` report;
 - schema 2.0 (§5.4): old reader refuses v2; new reader reads v0/v1.

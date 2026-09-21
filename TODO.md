@@ -62,10 +62,13 @@ paragraph.
   is out of scope.
   Closes here: both classification holes of
   `todo://deployer/failure-classification-channel`.
-  Done when: a controlled failure is diagnosed correctly, with run URL, commit SHA,
-  failing job/step and logs kept as acceptance evidence; the verdict cites evidence
-  from the run; "logs unavailable" is a distinct outcome from "CI failure diagnosed";
-  and insufficient evidence yields declared uncertainty, never an invented cause.
+  Done when: the full acceptance of the design's §8 passes — offline regression on
+  fixtures, a MINIMUM OF FOUR live dispatches (three failures plus the PROJECT
+  control that must pass), and the paid benchmark whose golden diff is explained
+  before promote. Evidence kept: run URL, commit SHA, failing job/step, logs. The
+  verdict cites evidence from the run; "logs unavailable" is a distinct outcome from
+  "CI failure diagnosed"; insufficient evidence yields declared uncertainty, never an
+  invented cause. The preparatory bootstrap PR does NOT close this item.
 - [ ] Fix authoring from a diagnosis: artifact edit, L1/L2, confirm the diagnosed cause is gone @owner:repo:deployer @blocked_by:todo://deployer/ci-failure-diagnosis @id:ci-fix-authoring @epic:eco.dark-factory
   — the other half of the founding doc's "generate/fix ... diagnose failed CI", split
   out with the owner 2026-09-21 so the diagnosis slice can be accepted on its own.
