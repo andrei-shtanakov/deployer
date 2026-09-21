@@ -977,7 +977,10 @@ def _classify(output: str) -> FailureKind:
     lowered = output.lower()
     if any(marker in lowered for marker in ENVIRONMENT_MARKERS):
         return FailureKind.ENVIRONMENT
-    return FailureKind.AUTHORING
+    # No marker matched. An exit code alone does not prove a root cause, so
+    # the honest answer is UNKNOWN — the old fallthrough to AUTHORING
+    # asserted a cause that nothing in the output supports.
+    return FailureKind.UNKNOWN
 
 
 _TRANSPORT_MARKERS = (
@@ -998,6 +1001,40 @@ def _is_transport_failure(output: str) -> bool:
     """
     lowered = output.lower()
     return any(marker in lowered for marker in _TRANSPORT_MARKERS)
+
+
+#: Positive evidence that the image's own entrypoint/command is wrong — an
+#: authoring cause that can be cited, unlike a bare exit code.
+AUTHORING_MARKERS = (
+    "no such file",
+    "executable file not found",
+    "exec format error",
+)
+
+
+def _classify_exit(returncode: int, output: str) -> FailureKind:
+    """Classify any nonzero `run_completes` exit.
+
+    An exit code alone does not establish a cause. AUTHORING requires its
+    own positive marker (AUTHORING_MARKERS); absent that, the honest answer
+    is UNKNOWN — not an invented AUTHORING.
+
+    The transport-marker check for ENVIRONMENT is deliberately gated to
+    125/126: those are the container-runtime CLI's own reserved codes for
+    "the runtime failed to start the job", not codes the containerized
+    command chose. Outside that range the exit code came from the process
+    under test, so a transport-shaped string in its output is more likely
+    the app's own text (e.g. a traceback saying "connection refused") than
+    real transport loss — treating it as ENVIRONMENT there would repeat the
+    class of bug `_run_completes`'s narrow marker set already guards
+    against for the app-output case.
+    """
+    lowered = output.lower()
+    if returncode in (125, 126) and _is_transport_failure(output):
+        return FailureKind.ENVIRONMENT
+    if any(marker in lowered for marker in AUTHORING_MARKERS):
+        return FailureKind.AUTHORING
+    return FailureKind.UNKNOWN
 
 
 def _atp_env_failure(message: str) -> CheckResult:
@@ -1371,8 +1408,10 @@ def _run_completes(
     With an `expect_stdout` oracle, stdout must also contain the marker.
     ENVIRONMENT is deliberately narrow: a foreground run interleaves app
     and CLI output, so only an explicit CLI failure (OSError, or exit
-    125/126 plus transport markers) counts — an app that prints
-    "connection refused" and exits non-zero stays AUTHORING.
+    125/126 plus transport markers) counts — an app's own transport-shaped
+    output (e.g. a traceback saying "connection refused") must not flip a
+    failure to ENVIRONMENT. Absent AUTHORING's own positive marker too,
+    the honest class is UNKNOWN, not an invented AUTHORING.
     """
     assert target.run is not None
     container = f"deployer-check-{uuid.uuid4().hex[:8]}"
@@ -1434,13 +1473,14 @@ def _run_completes(
         return CheckResult(check_id="run_completes", status=CheckStatus.PASSED)
 
     output = _redact_oracle(proc.stdout + "\n" + proc.stderr, marker)
-    if proc.returncode in (125, 126) and _is_transport_failure(output):
+    kind = _classify_exit(proc.returncode, output)
+    if kind is FailureKind.ENVIRONMENT:
         return _failed(
-            FailureKind.ENVIRONMENT,
+            kind,
             f"container runtime failed to start the job: {_tail(output, 3)}",
         )
     return _failed(
-        FailureKind.AUTHORING,
+        kind,
         f"container exited {proc.returncode}\noutput tail:\n{_tail(output)}",
     )
 

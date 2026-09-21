@@ -442,3 +442,23 @@ def test_satisfies_declared_smoke_reads_golden_case_the_same_way() -> None:
     )
     assert satisfies_declared_smoke(unsatisfied) is False
     assert satisfies_declared_smoke(satisfied) is True
+
+
+def test_failure_kind_has_unknown_and_project() -> None:
+    assert FailureKind.UNKNOWN.value == "unknown"
+    assert FailureKind.PROJECT.value == "project"
+
+
+def test_failed_check_may_carry_unknown() -> None:
+    """ "Failed, cause not established" must be expressible: the fallthrough to
+    AUTHORING existed only because it was not."""
+    result = CheckResult(
+        check_id="x", status=CheckStatus.FAILED, failure_kind=FailureKind.UNKNOWN
+    )
+    assert result.failure_kind is FailureKind.UNKNOWN
+
+
+def test_failed_check_still_requires_a_kind() -> None:
+    """The taxonomy invariant is ONE-WAY: FAILED without a class stays forbidden."""
+    with pytest.raises(ValidationError):
+        CheckResult(check_id="x", status=CheckStatus.FAILED)

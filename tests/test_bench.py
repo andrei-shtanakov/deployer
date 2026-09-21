@@ -4,17 +4,19 @@ import itertools
 import json
 import subprocess
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import pytest
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 import deployer.bench as bench
 from deployer.bench import (
+    _KNOWN_SCHEMA_MAJORS,
     BenchCase,
     FixtureAuthor,
     PromoteRefusedError,
     _create_run_dir,
+    _schema_major_supported,
     clone_external,
     compare_runs,
     load_baseline,
@@ -1456,12 +1458,14 @@ def test_committed_golden_baseline_still_loads() -> None:
     baseline the moment it was added.
 
     Asserts loadability and a readable version, deliberately not a specific
-    one: the committed baseline reads as v0 today, but the next promotion
-    rewrites it as current, and that must not be a test failure.
+    one: the committed baseline reads as whatever major was current when it
+    was last promoted, and the next promotion rewrites it as current — an
+    intermediate major (as of 2.0, the committed golden is still v1) must
+    not be a test failure any more than v0 or the current version would be.
     """
     corpus_root = Path(__file__).resolve().parent.parent / "corpus"
     baseline = load_baseline("golden", corpus_root)
-    assert baseline.schema_version in {LEGACY_SCHEMA_VERSION, SCHEMA_VERSION}
+    assert _schema_major_supported(baseline.schema_version)
     assert baseline.cases
 
 
@@ -1571,7 +1575,7 @@ def test_baseline_of_an_unknown_major_version_is_refused(
     promote_run(run_dir, tmp_path)
     golden_file = tmp_path / "golden" / "golden.json"
     raw = json.loads(golden_file.read_text())
-    raw["schema_version"] = "2.0"
+    raw["schema_version"] = "3.0"
     golden_file.write_text(json.dumps(raw, indent=2))
 
     with pytest.raises(ValueError, match="schema_version"):
@@ -1590,6 +1594,44 @@ def test_baseline_of_a_later_minor_version_still_reads(
     golden_file.write_text(json.dumps(raw, indent=2))
 
     assert load_baseline("golden", tmp_path).schema_version == "1.7"
+
+
+def test_new_reader_accepts_majors_0_1_2() -> None:
+    for version in ("0", "1.0", "2.0"):
+        assert _schema_major_supported(version)
+
+
+def test_major_1_is_not_dropped_by_the_bump() -> None:
+    """Regression: the known-majors set used to be derived from
+    SCHEMA_VERSION, so bumping to 2.0 would have silently dropped 1.
+    """
+    assert "1" in _KNOWN_SCHEMA_MAJORS
+
+
+class CheckResultV1(BaseModel):
+    """Stand-in for a reader pinned to the pre-2.0 `CheckResult` contract.
+
+    Carries only the two-member `failure_kind` enum v1 shipped with, so
+    validating a v2 document (`unknown`/`project` values) against it
+    reproduces what an old reader actually does: fail loudly rather than
+    degrade.
+    """
+
+    check_id: str
+    status: CheckStatus
+    failure_kind: Literal["authoring", "environment"] | None = None
+    message: str = ""
+
+
+def test_old_reader_refuses_v2_explicitly() -> None:
+    """An old reader must fail loudly, not degrade."""
+    doc = {
+        "schema_version": "2.0",
+        "results": [{"check_id": "x", "status": "failed", "failure_kind": "unknown"}],
+    }
+
+    with pytest.raises(ValidationError):
+        CheckResultV1.model_validate(doc["results"][0])
 
 
 def test_load_corpus_resolves_the_smoke_suite_beside_target_json(

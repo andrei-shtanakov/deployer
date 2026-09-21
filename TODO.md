@@ -45,9 +45,37 @@ contract was wrong only after it has users. The order below is deliberate — ea
 tagged with what blocks it, so the sequencing survives without anyone re-reading this
 paragraph.
 
-- [ ] CI-failure diagnosis — read a failed run, author the fix @id:ci-failure-diagnosis @epic:eco.dark-factory
-  — the founding doc's other half, and the next applied slice now that the first seam
-  (`todo://deployer/first-consumer-seam`, shipped — see `## Shipped`) is proven
+- [ ] CI-failure diagnosis: read a real failed GitHub run of our own authored ci.yml, classify the cause, emit a verdict citing evidence @owner:repo:deployer @id:ci-failure-diagnosis @epic:eco.dark-factory
+  — the founding doc's "diagnose failed CI" half, and the next applied slice now that
+  the first seam (`todo://deployer/first-consumer-seam`, shipped — see `## Shipped`) is
+  proven. Scope decided with the owner 2026-09-21: this slice ends at the DIAGNOSIS;
+  authoring the fix is `todo://deployer/ci-fix-authoring`, so the original one-line
+  promise "read a failed run, author the fix" is NOT closed by this item alone.
+  Source of the failed run: a real GitHub Actions run of the `ci.yml` this repo
+  authored. That is what proves work against a real forge; reading a run from a
+  neighbour's repository stays unproven and is a later slice. Agreeing with a neighbour
+  is deliberately not a blocker here.
+  Regression: an anonymised fixture taken from that real run, replayed offline. The
+  existing synthetic case stays as an extra test. A live GH run is for integration
+  acceptance, not for every test run.
+  CI authoring is widened only as far as the scenario needs; growing the CI generator
+  is out of scope.
+  Closes here: both classification holes of
+  `todo://deployer/failure-classification-channel`.
+  Done when: the full acceptance of the design's §8 passes — offline regression on
+  fixtures, a MINIMUM OF FOUR live dispatches (three failures plus the PROJECT
+  control that must pass), and the paid benchmark whose golden diff is explained
+  before promote. Evidence kept: run URL, commit SHA, failing job/step, logs. The
+  verdict cites evidence from the run; "logs unavailable" is a distinct outcome from
+  "CI failure diagnosed"; insufficient evidence yields declared uncertainty, never an
+  invented cause. The preparatory bootstrap PR does NOT close this item.
+- [ ] Fix authoring from a diagnosis: artifact edit, L1/L2, confirm the diagnosed cause is gone @owner:repo:deployer @blocked_by:todo://deployer/ci-failure-diagnosis @id:ci-fix-authoring @epic:eco.dark-factory
+  — the other half of the founding doc's "generate/fix ... diagnose failed CI", split
+  out with the owner 2026-09-21 so the diagnosis slice can be accepted on its own.
+  Depends on the diagnosis item: without a trustworthy cause a fix is authored against
+  a guess. How a fix is confirmed is decided in its own design — L1/L2 alone are NOT
+  enough to claim "the CI is fixed", because they verify the artifact this repo
+  produced, not the run that failed.
 - [ ] Further artifact types: Helm, Terraform @id:further-artifact-types @epic:eco.dark-factory
   — deliberately last; wait until the extension contract is confirmed by a live consumer
 
@@ -81,8 +109,6 @@ them is the next thing to pick up.
   payload-based poetry/pip install-strategy rules
 - [ ] Compose follow-ups: logs guard on a failed `up`, per-dependency env check @owner:repo:deployer @id:compose-follow-ups @epic:eco.dark-factory
   (postgres case), shared pin-rule helper, per-section fences
-- [ ] Failure classification channel: env failures carrying no markers ("exit status 1") @owner:repo:deployer @id:failure-classification-channel @epic:eco.dark-factory
-  and exit-125 non-transport CLI errors both classify AUTHORING
 - [ ] Poetry: list-valued optional-dependency constraints (`src/deployer/facts.py:248`) @owner:repo:deployer @id:poetry-list-optional-deps @epic:eco.dark-factory
 - [ ] Bench run-dir litter on config error; document `docker system prune` for bench @owner:repo:deployer @id:bench-run-dir-litter @epic:eco.dark-factory
   hosts (failed builds leave containers plus dangling intermediates)
@@ -139,6 +165,22 @@ them is the next thing to pick up.
   choice. Neither repo references the other; recorded so a third copy is a decision
 
 ## Shipped
+
+- [x] Failure classification channel: an exit code alone no longer establishes a cause @owner:repo:deployer @id:failure-classification-channel @epic:eco.research-bench
+  Closed by the taxonomy work of `todo://deployer/ci-failure-diagnosis` (PR-1), which found the
+  hole at THREE sites, not the two the design named:
+  - `_classify()` — anything without an ENVIRONMENT marker fell through to AUTHORING;
+  - the exit 125/126 branch — anything without a transport marker fell through to AUTHORING;
+  - the tail of `_run_completes` — **any other nonzero exit, including exit 1** — returned
+    AUTHORING unconditionally, without consulting the output at all. This third site was found
+    by review, not by the design; without it the item would have read as closed while still open.
+  All three now yield `FailureKind.UNKNOWN` absent positive evidence, while a positively evidenced
+  cause keeps its justified class. The fallthrough existed because `CheckResult` forbids a FAILED
+  result without a class, so "failure established, cause unknown" was inexpressible until
+  `FailureKind.UNKNOWN` was added; widening that field's value set is a breaking wire-format
+  change, so reports moved to schema 2.0 (readers accept majors 0/1/2).
+  The rest of `todo://deployer/ci-failure-diagnosis` stays OPEN — reading a real failed run, the
+  classifier, the CLI and the live acceptance are all still ahead.
 
 Merged work, plus the decisions that closed an open item without being code — those are
 prefixed `Decision:` so the ledger does not imply shipped behaviour.

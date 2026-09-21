@@ -14,13 +14,18 @@ from pydantic import (
     model_validator,
 )
 
-SCHEMA_VERSION = "1.0"
+SCHEMA_VERSION = "2.0"
 """Version stamped on every report this deployer writes.
 
 Compatibility policy: a document with no `schema_version` key reads as
 `LEGACY_SCHEMA_VERSION` — the shape that predates versioning — and within a
 major version additive fields are compatible, so a new report field does not
 force a version bump. Only a breaking change to an existing field does.
+
+2.0 bumped the major because it widened the value set of the existing
+`failure_kind` field (added `unknown`/`project` to `FailureKind`): a reader
+pinned to the v1 two-member enum fails with a pydantic validation error on
+that value, so the change is breaking rather than additive.
 """
 
 LEGACY_SCHEMA_VERSION = "0"
@@ -356,6 +361,13 @@ class FailureKind(StrEnum):
 
     AUTHORING = "authoring"
     ENVIRONMENT = "environment"
+    #: Positively evidenced defect in the code/tests of the project under
+    #: verification. Never inferred from the absence of other markers.
+    PROJECT = "project"
+    #: The failure is established; the cause is not. Before this member existed
+    #: the only way to express a failure was to name a cause, which is why
+    #: unknown failures fell through to AUTHORING.
+    UNKNOWN = "unknown"
 
 
 class CheckResult(BaseModel):
@@ -456,6 +468,8 @@ StopReason = Literal[
     "budget_exhausted",
     "no_progress",
     "environment_failure",
+    "unknown_failure",
+    "project_failure",
     "static_only",
     "llm_error",
 ]
@@ -483,6 +497,23 @@ class AuthoringRun(BaseModel):
     author_info: AuthorInfo | None = None
     deployer_version: str | None = None
     deployer_git_sha: str | None = None
+
+    @staticmethod
+    def repairable(report: VerificationReport) -> bool:
+        """Whether the authoring loop may call `repair()` for this report.
+
+        Repair edits the shared artifact, which can also affect a failure
+        whose cause was never established — so "that failure was not
+        addressed" cannot be promised unless every remaining failed check
+        is `FailureKind.AUTHORING`. A single non-AUTHORING failure blocks
+        repair even alongside AUTHORING failures; there is no partial or
+        addressed-only repair.
+        """
+        return all(
+            r.failure_kind is FailureKind.AUTHORING
+            for r in report.results
+            if r.status is CheckStatus.FAILED
+        )
 
 
 class BenchCaseResult(BaseModel):

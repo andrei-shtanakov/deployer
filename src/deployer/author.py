@@ -32,6 +32,26 @@ def _deployer_version() -> str | None:
         return None
 
 
+def _stop_reason(report: VerificationReport) -> StopReason | None:
+    """Whether the loop must stop on `report` instead of repairing it.
+
+    Priority: ENVIRONMENT -> UNKNOWN -> PROJECT. All failures stay in the
+    report regardless of which reason was chosen. `None` means every failed
+    check is AUTHORING (or there is no failure) and repair may proceed —
+    see `AuthoringRun.repairable`, which this mirrors.
+    """
+    if AuthoringRun.repairable(report):
+        return None
+    kinds = {r.failure_kind for r in report.results if r.status is CheckStatus.FAILED}
+    if FailureKind.ENVIRONMENT in kinds:
+        return "environment_failure"
+    if FailureKind.UNKNOWN in kinds:
+        return "unknown_failure"
+    if FailureKind.PROJECT in kinds:
+        return "project_failure"
+    return None
+
+
 def _deployer_git_sha() -> str | None:
     try:
         proc = subprocess.run(
@@ -172,8 +192,9 @@ def author_dockerfile(
             )
             hadolint_available = report.hadolint_available
 
-            if report.environment_failures:
-                stopped_reason = "environment_failure"
+            reason = _stop_reason(report)
+            if reason is not None:
+                stopped_reason = reason
                 break
             if report.passed:
                 stopped_reason = "success" if runtime is not None else "static_only"

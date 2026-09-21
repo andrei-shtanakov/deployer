@@ -70,7 +70,7 @@ check actually ran `atp`, as opposed to reporting `SKIPPED`) and `built_image`
 
 Every report deployer writes — `verify-report.json`, `authoring-run.json`,
 `bench-report.json`, `golden.json` — carries `schema_version`, currently
-`"1.0"`. A consumer should pin against it rather than against the shape.
+`"2.0"`. A consumer should pin against it rather than against the shape.
 
 The compatibility rules:
 
@@ -79,11 +79,17 @@ The compatibility rules:
   parsing these documents should do the same.
 - Within a major version, **added fields are compatible**: a new report field
   does not bump the version. Only a breaking change to an existing field does.
+- 2.0 widened the value set of an existing field — `CheckResult.failure_kind`
+  gained `unknown` and `project` — which is why it is a major bump rather than
+  an additive one: `CheckResult.model_validate` on a reader still pinned to
+  the v1 two-member enum fails with a pydantic validation error on those
+  values. A reader pinned to v1 refuses a v2 document **by design**; it is not
+  a bug to fix on the reader's side.
 - Because v1 is purely additive over v0, `bench compare` still diffs a v0
   baseline against a v1 run, and does not report the version gap as a
   finding.
 - deployer holds itself to the same rule when reading a report back: a
-  document whose **major** is neither `0` nor `1` is refused (`error:` and
+  document whose **major** is none of `0`, `1`, `2` is refused (`error:` and
   exit 2) rather than compared as if understood. A later *minor* stays
   readable, since additive fields are compatible within a major.
 
