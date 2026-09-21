@@ -120,12 +120,16 @@ them is the next thing to pick up.
 - [ ] Neighbour docs still describe deployer as "MVP / Dockerfile authoring" @owner:github:andrei-shtanakov @id:neighbour-docs-correction @epic:eco.ops
   — `../prograph-vault/authored/registry/registry.md` and the 2026-07-22 ideas note.
   Both are read-only from here: write the correction as a handoff note, do not edit
-- [ ] dispatcher's slice-0 design says deployer's CI runs no tests — stale since 2026-09-01 @blocked_by:dispatcher#256 @id:dispatcher-ci-doc-stale @epic:eco.ops
+- [x] dispatcher's slice-0 design says deployer's CI runs no tests — stale since 2026-09-01 @blocked_by:dispatcher#256 @id:dispatcher-ci-doc-stale @epic:eco.ops
   — `dispatcher/docs/superpowers/specs/2026-08-22-dark-factory-control-plane-slice0-design.md:557-565`
   builds its acceptance argument on "its only workflow is the governance caller"; deployer
   gained `.github/workflows/ci.yml` (`uv run pytest -q` on every PR, commit `c836cbc`).
-  Our half is done — inbox issue dispatcher#256 filed 2026-09-06, slug
-  `deployer-ci-signal-doc-stale`. The fix is theirs; this checkbox is the wait
+  Our half was done — inbox issue dispatcher#256 filed 2026-09-06, slug
+  `deployer-ci-signal-doc-stale`. Closed 2026-09-21 by dispatcher PR #267: the
+  premise is marked as describing 2026-08-22 state, the staleness date is named,
+  and the note separates what changed from what did not. §9.2's conclusion stands
+  on its second leg (evidence must be part of what the run records); what no longer
+  holds is justifying the acceptance criterion with "deployer emits no such signal"
 - [ ] Container-runtime selection is built twice in the fleet @trigger:"a third repo needs a container-runtime wrapper" @id:container-runtime-duplication @epic:eco.ops
   — the overlap is narrower than the name suggests: this repo's `ContainerRuntime`
   (`src/deployer/models.py:195`, resolved and invoked from `runtime.py`) is a config record —
