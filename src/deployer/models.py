@@ -356,6 +356,13 @@ class FailureKind(StrEnum):
 
     AUTHORING = "authoring"
     ENVIRONMENT = "environment"
+    #: Positively evidenced defect in the code/tests of the project under
+    #: verification. Never inferred from the absence of other markers.
+    PROJECT = "project"
+    #: The failure is established; the cause is not. Before this member existed
+    #: the only way to express a failure was to name a cause, which is why
+    #: unknown failures fell through to AUTHORING.
+    UNKNOWN = "unknown"
 
 
 class CheckResult(BaseModel):
