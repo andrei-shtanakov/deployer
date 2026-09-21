@@ -25,7 +25,6 @@ from deployer.author import (
 from deployer.facts import analyze_project
 from deployer.models import (
     LEGACY_SCHEMA_VERSION,
-    SCHEMA_VERSION,
     AuthorInfo,
     AuthoringRun,
     BenchCaseResult,
@@ -524,14 +523,21 @@ class PromoteRefusedError(ValueError):
     """Raised when `promote_run` refuses to promote a mismatched run."""
 
 
-_KNOWN_SCHEMA_MAJORS = frozenset(
-    {LEGACY_SCHEMA_VERSION, SCHEMA_VERSION.partition(".")[0]}
-)
-"""Report majors this deployer can read: the pre-versioning shape and its own.
+_KNOWN_SCHEMA_MAJORS = frozenset({"0", "1", "2"})
+"""Report majors this deployer can read.
 
-Only the major is checked. Additive fields are compatible within a major by
-policy, so a later minor stays readable; an unknown major does not.
+Explicit, not derived from `SCHEMA_VERSION`: deriving it (e.g. from
+`{LEGACY_SCHEMA_VERSION, SCHEMA_VERSION.partition(".")[0]}`) would silently
+drop the previous major every time `SCHEMA_VERSION` bumps — this set is the
+history of every major this deployer has ever written, not just the current
+one. Only the major is checked; additive fields are compatible within a
+major by policy, so a later minor stays readable.
 """
+
+
+def _schema_major_supported(schema_version: str) -> bool:
+    """Whether `schema_version`'s major is one this deployer can read."""
+    return schema_version.partition(".")[0] in _KNOWN_SCHEMA_MAJORS
 
 
 def _versioned(text: str) -> dict[str, Any]:
@@ -550,8 +556,7 @@ def _versioned(text: str) -> dict[str, Any]:
             f"{type(raw).__name__}: the file is not a deployer report"
         )
     raw.setdefault("schema_version", LEGACY_SCHEMA_VERSION)
-    major = str(raw["schema_version"]).partition(".")[0]
-    if major not in _KNOWN_SCHEMA_MAJORS:
+    if not _schema_major_supported(str(raw["schema_version"])):
         raise ValueError(
             f"unsupported schema_version {raw['schema_version']!r}: this "
             f"deployer reads majors {sorted(_KNOWN_SCHEMA_MAJORS)}. Reading a "

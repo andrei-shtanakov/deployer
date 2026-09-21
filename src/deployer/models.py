@@ -14,13 +14,18 @@ from pydantic import (
     model_validator,
 )
 
-SCHEMA_VERSION = "1.0"
+SCHEMA_VERSION = "2.0"
 """Version stamped on every report this deployer writes.
 
 Compatibility policy: a document with no `schema_version` key reads as
 `LEGACY_SCHEMA_VERSION` — the shape that predates versioning — and within a
 major version additive fields are compatible, so a new report field does not
 force a version bump. Only a breaking change to an existing field does.
+
+2.0 bumped the major because it widened the value set of the existing
+`failure_kind` field (added `unknown`/`project` to `FailureKind`): a reader
+pinned to the v1 two-member enum fails with a pydantic validation error on
+that value, so the change is breaking rather than additive.
 """
 
 LEGACY_SCHEMA_VERSION = "0"
