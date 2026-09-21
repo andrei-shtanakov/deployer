@@ -606,8 +606,20 @@ def test_classify_sees_stdout_side_of_combined_output() -> None:
     assert _classify(combined) is FailureKind.ENVIRONMENT
 
 
-def test_ordinary_build_error_stays_authoring() -> None:
-    assert _classify("E: Unable to locate package libfoo") is FailureKind.AUTHORING
+def test_unknown_output_is_unknown_not_authoring() -> None:
+    """Negative case: an exit-1 failure carrying no markers."""
+    assert _classify("exit status 1") is FailureKind.UNKNOWN
+
+
+def test_environment_marker_still_classifies() -> None:
+    """Positive twin: a known cause keeps its justified classification."""
+    assert _classify("cannot connect to the docker daemon") is FailureKind.ENVIRONMENT
+
+
+def test_ordinary_build_error_is_unknown() -> None:
+    """No marker matches an ordinary build error either — the exit code
+    alone does not establish AUTHORING as the cause."""
+    assert _classify("E: Unable to locate package libfoo") is FailureKind.UNKNOWN
 
 
 def test_isolated_context_excludes_secrets_and_junk(tmp_path: Path) -> None:
@@ -1317,7 +1329,9 @@ def test_verify_compose_up_failure_classifies_and_still_tears_down(
     )
     by_id = {r.check_id: r for r in results}
     assert by_id["compose_up"].status is CheckStatus.FAILED
-    assert by_id["compose_up"].failure_kind == "authoring"
+    # "build failed: syntax error" carries no marker `_classify` recognizes;
+    # the honest answer is UNKNOWN, not an invented AUTHORING cause.
+    assert by_id["compose_up"].failure_kind is FailureKind.UNKNOWN
     assert "compose_healthcheck" not in by_id
     _assert_both_compose_files(calls)
     assert "down" in calls[-2]  # teardown ran despite failure

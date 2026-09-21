@@ -977,7 +977,10 @@ def _classify(output: str) -> FailureKind:
     lowered = output.lower()
     if any(marker in lowered for marker in ENVIRONMENT_MARKERS):
         return FailureKind.ENVIRONMENT
-    return FailureKind.AUTHORING
+    # No marker matched. An exit code alone does not prove a root cause, so
+    # the honest answer is UNKNOWN — the old fallthrough to AUTHORING
+    # asserted a cause that nothing in the output supports.
+    return FailureKind.UNKNOWN
 
 
 _TRANSPORT_MARKERS = (
