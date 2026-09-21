@@ -1003,6 +1003,30 @@ def _is_transport_failure(output: str) -> bool:
     return any(marker in lowered for marker in _TRANSPORT_MARKERS)
 
 
+#: Positive evidence that the image's own entrypoint/command is wrong — an
+#: authoring cause that can be cited, unlike a bare exit code.
+AUTHORING_MARKERS = (
+    "no such file",
+    "executable file not found",
+    "exec format error",
+)
+
+
+def _classify_exit(returncode: int, output: str) -> FailureKind:
+    """Classify a 125/126 "runtime failed to start the job" exit.
+
+    A 125/126 alone does not establish a cause. ENVIRONMENT requires a
+    transport marker; AUTHORING requires its own positive marker; absent
+    either, the honest answer is UNKNOWN — not an invented AUTHORING.
+    """
+    lowered = output.lower()
+    if returncode in (125, 126) and _is_transport_failure(output):
+        return FailureKind.ENVIRONMENT
+    if any(marker in lowered for marker in AUTHORING_MARKERS):
+        return FailureKind.AUTHORING
+    return FailureKind.UNKNOWN
+
+
 def _atp_env_failure(message: str) -> CheckResult:
     """An ATP outcome that says nothing about the authored artifact."""
     return CheckResult(
@@ -1437,10 +1461,16 @@ def _run_completes(
         return CheckResult(check_id="run_completes", status=CheckStatus.PASSED)
 
     output = _redact_oracle(proc.stdout + "\n" + proc.stderr, marker)
-    if proc.returncode in (125, 126) and _is_transport_failure(output):
+    if proc.returncode in (125, 126):
+        kind = _classify_exit(proc.returncode, output)
+        if kind is FailureKind.ENVIRONMENT:
+            return _failed(
+                kind,
+                f"container runtime failed to start the job: {_tail(output, 3)}",
+            )
         return _failed(
-            FailureKind.ENVIRONMENT,
-            f"container runtime failed to start the job: {_tail(output, 3)}",
+            kind,
+            f"container exited {proc.returncode}\noutput tail:\n{_tail(output)}",
         )
     return _failed(
         FailureKind.AUTHORING,

@@ -8,6 +8,7 @@ import pytest
 
 import deployer.verify as verify_mod
 from deployer.models import (
+    CheckResult,
     CheckStatus,
     ContainerRuntime,
     DeployTarget,
@@ -121,11 +122,45 @@ def test_cli_transport_failure_is_environment(
     assert result.failure_kind is FailureKind.ENVIRONMENT
 
 
-def test_exit_125_without_transport_marker_stays_authoring(
+def test_exit_125_without_transport_marker_or_evidence_is_unknown(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """ "invalid memory limit" is neither a transport marker nor other
+    positive evidence of an authoring cause, so the honest class is
+    UNKNOWN."""
     _patch_container_run(monkeypatch, _proc(125, stderr="invalid memory limit"))
     result = _run_completes(_target(), RUNTIME, "tag", 30)
+    assert result.failure_kind is FailureKind.UNKNOWN
+
+
+def _run_completes_result(returncode: int, output: str) -> CheckResult:
+    """Build the CheckResult the 125/126 branch returns for a given
+    returncode/output, without wiring monkeypatch into each call site."""
+    with pytest.MonkeyPatch.context() as mp:
+        _patch_container_run(mp, _proc(returncode, stderr=output))
+        return _run_completes(_target(), RUNTIME, "tag", 30)
+
+
+def test_125_without_transport_marker_and_without_evidence_is_unknown() -> None:
+    """Negative case: the exit code alone does not establish a class."""
+    result = _run_completes_result(returncode=125, output="something went wrong")
+    assert result.failure_kind is FailureKind.UNKNOWN
+
+
+def test_125_with_transport_marker_is_environment() -> None:
+    """Positive twin A: a known transport cause keeps ENVIRONMENT."""
+    result = _run_completes_result(
+        returncode=125, output="cannot connect to the docker daemon"
+    )
+    assert result.failure_kind is FailureKind.ENVIRONMENT
+
+
+def test_125_with_other_positive_evidence_keeps_its_class() -> None:
+    """Positive twin B: other positive evidence still classifies. The rule
+    is "no OTHER positive evidence", not "no transport marker"."""
+    result = _run_completes_result(
+        returncode=125, output='exec: "/app/start": stat /app/start: no such file'
+    )
     assert result.failure_kind is FailureKind.AUTHORING
 
 
