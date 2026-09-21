@@ -45,9 +45,34 @@ contract was wrong only after it has users. The order below is deliberate — ea
 tagged with what blocks it, so the sequencing survives without anyone re-reading this
 paragraph.
 
-- [ ] CI-failure diagnosis — read a failed run, author the fix @id:ci-failure-diagnosis @epic:eco.dark-factory
-  — the founding doc's other half, and the next applied slice now that the first seam
-  (`todo://deployer/first-consumer-seam`, shipped — see `## Shipped`) is proven
+- [ ] CI-failure diagnosis: read a real failed GitHub run of our own authored ci.yml, classify the cause, emit a verdict citing evidence @owner:repo:deployer @id:ci-failure-diagnosis @epic:eco.dark-factory
+  — the founding doc's "diagnose failed CI" half, and the next applied slice now that
+  the first seam (`todo://deployer/first-consumer-seam`, shipped — see `## Shipped`) is
+  proven. Scope decided with the owner 2026-09-21: this slice ends at the DIAGNOSIS;
+  authoring the fix is `todo://deployer/ci-fix-authoring`, so the original one-line
+  promise "read a failed run, author the fix" is NOT closed by this item alone.
+  Source of the failed run: a real GitHub Actions run of the `ci.yml` this repo
+  authored. That is what proves work against a real forge; reading a run from a
+  neighbour's repository stays unproven and is a later slice. Agreeing with a neighbour
+  is deliberately not a blocker here.
+  Regression: an anonymised fixture taken from that real run, replayed offline. The
+  existing synthetic case stays as an extra test. A live GH run is for integration
+  acceptance, not for every test run.
+  CI authoring is widened only as far as the scenario needs; growing the CI generator
+  is out of scope.
+  Closes here: both classification holes of
+  `todo://deployer/failure-classification-channel`.
+  Done when: a controlled failure is diagnosed correctly, with run URL, commit SHA,
+  failing job/step and logs kept as acceptance evidence; the verdict cites evidence
+  from the run; "logs unavailable" is a distinct outcome from "CI failure diagnosed";
+  and insufficient evidence yields declared uncertainty, never an invented cause.
+- [ ] Fix authoring from a diagnosis: artifact edit, L1/L2, confirm the diagnosed cause is gone @owner:repo:deployer @blocked_by:todo://deployer/ci-failure-diagnosis @id:ci-fix-authoring @epic:eco.dark-factory
+  — the other half of the founding doc's "generate/fix ... diagnose failed CI", split
+  out with the owner 2026-09-21 so the diagnosis slice can be accepted on its own.
+  Depends on the diagnosis item: without a trustworthy cause a fix is authored against
+  a guess. How a fix is confirmed is decided in its own design — L1/L2 alone are NOT
+  enough to claim "the CI is fixed", because they verify the artifact this repo
+  produced, not the run that failed.
 - [ ] Further artifact types: Helm, Terraform @id:further-artifact-types @epic:eco.dark-factory
   — deliberately last; wait until the extension contract is confirmed by a live consumer
 
@@ -81,8 +106,10 @@ them is the next thing to pick up.
   payload-based poetry/pip install-strategy rules
 - [ ] Compose follow-ups: logs guard on a failed `up`, per-dependency env check @owner:repo:deployer @id:compose-follow-ups @epic:eco.dark-factory
   (postgres case), shared pin-rule helper, per-section fences
-- [ ] Failure classification channel: env failures carrying no markers ("exit status 1") @owner:repo:deployer @id:failure-classification-channel @epic:eco.dark-factory
-  and exit-125 non-transport CLI errors both classify AUTHORING
+- [ ] Failure classification channel: env failures carrying no markers ("exit status 1") @owner:repo:deployer @blocked_by:todo://deployer/ci-failure-diagnosis @id:failure-classification-channel @epic:eco.dark-factory
+  and exit-125 non-transport CLI errors both classify AUTHORING. Both holes sit on the
+  input of CI-failure diagnosis and are closed inside that slice (owner,
+  2026-09-21), so this item now waits on it rather than being picked up on its own
 - [ ] Poetry: list-valued optional-dependency constraints (`src/deployer/facts.py:248`) @owner:repo:deployer @id:poetry-list-optional-deps @epic:eco.dark-factory
 - [ ] Bench run-dir litter on config error; document `docker system prune` for bench @owner:repo:deployer @id:bench-run-dir-litter @epic:eco.dark-factory
   hosts (failed builds leave containers plus dangling intermediates)
