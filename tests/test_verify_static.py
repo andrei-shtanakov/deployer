@@ -622,6 +622,32 @@ def test_ordinary_build_error_is_unknown() -> None:
     assert _classify("E: Unable to locate package libfoo") is FailureKind.UNKNOWN
 
 
+_HATCHLING_MISSING_FILES_EXCERPT = """\
+  × Failed to build `uv-minimal @ file:///app`
+  ├─▶ The build backend returned an error
+  ╰─▶ Call to `hatchling.build.build_editable` failed (exit status: 1)
+      ValueError: Unable to determine which files to ship
+"""
+
+
+def test_hatchling_missing_files_is_authoring() -> None:
+    """Real evidence: `uv sync --frozen` run before the project sources were
+    copied in (a Dockerfile copy-order defect) makes hatchling unable to
+    find any files to ship. That is positive, cause-specific authoring
+    evidence, not a bare exit code — see the live acceptance evidence log
+    for `uv-minimal` in
+    .superpowers/sdd/2026-09-21-ci-failure-diagnosis/evidence/uv-minimal-build.log.
+    """
+    assert _classify(_HATCHLING_MISSING_FILES_EXCERPT) is FailureKind.AUTHORING
+
+
+def test_hatchling_missing_files_still_yields_to_environment_marker() -> None:
+    """Environment precedence is unchanged: an ENVIRONMENT marker anywhere
+    in the output still wins over the build-authoring marker."""
+    combined = _HATCHLING_MISSING_FILES_EXCERPT + "connection timed out\n"
+    assert _classify(combined) is FailureKind.ENVIRONMENT
+
+
 def test_isolated_context_excludes_secrets_and_junk(tmp_path: Path) -> None:
     (tmp_path / "app.py").write_text("print('hi')\n")
     (tmp_path / "nested").mkdir()

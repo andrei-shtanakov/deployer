@@ -996,13 +996,35 @@ ENVIRONMENT_MARKERS = (
 )
 
 
+#: Positive, cause-specific evidence that a build/run failure is an
+#: authoring defect rather than an unexplained exit. Every entry here must
+#: name a specific cause — a generic "the build backend returned an error"
+#: does not qualify, since it does not by itself point at anything the
+#: author could fix.
+#:
+#: "unable to determine which files to ship": hatchling's own message when
+#: the project's package sources are absent from the build context at
+#: install time (e.g. `RUN uv sync --frozen` before `COPY src/...` in a
+#: Dockerfile) — a copy-order defect. Evidence: live acceptance run
+#: `uv-minimal`, .superpowers/sdd/2026-09-21-ci-failure-diagnosis/evidence/
+#: uv-minimal-build.log.
+BUILD_AUTHORING_MARKERS: tuple[str, ...] = ("unable to determine which files to ship",)
+
+
 def _classify(output: str) -> FailureKind:
+    """Classify a build/run failure from its output.
+
+    ENVIRONMENT is checked first and wins on any match. Otherwise AUTHORING
+    requires its own positive, cause-specific marker (BUILD_AUTHORING_MARKERS);
+    absent that, the honest answer is UNKNOWN — an exit code alone never
+    establishes a cause, and the old fallthrough to AUTHORING asserted one
+    that nothing in the output supported.
+    """
     lowered = output.lower()
     if any(marker in lowered for marker in ENVIRONMENT_MARKERS):
         return FailureKind.ENVIRONMENT
-    # No marker matched. An exit code alone does not prove a root cause, so
-    # the honest answer is UNKNOWN — the old fallthrough to AUTHORING
-    # asserted a cause that nothing in the output supports.
+    if any(marker in lowered for marker in BUILD_AUTHORING_MARKERS):
+        return FailureKind.AUTHORING
     return FailureKind.UNKNOWN
 
 
