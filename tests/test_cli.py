@@ -1446,6 +1446,32 @@ def test_summary_lists_job_level_and_step_level_where(monkeypatch, capsys) -> No
     assert "[job 42 step 2] UNCLASSIFIED: assertion error: " in out
 
 
+def test_every_observation_of_a_verdict_is_printed_not_only_the_first(
+    monkeypatch, capsys
+) -> None:
+    """diagnose.py appends a caveat as a second observation (e.g. `cited
+    evidence is job-level (no step binding)`); it must reach a terminal-only
+    operator, not only the structured --output-file document."""
+    verdicts = [
+        FailureVerdict(
+            where=42,
+            outcome="UNCLASSIFIED",
+            evidence=[],
+            observations=[
+                "disk full: write /var/lib/docker/tmp/x: no space left",
+                "cited evidence is job-level (no step binding)",
+            ],
+        ),
+    ]
+    monkeypatch.setattr(
+        cli, "diagnose_run", lambda s: diagnosis("UNCLASSIFIED", failures=verdicts)
+    )
+    cli.main(["diagnose", RUN_URL])
+    out = capsys.readouterr().out
+    assert "[job 42] UNCLASSIFIED: disk full: " in out
+    assert "    cited evidence is job-level (no step binding)" in out
+
+
 def test_output_file_write_failure_exits_2_not_a_traceback(tmp_path, capsys) -> None:
     """--output-file is an operator argument: an unwritable path is a clean
     exit 2, not an uncaught OSError — the document IS the deliverable."""

@@ -443,8 +443,11 @@ def _print_diagnosis(diagnosis: RunDiagnosis) -> None:
     print(f"outcome: {diagnosis.outcome}")
     print(f"causes: {', '.join(diagnosis.causes) or 'none asserted'}")
     for verdict in diagnosis.failures:
-        observation = verdict.observations[0] if verdict.observations else "-"
-        print(f"[{_format_where(verdict.where)}] {verdict.outcome}: {observation}")
+        observations = verdict.observations or ["-"]
+        where = _format_where(verdict.where)
+        print(f"[{where}] {verdict.outcome}: {observations[0]}")
+        for observation in observations[1:]:
+            print(f"    {observation}")
     for observation in diagnosis.observations:
         print(observation)
     completeness = diagnosis.run.completeness
