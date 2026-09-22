@@ -89,18 +89,25 @@ ARTIFACT_MARKERS = (
         ".dockerignore: stat app.py: no such file or directory",
     ),
     (
-        "unresolvable-action",
-        "Unable to resolve action actions/checkout@v99, unable to find version v99",
-    ),
-    (
         "unrecognized-named-value",
         "Unrecognized named-value: 'secret'. Located at position 1 within "
         "expression: secret.TOKEN",
     ),
+)
+
+# Shapes the catalogue USED to read as AUTHORING and the owner demoted on
+# 2026-09-22: a container-runtime shape does not by itself say the name it
+# failed on came from the authored artifact. They establish nothing now, at
+# every source and level, and their cause twins are below.
+DEMOTED_MARKERS = (
     (
         "entrypoint-missing",
         "docker: Error response from daemon: unable to start container "
         'process: exec: "serve": executable file not found in $PATH: unknown.',
+    ),
+    (
+        "unresolvable-action",
+        "Unable to resolve action actions/checkout@v99, unable to find version v99",
     ),
 )
 
@@ -175,11 +182,6 @@ TWINS = (
     (
         "assertion-about-unknown-instruction",
         "E   AssertionError: unknown instruction: FORM was not reported",
-        True,
-    ),
-    (
-        "assertion-about-unresolvable-action",
-        "E   AssertionError: log should mention Unable to resolve action",
         True,
     ),
     (
@@ -421,6 +423,7 @@ ROWS: tuple[Row, ...] = (
     *_cross("project", PROJECT_MARKERS, PROJECT),
     *_cross("environment", ENVIRONMENT_MARKERS, ENVIRONMENT),
     *_cross("symptom-only", SYMPTOM_MARKERS, None),
+    *_cross("demoted", DEMOTED_MARKERS, None),
     *_cross("unknown", UNKNOWN_MARKERS, None),
     *[
         row

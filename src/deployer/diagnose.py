@@ -94,10 +94,39 @@ def _symptom(name: str, pattern: str) -> Rule:
 # - Every positive rule has a NEGATIVE TWIN: the same marker text in a context
 #   with a different cause must NOT yield the class.
 #
-# So each AUTHORING rule below matches a shape only the tool that owns the
-# artifact prints: buildkit's and docker's own COPY/ADD failures, the runner's
-# own workflow-YAML errors, the container runtime's own `exec:` line. The
-# symptoms those failures share with every other cause live in `SYMPTOMS`.
+# Sharpened by the owner on the same day: a CONTAINER-RUNTIME shape is not by
+# itself an artifact defect. `exec: "x": executable file not found in $PATH`
+# proves that a missing executable was asked for, not that its name came from
+# the authored CMD/ENTRYPOINT — the command is overridable at run time — and
+# `unable to resolve action` is printed just as faithfully for a reference that
+# was valid when the workflow was written and whose upstream tag has since been
+# deleted. Where the snapshot cannot tell the causes apart, it observes: both
+# shapes live in `SYMPTOMS` now.
+#
+# What survives in AUTHORING is only what the tool that OWNS the artifact says
+# about the artifact's own text or the artifact's own build context. Per rule,
+# why no other cause prints that shape:
+#
+# - `dockerfile parse error`, `unknown instruction`: the parser read the
+#   Dockerfile's bytes and could not. Nothing but that text produces the
+#   complaint — no environment state, no project code and no invocation can
+#   make a well-formed instruction unparseable.
+# - `unrecognized named-value`: the same, for the runner's own expression
+#   parser over the workflow YAML. A missing secret VALUE is a different
+#   message (the expression evaluates to empty); this one says the NAME is not
+#   in the language.
+# - `copy/add source not found` / `copy/add failed in build context`: the
+#   builder resolved a COPY/ADD source against the build context and printed
+#   the path it could not find. The build context IS the checkout the
+#   Dockerfile was authored against (spec §6.4 scenario A), so the pairing of
+#   instruction and context is the authored artifact, and no runtime state
+#   reaches it. RESIDUAL, stated rather than hidden: a source the project
+#   REMOVED after the Dockerfile was authored prints the identical line. That
+#   case is still a mismatch between the artifact and its context — the class
+#   names the defect, not the culprit — but the snapshot cannot say which side
+#   moved. Pinned as a cause twin in `tests/test_diagnose_matrix.py`.
+#
+# The symptoms these failures share with every other cause live in `SYMPTOMS`.
 _QUOTED_PATH_NOT_FOUND = r'[^\n]*"[^"\n]*": not found[ \t]*$'
 
 RULES: tuple[Rule, ...] = (
@@ -121,20 +150,10 @@ RULES: tuple[Rule, ...] = (
         r"(?:COPY|ADD) failed:[^\n]*"
         r"(?:no such file or directory|file not found in build context)",
     ),
-    _prose(FailureKind.AUTHORING, "unresolvable action", r"unable to resolve action"),
     _prose(
         FailureKind.AUTHORING,
         "unrecognized named-value",
         r"unrecognized named-value",
-    ),
-    # docker's/containerd's own shape when the image's CMD/ENTRYPOINT names a
-    # binary the image does not carry: `exec: "<binary>": executable file not
-    # found in $PATH`. Both halves on one line, because the sentence alone is
-    # printed by anything that spawns a process.
-    _prose(
-        FailureKind.AUTHORING,
-        "entrypoint executable not found",
-        r"exec:[^\n]*executable file not found in \$PATH",
     ),
     _prose(
         FailureKind.ENVIRONMENT,
@@ -188,6 +207,18 @@ SYMPTOMS: tuple[Rule, ...] = (
     # An amd64 image on an arm64 runner is an environment mismatch as readily
     # as a wrong `--platform` in the Dockerfile.
     _symptom("exec format error", r"exec format error"),
+    # docker's/containerd's own shape when the process it was told to start is
+    # not in the image: `exec: "<binary>": executable file not found in $PATH`.
+    # It was an AUTHORING rule until the owner's ruling of 2026-09-22: the line
+    # names the binary, never WHO named it, and `docker run --entrypoint`, a
+    # job's `container.options`, a compose `command:` and `kubectl run --` all
+    # override the image's CMD/ENTRYPOINT with a name of their own. Kept as its
+    # own symptom, apart from the bare sentence below, because the shape still
+    # tells the operator it was the container runtime that failed to start.
+    _symptom(
+        "entrypoint executable not found",
+        r"exec:[^\n]*executable file not found in \$PATH",
+    ),
     # The bare sentence, outside the `exec:` shape above: pytest, tox and any
     # process spawner print it about a binary that is nobody's entrypoint.
     _symptom(
@@ -195,6 +226,13 @@ SYMPTOMS: tuple[Rule, ...] = (
         r"^(?![^\n]*exec:[^\n]*executable file not found in \$PATH)"
         r"[^\n]*executable file not found",
     ),
+    # The runner could not fetch a `uses:` reference. A typo in the authored
+    # workflow prints it; so does a tag, branch or whole repository the
+    # upstream deleted after the workflow was written, and so does a private
+    # action the token may no longer read. Demoted 2026-09-22 with the `exec:`
+    # shape above, for the same reason: the snapshot carries nothing that tells
+    # a defect in the YAML from a change on the other side of the reference.
+    _symptom("unresolvable action", r"unable to resolve action"),
 )
 """Markers that name a SYMPTOM, never a cause (the second bullet above).
 
@@ -300,6 +338,13 @@ def classify_failure(
     and none is ``UNKNOWN`` with whatever was observed. A marker that landed
     on warning-shaped evidence establishes nothing and is carried through as
     an observation, whatever the outcome.
+
+    Every observation names the LINE it was read from, and every matched line
+    gets one, so a cited block never hides a second match behind its first.
+    ``EVIDENCE_UNAVAILABLE`` keeps all four kinds of observation beside the
+    note of what could not be read (spec §3: "markers already found are
+    preserved as observations") — an unreadable run must not be made to look
+    emptier than the part of it that WAS read.
     """
     where = step.ref if step is not None else job.job_id
     pool = _evidence_pool(job, step)
@@ -327,7 +372,7 @@ def classify_failure(
             "EVIDENCE_UNAVAILABLE",
             None,
             [],
-            found + warnings + _missing(completeness),
+            found + warnings + exceptions + symptoms + _missing(completeness),
         )
     kinds = sorted({match.rule.kind for match in matches}, key=lambda k: k.value)
     if len(kinds) >= 2:
@@ -437,43 +482,60 @@ def _for_operator(item: Evidence, line: str) -> str:
     return line if item.level is None else f"{item.level}: {line}"
 
 
+def _matched_lines(rule: Rule, item: Evidence) -> list[str]:
+    """Every line of ``item`` the rule matched: document order, once each.
+
+    ALL of them, not the first: the citation is the block, so a verdict that
+    named only the first match reported one missing file out of two and left
+    the operator to guess there was a second. Deduplicated by line text —
+    a pattern can land twice inside one line, and an operator reads lines,
+    not match offsets.
+    """
+    return list(
+        dict.fromkeys(
+            _line_at(item.text, hit.start()) for hit in rule.pattern.finditer(item.text)
+        )
+    )
+
+
 def _matches(item: Evidence) -> tuple[list[_Match], list[_Match]]:
     """Every rule against one piece of evidence: (established, warning-shaped).
 
-    A rule of ANY kind keeps looking past a match it judged warning-shaped,
-    and the first one it passed over is returned separately so the verdict can
-    observe it without citing it.
+    A rule of ANY kind keeps looking past a match it judged warning-shaped.
+    The lines it passed over are returned separately, and only when that rule
+    established nothing at all, so the verdict can observe a noticed problem
+    without citing it and without repeating what it did cite.
     """
     found: list[_Match] = []
     warned: list[_Match] = []
     for rule in RULES:
-        skipped: _Match | None = None
-        for hit in rule.pattern.finditer(item.text):
-            line = _line_at(item.text, hit.start())
+        established: list[_Match] = []
+        skipped: list[_Match] = []
+        for line in _matched_lines(rule, item):
+            match = _Match(rule, item, line)
             if _is_warning_shaped(item, line):
-                skipped = skipped or _Match(rule, item, line)
-                continue
-            found.append(_Match(rule, item, line))
-            break
-        else:
-            if skipped is not None:
-                warned.append(skipped)
+                skipped.append(match)
+            else:
+                established.append(match)
+        found.extend(established)
+        if not established:
+            warned.extend(skipped)
     return found, warned
 
 
 def _symptom_matches(item: Evidence) -> list[_Match]:
     """The symptom markers one piece of evidence carries: observed, not cited.
 
-    Unlike :func:`_matches` these establish nothing, so the warning shape
-    changes nothing about them either: the rendered line carries its own
-    ``W: `` prefix or annotation level for the operator to read.
+    Every matched line, as in :func:`_matches`. Unlike those these establish
+    nothing, so the warning shape changes nothing about them either: the
+    rendered line carries its own ``W: `` prefix or annotation level for the
+    operator to read.
     """
-    found: list[_Match] = []
-    for rule in SYMPTOMS:
-        hit = rule.pattern.search(item.text)
-        if hit is not None:
-            found.append(_Match(rule, item, _line_at(item.text, hit.start())))
-    return found
+    return [
+        _Match(rule, item, line)
+        for rule in SYMPTOMS
+        for line in _matched_lines(rule, item)
+    ]
 
 
 def _line_at(text: str, index: int) -> str:

@@ -1142,25 +1142,40 @@ def test_a_buildkit_run_failure_without_a_missing_path_is_not_authoring():
 
 
 def test_a_shell_command_not_found_is_not_an_entrypoint_defect():
-    """Negative twin of the entrypoint rule: a shell inside a RUN step, not
-    the image's CMD/ENTRYPOINT."""
+    """Negative twin of the old entrypoint rule: a shell inside a RUN step,
+    not the image's CMD/ENTRYPOINT."""
     v = _verdict("bash: foo: command not found")
     assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
     assert v.observations == ["no rule matched"]
 
 
-def test_a_docker_entrypoint_without_its_binary_is_authoring():
-    """The positive twin: docker/containerd's own `exec:` shape names the
-    image's entrypoint, which the Dockerfile authored."""
+def test_the_docker_exec_shape_is_a_symptom_not_authoring():
+    """Demotion (owner, 2026-09-22). Docker's `exec:` line proves a missing
+    executable, NOT that its name came from the image's CMD/ENTRYPOINT: the
+    identical line is printed when the command is overridden at run time
+    (`docker run --entrypoint`, a `container:`/`options:` job, a compose
+    `command:`). The snapshot cannot tell those apart, so it observes."""
     text = (
         "docker: Error response from daemon: failed to create task for container: "
         "OCI runtime create failed: unable to start container process: "
         'exec: "serve": executable file not found in $PATH: unknown.'
     )
     v = _verdict(text)
-    assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.AUTHORING
-    assert v.evidence == [Evidence(None, text)]
-    assert v.observations == [f"entrypoint executable not found: {text}"]
+    assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
+    assert v.evidence == []
+    assert v.observations == [f"symptom: entrypoint executable not found: {text}"]
+
+
+def test_an_unresolvable_action_is_a_symptom_not_authoring():
+    """Demotion (owner, 2026-09-22). `unable to resolve action` is not always
+    a YAML defect: a reference that was valid when the workflow was authored
+    prints the same line once the upstream tag or repository is gone. The
+    snapshot carries nothing that separates a typo from a deletion."""
+    text = "Unable to resolve action actions/checkout@v99, unable to find version v99"
+    v = _verdict(text)
+    assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
+    assert v.evidence == []
+    assert v.observations == [f"symptom: unresolvable action: {text}"]
 
 
 def test_the_buildkit_copy_shape_must_name_the_missing_path():
@@ -1187,6 +1202,8 @@ def test_no_rule_of_the_catalogue_fires_on_a_bare_symptom_line():
         "standard_init_linux.go:228: exec user process caused: exec format error",
         "E   RuntimeError: executable file not found in the sandbox",
         "bash: foo: command not found",
+        'exec: "serve": executable file not found in $PATH: unknown.',
+        "Unable to resolve action actions/checkout@v99, unable to find version v99",
     ):
         assert not [rule.name for rule in RULES if rule.pattern.search(text)], text
 
@@ -1202,3 +1219,89 @@ def test_a_symptom_beside_an_established_cause_is_observed_not_a_conflict():
     v = _verdict(text)
     assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.AUTHORING
     assert v.observations[-1].startswith("symptom: no such file: ")
+
+
+# --- PR #72 pre-final: the evidence contract cites the ACTUAL matches --------
+# A verdict that cites a BLOCK and names only its first matching line hides the
+# rest of what the run printed. `FailureVerdict.evidence` stays the block --
+# that is the provenance-carrying unit forge produced -- while every matched
+# LINE gets an observation of its own, in document order, deduplicated.
+
+
+def test_two_missing_files_in_one_block_are_two_symptom_observations():
+    """One block, one symptom rule, two different lines: two observations.
+    Reporting only the first leaves the operator to guess there was a second
+    file, which is exactly the fact a diagnosis exists to carry."""
+    first = "cp: cannot stat '/app/main.py': No such file or directory"
+    second = "cp: cannot stat '/app/util.py': No such file or directory"
+    v = _verdict(f"Copying sources\n{first}\n{second}\nDone")
+    assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
+    assert v.observations == [
+        f"symptom: no such file: {first}",
+        f"symptom: no such file: {second}",
+    ]
+
+
+def test_two_copy_failures_in_one_block_are_two_observations_one_citation():
+    """The same, for a classifying rule: two cited lines, one cited block."""
+    first = 'ERROR: failed to compute cache key: "/docs/setup.md": not found'
+    second = 'ERROR: failed to compute cache key: "/docs/usage.md": not found'
+    block = f"#12 [stage-0 7/9] COPY docs ./docs\n{first}\n{second}"
+    v = _verdict(block)
+    assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.AUTHORING
+    assert v.evidence == [Evidence(None, block)]
+    assert v.observations == [
+        f"copy/add source not found: {first}",
+        f"copy/add source not found: {second}",
+    ]
+
+
+def test_an_observation_quotes_the_line_the_rule_matched_not_the_first():
+    """A marker on line 3 of a block is quoted from line 3."""
+    marker = "ERROR: unknown instruction: FORM (did you mean FROM?)"
+    v = _verdict(f"#1 [internal] load build definition\n#1 transferring\n{marker}")
+    assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.AUTHORING
+    assert v.observations == [f"unknown instruction: {marker}"]
+
+
+def test_one_line_matched_twice_by_a_rule_is_cited_once():
+    """Deduplication: `finditer` can land twice inside one line, and the
+    operator reads lines, not match offsets."""
+    line = "ERROR: unknown instruction: FORM -- no unknown instruction is accepted"
+    v = _verdict(line)
+    assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.AUTHORING
+    assert v.observations == [f"unknown instruction: {line}"]
+
+
+def test_evidence_unavailable_keeps_the_symptoms_and_exceptions_found():
+    """Spec §3: "markers already found are preserved as observations". That
+    is the whole point of the outcome -- the operator sees what the partial
+    read DID show beside what could not be read -- and it must hold for the
+    symptom- and exception-shaped observations too, not only for the rule
+    matches. Dropping them made an unreadable run look emptier than it was."""
+    symptom = "cp: cannot stat '/app/main.py': No such file or directory"
+    exception = "ValueError: bad configuration"
+    v = classify_failure(
+        job_with(text=f"{symptom}\n{exception}"),
+        step=None,
+        completeness=LOGS_UNAVAILABLE,
+    )
+    assert v.outcome == "EVIDENCE_UNAVAILABLE" and v.kind is None
+    assert v.evidence == []
+    assert v.observations == [
+        f"exception: {exception}",
+        f"symptom: no such file: {symptom}",
+        "logs unavailable",
+    ]
+
+
+def test_evidence_unavailable_keeps_a_warning_shaped_match_too():
+    """The third shape of observation on that branch, pinned beside the
+    other two."""
+    warned = "W: Failed to fetch http://deb.debian.org/x.deb  [retrying]"
+    v = classify_failure(
+        job_with(text=warned), step=None, completeness=LOGS_UNAVAILABLE
+    )
+    assert v.outcome == "EVIDENCE_UNAVAILABLE"
+    assert [o for o in v.observations if o.startswith("warning-shaped: ")]
+    assert v.observations[-1] == "logs unavailable"
