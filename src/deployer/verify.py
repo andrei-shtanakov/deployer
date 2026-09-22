@@ -6,6 +6,7 @@ hadolint at a pinned version. L2 (docker half, Task 5): sandboxed build + run.
 
 import json
 import re
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -13,7 +14,7 @@ import time
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import yaml
 
@@ -996,13 +997,374 @@ ENVIRONMENT_MARKERS = (
 )
 
 
-def _classify(output: str) -> FailureKind:
+#: Build-output markers that name a cause but do not by themselves establish
+#: one — each needs corroborating evidence from the Dockerfile before it may
+#: be read as AUTHORING. Used only by `_classify_build`.
+#:
+#: "unable to determine which files to ship": hatchling's message when it can
+#: select no files for the wheel. The live `uv-minimal` acceptance build
+#: printed it as
+#:     ValueError: Unable to determine which files to ship
+#:     inside the wheel using the following heuristics: ...
+#:     The most likely cause of this is that there is no directory that
+#:     matches the name of your project (uv_minimal).
+#: The same message has two causes: the package sources are not in the build
+#: context yet (a Dockerfile copy-order defect — AUTHORING), or the project's
+#: own `tool.hatch.build` table selects nothing (a project defect this check
+#: cannot assert). `_install_precedes_source_copy` tells them apart.
+BUILD_AUTHORING_MARKERS: tuple[str, ...] = ("unable to determine which files to ship",)
+
+
+def _classify_build(output: str, dockerfile: str) -> FailureKind:
+    """Classify a build failure from its output and the Dockerfile built.
+
+    ENVIRONMENT is checked first and wins on any match, exactly as in
+    `_classify`. Otherwise a marker from BUILD_AUTHORING_MARKERS establishes
+    AUTHORING only when the Dockerfile corroborates it — the project is
+    installed before its sources are copied in. Absent that corroboration the
+    honest answer is UNKNOWN: the marker's two causes (copy order, packaging
+    config) are indistinguishable from the output alone.
+    """
     lowered = output.lower()
     if any(marker in lowered for marker in ENVIRONMENT_MARKERS):
         return FailureKind.ENVIRONMENT
-    # No marker matched. An exit code alone does not prove a root cause, so
-    # the honest answer is UNKNOWN — the old fallthrough to AUTHORING
-    # asserted a cause that nothing in the output supports.
+    if any(marker in lowered for marker in BUILD_AUTHORING_MARKERS):
+        if _install_precedes_source_copy(dockerfile):
+            return FailureKind.AUTHORING
+    return FailureKind.UNKNOWN
+
+
+#: Files an install step reads to resolve dependencies. Copying only these is
+#: not copying the package, so a source COPY is still outstanding afterwards.
+_MANIFEST_NAMES = frozenset(
+    {"pyproject.toml", "uv.lock", "poetry.lock", "setup.py", "setup.cfg"}
+)
+_MANIFEST_PATTERNS = (
+    re.compile(r"^requirements.*\.txt$", re.IGNORECASE),
+    re.compile(r"^README(\.\w+)?$"),
+    re.compile(r"^LICENSE(\.\w+)?$"),
+)
+
+#: Matches the stage name on a `FROM <image> [AS <name>]` line.
+_FROM_AS_RE = re.compile(r"\bAS\s+(\S+)", re.IGNORECASE)
+
+#: `RUN --mount=type=bind,...` — the build context (or part of it) can be
+#: present at the mount target for the life of this RUN, with no COPY at all.
+_BIND_MOUNT_RE = re.compile(r"--mount=\S*\btype=bind\b", re.IGNORECASE)
+
+
+def _install_precedes_source_copy(dockerfile: str) -> bool:
+    """True when the project is installed before its sources reach the image.
+
+    Walks the instructions in order (continuations joined, comments dropped
+    by `parse_dockerfile`) and returns True if the first project-installing
+    RUN — one whose EXECUTED command installs the project (`_installs_project`)
+    and that carries no bind mount, see below — comes before any instruction
+    that brings sources in. Three routes count as sources arriving: a
+    COPY/ADD of something other than a manifest file (`_copies_sources`), a
+    `COPY --from=<name>` naming a stage this Dockerfile itself declares
+    (`_copies_from_declared_stage` — it may carry the project out of that
+    stage, unlike `--from=` on an external image), and a `RUN
+    --mount=type=bind` on the installing RUN itself (the mounted context can
+    stand in for a COPY). The two sides fail closed in opposite directions,
+    each toward the honest answer: a RUN this walker does not recognise as
+    an install — `ARG`-substituted paths, heredoc `RUN <<EOF`, quoting that
+    does not close — never triggers True, since asserting an install that
+    was never confirmed would be a wrong AUTHORING, not an honest UNKNOWN;
+    a COPY/ADD this walker cannot read, or cannot prove is manifest-only,
+    counts as sources arriving (`_copies_sources`), since the opposite
+    guess — no sources — is what lets a genuine copy-order defect read as
+    UNKNOWN. A Dockerfile that never installs the project also returns
+    False.
+    """
+    stage_names = _declared_stage_names(parse_dockerfile(dockerfile))
+    for instruction, args in parse_dockerfile(dockerfile):
+        if instruction == "RUN":
+            if _installs_project(args) and not _BIND_MOUNT_RE.search(args):
+                return True
+        elif instruction in ("COPY", "ADD"):
+            if _copies_sources(args) or _copies_from_declared_stage(args, stage_names):
+                return False
+    return False
+
+
+def _declared_stage_names(instructions: list[tuple[str, str]]) -> set[str]:
+    """Lowercased names this Dockerfile assigns its own stages via `FROM ...
+    AS <name>` (case-insensitive `AS`)."""
+    names: set[str] = set()
+    for instruction, args in instructions:
+        if instruction != "FROM":
+            continue
+        match = _FROM_AS_RE.search(args)
+        if match:
+            names.add(match.group(1).strip("\"'").lower())
+    return names
+
+
+def _copies_from_declared_stage(copy_args: str, stage_names: set[str]) -> bool:
+    """True when `COPY --from=<name>` names a stage THIS Dockerfile declares.
+
+    Such a COPY pulls the output of an earlier stage in the same build —
+    which may include the project's sources — so it counts as sources
+    arriving, unlike `--from=` on an external image (`_copies_sources`'s
+    concern). A numeric `--from=<index>` addresses a stage by position and is
+    always treated as declared: resolving the index to a real stage would
+    require tracking declaration order, which this walker does not do.
+    """
+    for token in copy_args.split():
+        token = token.strip("[],\"'")
+        if not token.startswith("--from="):
+            continue
+        name = token[len("--from=") :].strip("\"'")
+        return name.isdigit() or name.lower() in stage_names
+    return False
+
+
+#: `VAR=value` at the head of a shell command: an environment prefix, not the
+#: command.
+_ASSIGNMENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+
+#: `shlex`'s punctuation characters. Lexed with `punctuation_chars=True`, an
+#: UNQUOTED run of these comes back as a token of its own — `&&`, `;`, `|`,
+#: `<<` — and never mixes with a word, so a token made only of them is a
+#: shell operator, whatever it is glued to in the source. Quoted text is one
+#: word: `'x;'` lexes to `x;`, an operand.
+_SHELL_PUNCTUATION = frozenset("();<>|&")
+
+
+def _installs_project(run_args: str) -> bool:
+    """True when the command this RUN executes IS an install of the project.
+
+    What is executed is read, never a word sequence anywhere in the line —
+    `RUN echo about to run uv sync` installs nothing, and neither does `RUN
+    echo 'prepare; uv sync'`, whose separator is quoted text. Exec form
+    (`RUN ["uv", "sync"]`) is parsed as the JSON argv it is. Shell form has a
+    leading `--mount=` flag stripped (RUN's own bind-mount option —
+    `_BIND_MOUNT_RE` already excuses it separately, in
+    `_install_precedes_source_copy`) and is tokenised by `_lex_shell`, which
+    decides what is an operator and what is a word the way the shell does.
+    Either form then has a leading `env` and `VAR=value` assignments dropped
+    and is matched at its LEADING tokens.
+
+    Recognised: `uv sync` (unless it also carries `--no-install-project`),
+    `poetry install` (unless `--no-root`), and `pip`/`pip3`/`uv pip`/`python
+    -m pip` `install` with a `.` operand (`pip install .`, `pip install -e
+    .`). Dependency-only installs are excluded, because they read a manifest
+    without needing the package sources.
+
+    A shell-form RUN is UNRECOGNISED — answering False, an honest UNKNOWN
+    downstream, never a wrong AUTHORING — whenever `_lex_shell` cannot
+    tokenise it (unbalanced quotes), whenever it tokenises to nothing, or
+    whenever ANY token is a bare shell operator (`_is_shell_operator`),
+    wherever it falls in the line. That last rule gives up real recognition
+    on a chained RUN like `apt-get update && uv sync --frozen`, which used
+    to be matched at its later segment: `shlex`'s posix quote removal makes
+    a QUOTED separator indistinguishable from a real one once the quotes are
+    gone — `RUN echo ';' uv sync --frozen` is one `echo` call with `;` and
+    `uv sync --frozen` as plain arguments, yet lexes to the same token list
+    as a real `;`-chain. Segmenting on every operator token read a fake
+    install out of that line. Refusing to recognise ANY multi-operator RUN
+    is the only way to stop reading a quoted separator as a real one; the
+    hatchling marker then falls back to UNKNOWN, which the owner's rule
+    prefers to a wrong AUTHORING.
+    """
+    argv = _exec_form_argv(run_args)
+    if argv is not None:
+        return _is_install_command(_drop_env_prefix(argv))
+    tokens = _lex_shell(_strip_mount_flag(run_args))
+    if not tokens or any(_is_shell_operator(token) for token in tokens):
+        return False
+    return _is_install_command(_drop_env_prefix(tokens))
+
+
+def _lex_shell(shell: str) -> list[str]:
+    """`shell` as its words and operators, or `[]` when it cannot be lexed.
+
+    `punctuation_chars=True` is what makes the operators the shell's and not
+    a pattern's: the lexer emits an unquoted `&&`, `;`, `|`, `<<` as its own
+    token even glued to a word (`true&&uv sync`), and leaves a quoted one
+    inside the word it belongs to (`'x;'`). `commenters` is cleared because
+    `#` is an ordinary character in a Dockerfile RUN, and `whitespace_split`
+    keeps paths and `--flag=value` whole.
+    """
+    lexer = shlex.shlex(shell, posix=True, punctuation_chars=True)
+    lexer.whitespace_split = True
+    lexer.commenters = ""
+    try:
+        return list(lexer)
+    except ValueError:
+        return []
+
+
+def _is_shell_operator(token: str) -> bool:
+    """True for a token the lexer built out of punctuation alone (`&&`, `;`)."""
+    return bool(token) and all(char in _SHELL_PUNCTUATION for char in token)
+
+
+def _exec_form_argv(run_args: str) -> list[str] | None:
+    """The argv of an exec-form `RUN ["cmd", ...]`, or None for shell form."""
+    text = run_args.strip()
+    if not text.startswith("["):
+        return None
+    try:
+        parsed = json.loads(text)
+    except ValueError:
+        return None
+    if isinstance(parsed, list) and all(isinstance(token, str) for token in parsed):
+        return parsed
+    return None
+
+
+def _strip_mount_flag(run_args: str) -> str:
+    """`run_args` without a leading `--mount=...` flag — RUN's own bind-mount
+    option, already excused via `_BIND_MOUNT_RE` in
+    `_install_precedes_source_copy`. Any OTHER leading `--flag` (say
+    `--network=`) is left in place; it then simply fails to match an install
+    command's leading tokens, which reads as unrecognised rather than
+    misreading the flag as part of the command."""
+    text = run_args.strip()
+    while text.startswith("--mount="):
+        _, _, text = text.partition(" ")
+        text = text.strip()
+    return text
+
+
+def _drop_env_prefix(tokens: list[str]) -> list[str]:
+    """One segment's tokens without a leading `env` and `VAR=value` prefixes."""
+    index = 0
+    while index < len(tokens) and (
+        tokens[index] == "env" or _ASSIGNMENT_RE.match(tokens[index])
+    ):
+        index += 1
+    return tokens[index:]
+
+
+def _is_install_command(tokens: list[str]) -> bool:
+    """True when `tokens` — one command's argv — installs the project itself."""
+    if _leads_with(tokens, "uv", "sync"):
+        return "--no-install-project" not in tokens
+    if _leads_with(tokens, "poetry", "install"):
+        return "--no-root" not in tokens
+    return _is_pip_install(tokens) and "." in tokens
+
+
+def _is_pip_install(tokens: list[str]) -> bool:
+    return any(
+        _leads_with(tokens, *words)
+        for words in (
+            ("uv", "pip", "install"),
+            ("pip", "install"),
+            ("pip3", "install"),
+            ("python", "-m", "pip", "install"),
+            ("python3", "-m", "pip", "install"),
+        )
+    )
+
+
+def _leads_with(tokens: list[str], *words: str) -> bool:
+    """True when the command's own leading tokens are exactly `words`."""
+    return tuple(tokens[: len(words)]) == words
+
+
+#: A leading `--flag` or `--flag=value` on a COPY/ADD line (`--chown=`,
+#: `--chmod=`, `--link`, `--from=`, ...), consumed one at a time from the
+#: front of the args before the source/dest list is parsed.
+_COPY_LEADING_FLAG_RE = re.compile(r"^(--[\w-]+(?:=\S*)?)\s*")
+
+
+def _copies_sources(copy_args: str) -> bool:
+    """True when a COPY/ADD from the build context brings in anything beyond
+    manifest files — the fail-closed default: a COPY this walker cannot
+    parse, or whose source operands it cannot prove are all manifest files,
+    counts as sources arriving. Guessing "no sources" for anything unread is
+    the dangerous direction — it is exactly what lets an install that truly
+    precedes its sources read as UNKNOWN instead of AUTHORING.
+
+    `COPY --from=` copies out of another stage or image, not this build
+    context, so it is never a source copy by this function's reckoning —
+    even when the referent is a stage this Dockerfile declares and may
+    itself hold the project's sources. That case is
+    `_copies_from_declared_stage`'s concern, checked separately by
+    `_install_precedes_source_copy`.
+    """
+    flags, body = _copy_leading_flags(copy_args)
+    if any(flag.startswith("--from=") for flag in flags):
+        return False
+    operands = _copy_source_operands(body)
+    if operands is None:
+        return True
+    return any(not _is_manifest(source) for source in operands)
+
+
+def _copy_leading_flags(copy_args: str) -> tuple[list[str], str]:
+    """`copy_args` split into its leading `--flag`/`--flag=value` tokens and
+    what remains: the JSON array, or the shell-form source/dest list."""
+    text = copy_args.strip()
+    flags: list[str] = []
+    while True:
+        match = _COPY_LEADING_FLAG_RE.match(text)
+        if match is None:
+            break
+        flags.append(match.group(1))
+        text = text[match.end() :]
+    return flags, text
+
+
+def _copy_source_operands(body: str) -> list[str] | None:
+    """The source operands of `body` (its last token, the destination,
+    dropped) — or None when `body` cannot be read as a source/dest list at
+    all: unparseable JSON, a JSON array holding something other than plain
+    strings, shell quoting `shlex` cannot close, or fewer than two tokens
+    (no destination to drop, so no operand list to trust). The caller treats
+    None exactly like an operand list that fails `_is_manifest`: sources
+    arrive.
+
+    JSON form (`body` starts with `[`) is exec-form COPY/ADD, parsed with
+    `json.loads` — never `str.split()`, which breaks on the comma-and-quote
+    punctuation JSON uses and silently produced too few tokens. Shell form
+    is tokenised with `shlex.split(posix=True)` so a quoted path with a
+    space in it stays one operand.
+    """
+    text = body.strip()
+    if text.startswith("["):
+        try:
+            parsed = json.loads(text)
+        except ValueError:
+            return None
+        if not isinstance(parsed, list) or not all(
+            isinstance(token, str) for token in parsed
+        ):
+            return None
+        tokens = parsed
+    else:
+        try:
+            tokens = shlex.split(text, posix=True)
+        except ValueError:
+            return None
+    if len(tokens) < 2:
+        return None
+    return tokens[:-1]  # the last token is the destination
+
+
+def _is_manifest(source: str) -> bool:
+    name = PurePosixPath(source).name
+    return name in _MANIFEST_NAMES or any(
+        pattern.match(name) for pattern in _MANIFEST_PATTERNS
+    )
+
+
+def _classify(output: str) -> FailureKind:
+    """Classify a run/compose failure from its output.
+
+    ENVIRONMENT is checked first and wins on any match. Absent an ENVIRONMENT
+    marker the honest answer is UNKNOWN — an exit code alone never establishes
+    a cause, and the old fallthrough to AUTHORING asserted one that nothing in
+    the output supported. Build failures go through `_classify_build`, which
+    can additionally weigh the Dockerfile.
+    """
+    lowered = output.lower()
+    if any(marker in lowered for marker in ENVIRONMENT_MARKERS):
+        return FailureKind.ENVIRONMENT
     return FailureKind.UNKNOWN
 
 
@@ -1026,21 +1388,20 @@ def _is_transport_failure(output: str) -> bool:
     return any(marker in lowered for marker in _TRANSPORT_MARKERS)
 
 
-#: Positive evidence that the image's own entrypoint/command is wrong — an
-#: authoring cause that can be cited, unlike a bare exit code.
-AUTHORING_MARKERS = (
-    "no such file",
-    "executable file not found",
-    "exec format error",
-)
-
-
 def _classify_exit(returncode: int, output: str) -> FailureKind:
-    """Classify any nonzero `run_completes` exit.
+    """Classify any nonzero `run_completes` exit: ENVIRONMENT, else UNKNOWN.
 
-    An exit code alone does not establish a cause. AUTHORING requires its
-    own positive marker (AUTHORING_MARKERS); absent that, the honest answer
-    is UNKNOWN — not an invented AUTHORING.
+    An exit code alone does not establish a cause, and on this path neither
+    does any marker in the output. There is no AUTHORING branch: the run
+    output is not bound to the authored artifact (owner's rule, 2026-09-22).
+    `exec: "app": executable file not found in $PATH` proves that a missing
+    executable was asked for, not that its name came from the image's
+    CMD/ENTRYPOINT — the identical line is printed when the command is
+    overridden at run time — and `no such file` or `exec format error` name
+    an artifact defect, a project defect, an environment mismatch and a wrong
+    invocation indifferently. `_classify_build` keeps its AUTHORING branch
+    because it HAS that binding: it weighs the Dockerfile it built beside
+    the message.
 
     The transport-marker check for ENVIRONMENT is deliberately gated to
     125/126: those are the container-runtime CLI's own reserved codes for
@@ -1052,11 +1413,8 @@ def _classify_exit(returncode: int, output: str) -> FailureKind:
     class of bug `_run_completes`'s narrow marker set already guards
     against for the app-output case.
     """
-    lowered = output.lower()
     if returncode in (125, 126) and _is_transport_failure(output):
         return FailureKind.ENVIRONMENT
-    if any(marker in lowered for marker in AUTHORING_MARKERS):
-        return FailureKind.AUTHORING
     return FailureKind.UNKNOWN
 
 
@@ -1240,7 +1598,7 @@ def _build(
         return CheckResult(
             check_id="build",
             status=CheckStatus.FAILED,
-            failure_kind=_classify(proc.stdout + "\n" + proc.stderr),
+            failure_kind=_classify_build(proc.stdout + "\n" + proc.stderr, dockerfile),
             message=_tail(proc.stderr or proc.stdout),
         )
     return CheckResult(check_id="build", status=CheckStatus.PASSED)

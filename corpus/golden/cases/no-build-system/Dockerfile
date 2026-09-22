@@ -14,4 +14,4 @@ USER appuser
 
 ENV PATH="/app/.venv/bin:$PATH"
 
-CMD ["python", "main.py"]
+CMD ["uv", "run", "--no-sync", "python", "main.py"]
