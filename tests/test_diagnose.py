@@ -593,3 +593,78 @@ def test_render_verdict_carries_its_own_schema_version_first():
             assert set(where) == {"job_id", "number"}
     # The nested run keeps its own, distinct schema version.
     assert document["run"]["snapshot_schema_version"] == "1.0"
+
+
+# --- final review: I1 pin, I2 apt-warning mitigation ------------------------
+
+
+def test_sibling_job_log_error_currently_erases_an_established_cause():
+    """Documented limitation of run-global `Completeness`, pinned so a change
+    to it is deliberate.
+
+    The common shape is a fail-fast matrix: job 1 fails readably, job 2 is
+    cancelled before it starts and its log endpoint errors. `Completeness` is
+    one worst-of value for the whole run, so `diagnose_run` hands `error` to
+    every `classify_failure` and job 1's complete, unambiguously AUTHORING
+    evidence is dropped — spec §4's "established causes are never lost" holds
+    for the run summary but not per failure. The structural fix is per-job
+    completeness, tracked in `todo://deployer/forge-step-level-log-binding`.
+    """
+    readable = job_with(
+        text='ERROR: failed to compute cache key: "/docs/setup.md": not found',
+        job_id=1,
+    )
+    unreadable = job_with(job_id=2)
+    d = diagnose_run(run_with(readable, unreadable, completeness=LOGS_ERROR))
+
+    assert d.outcome == "EVIDENCE_UNAVAILABLE"
+    assert d.causes == []
+    assert [v.outcome for v in d.failures] == [
+        "EVIDENCE_UNAVAILABLE",
+        "EVIDENCE_UNAVAILABLE",
+    ]
+    assert all(v.kind is None and v.evidence == [] for v in d.failures)
+
+
+def test_recovered_apt_warning_does_not_dilute_an_authoring_verdict():
+    """The review's probe. A retried-and-recovered apt fetch is one of the
+    most common lines in a Debian-based build; before the exclusion it paired
+    with the real COPY failure into `ambiguous:` and lost the class."""
+    text = (
+        "#8 12.1 W: Failed to fetch http://deb.debian.org/debian/x.deb  "
+        "Connection timed out [IP: 1.2.3.4 80] [retrying]\n"
+        "#8 30.2 apt-get update succeeded on retry\n"
+        'ERROR: failed to solve: failed to compute cache key: "/x": not found'
+    )
+    v = classify_failure(job_with(text=text), step=None, completeness=COMPLETE)
+    assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.AUTHORING
+
+
+def test_apt_error_line_is_still_environment():
+    """The negative twin, verbatim from live acceptance run 2: apt's `E: `
+    prefix is a real failure and must keep firing."""
+    text = (
+        "#11 15.89 E: Failed to fetch http://10.255.255.1/debian/x.deb  "
+        "Connection timed out [IP: 10.255.255.1 80]"
+    )
+    v = classify_failure(job_with(text=text), step=None, completeness=COMPLETE)
+    assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.ENVIRONMENT
+
+
+def test_a_warning_line_does_not_mask_the_same_marker_elsewhere():
+    """The exclusion is per match, not per rule: a genuine fetch failure
+    later in the log still establishes ENVIRONMENT."""
+    text = (
+        "W: Failed to fetch http://deb.debian.org/x.deb [retrying]\n"
+        "E: Failed to fetch http://deb.debian.org/x.deb\n"
+    )
+    v = classify_failure(job_with(text=text), step=None, completeness=COMPLETE)
+    assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.ENVIRONMENT
+
+
+def test_the_warning_exclusion_is_environment_only():
+    """An AUTHORING marker on a `W: ` line is still an AUTHORING marker: the
+    exclusion answers apt's retry noise, it is not a general line filter."""
+    text = 'W: failed to compute cache key: "/x": not found'
+    v = classify_failure(job_with(text=text), step=None, completeness=COMPLETE)
+    assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.AUTHORING

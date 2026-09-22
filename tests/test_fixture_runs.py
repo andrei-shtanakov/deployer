@@ -56,7 +56,11 @@ def test_fixture_is_complete_and_anonymised(name: str) -> None:
 
 def test_the_three_live_classes_are_distinct() -> None:
     """The discrimination the live runs prove: three runs, three classes."""
-    kinds = {diagnose_run(_load(name)).causes[0] for name, _, _ in CASES}
+    kinds = set()
+    for name, _, _ in CASES:
+        causes = diagnose_run(_load(name)).causes
+        assert causes, f"{name}: no cause established"
+        kinds.add(causes[0])
     assert kinds == {
         FailureKind.AUTHORING,
         FailureKind.ENVIRONMENT,

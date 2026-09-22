@@ -271,13 +271,30 @@ def _evidence_pool(job: FailedJob, step: FailedStep | None) -> list[Evidence]:
     ]
 
 
+# apt prefixes a recovered problem with `W: ` and a real one with `E: `. A
+# retry that then succeeded is not a cause, and because in practice every
+# step's evidence pool is the whole job log (all real citations are
+# job-level), one such line was enough to pair with a genuine AUTHORING
+# marker and turn a clean verdict into `ambiguous:`. ENVIRONMENT rules
+# therefore skip a match landing on a warning line — the first mitigation
+# for todo://deployer/diagnose-rule-catalogue-precision.
+_WARNING_LINE_RE = re.compile(rf"^{_LINE_PREFIX}W: ")
+
+
 def _matches(item: Evidence) -> list[_Match]:
-    """Every rule against one piece of evidence, one match per rule."""
+    """Every rule against one piece of evidence, one match per rule.
+
+    An ENVIRONMENT rule keeps looking past a match on an apt warning line;
+    other kinds take the first match as before.
+    """
     found: list[_Match] = []
     for rule in RULES:
-        hit = rule.pattern.search(item.text)
-        if hit is not None:
-            found.append(_Match(rule, item, _line_at(item.text, hit.start())))
+        for hit in rule.pattern.finditer(item.text):
+            line = _line_at(item.text, hit.start())
+            if rule.kind is FailureKind.ENVIRONMENT and _WARNING_LINE_RE.match(line):
+                continue
+            found.append(_Match(rule, item, line))
+            break
     return found
 
 
