@@ -1485,6 +1485,19 @@ def test_a_repo_flag_that_is_not_a_repo_name_is_rejected(capsys) -> None:
     assert "owner/name" in capsys.readouterr().err
 
 
+def test_a_url_whose_slug_segments_are_all_dots_is_rejected(capsys) -> None:
+    """`../..` matches the old `[A-Za-z0-9._-]+` alternation character for
+    character; rejecting an all-dots segment costs one alternation."""
+    url = "https://github.com/../../actions/runs/1"
+    assert cli.main(["diagnose", url]) == 2
+    assert "owner/name" in capsys.readouterr().err
+
+
+def test_a_repo_flag_that_is_all_dots_is_rejected(capsys) -> None:
+    assert cli.main(["diagnose", "--repo", "./.", "--run-id", "1"]) == 2
+    assert "owner/name" in capsys.readouterr().err
+
+
 def test_an_ordinary_slug_still_passes_both_branches(monkeypatch) -> None:
     """The twin: dots, dashes and underscores are legal in a repo name."""
     seen: list[RunRef] = []

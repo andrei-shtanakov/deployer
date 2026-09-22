@@ -780,6 +780,90 @@ def test_copy_from_another_stage_is_not_a_source_copy() -> None:
     assert _install_precedes_source_copy(dockerfile) is True
 
 
+def test_copy_from_an_external_image_still_reads_as_authoring() -> None:
+    """The evidence case: `COPY --from=` naming an image outside this
+    Dockerfile (not a declared stage) does not count as sources arriving,
+    even once a manifest-only COPY follows it — the project install still
+    precedes the actual source copy."""
+    dockerfile = (
+        "FROM python:3.12-slim\n"
+        "COPY --from=ghcr.io/astral-sh/uv:0.5.11 /uv /bin/uv\n"
+        "COPY pyproject.toml uv.lock ./\n"
+        "RUN uv sync --frozen\n"
+    )
+    assert _install_precedes_source_copy(dockerfile) is True
+
+
+def test_copy_from_a_declared_stage_counts_as_sources_arriving() -> None:
+    """`COPY --from=<name>` naming a stage THIS Dockerfile declares (`FROM
+    ... AS <name>`) may carry the project's sources out of that stage, so it
+    counts as sources arriving — unlike `--from=` on an external image."""
+    dockerfile = (
+        "FROM python:3.12-slim AS src\n"
+        "FROM python:3.12-slim\n"
+        "COPY --from=src /repo /app\n"
+        "RUN pip install .\n"
+    )
+    assert _install_precedes_source_copy(dockerfile) is False
+
+
+def test_copy_from_a_declared_stage_is_case_insensitive_on_as_and_name() -> None:
+    dockerfile = (
+        "FROM python:3.12-slim as Src\n"
+        "FROM python:3.12-slim\n"
+        "COPY --from=SRC /repo /app\n"
+        "RUN pip install .\n"
+    )
+    assert _install_precedes_source_copy(dockerfile) is False
+
+
+def test_copy_from_a_numeric_stage_index_counts_as_sources_arriving() -> None:
+    """`--from=<N>` addresses a stage by position; treated as declared since
+    resolving the index correctly would require tracking stage order."""
+    dockerfile = (
+        "FROM python:3.12-slim\n"
+        "FROM python:3.12-slim\n"
+        "COPY --from=0 /repo /app\n"
+        "RUN pip install .\n"
+    )
+    assert _install_precedes_source_copy(dockerfile) is False
+
+
+def test_bind_mount_install_is_not_a_copy_order_defect() -> None:
+    """`RUN --mount=type=bind` can make the build context present at the
+    mount target during the RUN, with no COPY at all — the pattern uv's own
+    Docker guide recommends. It must not read as install-before-sources."""
+    dockerfile = (
+        "FROM python:3.12-slim\n"
+        "RUN --mount=type=bind,source=.,target=/app uv sync --frozen\n"
+    )
+    assert _install_precedes_source_copy(dockerfile) is False
+
+
+def test_bind_mount_does_not_shadow_a_later_ordinary_defect() -> None:
+    """A bind-mounted install does not, by itself, make every later install
+    safe — only THAT install is excused."""
+    dockerfile = (
+        "FROM python:3.12-slim\n"
+        "RUN --mount=type=bind,source=.,target=/app uv sync --no-install-project\n"
+        "RUN uv sync --frozen\n"
+        "COPY src ./src\n"
+    )
+    assert _install_precedes_source_copy(dockerfile) is True
+
+
+def test_manifest_pattern_does_not_match_a_directory_named_like_one() -> None:
+    """`READMEs` is a real source directory, not the README manifest file —
+    the anchored pattern must not swallow it."""
+    dockerfile = "FROM python:3.12-slim\nCOPY READMEs ./READMEs\nRUN pip install .\n"
+    assert _install_precedes_source_copy(dockerfile) is False
+
+
+def test_manifest_pattern_still_matches_the_bare_files() -> None:
+    dockerfile = "FROM python:3.12-slim\nCOPY README.md LICENSE ./\nRUN pip install .\n"
+    assert _install_precedes_source_copy(dockerfile) is True
+
+
 def test_a_dockerfile_that_never_installs_the_project_is_not_a_copy_order_defect() -> (
     None
 ):

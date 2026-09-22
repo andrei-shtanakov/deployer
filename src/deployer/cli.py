@@ -50,8 +50,10 @@ _RUN_URL_RE = re.compile(
 #: A GitHub repository slug. The value is interpolated straight into
 #: `repos/{repo}/...` (`forge.py`), so a run URL pasted from an issue or
 #: handed over by an agent could otherwise steer `gh api` at a path other
-#: than the one the URL appears to name.
-_REPO_SLUG_RE = re.compile(r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$")
+#: than the one the URL appears to name. Neither segment may be made of dots
+#: only (`.`, `..`, `...`, ...) — no GitHub owner or repo name is, and
+#: `owner/..` or `../..` reads as path traversal against `repos/{repo}/...`.
+_REPO_SLUG_RE = re.compile(r"^(?!\.+/)[A-Za-z0-9._-]+/(?!\.+$)[A-Za-z0-9._-]+$")
 
 _EXIT_BY_OUTCOME: dict[str, int] = {
     "CLASSIFIED": 0,

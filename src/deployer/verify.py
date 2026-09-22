@@ -1040,24 +1040,76 @@ _MANIFEST_NAMES = frozenset(
 )
 _MANIFEST_PATTERNS = (
     re.compile(r"^requirements.*\.txt$", re.IGNORECASE),
-    re.compile(r"^README.*$"),
-    re.compile(r"^LICENSE.*$"),
+    re.compile(r"^README(\.\w+)?$"),
+    re.compile(r"^LICENSE(\.\w+)?$"),
 )
+
+#: Matches the stage name on a `FROM <image> [AS <name>]` line.
+_FROM_AS_RE = re.compile(r"\bAS\s+(\S+)", re.IGNORECASE)
+
+#: `RUN --mount=type=bind,...` — the build context (or part of it) can be
+#: present at the mount target for the life of this RUN, with no COPY at all.
+_BIND_MOUNT_RE = re.compile(r"--mount=\S*\btype=bind\b", re.IGNORECASE)
 
 
 def _install_precedes_source_copy(dockerfile: str) -> bool:
     """True when the project is installed before its sources reach the image.
 
-    Walks the instructions in order (continuations joined, comments dropped by
-    `parse_dockerfile`) and returns True if the first project-installing RUN
-    comes before any COPY/ADD that brings in something other than manifest
-    files. A Dockerfile that never installs the project returns False.
+    Walks the instructions in order (continuations joined, comments dropped
+    by `parse_dockerfile`) and returns True if the first project-installing
+    RUN — one without a bind mount, see below — comes before any instruction
+    that brings sources in. Three routes count as sources arriving: a
+    COPY/ADD of something other than a manifest file (`_copies_sources`), a
+    `COPY --from=<name>` naming a stage this Dockerfile itself declares
+    (`_copies_from_declared_stage` — it may carry the project out of that
+    stage, unlike `--from=` on an external image), and a `RUN
+    --mount=type=bind` on the installing RUN itself (the mounted context can
+    stand in for a COPY). Anything this walker does not recognise — shell
+    quoting, `ARG`-substituted paths, heredoc `RUN <<EOF` — is treated as
+    sources possibly already present, i.e. it does not trigger True: the
+    honest failure mode is UNKNOWN, never a wrong AUTHORING. A Dockerfile
+    that never installs the project also returns False.
     """
+    stage_names = _declared_stage_names(parse_dockerfile(dockerfile))
     for instruction, args in parse_dockerfile(dockerfile):
-        if instruction == "RUN" and _installs_project(args):
-            return True
-        if instruction in ("COPY", "ADD") and _copies_sources(args):
-            return False
+        if instruction == "RUN":
+            if _installs_project(args) and not _BIND_MOUNT_RE.search(args):
+                return True
+        elif instruction in ("COPY", "ADD"):
+            if _copies_sources(args) or _copies_from_declared_stage(args, stage_names):
+                return False
+    return False
+
+
+def _declared_stage_names(instructions: list[tuple[str, str]]) -> set[str]:
+    """Lowercased names this Dockerfile assigns its own stages via `FROM ...
+    AS <name>` (case-insensitive `AS`)."""
+    names: set[str] = set()
+    for instruction, args in instructions:
+        if instruction != "FROM":
+            continue
+        match = _FROM_AS_RE.search(args)
+        if match:
+            names.add(match.group(1).strip("\"'").lower())
+    return names
+
+
+def _copies_from_declared_stage(copy_args: str, stage_names: set[str]) -> bool:
+    """True when `COPY --from=<name>` names a stage THIS Dockerfile declares.
+
+    Such a COPY pulls the output of an earlier stage in the same build —
+    which may include the project's sources — so it counts as sources
+    arriving, unlike `--from=` on an external image (`_copies_sources`'s
+    concern). A numeric `--from=<index>` addresses a stage by position and is
+    always treated as declared: resolving the index to a real stage would
+    require tracking declaration order, which this walker does not do.
+    """
+    for token in copy_args.split():
+        token = token.strip("[],\"'")
+        if not token.startswith("--from="):
+            continue
+        name = token[len("--from=") :].strip("\"'")
+        return name.isdigit() or name.lower() in stage_names
     return False
 
 
@@ -1098,10 +1150,15 @@ def _has_words(tokens: list[str], *words: str) -> bool:
 
 
 def _copies_sources(copy_args: str) -> bool:
-    """True when a COPY/ADD brings in anything beyond manifest files.
+    """True when a COPY/ADD from the build context brings in anything beyond
+    manifest files.
 
     `COPY --from=` copies out of another stage or image, not this build
-    context, so it never carries the project's sources.
+    context, so it is never a source copy by this function's reckoning —
+    even when the referent is a stage this Dockerfile declares and may
+    itself hold the project's sources. That case is
+    `_copies_from_declared_stage`'s concern, checked separately by
+    `_install_precedes_source_copy`.
     """
     tokens = [token.strip("[],\"'") for token in copy_args.split()]
     if any(token.startswith("--from=") for token in tokens):

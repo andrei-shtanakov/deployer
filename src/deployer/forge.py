@@ -191,8 +191,12 @@ def fetch_failed_run(
     One run-metadata call decides both the refusal and the attempt; the
     attempt is fixed once, before any jobs or logs are read, so a re-run
     never mixes evidence from different attempts. A GhError on the run or
-    jobs calls propagates; per-job log and annotation failures are recorded
-    in ``Completeness`` instead.
+    jobs calls propagates. Per-job log and annotation failures follow the
+    same rule as :meth:`_Gh.logs`/:meth:`_Gh.annotations`: an HTTP-status
+    ``GhError`` is data about the run and is recorded in ``Completeness``;
+    a status-less ``GhError`` (timeout, ``gh`` could not start, an
+    unparseable failure) means ``gh`` itself never reached GitHub and
+    propagates instead.
     """
     gh = _Gh(runner if runner is not None else SubprocessGh(), ref.repo)
     run = gh.json(_run_path(ref.run_id, attempt))
