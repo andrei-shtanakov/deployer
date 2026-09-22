@@ -85,7 +85,7 @@ class FakeGh:
 
     def api(self, argv: list[str], *, timeout: float) -> str:
         self.calls.append(Call(argv=list(argv), timeout=timeout))
-        path = argv[0]
+        path = argv[-1]  # flags (e.g. --allow-escape-sequences) precede it
         if m := _JOBS_RE.search(path):
             return self._jobs_page(int(m.group(1)), int(m.group(2)))
         if m := _ANNOTATIONS_RE.search(path):
@@ -180,7 +180,7 @@ def test_gh_is_invoked_without_a_shell_and_with_a_timeout(fake_gh):
 
 
 def _paths(fake_gh: FakeGh) -> list[str]:
-    return [c.argv[0] for c in fake_gh.calls]
+    return [c.argv[-1] for c in fake_gh.calls]
 
 
 def test_refusal_reads_nothing_but_the_run(fake_gh):
@@ -392,7 +392,7 @@ def test_completeness_is_the_worst_across_kept_jobs(fake_gh):
     logs_by_job = {1: "fine", 2: GhError("boom")}
 
     def logs_per_job(argv: list[str], *, timeout: float) -> str:
-        m = _LOGS_RE.search(argv[0])
+        m = _LOGS_RE.search(argv[-1])
         if m:
             result = logs_by_job[int(m.group(1))]
             if isinstance(result, GhError):
@@ -415,6 +415,39 @@ def test_run_level_gh_error_propagates(fake_gh):
 
     with pytest.raises(GhError):
         fetch_failed_run(RunRef("o/r", 1), attempt=None, runner=Broken())
+
+
+# --- ANSI-coloured logs ------------------------------------------------------
+
+
+def test_logs_call_passes_allow_escape_sequences_other_calls_do_not(fake_gh):
+    """gh refuses real build logs (they carry ANSI colour) without this flag."""
+    fetch_failed_run(RunRef("o/r", 1), attempt=1, runner=fake_gh)
+    logs_calls = [c for c in fake_gh.calls if _LOGS_RE.search(c.argv[-1])]
+    other_calls = [c for c in fake_gh.calls if not _LOGS_RE.search(c.argv[-1])]
+    assert logs_calls and all("--allow-escape-sequences" in c.argv for c in logs_calls)
+    assert other_calls and not any(
+        "--allow-escape-sequences" in c.argv for c in other_calls
+    )
+
+
+def test_ansi_colour_is_stripped_from_log_evidence(fake_gh):
+    """The runner echoes the step command in colour; evidence must be plain."""
+    fake_gh.job_pages = [[job(1, steps=[step(1, "Run docker build")])]]
+    fake_gh.logs = (
+        f"{_TS}##[group]Run docker build\n"
+        f"{_TS}\x1b[36;1mdocker build --file ./Dockerfile .\x1b[0m\n"
+        f"{_TS}##[endgroup]"
+    )
+    snapshot = fetch_failed_run(RunRef("o/r", 1), attempt=1, runner=fake_gh)
+    assert isinstance(snapshot, FailedRun)
+    all_evidence = [e for j in snapshot.jobs for e in j.evidence] + [
+        e for j in snapshot.jobs for s in j.steps for e in s.evidence
+    ]
+    assert all_evidence
+    assert not any("\x1b" in e.text for e in all_evidence)
+    (kept,) = snapshot.jobs
+    assert "docker build --file ./Dockerfile ." in kept.steps[0].evidence[0].text
 
 
 # --- versioned serialization -------------------------------------------------

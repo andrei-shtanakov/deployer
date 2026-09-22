@@ -36,11 +36,15 @@ _EMPTY_SET_NOTE = "failed run exposes no failed job or step"
 # The shape of a Python exception line, optionally under pytest's ``E`` prefix.
 _EXCEPTION_NAME = r"[A-Za-z_]\w*(?:\.\w+)*(?:Error|Exception)"
 _EXCEPTION_LINE = rf"(?:E[ \t]+)?{_EXCEPTION_NAME}: "
+# `docker build` frames every RUN-step output line as `#<step> <seconds> `
+# (buildkit); diagnose, not forge, knows what docker is, so the framing is
+# tolerated here, at the line-shape rules, not stripped at the source.
+_LINE_PREFIX = r"[ \t]*(?:#\d+ \d+\.\d+ )?"
 # Exception lines other than the assertion rules below: recorded as
 # observations, never as a class (spec §5: wrong dependencies or a wrong
 # invocation produce the same symptom as a project defect).
 _EXCEPTION_LINE_RE = re.compile(
-    rf"^(?:E[ \t]+)?((?!AssertionError\b){_EXCEPTION_NAME}: .+)$",
+    rf"^{_LINE_PREFIX}(?:E[ \t]+)?((?!AssertionError\b){_EXCEPTION_NAME}: .+)$",
     re.MULTILINE,
 )
 
@@ -77,7 +81,7 @@ RULES: tuple[Rule, ...] = (
     _prose(
         FailureKind.AUTHORING,
         "no such file",
-        rf"^(?!{_EXCEPTION_LINE})[^\n]*no such file",
+        rf"^(?!{_LINE_PREFIX}{_EXCEPTION_LINE})[^\n]*no such file",
     ),
     _prose(FailureKind.AUTHORING, "executable not found", r"executable file not found"),
     _prose(FailureKind.AUTHORING, "exec format error", r"exec format error"),
@@ -108,14 +112,22 @@ RULES: tuple[Rule, ...] = (
         "runner shutdown",
         r"the runner has received a shutdown signal",
     ),
-    _exact(FailureKind.PROJECT, "assertion error", r"^(?:E[ \t]+)?AssertionError: "),
+    _exact(
+        FailureKind.PROJECT,
+        "assertion error",
+        rf"^{_LINE_PREFIX}(?:E[ \t]+)?AssertionError: ",
+    ),
     _exact(
         FailureKind.PROJECT,
         "pytest failed with assertion",
-        r"^FAILED \S+ - AssertionError",
+        rf"^{_LINE_PREFIX}FAILED \S+ - AssertionError",
     ),
-    _exact(FailureKind.PROJECT, "pytest bare assert", r"^FAILED \S+ - assert "),
-    _exact(FailureKind.PROJECT, "pytest assert", r"^E[ \t]+assert "),
+    _exact(
+        FailureKind.PROJECT,
+        "pytest bare assert",
+        rf"^{_LINE_PREFIX}FAILED \S+ - assert ",
+    ),
+    _exact(FailureKind.PROJECT, "pytest assert", rf"^{_LINE_PREFIX}E[ \t]+assert "),
 )
 """Every rule is evaluated against every piece of evidence; order is cosmetic."""
 

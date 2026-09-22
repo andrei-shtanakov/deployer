@@ -26,6 +26,9 @@ _FAILED_CONCLUSIONS = frozenset({"failure", "timed_out"})
 _GREEN_CONCLUSIONS = frozenset({"success", "skipped", "neutral"})
 _HTTP_STATUS_RE = re.compile(r"\(HTTP (\d{3})\)")
 _LOG_TIMESTAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z ?")
+# The runner colours some lines (e.g. echoing the step command) with ANSI CSI
+# sequences; stripping is mechanical framing removal, not interpretation.
+_ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 _GROUP_PREFIX = "##[group]"
 _ENDGROUP = "##[endgroup]"
 
@@ -254,8 +257,11 @@ class _Gh:
         self._runner = runner
         self._prefix = f"repos/{repo}"
 
-    def text(self, path: str) -> str:
-        return self._runner.api([f"{self._prefix}/{path}"], timeout=GH_TIMEOUT_S)
+    def text(self, path: str, *, extra: tuple[str, ...] = ()) -> str:
+        """Fetch ``path``; ``extra`` are ``gh api`` flags placed before it."""
+        return self._runner.api(
+            [*extra, f"{self._prefix}/{path}"], timeout=GH_TIMEOUT_S
+        )
 
     def json(self, path: str) -> Any:
         return json.loads(self.text(path))
@@ -276,7 +282,12 @@ class _Gh:
 
     def logs(self, job_id: int) -> tuple[str, LogsState]:
         try:
-            text = self.text(f"actions/jobs/{job_id}/logs")
+            # Real build logs routinely carry the runner's ANSI colouring
+            # (e.g. the echoed step command); gh refuses to print those
+            # without this flag. `_split_blocks` strips the sequences.
+            text = self.text(
+                f"actions/jobs/{job_id}/logs", extra=("--allow-escape-sequences",)
+            )
         except GhError as exc:
             return "", "unavailable" if exc.status == 410 else "error"
         return (text, "present") if text.strip() else ("", "unavailable")
@@ -379,6 +390,7 @@ def _split_blocks(log_text: str) -> list[tuple[str | None, list[str]]]:
 
     for raw in log_text.splitlines():
         line = _LOG_TIMESTAMP_RE.sub("", raw, count=1)
+        line = _ANSI_RE.sub("", line)
         if line.startswith(_GROUP_PREFIX):
             flush()
             title = line.removeprefix(_GROUP_PREFIX)

@@ -283,6 +283,65 @@ def test_cited_line_is_the_marker_line_not_a_bare_prefix():
     assert v.observations == ["assertion error: AssertionError: split"]
 
 
+# --- buildkit line framing ---------------------------------------------------
+# `docker build` frames every RUN-step output line as `#<step> <seconds> `;
+# lines below are copied verbatim from real job logs (evidence/job-*.raw.log).
+
+
+def test_buildkit_framed_assertion_error_is_still_project():
+    text = "#16 0.310 AssertionError: 'hello from ci_build' != 'hello from ci-build'"
+    v = classify_failure(job_with(text=text), step=None, completeness=COMPLETE)
+    assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.PROJECT
+    assert v.evidence == [Evidence(None, text)]
+
+
+def test_buildkit_framed_file_not_found_is_still_an_exception_not_authoring():
+    """The negative lookahead must see through the buildkit frame too."""
+    text = "#12 0.512 E   FileNotFoundError: [Errno 2] No such file or directory: 'x'"
+    v = classify_failure(job_with(text=text), step=None, completeness=COMPLETE)
+    assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
+    assert v.evidence == []
+    assert v.observations == [
+        "exception: FileNotFoundError: [Errno 2] No such file or directory: 'x'"
+    ]
+
+
+def test_leading_whitespace_before_pytest_assert_is_still_project():
+    v = classify_failure(
+        job_with(text="   E   AssertionError: 1 != 2"), step=None, completeness=COMPLETE
+    )
+    assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.PROJECT
+
+
+def test_buildkit_framed_connection_timeout_is_environment():
+    """The prose ENVIRONMENT rules are already unanchored; this is a pin."""
+    text = (
+        "#11 15.43   Could not connect to 10.255.255.1:80 (10.255.255.1), "
+        "connection timed out"
+    )
+    v = classify_failure(job_with(text=text), step=None, completeness=COMPLETE)
+    assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.ENVIRONMENT
+
+
+def test_real_buildkit_copy_not_found_is_authoring():
+    """Verbatim from evidence/run-1.log-failed.txt."""
+    text = (
+        "ERROR: failed to build: failed to solve: failed to compute cache key: "
+        'failed to calculate checksum of ref a4efb8b6::t0jk: "/docs/setup.md": '
+        "not found"
+    )
+    v = classify_failure(job_with(text=text), step=None, completeness=COMPLETE)
+    assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.AUTHORING
+
+
+def test_buildkit_framing_does_not_reopen_the_split_line_gap():
+    """`E` and `assert x` on separate buildkit-framed lines still do not match."""
+    v = classify_failure(
+        job_with(text="#12 0.5 E\n#12 0.5 assert x"), step=None, completeness=COMPLETE
+    )
+    assert v.kind is not FailureKind.PROJECT
+
+
 def test_step_verdict_cites_a_job_annotation_with_a_marker():
     """Review #6: int-source (annotation) evidence is in the step pool and citable."""
     target = failed_step(3)
