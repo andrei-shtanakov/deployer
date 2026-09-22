@@ -13,6 +13,12 @@ says it must produce:
 - a symptom establishes nothing at any level, and a conflict between two kinds
   is ambiguity, not a winner.
 
+Beside the negative twins, which vary the SHAPE, the table carries CAUSE TWINS,
+which keep the message text identical and vary only what produced it. Both
+members of such a pair expect the SAME verdict -- where that verdict is a
+class, the pair pins an over-firing the catalogue cannot currently avoid, and
+its ``note`` says so in the open.
+
 The rows are built by helpers from a small table of markers so that the cross
 product is exhaustive rather than anecdotal; ``print_table()`` (``python -m``
 this module, or run it as a script) renders them as markdown for review. It is
@@ -23,7 +29,7 @@ from dataclasses import dataclass
 
 import pytest
 
-from deployer.diagnose import Outcome, classify_failure, diagnose_run
+from deployer.diagnose import RULES, Outcome, classify_failure, diagnose_run
 from deployer.forge import (
     Completeness,
     Evidence,
@@ -62,6 +68,12 @@ class Row:
     context: Context
     expects_ambiguity: bool = False
     placement: str = ""
+    note: str = ""
+    """Why this row reads the way it does, for a reader of ``print_table()``.
+
+    Carried by the cause twins below, where the expected value is a statement
+    about what the snapshot can honestly conclude rather than a bare class.
+    """
 
 
 # --- the markers, one per catalogue shape ------------------------------------
@@ -418,6 +430,396 @@ CONFLICT_ROWS = (
 into `ambiguous:`, whichever side of the block it sits on. Two FAILURE kinds
 in one pool are the real conflict, and order does not pick a winner."""
 
+# --- cause twins: the SAME message, a different cause ------------------------
+# The negative twins above vary the SHAPE: different words, so no class. A
+# cause twin keeps the message text IDENTICAL and changes only what produced
+# it — the harder question the owner put to the catalogue on 2026-09-22. Both
+# members of a pair therefore carry the SAME expected verdict: a pair whose
+# members differed would mean the snapshot CAN separate the causes, and the
+# rule could then be made to.
+#
+# Where the pair is UNCLASSIFIED, the demotion is doing its job. Where it is
+# CLASSIFIED, the class is what the catalogue answers to BOTH causes, and the
+# note says so: that is the over-firing, pinned here in the open rather than
+# discovered in production. Rewriting a note into "the twin is now separable"
+# takes a new discriminator in the evidence, not a better guess.
+#
+# The preambles are ordinary log lines from each scenario. They deliberately
+# do not encode the cause: a real snapshot does not either, which is the
+# finding these rows carry.
+
+
+@dataclass(frozen=True)
+class CauseTwin:
+    """One message text, two causes, and what the snapshot may conclude."""
+
+    rule: str
+    slug: str
+    marker: str
+    base: FailureKind | None
+    note: str
+    cause_a: str
+    preamble_a: str
+    cause_b: str
+    preamble_b: str
+
+
+_BUILD_CONTEXT = "#2 [internal] load build context\n#2 transferring context: 41.09kB"
+_SMALL_CONTEXT = "#2 [internal] load build context\n#2 transferring context: 1.21kB"
+
+CAUSE_TWINS: tuple[CauseTwin, ...] = (
+    # --- the kept AUTHORING shapes -------------------------------------------
+    CauseTwin(
+        rule="dockerfile parse error",
+        slug="dockerfile-parse-error",
+        marker="Dockerfile parse error on line 3: unexpected end of statement",
+        base=ARTIFACT,
+        note=(
+            "hand-written Dockerfile vs one a build script generated: AUTHORING "
+            "either way -- the class names the artifact whose text will not "
+            "parse, never who typed it"
+        ),
+        cause_a="hand-written",
+        preamble_a="#1 [internal] load build definition from Dockerfile",
+        cause_b="script-generated",
+        preamble_b="#1 [internal] load build definition from Dockerfile.gen",
+    ),
+    CauseTwin(
+        rule="unknown instruction",
+        slug="unknown-instruction",
+        marker="ERROR: unknown instruction: RUN --mount=type=cache,target=/root/.cache",
+        base=ARTIFACT,
+        note=(
+            "a typo in the authored file vs an instruction a builder too old to "
+            "know it rejects: AUTHORING either way, and the second is a residual "
+            "-- the artifact and the builder it is built by are a pair the "
+            "snapshot cannot take apart"
+        ),
+        cause_a="typo",
+        preamble_a="#1 [internal] load build definition from Dockerfile",
+        cause_b="builder-too-old",
+        preamble_b='#0 building with "default" instance using docker driver',
+    ),
+    CauseTwin(
+        rule="unrecognized named-value",
+        slug="unrecognized-named-value",
+        marker=(
+            "Unrecognized named-value: 'secret'. Located at position 1 within "
+            "expression: secret.TOKEN"
+        ),
+        base=ARTIFACT,
+        note=(
+            "the repo's own workflow vs a reusable workflow it calls: AUTHORING "
+            "either way -- workflow YAML is not in the language, but the "
+            "snapshot does not say whose YAML"
+        ),
+        cause_a="own-workflow",
+        preamble_a="##[error].github/workflows/ci.yml (Line: 31, Col: 9)",
+        cause_b="called-reusable-workflow",
+        preamble_b="##[error]org/ci-workflows/.github/workflows/build.yml@v2",
+    ),
+    CauseTwin(
+        rule="copy/add source not found",
+        slug="copy-not-found",
+        marker=(
+            "ERROR: failed to solve: failed to compute cache key: failed to "
+            'calculate checksum of ref abc::def: "/docs/setup.md": not found'
+        ),
+        base=ARTIFACT,
+        note=(
+            "a path the COPY never had right vs a file the project removed "
+            "AFTER the Dockerfile was authored: AUTHORING either way (spec "
+            "6.4 A -- the build context IS the checkout the Dockerfile was "
+            "authored against), and the second is the stated residual: the "
+            "class names the mismatch, not which side moved"
+        ),
+        cause_a="wrong-path",
+        preamble_a="#12 [stage-0 7/9] COPY docs/setup.md ./setup.md",
+        cause_b="removed-after-authoring",
+        preamble_b="#12 [stage-0 7/9] COPY docs/setup.md ./setup.md",
+    ),
+    CauseTwin(
+        rule="copy/add failed in build context",
+        slug="copy-failed",
+        marker=(
+            "COPY failed: file not found in build context or excluded by "
+            ".dockerignore: stat app.py: no such file or directory"
+        ),
+        base=ARTIFACT,
+        note=(
+            "a source that is not in the repo vs one the .dockerignore excludes: "
+            "AUTHORING either way -- docker prints the same sentence for both, "
+            "and both are a mismatch between the instruction and its context"
+        ),
+        cause_a="absent-from-repo",
+        preamble_a=_BUILD_CONTEXT,
+        cause_b="excluded-by-dockerignore",
+        preamble_b=_SMALL_CONTEXT,
+    ),
+    # --- the ENVIRONMENT rules -----------------------------------------------
+    CauseTwin(
+        rule="docker daemon unreachable",
+        slug="docker-daemon-unreachable",
+        marker=("Cannot connect to the Docker daemon at unix:///var/run/docker.sock."),
+        base=ENVIRONMENT,
+        note=(
+            "the runner's daemon really down vs the project's own test printing "
+            "its client's error path: ENVIRONMENT for both today -- KNOWN "
+            "over-firing, the snapshot cannot tell a tool's failure from a test "
+            "that provokes one"
+        ),
+        cause_a="daemon-down",
+        preamble_a="##[group]Run docker build .",
+        cause_b="project-error-path-test",
+        preamble_b="##[group]Run pytest tests/test_docker_client.py -k offline",
+    ),
+    CauseTwin(
+        rule="host unresolvable",
+        slug="host-unresolvable",
+        marker="curl: (6) Could not resolve host: pypi.org",
+        base=ENVIRONMENT,
+        note=(
+            "the runner's DNS down vs a step that deliberately curls an "
+            "unreachable host to prove the image needs no network: ENVIRONMENT "
+            "for both today -- known over-firing"
+        ),
+        cause_a="runner-dns-down",
+        preamble_a="##[group]Run curl -sSf https://pypi.org/simple/",
+        cause_b="deliberate-offline-probe",
+        preamble_b="##[group]Run scripts/assert-no-network.sh",
+    ),
+    CauseTwin(
+        rule="name resolution failure",
+        slug="name-resolution-failure",
+        marker="E: Temporary failure resolving 'deb.debian.org'",
+        base=ENVIRONMENT,
+        note=(
+            "the runner's resolver down vs a build step run with networking "
+            "switched off on purpose: ENVIRONMENT for both today -- known "
+            "over-firing"
+        ),
+        cause_a="resolver-down",
+        preamble_a="#9 [stage-0 3/9] RUN apt-get update",
+        cause_b="network-disabled-on-purpose",
+        preamble_b="#9 [stage-0 3/9] RUN --network=none apt-get update",
+    ),
+    CauseTwin(
+        rule="fetch failure",
+        slug="fetch-failure",
+        marker=(
+            "E: Failed to fetch http://deb.debian.org/debian/pool/main/x.deb  "
+            "404  Not Found"
+        ),
+        base=ENVIRONMENT,
+        note=(
+            "a mirror that rotated the package out vs a version the Dockerfile "
+            "pinned that the suite no longer carries: ENVIRONMENT for both "
+            "today -- known over-firing, and the second is really an artifact "
+            "defect the snapshot cannot see"
+        ),
+        cause_a="mirror-rotated",
+        preamble_a="#9 [stage-0 3/9] RUN apt-get install -y libpq5",
+        cause_b="pinned-version-withdrawn",
+        preamble_b="#9 [stage-0 3/9] RUN apt-get install -y libpq5=13.4-1",
+    ),
+    CauseTwin(
+        rule="connection timed out",
+        slug="connection-timed-out",
+        marker="requests: connection timed out after 5s",
+        base=ENVIRONMENT,
+        note=(
+            "the runner's network vs the app's OWN retry test printing the "
+            "phrase it is testing: ENVIRONMENT for both today -- known "
+            "over-firing, pinned"
+        ),
+        cause_a="runner-network",
+        preamble_a="##[group]Run python -m app.sync --once",
+        cause_b="app-retry-test",
+        preamble_b="##[group]Run pytest tests/test_retry.py -k timeout",
+    ),
+    CauseTwin(
+        rule="registry rate limit",
+        slug="registry-rate-limit",
+        marker="toomanyrequests: You have reached your pull rate limit.",
+        base=ENVIRONMENT,
+        note=(
+            "a shared runner IP that exhausted the anonymous quota vs a test "
+            "replaying a recorded 429 body: ENVIRONMENT for both today -- known "
+            "over-firing"
+        ),
+        cause_a="quota-exhausted",
+        preamble_a="#1 [internal] load metadata for docker.io/library/python:3.12",
+        cause_b="recorded-response-replayed",
+        preamble_b="##[group]Run pytest tests/test_registry.py -k ratelimit",
+    ),
+    CauseTwin(
+        rule="service unavailable",
+        slug="service-unavailable",
+        marker="error parsing HTTP 503 response body: 503 Service Unavailable",
+        base=ENVIRONMENT,
+        note=(
+            "the registry really down vs the app's HTTP fixture printing a "
+            "canned upstream response: ENVIRONMENT for both today -- known "
+            "over-firing"
+        ),
+        cause_a="registry-down",
+        preamble_a="#1 [internal] load metadata for docker.io/library/python:3.12",
+        cause_b="canned-fixture-response",
+        preamble_b="##[group]Run pytest tests/test_upstream.py -k unavailable",
+    ),
+    CauseTwin(
+        rule="disk full",
+        slug="disk-full",
+        marker="write /var/lib/docker/tmp/x: no space left on device",
+        base=ENVIRONMENT,
+        note=(
+            "the runner's disk filled vs a test writing to a deliberately tiny "
+            "tmpfs to prove the app survives ENOSPC: ENVIRONMENT for both today "
+            "-- known over-firing"
+        ),
+        cause_a="runner-disk-filled",
+        preamble_a="#12 [stage-0 7/9] COPY . /app",
+        cause_b="deliberate-enospc-test",
+        preamble_b="##[group]Run pytest tests/test_spool.py -k enospc",
+    ),
+    CauseTwin(
+        rule="runner shutdown",
+        slug="runner-shutdown",
+        marker=(
+            "The runner has received a shutdown signal. This can happen when "
+            "the runner service is stopped."
+        ),
+        base=ENVIRONMENT,
+        note=(
+            "a spot instance reclaimed mid-job vs a human cancelling the run: "
+            "ENVIRONMENT for both today -- known over-firing, and a cancelled "
+            "run is not a failure of anything at all"
+        ),
+        cause_a="instance-reclaimed",
+        preamble_a="##[group]Run pytest",
+        cause_b="run-cancelled-by-a-human",
+        preamble_b="##[group]Run pytest -x",
+    ),
+    # --- the PROJECT rules ---------------------------------------------------
+    CauseTwin(
+        rule="assertion error",
+        slug="assertion-error",
+        marker="AssertionError: 1 != 2",
+        base=PROJECT,
+        note=(
+            "the project's own test vs the CI's setup script asserting a "
+            "precondition: PROJECT for both today -- KNOWN limitation, the "
+            "snapshot does not say whose assertion failed"
+        ),
+        cause_a="project-test",
+        preamble_a="##[group]Run pytest tests/test_greet.py",
+        cause_b="ci-setup-script",
+        preamble_b="##[group]Run python .github/scripts/provision.py",
+    ),
+    CauseTwin(
+        rule="pytest failed with assertion",
+        slug="pytest-failed-assertion",
+        marker="FAILED tests/test_greet.py::test_greet - AssertionError: 1 != 2",
+        base=PROJECT,
+        note=(
+            "the project's own suite vs a test file the CI harness vendored "
+            "into the checkout: PROJECT for both today -- known limitation, the "
+            "path in the line is not proof of ownership"
+        ),
+        cause_a="project-suite",
+        preamble_a="##[group]Run pytest",
+        cause_b="harness-vendored-test",
+        preamble_b="##[group]Run pytest --rootdir=/opt/ci-harness",
+    ),
+    CauseTwin(
+        rule="pytest bare assert",
+        slug="pytest-bare-assert",
+        marker="FAILED tests/test_greet.py::test_greet - assert 1 == 2",
+        base=PROJECT,
+        note=(
+            "the project's own assertion vs one in a conftest plugin the CI "
+            "image installs: PROJECT for both today -- known limitation"
+        ),
+        cause_a="project-assertion",
+        preamble_a="##[group]Run pytest",
+        cause_b="ci-installed-plugin",
+        preamble_b="##[group]Run pytest -p ci_harness.plugin",
+    ),
+    CauseTwin(
+        rule="pytest assert",
+        slug="pytest-assert",
+        marker="E       assert 'ci_build' == 'ci-build'",
+        base=PROJECT,
+        note=(
+            "the project's own test vs a doctest in a vendored dependency "
+            "collected by the same run: PROJECT for both today -- known "
+            "limitation"
+        ),
+        cause_a="project-test",
+        preamble_a="##[group]Run pytest",
+        cause_b="vendored-dependency-doctest",
+        preamble_b="##[group]Run pytest --doctest-modules vendor/",
+    ),
+    # --- the shapes demoted on 2026-09-22 ------------------------------------
+    CauseTwin(
+        rule="entrypoint executable not found",
+        slug="entrypoint-executable-not-found",
+        marker=(
+            "docker: Error response from daemon: unable to start container "
+            'process: exec: "app": executable file not found in $PATH: unknown.'
+        ),
+        base=None,
+        note=(
+            "the image's authored CMD names the binary vs `--entrypoint app` "
+            "overriding it at run time: UNCLASSIFIED for both -- the demotion, "
+            "and the reason for it, in one pair"
+        ),
+        cause_a="authored-cmd",
+        preamble_a="##[group]Run docker run --rm app:ci",
+        cause_b="entrypoint-overridden",
+        preamble_b="##[group]Run docker run --rm --entrypoint app app:ci",
+    ),
+    CauseTwin(
+        rule="unresolvable action",
+        slug="unresolvable-action",
+        marker=(
+            "Unable to resolve action actions/checkout@v99, unable to find version v99"
+        ),
+        base=None,
+        note=(
+            "a typo in the authored workflow vs an upstream tag deleted after "
+            "the workflow was written: UNCLASSIFIED for both -- the snapshot "
+            "carries nothing from the other side of the reference"
+        ),
+        cause_a="typo",
+        preamble_a="##[group]Run actions/checkout@v99",
+        cause_b="upstream-tag-deleted",
+        preamble_b="Download action repository 'actions/checkout@v99'",
+    ),
+)
+
+
+def _cause_twin_rows(twin: CauseTwin) -> list[Row]:
+    """The pair as two rows; the expected verdict is one value for both."""
+    outcome, kind = _expected(twin.base, False)
+    return [
+        Row(
+            row_id=f"cause-twin-{twin.slug}-{cause}",
+            source="log",
+            level="plain line",
+            text=f"{preamble}\n{twin.marker}",
+            expected_outcome=outcome,
+            expected_kind=kind,
+            context="cause-twin",
+            note=twin.note,
+        )
+        for cause, preamble in (
+            (twin.cause_a, twin.preamble_a),
+            (twin.cause_b, twin.preamble_b),
+        )
+    ]
+
+
 ROWS: tuple[Row, ...] = (
     *_cross("artifact", ARTIFACT_MARKERS, ARTIFACT),
     *_cross("project", PROJECT_MARKERS, PROJECT),
@@ -452,6 +854,7 @@ ROWS: tuple[Row, ...] = (
         "symptom-only", "bare-no-such-file", _SYMPTOM_MARKER, None, ("failure",)
     ),
     *CONFLICT_ROWS,
+    *[row for twin in CAUSE_TWINS for row in _cause_twin_rows(twin)],
 )
 
 
@@ -503,6 +906,43 @@ def test_every_artifact_shape_has_a_negative_twin() -> None:
         if row.context == "twin" and row.expected_kind is FailureKind.AUTHORING
     ]
     assert len({marker_id for marker_id, _, _ in TWINS}) >= len(ARTIFACT_MARKERS)
+
+
+def test_every_catalogue_rule_has_a_cause_twin_pair() -> None:
+    """The class, not the instance: coverage is asserted against `RULES`
+    itself, so a rule added later has no cause twin and says so here rather
+    than shipping unexamined."""
+    covered = {twin.rule for twin in CAUSE_TWINS}
+    assert {rule.name for rule in RULES} <= covered, (
+        f"rules without a cause twin: {sorted({r.name for r in RULES} - covered)}"
+    )
+    assert {"entrypoint executable not found", "unresolvable action"} <= covered
+    assert len({twin.slug for twin in CAUSE_TWINS}) == len(CAUSE_TWINS)
+
+
+def test_every_cause_twin_carries_its_reason() -> None:
+    """A row whose expected value is "both, today" is unreadable without the
+    reason; the note is part of the row, not of a comment that can drift."""
+    assert all(twin.note for twin in CAUSE_TWINS)
+    pairs = [row for row in ROWS if row.context == "cause-twin"]
+    assert len(pairs) == 2 * len(CAUSE_TWINS)
+    assert all(row.note for row in pairs)
+
+
+@pytest.mark.parametrize("twin", CAUSE_TWINS, ids=[t.slug for t in CAUSE_TWINS])
+def test_cause_twin_members_are_indistinguishable(twin: CauseTwin) -> None:
+    """The pair's whole point: two causes, one verdict.
+
+    If these ever diverge, the catalogue has found a discriminator the note
+    says does not exist — and then the note is what must change, not this
+    assertion."""
+    first, second = _cause_twin_rows(twin)
+    a = classify_failure(_job(first), step=None, completeness=COMPLETE)
+    b = classify_failure(_job(second), step=None, completeness=COMPLETE)
+    assert (a.outcome, a.kind) == (b.outcome, b.kind), (
+        a.observations,
+        b.observations,
+    )
 
 
 # --- the run summary: two independent failures are not a conflict (spec §4) --
@@ -564,8 +1004,8 @@ def test_two_independent_jobs_do_not_depend_on_their_order() -> None:
 
 def print_table() -> None:
     """Render the table as markdown, for review outside the test run."""
-    print("| row_id | source | level | context | expected |")
-    print("| --- | --- | --- | --- | --- |")
+    print("| row_id | source | level | context | expected | note |")
+    print("| --- | --- | --- | --- | --- | --- |")
     for row in ROWS:
         expected = row.expected_outcome
         if row.expected_outcome == "CLASSIFIED":
@@ -577,7 +1017,10 @@ def print_table() -> None:
         level = row.level if row.level is not None else "absent"
         if row.placement:
             level = f"{level}, marker {row.placement}"
-        print(f"| {row.row_id} | {row.source} | {level} | {row.context} | {expected} |")
+        print(
+            f"| {row.row_id} | {row.source} | {level} | {row.context} "
+            f"| {expected} | {row.note} |"
+        )
 
 
 if __name__ == "__main__":
