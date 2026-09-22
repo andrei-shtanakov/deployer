@@ -224,11 +224,19 @@ def classify_failure(
     ``step=None`` is the job-level verdict for a job without kept steps. All
     matches are collected first; then incompleteness wins over any marker,
     two distinct kinds are ambiguity, one kind is a class with its citations,
-    and none is ``UNKNOWN`` with whatever was observed.
+    and none is ``UNKNOWN`` with whatever was observed. A marker that landed
+    on warning-shaped evidence establishes nothing and is carried through as
+    an observation, whatever the outcome.
     """
     where = step.ref if step is not None else job.job_id
     pool = _evidence_pool(job, step)
-    matches = [match for item in pool for match in _matches(item)]
+    per_item = [_matches(item) for item in pool]
+    matches = [match for found, _ in per_item for match in found]
+    warnings = [
+        f"{WARNING_SHAPED_NOTE}: {match.describe()}"
+        for _, warned in per_item
+        for match in warned
+    ]
     exceptions = [
         f"exception: {line}"
         for item in pool
@@ -237,7 +245,11 @@ def classify_failure(
     if _incomplete(completeness):
         found = [match.describe() for match in matches]
         return FailureVerdict(
-            where, "EVIDENCE_UNAVAILABLE", None, [], found + _missing(completeness)
+            where,
+            "EVIDENCE_UNAVAILABLE",
+            None,
+            [],
+            found + warnings + _missing(completeness),
         )
     kinds = sorted({match.rule.kind for match in matches}, key=lambda k: k.value)
     if len(kinds) >= 2:
@@ -246,18 +258,22 @@ def classify_failure(
             "UNCLASSIFIED",
             FailureKind.UNKNOWN,
             [],
-            [_ambiguity(matches, kinds), *exceptions],
+            [_ambiguity(matches, kinds), *warnings, *exceptions],
         )
     if len(kinds) == 1:
         cited = list(dict.fromkeys(match.evidence for match in matches))
-        observations = [match.describe() for match in matches] + exceptions
+        observations = [match.describe() for match in matches] + warnings + exceptions
         if step is not None and any(
             not isinstance(item.source, StepRef) for item in cited
         ):
             observations.append(_JOB_LEVEL_NOTE)
         return FailureVerdict(where, "CLASSIFIED", kinds[0], cited, observations)
     return FailureVerdict(
-        where, "UNCLASSIFIED", FailureKind.UNKNOWN, [], exceptions or [_NO_RULE_NOTE]
+        where,
+        "UNCLASSIFIED",
+        FailureKind.UNKNOWN,
+        [],
+        warnings + exceptions or [_NO_RULE_NOTE],
     )
 
 
@@ -278,31 +294,56 @@ def _evidence_pool(job: FailedJob, step: FailedStep | None) -> list[Evidence]:
     ]
 
 
-# apt prefixes a recovered problem with `W: ` and a real one with `E: `. A
-# retry that then succeeded is not a cause, and because in practice every
-# step's evidence pool is the whole job log (all real citations are
-# job-level), one such line was enough to pair with a genuine AUTHORING
-# marker and turn a clean verdict into `ambiguous:`. ENVIRONMENT rules
-# therefore skip a match landing on a warning line — the first mitigation
-# for todo://deployer/diagnose-rule-catalogue-precision.
-_WARNING_LINE_RE = re.compile(rf"^{_LINE_PREFIX}W: ")
+# One notion, two sources. apt prefixes a recovered problem with `W: ` and a
+# real one with `E: `, per line inside a log block; and `forge._build_job`
+# renders a job annotation as `<level>: <message>`, so a whole block reading
+# `warning: `/`notice: ` is GitHub saying it noticed something, while
+# `error: `/`failure: ` (and an unprefixed log line) are failure evidence.
+# Because in practice every step's evidence pool is the whole job log (all
+# real citations are job-level), one warning-shaped line was enough to pair
+# with a genuine AUTHORING marker and turn a clean verdict into `ambiguous:`,
+# or to classify ENVIRONMENT off a retry that succeeded. ENVIRONMENT rules
+# therefore skip such a match and keep it as an observation — the first
+# mitigation for todo://deployer/diagnose-rule-catalogue-precision.
+_APT_WARNING_RE = re.compile(rf"^{_LINE_PREFIX}W: ")
+_ANNOTATION_WARNING_RE = re.compile(r"^(?:warning|notice): ")
+
+WARNING_SHAPED_NOTE = "warning-shaped"
 
 
-def _matches(item: Evidence) -> list[_Match]:
-    """Every rule against one piece of evidence, one match per rule.
+def _is_warning_shaped(text: str, line: str) -> bool:
+    """Whether `line` of the evidence `text` reports a noticed, not fatal, problem.
 
-    An ENVIRONMENT rule keeps looking past a match on an apt warning line;
-    other kinds take the first match as before.
+    Two shapes, because the two sources scope differently: apt's `W: ` marks
+    the one line it prefixes, an annotation level opens the whole block.
+    """
+    return bool(_APT_WARNING_RE.match(line) or _ANNOTATION_WARNING_RE.match(text))
+
+
+def _matches(item: Evidence) -> tuple[list[_Match], list[_Match]]:
+    """Every rule against one piece of evidence: (established, warning-shaped).
+
+    An ENVIRONMENT rule keeps looking past a match on warning-shaped evidence,
+    and the first one it passed over is returned separately so the verdict can
+    observe it without citing it; other kinds take the first match as before.
     """
     found: list[_Match] = []
+    warned: list[_Match] = []
     for rule in RULES:
+        skipped: _Match | None = None
         for hit in rule.pattern.finditer(item.text):
             line = _line_at(item.text, hit.start())
-            if rule.kind is FailureKind.ENVIRONMENT and _WARNING_LINE_RE.match(line):
+            if rule.kind is FailureKind.ENVIRONMENT and _is_warning_shaped(
+                item.text, line
+            ):
+                skipped = skipped or _Match(rule, item, line)
                 continue
             found.append(_Match(rule, item, line))
             break
-    return found
+        else:
+            if skipped is not None:
+                warned.append(skipped)
+    return found, warned
 
 
 def _line_at(text: str, index: int) -> str:

@@ -716,3 +716,72 @@ def test_the_warning_exclusion_is_environment_only():
     text = 'W: failed to compute cache key: "/x": not found'
     v = classify_failure(job_with(text=text), step=None, completeness=COMPLETE)
     assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.AUTHORING
+
+
+# --- PR #72 round 2, finding 1: warning-level annotations ---------------------
+
+
+def _step_with_a_warning_annotation(level: str) -> FailedJob:
+    """One failed step whose log says only that the step exited non-zero, plus
+    a job annotation at `level` naming a recovered network problem."""
+    target = failed_step(1, "Process completed with exit code 1.")
+    annotation = Evidence(JOB_ID, f"{level}: Connection timed out; retry succeeded")
+    return job_with(evidence=[annotation], steps=[target])
+
+
+def test_a_warning_level_annotation_does_not_establish_environment():
+    """A `warning: ` annotation is forge rendering GitHub's annotation level,
+    not a failure: the step's only failure evidence is the exit code, so the
+    honest verdict is UNCLASSIFIED with the warning kept as an observation."""
+    job = _step_with_a_warning_annotation("warning")
+    v = classify_failure(job, step=job.steps[0], completeness=COMPLETE)
+    assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
+    assert v.evidence == []
+    assert v.observations == [
+        "warning-shaped: connection timed out: warning: Connection timed out; "
+        "retry succeeded"
+    ]
+
+
+def test_a_notice_level_annotation_does_not_establish_environment():
+    """The other non-failure level GitHub emits."""
+    job = _step_with_a_warning_annotation("notice")
+    v = classify_failure(job, step=job.steps[0], completeness=COMPLETE)
+    assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
+    assert v.evidence == []
+
+
+def test_the_run_of_a_warning_annotation_is_unclassified_not_classified():
+    """The exit-code-3 door: `deployer diagnose` must not report exit 0 with
+    ENVIRONMENT on a run whose only network line was a recovered warning."""
+    d = diagnose_run(run_with(_step_with_a_warning_annotation("warning")))
+    assert d.outcome == "UNCLASSIFIED"
+    assert d.causes == []
+
+
+def test_an_error_level_annotation_is_still_environment_evidence():
+    """The positive twin of the level test: `error: `, like `failure: `, is
+    failure evidence and keeps establishing a class."""
+    target = failed_step(1, "Process completed with exit code 1.")
+    annotation = Evidence(JOB_ID, "error: Temporary failure in name resolution")
+    v = classify_failure(
+        job_with(evidence=[annotation], steps=[target]),
+        step=target,
+        completeness=COMPLETE,
+    )
+    assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.ENVIRONMENT
+    assert v.evidence == [annotation]
+
+
+def test_a_warning_annotation_does_not_mask_a_real_log_line():
+    """Per piece of evidence, not per run: an unprefixed log line naming the
+    same problem still establishes ENVIRONMENT."""
+    target = failed_step(1, "curl: (6) Could not resolve host: pypi.org")
+    annotation = Evidence(JOB_ID, "warning: Connection timed out; retry succeeded")
+    v = classify_failure(
+        job_with(evidence=[annotation], steps=[target]),
+        step=target,
+        completeness=COMPLETE,
+    )
+    assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.ENVIRONMENT
+    assert v.evidence == [target.evidence[0]]
