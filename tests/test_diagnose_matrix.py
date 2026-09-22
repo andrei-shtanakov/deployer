@@ -84,10 +84,38 @@ ARTIFACT = FailureKind.AUTHORING
 PROJECT = FailureKind.PROJECT
 ENVIRONMENT = FailureKind.ENVIRONMENT
 
+# What survives as AUTHORING after the owner's evidence rule (2026-09-22):
+# the Dockerfile parser's own sentence about the artifact's text, and
+# GitHub's own validator framing over the workflow YAML.
 ARTIFACT_MARKERS = (
     (
         "dockerfile-parse-error",
         "Dockerfile parse error on line 3: unexpected end of statement",
+    ),
+    (
+        "unrecognized-named-value",
+        "The workflow is not valid. .github/workflows/ci.yml (Line: 31, "
+        "Col: 9): Unrecognized named-value: 'secret'. Located at position 1 "
+        "within expression: secret.TOKEN",
+    ),
+)
+
+# Shapes the catalogue USED to read as AUTHORING and the owner demoted on
+# 2026-09-22: a container-runtime shape does not by itself say the name it
+# failed on came from the authored artifact, `unknown instruction` is
+# ordinary English about a vocabulary, and both COPY/ADD shapes name a
+# mismatch between the instruction and its build context without saying
+# which side moved. They establish nothing now, at every source and level,
+# and their cause twins are below.
+DEMOTED_MARKERS = (
+    (
+        "entrypoint-missing",
+        "docker: Error response from daemon: unable to start container "
+        'process: exec: "serve": executable file not found in $PATH: unknown.',
+    ),
+    (
+        "unresolvable-action",
+        "Unable to resolve action actions/checkout@v99, unable to find version v99",
     ),
     (
         "unknown-instruction",
@@ -104,41 +132,44 @@ ARTIFACT_MARKERS = (
         "COPY failed: file not found in build context or excluded by "
         ".dockerignore: stat app.py: no such file or directory",
     ),
-    (
-        "unrecognized-named-value",
-        "The workflow is not valid. .github/workflows/ci.yml (Line: 31, "
-        "Col: 9): Unrecognized named-value: 'secret'. Located at position 1 "
-        "within expression: secret.TOKEN",
-    ),
 )
 
-# Shapes the catalogue USED to read as AUTHORING and the owner demoted on
-# 2026-09-22: a container-runtime shape does not by itself say the name it
-# failed on came from the authored artifact. They establish nothing now, at
-# every source and level, and their cause twins are below.
-DEMOTED_MARKERS = (
-    (
-        "entrypoint-missing",
-        "docker: Error response from daemon: unable to start container "
-        'process: exec: "serve": executable file not found in $PATH: unknown.',
-    ),
-    (
-        "unresolvable-action",
-        "Unable to resolve action actions/checkout@v99, unable to find version v99",
-    ),
-)
+# PROJECT needs PROVENANCE in the SAME piece of evidence: a traceback frame
+# or a pytest node id naming a file of the checkout. Every marker here
+# carries its own, as real tool output does.
+_PROJECT_FRAME = '  File "/app/tests/test_greet.py", line 10, in test_greet'
+_PROJECT_NODE = "FAILED tests/test_greet.py::test_greet"
 
 PROJECT_MARKERS = (
     (
         "assertion-error",
+        f"{_PROJECT_FRAME}\n"
         "E   AssertionError: 'hello from ci_build' != 'hello from ci-build'",
     ),
+    ("pytest-failed-assertion", f"{_PROJECT_NODE} - AssertionError: 1 != 2"),
+    ("pytest-bare-assert", f"{_PROJECT_NODE} - assert 1 == 2"),
     (
-        "pytest-failed-assertion",
-        "FAILED tests/test_greet.py::test_greet - AssertionError: 1 != 2",
+        "pytest-assert",
+        f"{_PROJECT_FRAME}\nE       assert 'ci_build' == 'ci-build'",
     ),
-    ("pytest-bare-assert", "FAILED tests/test_greet.py::test_greet - assert 1 == 2"),
-    ("pytest-assert", "E       assert 'ci_build' == 'ci-build'"),
+)
+
+# The same assertion shapes WITHOUT provenance: the runner's own setup step,
+# a vendored dependency's doctest, a synthetic `python -c` frame. The rules
+# still match them; `classify_failure` refuses to call any of it a class.
+PROVENANCELESS_MARKERS = (
+    ("bare-assertion-error", "AssertionError: 1 != 2"),
+    ("runner-setup-assertion", 'File "<string>", line 1, in <module>'),
+    (
+        "vendored-doctest-assertion",
+        '  File "/usr/lib/python3.12/site-packages/vendorlib/check.py", '
+        "line 8, in verify\nAssertionError: 1 != 2",
+    ),
+    (
+        "harness-node-id",
+        "FAILED /usr/lib/python3/dist-packages/vendorlib/tests/test_a.py"
+        "::test_a - AssertionError: 1 != 2",
+    ),
 )
 
 ENVIRONMENT_MARKERS = (
@@ -148,6 +179,15 @@ ENVIRONMENT_MARKERS = (
         "timed out [IP: 1.2.3.4 80]",
     ),
     ("host-unresolvable", "curl: (6) Could not resolve host: pypi.org"),
+)
+
+# The same ENVIRONMENT words with no tool's framing around them: an
+# application under test printing what it was written to print.
+UNFRAMED_ENVIRONMENT_MARKERS = (
+    ("bare-timeout", "requests: connection timed out after 5s"),
+    ("bare-503", "error parsing HTTP 503 response body: 503 Service Unavailable"),
+    ("bare-disk-full", "tmpfs write failed: no space left on device"),
+    ("bare-name-resolution", "Temporary failure in name resolution"),
 )
 
 SYMPTOM_MARKERS = (
@@ -165,13 +205,15 @@ UNKNOWN_MARKERS = (("exit-code", "Process completed with exit code 1."),)
 # with another cause -- NOT AUTHORING, either way. `expected_base` is what
 # the row honestly resolves to: `None` for most (no rule matches the bare
 # words at all, so `no rule matched`/UNCLASSIFIED); `ambiguous` marks the
-# ones that still collide with a PROJECT rule because the surviving
+# one that still collides with a PROJECT rule because the surviving
 # AUTHORING shape (bare `dockerfile parse error`, unanchored on purpose --
-# nothing else prints that sentence) reads the same prose. The two shapes
-# the final review round anchored to the parser's own framing
-# (`unknown instruction`, `unrecognized named-value`) no longer collide at
-# all: inside an `AssertionError:`/pytest-assert line the bare words are
-# PROJECT evidence outright, so `expected_base=PROJECT` and no ambiguity.
+# nothing else prints that sentence) reads the same prose.
+#
+# The three assertion twins carry a pytest node id, as a real failing suite
+# does: since the evidence rule of 2026-09-22 a PROJECT class needs that
+# provenance, and a twin written as a bare `E   AssertionError:` line would
+# resolve to UNCLASSIFIED for the wrong reason -- hiding, rather than
+# pinning, what the AUTHORING rule does with the same words.
 TWINS = (
     ("shell-stat", "stat app.py: no such file or directory", False, None),
     ("cat-missing-config", "cat: config.yml: No such file or directory", False, None),
@@ -203,19 +245,22 @@ TWINS = (
     ),
     (
         "assertion-about-parse-error",
-        "E   AssertionError: expected 'Dockerfile parse error' in captured stderr",
+        "FAILED tests/test_build.py::test_parse_error - AssertionError: "
+        "expected 'Dockerfile parse error' in captured stderr",
         True,
         None,
     ),
     (
         "assertion-about-unknown-instruction",
-        "E   AssertionError: unknown instruction: FORM was not reported",
+        "FAILED tests/test_build.py::test_unknown_instruction - "
+        "AssertionError: unknown instruction: FORM was not reported",
         False,
         PROJECT,
     ),
     (
         "assertion-about-named-value",
-        "E   AssertionError: Unrecognized named-value was expected",
+        "FAILED tests/test_ci.py::test_named_value - AssertionError: "
+        "Unrecognized named-value was expected",
         False,
         PROJECT,
     ),
@@ -270,16 +315,23 @@ def _placed(text: str, placement: str) -> str:
 
 
 def _shaped(text: str, prefix: str) -> str:
-    """Put a log line's own severity at its head.
+    """Put a log line's own severity at the head of EVERY line of a marker.
 
     apt writes its severity first, so its `W: ` line is the `E: ` line with
     the severity replaced -- which is exactly the recovered-and-retried line
     a Debian build really prints. Buildkit's framing is not a severity and
-    is prepended to whatever the line already said.
+    is prepended to whatever the line already said. Both are per LINE: a
+    multi-line marker (an assertion under its traceback frame) whose first
+    line alone carried the prefix would leave the rest looking unprefixed,
+    and the row would pass for the wrong reason.
     """
-    if prefix in _SEVERITY_PREFIXES and text.startswith("E: "):
-        text = text[len("E: ") :]
-    return prefix + text
+    return "\n".join(_shaped_line(line, prefix) for line in text.split("\n"))
+
+
+def _shaped_line(line: str, prefix: str) -> str:
+    if prefix in _SEVERITY_PREFIXES and line.startswith("E: "):
+        line = line[len("E: ") :]
+    return prefix + line
 
 
 def _expected(base: FailureKind | None, noticed: bool) -> tuple[Outcome, FailureKind]:
@@ -400,13 +452,16 @@ def _placement_rows(
     return rows
 
 
-_ARTIFACT_MARKER = ARTIFACT_MARKERS[2][1]
+_ARTIFACT_MARKER = ARTIFACT_MARKERS[0][1]
 _PROJECT_MARKER = PROJECT_MARKERS[0][1]
 _ENVIRONMENT_MARKER = ENVIRONMENT_MARKERS[0][1]
 _SYMPTOM_MARKER = SYMPTOM_MARKERS[0][1]
+# apt's `Err:` detail line, recovered: it keeps the framing the evidence
+# rule requires (host and port), so the rule really does match it and the
+# WARNING SHAPE is what stops it -- which is the fact these rows pin.
 _RECOVERED_FETCH = (
-    "W: Failed to fetch http://deb.debian.org/debian/x.deb  Connection "
-    "timed out [IP: 1.2.3.4 80] [retrying]"
+    "W: Could not connect to deb.debian.org:80 (1.2.3.4), connection "
+    "timed out [retrying]"
 )
 
 CONFLICT_ROWS = (
@@ -853,6 +908,8 @@ ROWS: tuple[Row, ...] = (
     *_cross("environment", ENVIRONMENT_MARKERS, ENVIRONMENT),
     *_cross("symptom-only", SYMPTOM_MARKERS, None),
     *_cross("demoted", DEMOTED_MARKERS, None),
+    *_cross("unprovenanced", PROVENANCELESS_MARKERS, None),
+    *_cross("unframed-environment", UNFRAMED_ENVIRONMENT_MARKERS, None),
     *_cross("unknown", UNKNOWN_MARKERS, None),
     *[
         row
@@ -870,7 +927,11 @@ ROWS: tuple[Row, ...] = (
         )
     ],
     *_placement_rows(
-        "artifact", "copy-not-found", _ARTIFACT_MARKER, ARTIFACT, ("failure", "warning")
+        "artifact",
+        "dockerfile-parse-error",
+        _ARTIFACT_MARKER,
+        ARTIFACT,
+        ("failure", "warning"),
     ),
     *_placement_rows(
         "project", "assertion-error", _PROJECT_MARKER, PROJECT, ("failure",)

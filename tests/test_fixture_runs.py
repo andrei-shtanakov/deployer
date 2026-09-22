@@ -7,24 +7,47 @@ workflow (2026-09-22): repository identity rewritten to ``example/project``
 names, step numbers and the rest of the log text kept. The classifier is pure,
 so replaying the snapshot IS the live diagnosis — these tests fail if the
 catalogue or the evidence discipline regresses.
+
+Two of the three establish a class; run 1 does NOT, and that is the honest
+result rather than a regression. Its line is buildkit's COPY/ADD shape, which
+the owner's evidence rule moved to ``SYMPTOMS`` on 2026-09-22: a path the COPY
+never had right and a file the project moved after the Dockerfile was authored
+print the identical sentence, so the snapshot cannot establish AUTHORING. The
+expectation was corrected; the catalogue was NOT widened to keep the run
+green. The discrimination the live runs still prove is ENVIRONMENT vs PROJECT.
 """
 
 from pathlib import Path
 
 import pytest
 
-from deployer.diagnose import diagnose_run
+from deployer.diagnose import Outcome, diagnose_run
 from deployer.forge import SNAPSHOT_SCHEMA_VERSION, load_snapshot
 from deployer.models import FailureKind
 
 FIXTURES = Path(__file__).parent / "fixtures" / "runs"
 
-# Expected class per fixture, fixed before the runs were dispatched; the
-# marker is the line the live log really carried.
-CASES = [
-    ("authoring", FailureKind.AUTHORING, '"/docs/setup.md": not found'),
-    ("environment", FailureKind.ENVIRONMENT, "connection timed out"),
-    ("project", FailureKind.PROJECT, "AssertionError: 'hello from ci_build'"),
+# Expected outcome per fixture, and the text the live log really carried: the
+# citation for a class, the observation for the one that establishes none.
+CASES: list[tuple[str, Outcome, FailureKind | None, str]] = [
+    (
+        "authoring",
+        "UNCLASSIFIED",
+        None,
+        "symptom: copy/add source not found: ",
+    ),
+    (
+        "environment",
+        "CLASSIFIED",
+        FailureKind.ENVIRONMENT,
+        "connection timed out",
+    ),
+    (
+        "project",
+        "CLASSIFIED",
+        FailureKind.PROJECT,
+        "AssertionError: 'hello from ci_build'",
+    ),
 ]
 
 
@@ -32,14 +55,20 @@ def _load(name: str):
     return load_snapshot((FIXTURES / f"{name}.json").read_text())
 
 
-@pytest.mark.parametrize(("name", "kind", "marker"), CASES)
-def test_live_run_replays_to_its_class(
-    name: str, kind: FailureKind, marker: str
+@pytest.mark.parametrize(("name", "outcome", "kind", "marker"), CASES)
+def test_live_run_replays_to_its_outcome(
+    name: str, outcome: Outcome, kind: FailureKind | None, marker: str
 ) -> None:
     diagnosis = diagnose_run(_load(name))
-    assert diagnosis.outcome == "CLASSIFIED"
-    assert diagnosis.causes == [kind]
+    assert diagnosis.outcome == outcome
     (verdict,) = diagnosis.failures
+    if kind is None:
+        assert diagnosis.causes == []
+        assert verdict.kind is FailureKind.UNKNOWN
+        assert verdict.evidence == [], "nothing established, nothing cited"
+        assert any(o.startswith(marker) for o in verdict.observations)
+        return
+    assert diagnosis.causes == [kind]
     assert verdict.kind is kind
     assert any(marker in e.text for e in verdict.evidence), "class without citation"
 
@@ -58,15 +87,20 @@ def test_fixture_is_complete_and_anonymised(name: str) -> None:
     assert "\x1b" not in raw
 
 
-def test_the_three_live_classes_are_distinct() -> None:
-    """The discrimination the live runs prove: three runs, three classes."""
+def test_the_live_classes_are_distinct_and_run_1_establishes_none() -> None:
+    """What the live runs prove after the evidence rule: two classes, and one
+    honest UNCLASSIFIED.
+
+    Before the rule this read "three runs, three classes". The third class
+    came from a marker that two different causes print, so it was a wrong
+    diagnosis on one of them — the count went down because the answers got
+    truer, and that is the assertion worth keeping."""
     kinds = set()
-    for name, _, _ in CASES:
+    for name, outcome, _, _ in CASES:
         causes = diagnose_run(_load(name)).causes
+        if outcome == "UNCLASSIFIED":
+            assert causes == [], f"{name}: a class the evidence does not carry"
+            continue
         assert causes, f"{name}: no cause established"
         kinds.add(causes[0])
-    assert kinds == {
-        FailureKind.AUTHORING,
-        FailureKind.ENVIRONMENT,
-        FailureKind.PROJECT,
-    }
+    assert kinds == {FailureKind.ENVIRONMENT, FailureKind.PROJECT}

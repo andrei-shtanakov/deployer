@@ -103,77 +103,83 @@ def _symptom(name: str, pattern: str) -> Rule:
 # deleted. Where the snapshot cannot tell the causes apart, it observes: both
 # shapes live in `SYMPTOMS` now.
 #
-# What survives in AUTHORING is only what the tool that OWNS the artifact says
-# about the artifact's own text or the artifact's own build context. Per rule,
-# why no other cause prints that shape:
+# Generalised by the owner (2026-09-22, bounded deterministic pass) into the
+# rule the whole catalogue now answers to:
 #
-# - `dockerfile parse error`, `unknown instruction`: the parser read the
-#   Dockerfile's bytes and could not. Nothing but that text produces the
-#   complaint — no environment state, no project code and no invocation can
-#   make a well-formed instruction unparseable.
-# - `unrecognized named-value`: the same, for the runner's own expression
-#   parser over the workflow YAML. A missing secret VALUE is a different
-#   message (the expression evaluates to empty); this one says the NAME is not
-#   in the language.
+#   A CLASS IS ESTABLISHED ONLY WHERE THE SHAPE OF THE EVIDENCE TIES THE
+#   MESSAGE TO ITS CAUSE. Without sufficient provenance the honest answer is
+#   an observation and UNCLASSIFIED — and a classification known to fire on
+#   the wrong cause is a WRONG DIAGNOSIS, not a limitation to be pinned and
+#   shipped.
 #
-# Anchored (owner finding, 2026-09-22, final review round): the two bullets
-# above are true only of the WORDS the parser itself prints, and
-# `unknown instruction` / `unrecognized named-value` are ordinary English an
-# application can say about its own business — `ValueError: unknown
-# instruction: frobnicate` has never seen a Dockerfile, and a pytest
-# assertion can quote `unrecognized named-value` without being GitHub's
-# validator. Both rules require the parser's OWN framing on the SAME LINE as
-# the words, never the words alone: buildkit's and the legacy daemon's
-# `...dockerfile parse error (?:on )?line N: unknown instruction: X` put
-# both on one line, and so does GitHub's own
-# `The workflow is not valid. .github/workflows/...: Unrecognized
-# named-value: ...`. `dockerfile parse error` alone needs no anchor: no
-# other tool prints that sentence.
-# - `copy/add source not found` / `copy/add failed in build context`: the
-#   builder resolved a COPY/ADD source against the build context and printed
-#   the path it could not find. The build context IS the checkout the
-#   Dockerfile was authored against (spec §6.4 scenario A), so the pairing of
-#   instruction and context is the authored artifact, and no runtime state
-#   reaches it. RESIDUAL, stated rather than hidden: a source the project
-#   REMOVED after the Dockerfile was authored prints the identical line. That
-#   case is still a mismatch between the artifact and its context — the class
-#   names the defect, not the culprit — but the snapshot cannot say which side
-#   moved. Pinned as a cause twin in `tests/test_diagnose_matrix.py`.
+# So the catalogue is NOT widened to keep a live scenario green: live
+# acceptance run 1 (a COPY of a path that is not in the build context) reads
+# UNCLASSIFIED now, and the expectation was corrected rather than the rule.
+# What the rule costs each kind:
 #
-# The symptoms these failures share with every other cause live in `SYMPTOMS`.
+# - AUTHORING keeps only what the tool that OWNS the artifact says about the
+#   artifact's own text. `dockerfile parse error`: the parser read the
+#   Dockerfile's bytes and could not — no environment state, no project code
+#   and no invocation can make a well-formed instruction unparseable.
+#   `unrecognized named-value`: the same, for the runner's own expression
+#   parser over the workflow YAML (a missing secret VALUE is a different
+#   message — the expression evaluates to empty; this one says the NAME is
+#   not in the language), and it demands GitHub's own framing on the SAME
+#   line, because a pytest assertion can quote the phrase without being the
+#   validator. `unknown instruction` is a SYMPTOM outright: it is ordinary
+#   English about a vocabulary, and `ValueError: unknown instruction:
+#   frobnicate` has never seen a Dockerfile. A `dockerfile parse error` line
+#   that carries those words therefore establishes nothing either — the words
+#   are what an application would be quoting, and the parser's framing beside
+#   them proves only that both sentences share a line.
+# - ENVIRONMENT matches only a line carrying a TOOL'S OWN framing: apt's
+#   `E: `, curl's `curl: (N)`, git's `fatal: unable to access '...':`, uv's
+#   error chain, buildkit's `failed to solve:`, the docker daemon's own
+#   reply, the registry's `toomanyrequests:`, the runner's own sentence. The
+#   BARE phrases — `connection timed out`, `503 Service Unavailable`, `no
+#   space left on device`, `temporary failure in name resolution`, `could not
+#   resolve host` — are printed verbatim by any application under test that
+#   exercises a retry path, so on their own they are symptoms. Each
+#   alternative below is named for the tool it was taken from.
+# - PROJECT needs PROVENANCE beside the assertion (`_has_project_provenance`).
+#   The rules match the assertion shapes exactly as before; `classify_failure`
+#   is what refuses to call it a class when the same piece of evidence does
+#   not say WHOSE assertion failed.
+#
+# The symptoms these failures share with every other cause live in `SYMPTOMS`
+# — including, since this pass, both COPY/ADD shapes. The build context IS
+# the checkout the Dockerfile was authored against (spec §6.4 scenario A), so
+# the line is a genuine mismatch between the instruction and its context; but
+# a path the COPY never had right and a file the project moved AFTER the
+# Dockerfile was authored print the identical line, and the snapshot cannot
+# say which side moved. Naming AUTHORING there would be right by luck.
 _QUOTED_PATH_NOT_FOUND = r'[^\n]*"[^"\n]*": not found[ \t]*$'
 
+# The tool framings the ENVIRONMENT rules require, each named for the tool
+# that prints it. They are line fragments, never anchored to the line's head:
+# buildkit frames a step's output as `#N t.ttt ` and then reprints the failing
+# lines a second time, under `------`, with a bare `t.ttt ` instead.
+_APT_ERROR = r"(?:^|[ \t])E: "
+_APT_UNREACHABLE = r"could not connect to \S+?:\d+"
+_CURL = r"curl: \(\d+\)"
+_GIT_ACCESS = r"fatal: unable to access '[^'\n]*':"
+_PIP_ERROR = r"(?:^|[ \t])ERROR: "
+_UV_ERROR = r"(?:error: Failed to fetch:|Caused by:)"
+_BUILDKIT = r"failed to solve:"
+_DAEMON = r"(?:Error response from daemon:|error during connect:)"
+_TIMED_OUT = r"(?:connection timed out|operation timed out|i/o timeout)"
+
 RULES: tuple[Rule, ...] = (
-    _prose(FailureKind.AUTHORING, "dockerfile parse error", r"dockerfile parse error"),
-    # Anchored to the parser's own line (see the note above): buildkit and
-    # the legacy daemon both put the framing and the bad instruction on ONE
-    # line, so requiring both there -- not the bare word "unknown
-    # instruction" -- is exactly "the parser said so", never a coincidence
-    # of two unrelated sentences sharing a page.
+    # The Dockerfile parser's own sentence -- no other tool prints it -- but
+    # never on a line that also carries `unknown instruction`: those words
+    # are a symptom now, and a line holding both proves only that the two
+    # sentences share a line.
     _prose(
         FailureKind.AUTHORING,
-        "unknown instruction",
-        r"dockerfile parse error[^\n]*unknown instruction",
+        "dockerfile parse error",
+        r"dockerfile parse error(?![^\n]*unknown instruction)",
     ),
-    # buildkit's own shape for a COPY/ADD source missing from the build
-    # context: it names the path it could not find, quoted, at the line's end.
-    # `failed to solve` alone heads every buildkit failure, a RUN step that
-    # exited non-zero included, so the quoted path is what makes the line an
-    # artifact defect rather than a symptom of one.
-    _prose(
-        FailureKind.AUTHORING,
-        "copy/add source not found",
-        rf"failed to (?:solve|compute cache key){_QUOTED_PATH_NOT_FOUND}",
-    ),
-    # docker's own shape for the same defect (classic builder, and buildkit
-    # when it reports the stat behind the failure).
-    _prose(
-        FailureKind.AUTHORING,
-        "copy/add failed in build context",
-        r"(?:COPY|ADD) failed:[^\n]*"
-        r"(?:no such file or directory|file not found in build context)",
-    ),
-    # Anchored the same way: GitHub's own validator prints "The workflow is
+    # Anchored to the validator's own line: GitHub prints "The workflow is
     # not valid." and/or the failing `.github/workflows/...` path on the
     # SAME line as "Unrecognized named-value" -- an assertion or a third
     # party tool that merely mentions the phrase carries neither.
@@ -182,27 +188,78 @@ RULES: tuple[Rule, ...] = (
         "unrecognized named-value",
         r"(?:workflow is not valid|\.github/workflows/)[^\n]*unrecognized named-value",
     ),
+    # docker's own reply when its socket is not answering.
     _prose(
         FailureKind.ENVIRONMENT,
         "docker daemon unreachable",
-        r"cannot connect to the docker daemon",
+        r"(?:cannot connect to the docker daemon|error during connect:)",
     ),
-    _prose(FailureKind.ENVIRONMENT, "host unresolvable", r"could not resolve host"),
+    # curl, git, apt or uv saying DNS failed. The bare sentence is a symptom:
+    # an offline-probe step prints it on purpose.
+    _prose(
+        FailureKind.ENVIRONMENT,
+        "host unresolvable",
+        rf"(?:{_CURL}|{_GIT_ACCESS}|{_APT_ERROR}|{_UV_ERROR})"
+        r"[^\n]*could not resolve host",
+    ),
+    # apt names the host it could not resolve, which is framing enough; pip
+    # and uv need their own error framing, since pip's `WARNING: Retrying`
+    # says the same words about a problem it went on to recover from.
     _prose(
         FailureKind.ENVIRONMENT,
         "name resolution failure",
-        r"temporary failure (?:resolving|in name resolution)",
+        r"(?:temporary failure resolving '[^'\n]+'"
+        rf"|(?:{_APT_ERROR}|{_PIP_ERROR})[^\n]*temporary failure in name resolution"
+        rf"|{_UV_ERROR}[^\n]*failed to lookup address)",
     ),
-    _prose(FailureKind.ENVIRONMENT, "fetch failure", r"failed to fetch"),
-    _prose(FailureKind.ENVIRONMENT, "connection timed out", r"connection timed out"),
-    _prose(FailureKind.ENVIRONMENT, "registry rate limit", r"toomanyrequests"),
-    _prose(FailureKind.ENVIRONMENT, "service unavailable", r"503 service unavailable"),
-    _prose(FailureKind.ENVIRONMENT, "disk full", r"no space left on device"),
+    # apt's and uv's own fetch failures. `TypeError: Failed to fetch` --
+    # jest's message, the over-firer recorded in TODO.md -- carries neither
+    # framing: no `E: ` at the head of a word, and no trailing colon.
+    _prose(
+        FailureKind.ENVIRONMENT,
+        "fetch failure",
+        rf"(?:{_APT_ERROR}Failed to fetch\b|error: Failed to fetch:)",
+    ),
+    # apt's `Err:` detail line names the host and port it could not reach;
+    # the other tools carry their own framing before the phrase.
+    _prose(
+        FailureKind.ENVIRONMENT,
+        "connection timed out",
+        rf"(?:{_APT_UNREACHABLE}[^\n]*connection timed out"
+        rf"|(?:{_APT_ERROR}|{_CURL}|{_GIT_ACCESS}|{_UV_ERROR}|{_BUILDKIT})"
+        rf"[^\n]*{_TIMED_OUT})",
+    ),
+    # The registry's own refusal, or buildkit reporting it.
+    _prose(
+        FailureKind.ENVIRONMENT,
+        "registry rate limit",
+        rf"(?:toomanyrequests:[^\n]*rate limit|{_BUILDKIT}[^\n]*toomanyrequests)",
+    ),
+    # An upstream 503 as a TOOL read it, not as an app's fixture printed it.
+    _prose(
+        FailureKind.ENVIRONMENT,
+        "service unavailable",
+        rf"(?:{_BUILDKIT}|{_DAEMON}|{_CURL}|{_APT_ERROR}|{_UV_ERROR})"
+        r"[^\n]*503 service unavailable",
+    ),
+    # buildkit, the daemon, or the daemon's own storage path: a test writing
+    # to a deliberately tiny tmpfs prints the bare sentence and nothing else.
+    _prose(
+        FailureKind.ENVIRONMENT,
+        "disk full",
+        rf"(?:{_BUILDKIT}|{_DAEMON}|/var/lib/docker[^\n]*?:)"
+        r"[^\n]*no space left on device",
+    ),
+    # The runner's own sentence about itself.
     _prose(
         FailureKind.ENVIRONMENT,
         "runner shutdown",
         r"the runner has received a shutdown signal",
     ),
+    # The assertion shapes. Each matches as it always did; none of them
+    # establishes PROJECT unless the SAME piece of evidence also carries a
+    # frame or node id pointing into the checkout (`_has_project_provenance`,
+    # applied in `classify_failure`).
     _exact(
         FailureKind.PROJECT,
         "assertion error",
@@ -223,6 +280,28 @@ RULES: tuple[Rule, ...] = (
 """Every rule is evaluated against every piece of evidence; order is cosmetic."""
 
 SYMPTOMS: tuple[Rule, ...] = (
+    # buildkit's own shape for a COPY/ADD source missing from the build
+    # context (the path it could not find, quoted, at the line's end), and
+    # docker's shape for the same. AUTHORING until this pass: the build
+    # context IS the checkout, so the line is a real mismatch between the
+    # instruction and its context -- but a path the COPY never had right and
+    # a file the project moved AFTER the Dockerfile was authored print the
+    # identical line. The snapshot cannot say which side moved, so it says
+    # what it saw. Listed before `no such file` so the operator reads the
+    # builder's own shape first.
+    _symptom(
+        "copy/add source not found",
+        rf"failed to (?:solve|compute cache key){_QUOTED_PATH_NOT_FOUND}",
+    ),
+    _symptom(
+        "copy/add failed in build context",
+        r"(?:COPY|ADD) failed:[^\n]*"
+        r"(?:no such file or directory|file not found in build context)",
+    ),
+    # Demoted with them: `unknown instruction` is ordinary English about a
+    # vocabulary, and an application says it about its own -- the parser's
+    # framing on the same line proves only that both sentences share a line.
+    _symptom("unknown instruction", r"unknown instruction"),
     # A missing file is what a defect in the artifact, in the project, in the
     # environment and in the invocation all look like from the outside. The
     # exception-shaped lookahead keeps a Python `FileNotFoundError` to the one
@@ -366,6 +445,12 @@ def classify_failure(
     on warning-shaped evidence establishes nothing and is carried through as
     an observation, whatever the outcome.
 
+    A PROJECT match is demoted the same way when the piece of evidence it
+    landed on carries no provenance for the assertion (see
+    :func:`_has_project_provenance`): an assertion that does not say whose
+    it was establishes nothing, and cannot make an unrelated cause ambiguous
+    either.
+
     Every observation names the LINE it was read from, and every matched line
     gets one, so a cited block never hides a second match behind its first.
     ``EVIDENCE_UNAVAILABLE`` keeps all four kinds of observation beside the
@@ -376,12 +461,14 @@ def classify_failure(
     where = step.ref if step is not None else job.job_id
     pool = _evidence_pool(job, step)
     per_item = [_matches(item) for item in pool]
-    matches = [match for found, _ in per_item for match in found]
-    warnings = [
+    matches, unprovenanced = _partition_by_provenance(
+        [match for found, _ in per_item for match in found]
+    )
+    demoted = [
         f"{WARNING_SHAPED_NOTE}: {match.describe()}"
         for _, warned in per_item
         for match in warned
-    ]
+    ] + [f"{NO_PROVENANCE_NOTE}: {match.describe()}" for match in unprovenanced]
     exceptions = [
         f"exception: {_for_operator(item, line)}"
         for item in pool
@@ -399,7 +486,7 @@ def classify_failure(
             "EVIDENCE_UNAVAILABLE",
             None,
             [],
-            found + warnings + exceptions + symptoms + _missing(completeness),
+            found + demoted + exceptions + symptoms + _missing(completeness),
         )
     kinds = sorted({match.rule.kind for match in matches}, key=lambda k: k.value)
     if len(kinds) >= 2:
@@ -408,12 +495,12 @@ def classify_failure(
             "UNCLASSIFIED",
             FailureKind.UNKNOWN,
             [],
-            [_ambiguity(matches, kinds), *warnings, *exceptions, *symptoms],
+            [_ambiguity(matches, kinds), *demoted, *exceptions, *symptoms],
         )
     if len(kinds) == 1:
         cited = list(dict.fromkeys(match.evidence for match in matches))
         observations = (
-            [match.describe() for match in matches] + warnings + exceptions + symptoms
+            [match.describe() for match in matches] + demoted + exceptions + symptoms
         )
         if step is not None and any(
             not isinstance(item.source, StepRef) for item in cited
@@ -425,7 +512,7 @@ def classify_failure(
         "UNCLASSIFIED",
         FailureKind.UNKNOWN,
         [],
-        warnings + exceptions + symptoms or [_NO_RULE_NOTE],
+        demoted + exceptions + symptoms or [_NO_RULE_NOTE],
     )
 
 
@@ -502,6 +589,75 @@ def _is_warning_shaped(item: Evidence, line: str) -> bool:
     if item.level is not None:
         return item.level in _NOTICED_LEVELS
     return bool(_LINE_WARNING_RE.match(line))
+
+
+# PROJECT's provenance (owner's evidence rule, 2026-09-22). `AssertionError:
+# 1 != 2` is printed by the project's own suite, by a CI setup script the
+# runner invokes with `python -c`, and by an installed dependency's doctest
+# collected by the same run. What tells them apart is the FILE the failing
+# frame names, so a class is established only where the SAME piece of
+# evidence carries one of the two shapes that name it: a traceback frame, or
+# a pytest node id. The node id is provenance in its own right, which is why
+# `FAILED tests/test_x.py::test_y - AssertionError: ...` needs nothing else.
+_PROVENANCE_RE = re.compile(
+    rf'File "(?P<frame>[^"\n]+)", line \d+|^{_LINE_PREFIX}FAILED (?P<node>\S+?)::',
+    re.MULTILINE,
+)
+# Not the checkout: an installed dependency, the runner's own temp area, or
+# a synthetic frame (`<string>`/`<stdin>`, what `python -c` reports).
+_NOT_THE_CHECKOUT = ("site-packages", "dist-packages", "/_temp/", "/tmp/")
+# An ABSOLUTE frame is the checkout's only where the path says so. `/app/
+# tests/test_greeting.py` qualifies: it is the image's WORKDIR copy of the
+# project, which is what live acceptance run 3 really printed.
+_CHECKOUT_DIRS = ("/tests/", "/src/")
+
+NO_PROVENANCE_NOTE = "assertion without project provenance"
+
+
+def _has_project_provenance(item: Evidence) -> bool:
+    """Whether this piece of evidence says WHOSE assertion failed."""
+    return any(
+        _is_project_path(frame or node)
+        for frame, node in _PROVENANCE_RE.findall(item.text)
+    )
+
+
+def _is_project_path(path: str) -> bool:
+    """Whether a frame's path names a file of the checkout under diagnosis.
+
+    A RELATIVE path is the checkout's by construction — pytest prints node
+    ids relative to its rootdir, and a traceback frame is relative when the
+    process was started inside the tree. An ABSOLUTE one is the checkout's
+    only when it sits under the project's own directories.
+    """
+    if path.startswith("<"):
+        return False
+    if any(part in path for part in _NOT_THE_CHECKOUT):
+        return False
+    if not path.startswith("/"):
+        return True
+    return any(part in path for part in _CHECKOUT_DIRS)
+
+
+def _partition_by_provenance(
+    matches: list[_Match],
+) -> tuple[list[_Match], list[_Match]]:
+    """Split the matches into (established, PROJECT matches without provenance).
+
+    Only the PROJECT kind is gated: the other kinds are tied to their cause by
+    the shape of the line itself (a tool's own framing, a parser's own
+    sentence), which is the same requirement read off a different feature.
+    """
+    established: list[_Match] = []
+    unprovenanced: list[_Match] = []
+    for match in matches:
+        if match.rule.kind is FailureKind.PROJECT and not _has_project_provenance(
+            match.evidence
+        ):
+            unprovenanced.append(match)
+        else:
+            established.append(match)
+    return established, unprovenanced
 
 
 def _for_operator(item: Evidence, line: str) -> str:

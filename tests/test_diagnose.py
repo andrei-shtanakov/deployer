@@ -31,6 +31,13 @@ ANNOTATIONS_ABSENT = Completeness(logs="present", annotations="absent")
 # annotations: the default a hand-built job carries.
 READ_COMPLETELY = ANNOTATIONS_ABSENT
 
+# A recovered network problem in the shape the owner's evidence rule requires
+# (2026-09-22): apt's `Err:` detail line names the host and the port it could
+# not reach, which is what separates a TOOL's own report from an application
+# printing the same words. The bare phrase establishes nothing at any level
+# now, so a warning-level test written on it would pass for the wrong reason.
+RECOVERED_TIMEOUT = "Could not connect to pypi.org:443, connection timed out"
+
 
 def job_with(
     *,
@@ -75,7 +82,7 @@ def test_class_requires_a_citation():
 
 def test_project_needs_positive_evidence_not_absence_of_markers():
     v = classify_failure(
-        job_with(text="FAILED test_x - AssertionError: 1 != 2"),
+        job_with(text="FAILED tests/test_x.py::test_x - AssertionError: 1 != 2"),
         step=None,
         completeness=COMPLETE,
     )
@@ -106,7 +113,13 @@ def test_incomplete_evidence_wins_over_a_found_marker():
 def test_conflicting_causes_for_one_failure_are_unclassified():
     """Not resolved by iteration order."""
     v = classify_failure(
-        job_with(text="cannot connect to the docker daemon\nAssertionError: 1 != 2"),
+        job_with(
+            text=(
+                "cannot connect to the docker daemon\n"
+                'File "tests/test_x.py", line 10, in test_x\n'
+                "AssertionError: 1 != 2"
+            )
+        ),
         step=None,
         completeness=COMPLETE,
     )
@@ -118,7 +131,11 @@ def test_conflict_is_the_same_with_the_evidence_reversed():
     forward = job_with(
         evidence=[
             Evidence(None, "cannot connect to the docker daemon"),
-            Evidence(None, "E   AssertionError: 1 != 2"),
+            Evidence(
+                None,
+                'File "tests/test_x.py", line 10, in test_x\n'
+                "E   AssertionError: 1 != 2",
+            ),
         ]
     )
     backward = job_with(evidence=list(reversed(forward.evidence)))
@@ -155,8 +172,8 @@ def test_no_marker_at_all_says_so():
 
 def test_authoring_marker_is_classified_with_its_evidence():
     text = (
-        "ERROR: failed to solve: failed to compute cache key: "
-        '"/requirements.txt": not found'
+        "ERROR: failed to solve: dockerfile parse error on line 3: "
+        "FROM requires either one or three arguments"
     )
     v = classify_failure(job_with(text=text), step=None, completeness=COMPLETE)
     assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.AUTHORING
@@ -165,7 +182,7 @@ def test_authoring_marker_is_classified_with_its_evidence():
 
 def test_environment_marker_is_classified_with_its_evidence():
     v = classify_failure(
-        job_with(text="Temporary failure in name resolution"),
+        job_with(text="E: Temporary failure resolving 'deb.debian.org'"),
         step=None,
         completeness=COMPLETE,
     )
@@ -173,7 +190,11 @@ def test_environment_marker_is_classified_with_its_evidence():
 
 
 def test_several_markers_of_one_kind_cite_each_item_once():
-    e1 = Evidence(None, "no space left on device\nno space left on device")
+    e1 = Evidence(
+        None,
+        "failed to solve: write /var/lib/docker/tmp/a: no space left on device\n"
+        "failed to solve: write /var/lib/docker/tmp/b: no space left on device",
+    )
     e2 = Evidence(None, "toomanyrequests: rate limit exceeded")
     v = classify_failure(job_with(evidence=[e1, e2]), step=None, completeness=COMPLETE)
     assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.ENVIRONMENT
@@ -203,7 +224,7 @@ def test_step_verdict_uses_its_own_and_unbound_job_evidence():
 
 def test_step_verdict_cites_step_bound_evidence_without_the_job_level_note():
     target = failed_step(
-        2, "Dockerfile parse error on line 3: unknown instruction: FORM"
+        2, "Dockerfile parse error on line 3: unexpected end of statement"
     )
     v = classify_failure(job_with(steps=[target]), step=target, completeness=COMPLETE)
     assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.AUTHORING
@@ -231,23 +252,37 @@ def test_python_file_not_found_is_an_observation_not_authoring():
     ]
 
 
-def test_docker_copy_no_such_file_is_still_authoring():
+def test_docker_copy_no_such_file_is_a_symptom_not_authoring():
+    """Demoted by the owner's evidence rule (2026-09-22). docker names the
+    source it could not resolve against the build context -- but the context
+    IS the checkout, so a path the COPY never had right and a file the
+    project moved after the Dockerfile was authored print the same sentence.
+    The line is reported, twice: by the builder's own shape and by the bare
+    `no such file` it also carries."""
     text = (
         "COPY failed: file not found in build context or excluded by "
         ".dockerignore: stat app.py: no such file or directory"
     )
     v = classify_failure(job_with(text=text), step=None, completeness=COMPLETE)
-    assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.AUTHORING
-    assert v.evidence == [Evidence(None, text)]
+    assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
+    assert v.evidence == []
+    assert v.observations == [
+        f"symptom: copy/add failed in build context: {text}",
+        f"symptom: no such file: {text}",
+    ]
 
 
 def test_exception_shaped_environment_line_is_still_environment():
-    """The exception-line exclusion is scoped to `no such file` only."""
+    """The exception-line exclusion is scoped to `no such file` only.
+
+    The marker carries docker's own framing (the evidence rule): a client
+    that could not reach the daemon says so in its own words, whoever
+    called it."""
     v = classify_failure(
         job_with(
             text=(
-                "requests.exceptions.ConnectionError: HTTPConnectionPool: "
-                "Temporary failure in name resolution"
+                "docker.errors.DockerException: Cannot connect to the Docker "
+                "daemon at unix:///var/run/docker.sock"
             )
         ),
         step=None,
@@ -283,7 +318,11 @@ def test_exact_rules_do_not_match_across_a_newline():
 
 def test_cited_line_is_the_marker_line_not_a_bare_prefix():
     v = classify_failure(
-        job_with(text="E\nAssertionError: split"), step=None, completeness=COMPLETE
+        job_with(
+            text='File "tests/test_x.py", line 3, in test_x\nE\nAssertionError: split'
+        ),
+        step=None,
+        completeness=COMPLETE,
     )
     assert v.kind is FailureKind.PROJECT
     assert v.observations == ["assertion error: AssertionError: split"]
@@ -295,7 +334,10 @@ def test_cited_line_is_the_marker_line_not_a_bare_prefix():
 
 
 def test_buildkit_framed_assertion_error_is_still_project():
-    text = "#16 0.310 AssertionError: 'hello from ci_build' != 'hello from ci-build'"
+    text = (
+        '#16 0.310   File "/app/tests/test_greeting.py", line 10, in test_greeting\n'
+        "#16 0.310 AssertionError: 'hello from ci_build' != 'hello from ci-build'"
+    )
     v = classify_failure(job_with(text=text), step=None, completeness=COMPLETE)
     assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.PROJECT
     assert v.evidence == [Evidence(None, text)]
@@ -314,13 +356,20 @@ def test_buildkit_framed_file_not_found_is_still_an_exception_not_authoring():
 
 def test_leading_whitespace_before_pytest_assert_is_still_project():
     v = classify_failure(
-        job_with(text="   E   AssertionError: 1 != 2"), step=None, completeness=COMPLETE
+        job_with(
+            text='File "tests/test_x.py", line 3, in test_x\n'
+            "   E   AssertionError: 1 != 2"
+        ),
+        step=None,
+        completeness=COMPLETE,
     )
     assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.PROJECT
 
 
 def test_buildkit_framed_connection_timeout_is_environment():
-    """The prose ENVIRONMENT rules are already unanchored; this is a pin."""
+    """The prose ENVIRONMENT rules are unanchored; this is a pin. The line is
+    apt's `Err:` detail, which names the host and the port it could not
+    reach -- the framing the evidence rule requires."""
     text = (
         "#11 15.43   Could not connect to 10.255.255.1:80 (10.255.255.1), "
         "connection timed out"
@@ -329,15 +378,20 @@ def test_buildkit_framed_connection_timeout_is_environment():
     assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.ENVIRONMENT
 
 
-def test_real_buildkit_copy_not_found_is_authoring():
-    """Verbatim from evidence/run-1.log-failed.txt."""
+def test_real_buildkit_copy_not_found_is_an_observation():
+    """Verbatim from evidence/run-1.log-failed.txt -- the line live
+    acceptance run 1 really printed. It established AUTHORING until the
+    owner's evidence rule; it is an observation now, and run 1 is
+    UNCLASSIFIED (`tests/test_fixture_runs.py`)."""
     text = (
         "ERROR: failed to build: failed to solve: failed to compute cache key: "
         'failed to calculate checksum of ref a4efb8b6::t0jk: "/docs/setup.md": '
         "not found"
     )
     v = classify_failure(job_with(text=text), step=None, completeness=COMPLETE)
-    assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.AUTHORING
+    assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
+    assert v.evidence == []
+    assert v.observations == [f"symptom: copy/add source not found: {text}"]
 
 
 def test_buildkit_framing_does_not_reopen_the_split_line_gap():
@@ -351,7 +405,9 @@ def test_buildkit_framing_does_not_reopen_the_split_line_gap():
 def test_step_verdict_cites_a_job_annotation_with_a_marker():
     """Review #6: int-source (annotation) evidence is in the step pool and citable."""
     target = failed_step(3)
-    annotation = Evidence(JOB_ID, "Temporary failure in name resolution", "failure")
+    annotation = Evidence(
+        JOB_ID, "E: Temporary failure resolving 'deb.debian.org'", "failure"
+    )
     v = classify_failure(
         job_with(evidence=[annotation], steps=[target]),
         step=target,
@@ -620,7 +676,10 @@ def test_render_verdict_carries_its_own_schema_version_first():
 def _fail_fast_matrix() -> tuple[FailedJob, FailedJob]:
     """Job 1 fails readably; job 2 is cancelled and its log endpoint errors."""
     readable = job_with(
-        text='ERROR: failed to compute cache key: "/docs/setup.md": not found',
+        text=(
+            "ERROR: failed to solve: dockerfile parse error on line 3: "
+            "FROM requires either one or three arguments"
+        ),
         job_id=1,
     )
     unreadable = job_with(job_id=2, completeness=LOGS_ERROR)
@@ -645,7 +704,7 @@ def test_sibling_job_log_error_does_not_erase_an_established_cause():
     ]
     established = d.failures[0]
     assert established.kind is FailureKind.AUTHORING
-    assert any("/docs/setup.md" in e.text for e in established.evidence)
+    assert any("dockerfile parse error" in e.text for e in established.evidence)
     assert d.outcome == "EVIDENCE_UNAVAILABLE"
     assert d.causes == [FailureKind.AUTHORING]
 
@@ -680,10 +739,11 @@ def test_recovered_apt_warning_does_not_dilute_an_authoring_verdict():
     most common lines in a Debian-based build; before the exclusion it paired
     with the real COPY failure into `ambiguous:` and lost the class."""
     text = (
-        "#8 12.1 W: Failed to fetch http://deb.debian.org/debian/x.deb  "
-        "Connection timed out [IP: 1.2.3.4 80] [retrying]\n"
+        "#8 12.1 W: Could not connect to deb.debian.org:80 (1.2.3.4), "
+        "connection timed out [retrying]\n"
         "#8 30.2 apt-get update succeeded on retry\n"
-        'ERROR: failed to solve: failed to compute cache key: "/x": not found'
+        "ERROR: failed to solve: dockerfile parse error on line 3: "
+        "FROM requires either one or three arguments"
     )
     v = classify_failure(job_with(text=text), step=None, completeness=COMPLETE)
     assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.AUTHORING
@@ -716,11 +776,11 @@ def test_a_warning_shaped_line_establishes_no_class_at_all():
     so an AUTHORING marker on a `W: ` line still established AUTHORING. A
     warning is not the failure whatever it mentions: apt reports a problem it
     recovered from with the same `W: ` prefix for every subject."""
-    text = 'W: failed to compute cache key: "/x": not found'
+    text = "W: curl: (6) Could not resolve host: proxy.internal [retrying]"
     v = classify_failure(job_with(text=text), step=None, completeness=COMPLETE)
     assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
     assert v.evidence == []
-    assert v.observations == [f"warning-shaped: copy/add source not found: {text}"]
+    assert v.observations == [f"warning-shaped: host unresolvable: {text}"]
 
 
 def test_a_warning_annotation_naming_a_missing_file_is_not_authoring():
@@ -755,8 +815,8 @@ def test_a_failure_annotation_naming_an_artifact_defect_is_authoring():
     target = failed_step(1, "Process completed with exit code 1.")
     annotation = Evidence(
         JOB_ID,
-        "COPY failed: file not found in build context or excluded by "
-        ".dockerignore: stat app.py: no such file or directory",
+        "The workflow is not valid. .github/workflows/ci.yml (Line: 31, "
+        "Col: 9): Unrecognized named-value: 'secret'",
         "failure",
     )
     v = classify_failure(
@@ -772,8 +832,8 @@ def test_an_unprefixed_log_line_naming_an_artifact_defect_is_authoring():
     """The positive twin by shape: a plain build-log line carries no level,
     and an unlevelled line is failure evidence."""
     text = (
-        "#8 0.42 ERROR: failed to solve: failed to compute cache key: "
-        '"/app/main.py": not found'
+        "#8 0.42 ERROR: failed to solve: dockerfile parse error on line 3: "
+        "FROM requires either one or three arguments"
     )
     v = classify_failure(job_with(text=text), step=None, completeness=COMPLETE)
     assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.AUTHORING
@@ -786,7 +846,7 @@ def _step_with_a_warning_annotation(level: str) -> FailedJob:
     """One failed step whose log says only that the step exited non-zero, plus
     a job annotation at `level` naming a recovered network problem."""
     target = failed_step(1, "Process completed with exit code 1.")
-    annotation = Evidence(JOB_ID, "Connection timed out; retry succeeded", level)
+    annotation = Evidence(JOB_ID, f"{RECOVERED_TIMEOUT}; retry succeeded", level)
     return job_with(evidence=[annotation], steps=[target])
 
 
@@ -800,7 +860,7 @@ def test_a_warning_level_annotation_does_not_establish_environment():
     assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
     assert v.evidence == []
     assert v.observations == [
-        "warning-shaped: connection timed out: warning: Connection timed out; "
+        f"warning-shaped: connection timed out: warning: {RECOVERED_TIMEOUT}; "
         "retry succeeded"
     ]
 
@@ -825,7 +885,9 @@ def test_an_error_level_annotation_is_still_environment_evidence():
     """The positive twin of the level test: `error`, like `failure`, is
     failure evidence and keeps establishing a class."""
     target = failed_step(1, "Process completed with exit code 1.")
-    annotation = Evidence(JOB_ID, "Temporary failure in name resolution", "error")
+    annotation = Evidence(
+        JOB_ID, "E: Temporary failure resolving 'deb.debian.org'", "error"
+    )
     v = classify_failure(
         job_with(evidence=[annotation], steps=[target]),
         step=target,
@@ -839,7 +901,7 @@ def test_a_warning_annotation_does_not_mask_a_real_log_line():
     """Per piece of evidence, not per run: an unprefixed log line naming the
     same problem still establishes ENVIRONMENT."""
     target = failed_step(1, "curl: (6) Could not resolve host: pypi.org")
-    annotation = Evidence(JOB_ID, "Connection timed out; retry succeeded", "warning")
+    annotation = Evidence(JOB_ID, f"{RECOVERED_TIMEOUT}; retry succeeded", "warning")
     v = classify_failure(
         job_with(evidence=[annotation], steps=[target]),
         step=target,
@@ -863,14 +925,14 @@ def test_a_warning_line_mid_block_does_not_mask_the_block():
     apt's `W: ` is the whole of the per-line rule.)"""
     text = (
         "Starting checks\n"
-        "W: Connection timed out; retrying\n"
+        f"W: {RECOVERED_TIMEOUT}; retrying\n"
         "Process completed with exit code 1."
     )
     v = classify_failure(job_with(text=text), step=None, completeness=COMPLETE)
     assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
     assert v.evidence == []
     assert v.observations == [
-        "warning-shaped: connection timed out: W: Connection timed out; retrying"
+        f"warning-shaped: connection timed out: W: {RECOVERED_TIMEOUT}; retrying"
     ]
 
 
@@ -892,7 +954,7 @@ def test_an_annotation_that_is_still_a_single_line_stays_unclassified():
     """The commonest annotation shape must keep working: a single-line
     `warning` annotation is judged by its level like any other."""
     target = failed_step(1, "Process completed with exit code 1.")
-    annotation = Evidence(JOB_ID, "Connection timed out; retry succeeded", "warning")
+    annotation = Evidence(JOB_ID, f"{RECOVERED_TIMEOUT}; retry succeeded", "warning")
     v = classify_failure(
         job_with(evidence=[annotation], steps=[target]),
         step=target,
@@ -914,7 +976,7 @@ def test_a_multiline_warning_annotation_is_warning_shaped_throughout():
     target = failed_step(1, "Process completed with exit code 1.")
     annotation = Evidence(
         JOB_ID,
-        "Recovered network issue\nConnection timed out; retry succeeded",
+        f"Recovered network issue\n{RECOVERED_TIMEOUT}; retry succeeded",
         "warning",
     )
     v = classify_failure(
@@ -937,7 +999,7 @@ def test_a_multiline_failure_annotation_still_establishes_a_class():
     target = failed_step(1, "Process completed with exit code 1.")
     annotation = Evidence(
         JOB_ID,
-        "Recovered network issue\nConnection timed out; retry succeeded",
+        f"Recovered network issue\n{RECOVERED_TIMEOUT}; retry succeeded",
         "failure",
     )
     v = classify_failure(
@@ -959,7 +1021,7 @@ def test_an_annotation_opening_with_an_empty_line_is_still_warning_shaped():
     exit 0, off a warning. A level carried as data cannot be hidden by any
     text at all."""
     target = failed_step(1, "Process completed with exit code 1.")
-    annotation = Evidence(JOB_ID, "\nConnection timed out; retry succeeded", "warning")
+    annotation = Evidence(JOB_ID, f"\n{RECOVERED_TIMEOUT}; retry succeeded", "warning")
     v = classify_failure(
         job_with(evidence=[annotation], steps=[target]),
         step=target,
@@ -969,7 +1031,7 @@ def test_an_annotation_opening_with_an_empty_line_is_still_warning_shaped():
     assert v.evidence == []
     assert v.observations == [
         "warning-shaped: connection timed out: "
-        "warning: Connection timed out; retry succeeded"
+        f"warning: {RECOVERED_TIMEOUT}; retry succeeded"
     ]
     d = diagnose_run(run_with(job_with(evidence=[annotation], steps=[target])))
     assert d.outcome == "UNCLASSIFIED"
@@ -1011,7 +1073,9 @@ def test_an_unknown_annotation_level_is_failure_evidence():
     seen -- is failure evidence, so an unknown level never silently
     suppresses a marker."""
     target = failed_step(1, "Process completed with exit code 1.")
-    annotation = Evidence(JOB_ID, "Temporary failure in name resolution", "fatal")
+    annotation = Evidence(
+        JOB_ID, "E: Temporary failure resolving 'deb.debian.org'", "fatal"
+    )
     v = classify_failure(
         job_with(evidence=[annotation], steps=[target]),
         step=target,
@@ -1032,21 +1096,21 @@ def test_a_warning_prefixed_log_line_is_warning_shaped():
     must not establish a class any more than the annotation did."""
     text = (
         "Starting\n"
-        "warning: Could not resolve host: proxy.internal; using the direct route\n"
+        "warning: curl: (6) Could not resolve host: proxy.internal\n"
         "Process completed with exit code 1."
     )
     v = classify_failure(job_with(text=text), step=None, completeness=COMPLETE)
     assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
     assert v.evidence == []
     assert v.observations == [
-        "warning-shaped: host unresolvable: warning: Could not resolve host: "
-        "proxy.internal; using the direct route"
+        "warning-shaped: host unresolvable: warning: curl: (6) Could not "
+        "resolve host: proxy.internal"
     ]
 
 
 def test_a_notice_prefixed_log_line_is_warning_shaped():
     """The other noticed-not-fatal shape, on a log line rather than a level."""
-    text = "notice: Connection timed out; the retry succeeded"
+    text = f"notice: {RECOVERED_TIMEOUT}; the retry succeeded"
     v = classify_failure(job_with(text=text), step=None, completeness=COMPLETE)
     assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
     assert v.evidence == []
@@ -1057,7 +1121,7 @@ def test_a_warning_log_line_is_warning_shaped_under_buildkit_framing():
     """`docker build` frames every RUN-step line as `#<step> <seconds> `, so
     the warning shape is read after `_LINE_PREFIX`, like every other line
     rule -- not at the raw start of the line."""
-    text = "#8 0.42 warning: Could not resolve host: proxy.internal"
+    text = "#8 0.42 warning: curl: (6) Could not resolve host: proxy.internal"
     v = classify_failure(job_with(text=text), step=None, completeness=COMPLETE)
     assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
     assert v.observations == [f"warning-shaped: host unresolvable: {text}"]
@@ -1178,11 +1242,18 @@ def test_an_unresolvable_action_is_a_symptom_not_authoring():
     assert v.observations == [f"symptom: unresolvable action: {text}"]
 
 
-def test_the_buildkit_copy_shape_must_name_the_missing_path():
-    """The kept shape is buildkit's own: `failed to solve`/`failed to compute
-    cache key` AND the quoted path it could not find, at the line's end."""
-    v = _verdict('ERROR: failed to compute cache key: "/docs/setup.md": not found')
-    assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.AUTHORING
+def test_the_buildkit_copy_shape_is_an_observation_not_authoring():
+    """Demotion (owner's evidence rule, 2026-09-22). buildkit's shape does
+    name the path it could not resolve against the build context -- but the
+    context IS the checkout the Dockerfile was authored against, so a path
+    the COPY never had right and a file the project moved AFTER the
+    Dockerfile was authored print the identical line. The snapshot cannot
+    say which side moved, so it does not name the artifact."""
+    text = 'ERROR: failed to compute cache key: "/docs/setup.md": not found'
+    v = _verdict(text)
+    assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
+    assert v.evidence == []
+    assert v.observations == [f"symptom: copy/add source not found: {text}"]
 
 
 def test_symptoms_are_a_separate_table_that_names_no_cause():
@@ -1204,6 +1275,20 @@ def test_no_rule_of_the_catalogue_fires_on_a_bare_symptom_line():
         "bash: foo: command not found",
         'exec: "serve": executable file not found in $PATH: unknown.',
         "Unable to resolve action actions/checkout@v99, unable to find version v99",
+        # Demoted by the evidence rule of 2026-09-22: the COPY/ADD shapes,
+        # `unknown instruction` (with the parser's framing beside it, which
+        # proves only that both sentences share a line), and every BARE
+        # ENVIRONMENT phrase an application under test prints for itself.
+        'ERROR: failed to compute cache key: "/docs/setup.md": not found',
+        "COPY failed: file not found in build context or excluded by "
+        ".dockerignore: stat app.py: no such file or directory",
+        "dockerfile parse error on line 7: unknown instruction: FROBNICATE",
+        "connection timed out",
+        "503 Service Unavailable",
+        "no space left on device",
+        "Temporary failure in name resolution",
+        "Could not resolve host: pypi.org",
+        "toomanyrequests",
     ):
         assert not [rule.name for rule in RULES if rule.pattern.search(text)], text
 
@@ -1212,8 +1297,8 @@ def test_a_symptom_beside_an_established_cause_is_observed_not_a_conflict():
     """A symptom is not a second kind: it cannot turn a clean verdict into
     `ambiguous:`, and the operator still reads it."""
     text = (
-        'ERROR: failed to solve: failed to compute cache key: "/docs/setup.md": '
-        "not found\n"
+        "ERROR: failed to solve: dockerfile parse error on line 3: "
+        "FROM requires either one or three arguments\n"
         "cp: cannot stat '/app/main.py': No such file or directory"
     )
     v = _verdict(text)
@@ -1242,45 +1327,42 @@ def test_two_missing_files_in_one_block_are_two_symptom_observations():
     ]
 
 
-def test_two_copy_failures_in_one_block_are_two_observations_one_citation():
-    """The same, for a classifying rule: two cited lines, one cited block."""
-    first = 'ERROR: failed to compute cache key: "/docs/setup.md": not found'
-    second = 'ERROR: failed to compute cache key: "/docs/usage.md": not found'
-    block = f"#12 [stage-0 7/9] COPY docs ./docs\n{first}\n{second}"
+def test_two_fetch_failures_in_one_block_are_two_observations_one_citation():
+    """The same, for a classifying rule: two cited lines, one cited block.
+    apt really does print one `E: Failed to fetch` per index it could not
+    reach, so reporting only the first hides half the failure."""
+    first = "E: Failed to fetch http://deb.debian.org/debian/a.deb  404  Not Found"
+    second = "E: Failed to fetch http://deb.debian.org/debian/b.deb  404  Not Found"
+    block = f"#9 [stage-0 3/9] RUN apt-get install -y a b\n{first}\n{second}"
     v = _verdict(block)
-    assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.AUTHORING
+    assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.ENVIRONMENT
     assert v.evidence == [Evidence(None, block)]
     assert v.observations == [
-        f"copy/add source not found: {first}",
-        f"copy/add source not found: {second}",
+        f"fetch failure: {first}",
+        f"fetch failure: {second}",
     ]
 
 
 def test_an_observation_quotes_the_line_the_rule_matched_not_the_first():
     """A marker on line 3 of a block is quoted from line 3.
 
-    The marker is buildkit's real one-line shape (final round, finding 1):
-    the parser's framing and the bad instruction on the SAME line -- a bare
-    `unknown instruction: FORM` no longer establishes anything on its own.
-    It also satisfies the bare `dockerfile parse error` rule, so both fire
-    on the identical line, each cited once.
+    The marker is the parser's own sentence about the Dockerfile's text --
+    a plain syntax error, with no `unknown instruction` beside it, which is
+    the whole of what AUTHORING keeps after the evidence rule.
     """
-    marker = (
-        "dockerfile parse error on line 3: unknown instruction: FORM "
-        "(did you mean FROM?)"
-    )
+    marker = "dockerfile parse error on line 3: unexpected end of statement"
     v = _verdict(f"#1 [internal] load build definition\n#1 transferring\n{marker}")
     assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.AUTHORING
-    assert v.observations == [
-        f"dockerfile parse error: {marker}",
-        f"unknown instruction: {marker}",
-    ]
+    assert v.observations == [f"dockerfile parse error: {marker}"]
 
 
 def test_one_line_matched_twice_by_a_rule_is_cited_once():
     """Deduplication: `finditer` can land twice inside one line, and the
     operator reads lines, not match offsets."""
-    line = "connection timed out; retry also connection timed out"
+    line = (
+        "Could not connect to pypi.org:443, connection timed out; "
+        "retried: Could not connect to pypi.org:443, connection timed out"
+    )
     v = _verdict(line)
     assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.ENVIRONMENT
     assert v.observations == [f"connection timed out: {line}"]
@@ -1311,7 +1393,7 @@ def test_evidence_unavailable_keeps_the_symptoms_and_exceptions_found():
 def test_evidence_unavailable_keeps_a_warning_shaped_match_too():
     """The third shape of observation on that branch, pinned beside the
     other two."""
-    warned = "W: Failed to fetch http://deb.debian.org/x.deb  [retrying]"
+    warned = f"W: {RECOVERED_TIMEOUT} [retrying]"
     v = classify_failure(
         job_with(text=warned), step=None, completeness=LOGS_UNAVAILABLE
     )
@@ -1337,32 +1419,49 @@ def test_a_bare_unknown_instruction_in_an_application_exception_is_not_authoring
     v = _verdict(text)
     assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
     assert v.evidence == []
-    assert v.observations == [f"exception: {text}"]
-
-
-def test_buildkits_own_one_line_shape_still_establishes_unknown_instruction():
-    """The real shape (owner ruling, 2026-09-22): buildkit puts the parser's
-    framing and the bad instruction on ONE line, not a `Dockerfile:N` header
-    with the error on a line of its own. The line also satisfies the bare
-    `dockerfile parse error` rule, so both are cited."""
-    text = "dockerfile parse error on line 7: unknown instruction: FROBNICATE"
-    v = _verdict(text)
-    assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.AUTHORING
     assert v.observations == [
-        f"dockerfile parse error: {text}",
-        f"unknown instruction: {text}",
+        f"exception: {text}",
+        f"symptom: unknown instruction: {text}",
     ]
 
 
-def test_the_legacy_daemons_one_line_shape_also_establishes_it():
-    """The pre-buildkit daemon's framing, without buildkit's own prefix
-    words -- still the parser's line, framing then instruction, together."""
+def test_buildkits_own_unknown_instruction_line_establishes_nothing():
+    """Demotion (owner's evidence rule, 2026-09-22). The previous round kept
+    this shape because the parser's framing and the bad instruction share a
+    line. They still do -- and that is exactly what an application quoting
+    the parser also produces, so the framing beside the words proves only
+    that two sentences share a line. `unknown instruction` is a symptom now,
+    and `dockerfile parse error` refuses a line carrying it."""
+    text = "dockerfile parse error on line 7: unknown instruction: FROBNICATE"
+    v = _verdict(text)
+    assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
+    assert v.evidence == []
+    assert v.observations == [f"symptom: unknown instruction: {text}"]
+
+
+def test_the_legacy_daemons_one_line_shape_is_demoted_too():
+    """The pre-buildkit daemon's framing, demoted with it: the class is the
+    unit, not the instance."""
     text = (
         "Error response from daemon: dockerfile parse error line 7: "
         "unknown instruction: FROBNICATE"
     )
     v = _verdict(text)
+    assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
+    assert v.evidence == []
+
+
+def test_a_plain_dockerfile_syntax_error_is_still_authoring():
+    """The positive twin of the two demotions above, and the whole of what
+    AUTHORING keeps for the Dockerfile: the parser read the artifact's bytes
+    and could not, in words no other tool prints and no application quotes
+    about its own vocabulary."""
+    text = (
+        "dockerfile parse error on line 3: FROM requires either one or three arguments"
+    )
+    v = _verdict(text)
     assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.AUTHORING
+    assert v.observations == [f"dockerfile parse error: {text}"]
 
 
 def test_githubs_own_one_line_shape_still_establishes_unrecognized_named_value():
@@ -1380,7 +1479,10 @@ def test_a_pytest_assertion_quoting_the_words_is_project_not_authoring():
     out` is PROJECT evidence outright (pytest's own bare-assert shape) --
     the anchored AUTHORING rule does not also fire on it, so there is no
     ambiguity left to resolve, only the one honest kind."""
-    text = 'E   assert "unrecognized named-value" in out'
+    text = (
+        "FAILED tests/test_ci.py::test_named_value - "
+        'assert "unrecognized named-value" in out'
+    )
     v = _verdict(text)
     assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.PROJECT
 
@@ -1404,7 +1506,7 @@ def test_a_third_partys_own_message_is_not_authoring():
 def test_upper_case_warning_prefix_does_not_establish_environment():
     """The bug, in the shape the review found it: `WARNING:` (all caps)
     read as fresh failure evidence instead of a noticed, recovered problem."""
-    text = "WARNING: Connection timed out; retry succeeded"
+    text = f"WARNING: {RECOVERED_TIMEOUT}; retry succeeded"
     v = _verdict(text)
     assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
     assert v.evidence == []
@@ -1412,7 +1514,7 @@ def test_upper_case_warning_prefix_does_not_establish_environment():
 
 
 def test_title_case_warning_prefix_is_also_warning_shaped():
-    text = "Warning: Connection timed out; retry succeeded"
+    text = f"Warning: {RECOVERED_TIMEOUT}; retry succeeded"
     v = _verdict(text)
     assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
     assert v.observations == [f"warning-shaped: connection timed out: {text}"]
@@ -1423,9 +1525,242 @@ def test_upper_case_warning_run_does_not_classify_the_exit_code_either():
     followed only by the step's own exit code -- must not read as
     ENVIRONMENT with a class the operator would exit 0 with, undiagnosed."""
     text = (
-        "WARNING: Connection timed out; retry succeeded\n"
+        f"WARNING: {RECOVERED_TIMEOUT}; retry succeeded\n"
         "Process completed with exit code 1."
     )
     v = _verdict(text)
     assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
     assert v.evidence == []
+
+
+# --- PR #72 bounded pass: a class needs the shape, not the words ------------
+# The owner's evidence rule, 2026-09-22: a class is established only where
+# the SHAPE of the evidence ties the message to its cause, and a rule known
+# to fire on the wrong cause is a wrong diagnosis, not a limitation. Two
+# features carry that here -- a TOOL'S OWN FRAMING for ENVIRONMENT, and
+# PROVENANCE for PROJECT -- and each is pinned by a pair: the framed line
+# that keeps its class, and the bare words that lose it.
+
+
+def test_an_app_printing_a_503_body_is_not_an_environment_failure():
+    """The twin the old rule got wrong: an HTTP fixture replaying a canned
+    upstream response says `503 Service Unavailable` exactly as the registry
+    does, and nothing in the sentence says which one printed it."""
+    v = _verdict("error parsing HTTP 503 response body: 503 Service Unavailable")
+    assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
+    assert v.evidence == []
+    assert v.observations == ["no rule matched"]
+
+
+def test_buildkits_own_503_is_still_environment():
+    """The positive twin: buildkit says IT could not reach the registry."""
+    text = (
+        "ERROR: failed to solve: failed to do request: "
+        "docker.io/library/python:3.12-slim: 503 Service Unavailable"
+    )
+    v = _verdict(text)
+    assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.ENVIRONMENT
+    assert v.evidence == [Evidence(None, text)]
+
+
+def test_a_test_printing_a_timeout_is_not_an_environment_failure():
+    """A retry test prints the phrase it exists to exercise."""
+    v = _verdict("requests: connection timed out after 5s")
+    assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
+    assert v.observations == ["no rule matched"]
+
+
+def test_apts_own_unreachable_line_is_still_environment():
+    """apt names the host AND the port it could not reach -- framing the
+    application above does not have. Verbatim from live acceptance run 2."""
+    text = (
+        "#11 15.43   Could not connect to 10.255.255.1:80 (10.255.255.1), "
+        "connection timed out"
+    )
+    v = _verdict(text)
+    assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.ENVIRONMENT
+
+
+def test_curls_own_timeout_line_is_still_environment():
+    v = _verdict("curl: (28) Operation timed out after 5001 milliseconds")
+    assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.ENVIRONMENT
+
+
+def test_gits_own_transport_failure_is_still_environment():
+    text = (
+        "fatal: unable to access 'https://github.com/o/r/': "
+        "Could not resolve host: github.com"
+    )
+    v = _verdict(text)
+    assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.ENVIRONMENT
+
+
+def test_uvs_own_error_chain_is_still_environment():
+    text = (
+        "  Caused by: failed to lookup address information: Name or service not known"
+    )
+    v = _verdict(text)
+    assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.ENVIRONMENT
+
+
+def test_pips_retry_warning_is_a_noticed_problem_not_a_cause():
+    """`WARNING: Retrying ...` is pip saying it recovered, and the level rule
+    already covers it; the words alone never did name a cause."""
+    text = (
+        "WARNING: Retrying (Retry(total=4)) after connection broken by "
+        "'NewConnectionError': Temporary failure in name resolution"
+    )
+    v = _verdict(text)
+    assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
+    assert v.evidence == []
+
+
+def test_pips_own_install_failure_is_environment():
+    """The positive twin: pip's `ERROR: ` is the failure, not the retry."""
+    text = (
+        "ERROR: Could not install packages due to an OSError: "
+        "[Errno -3] Temporary failure in name resolution"
+    )
+    v = _verdict(text)
+    assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.ENVIRONMENT
+
+
+def test_a_bare_disk_full_sentence_is_not_a_full_runner():
+    """A test writing to a deliberately tiny tmpfs prints it verbatim."""
+    v = _verdict("OSError: [Errno 28] No space left on device")
+    assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
+    assert v.observations == ["exception: OSError: [Errno 28] No space left on device"]
+
+
+def test_the_daemons_own_storage_path_is_still_a_full_runner():
+    v = _verdict("write /var/lib/docker/tmp/x: no space left on device")
+    assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.ENVIRONMENT
+
+
+def test_a_bare_rate_limit_word_is_not_a_registry_refusal():
+    v = _verdict("assert 'toomanyrequests' in body")
+    assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
+
+
+def test_the_registrys_own_refusal_is_still_environment():
+    text = "toomanyrequests: You have reached your pull rate limit."
+    v = _verdict(text)
+    assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.ENVIRONMENT
+
+
+def test_jests_failed_to_fetch_no_longer_reads_as_apt():
+    """The over-firer recorded in TODO.md: jest's own `TypeError: Failed to
+    fetch` carries neither apt's `E: ` nor uv's trailing colon."""
+    v = _verdict("E   TypeError: Failed to fetch")
+    assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
+    assert v.evidence == []
+
+
+# --- PROJECT: the assertion must say whose it was ---------------------------
+
+
+def test_a_bare_assertion_error_establishes_nothing():
+    """The runner's own setup step, `python -c 'assert ...'`, prints exactly
+    this. The match is kept as an observation so the operator still reads
+    it, and it names no cause."""
+    text = "AssertionError: 1 != 2"
+    v = _verdict(text)
+    assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
+    assert v.evidence == []
+    assert v.observations == [
+        f"assertion without project provenance: assertion error: {text}"
+    ]
+
+
+def test_a_traceback_frame_in_the_checkout_establishes_project():
+    """The shape live acceptance run 3 really printed: unittest's frame names
+    the image's WORKDIR copy of the project, and the assertion under it."""
+    text = (
+        '  File "/app/tests/test_greeting.py", line 10, in test_greeting_text\n'
+        "AssertionError: 'hello from ci_build' != 'hello from ci-build'"
+    )
+    v = _verdict(text)
+    assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.PROJECT
+    assert v.evidence == [Evidence(None, text)]
+
+
+def test_a_pytest_node_id_is_provenance_in_its_own_right():
+    v = _verdict("FAILED tests/test_greet.py::test_greet - AssertionError: 1 != 2")
+    assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.PROJECT
+
+
+def test_a_frame_in_site_packages_is_not_the_projects_assertion():
+    """A vendored dependency's doctest, or a conftest plugin the CI image
+    installs, collected by the same run."""
+    text = (
+        '  File "/usr/lib/python3.12/site-packages/vendorlib/check.py", '
+        "line 8, in verify\n"
+        "AssertionError: 1 != 2"
+    )
+    v = _verdict(text)
+    assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
+    assert v.evidence == []
+
+
+def test_a_node_id_under_site_packages_is_not_provenance_either():
+    v = _verdict(
+        "FAILED /usr/lib/python3/dist-packages/vendorlib/tests/test_a.py::test_a "
+        "- AssertionError: 1 != 2"
+    )
+    assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
+
+
+def test_a_synthetic_frame_from_python_dash_c_is_not_provenance():
+    """`python -c` reports `<string>`: a CI setup script asserting a
+    precondition, which is not the project's suite."""
+    v = _verdict('  File "<string>", line 1, in <module>\nAssertionError: 1 != 2')
+    assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
+
+
+def test_a_frame_in_the_runners_temp_area_is_not_provenance():
+    v = _verdict(
+        '  File "/home/runner/work/_temp/8f2a/provision.py", line 12, in main\n'
+        "AssertionError: 1 != 2"
+    )
+    assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
+
+
+def test_an_absolute_frame_outside_the_projects_directories_is_not_provenance():
+    """`.github/scripts/provision.py` is the CI's own script: absolute, and
+    under neither `tests/` nor `src/`."""
+    v = _verdict(
+        '  File "/home/runner/work/project/project/.github/scripts/provision.py", '
+        "line 12, in main\nAssertionError: 1 != 2"
+    )
+    assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
+
+
+def test_a_relative_frame_is_the_checkouts_by_construction():
+    v = _verdict(
+        '  File "tests/test_greet.py", line 10, in test_greet\nE   assert 1 == 2'
+    )
+    assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.PROJECT
+
+
+def test_provenance_must_be_in_the_same_piece_of_evidence():
+    """Two blocks: one carries the frame, the other the assertion. Nothing
+    in the snapshot binds them, so neither establishes the class."""
+    job = job_with(
+        evidence=[
+            Evidence(None, '  File "tests/test_greet.py", line 10, in test_greet'),
+            Evidence(None, "AssertionError: 1 != 2"),
+        ]
+    )
+    v = classify_failure(job, step=None, completeness=COMPLETE)
+    assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
+    assert v.evidence == []
+
+
+def test_an_unprovenanced_assertion_does_not_make_a_real_cause_ambiguous():
+    """The availability side of the gate: a demoted match is not a second
+    kind, so an established ENVIRONMENT cause survives beside it."""
+    v = _verdict("curl: (6) Could not resolve host: pypi.org\nAssertionError: 1 != 2")
+    assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.ENVIRONMENT
+    assert any(
+        o.startswith("assertion without project provenance: ") for o in v.observations
+    )
