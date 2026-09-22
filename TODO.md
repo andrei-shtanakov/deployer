@@ -49,9 +49,9 @@ paragraph.
   REOPENED 2026-09-22. PR #72 proposes only the reading layer
   (`todo://deployer/ci-failure-reading-layer`); establishing the cause from log phrases did
   not survive acceptance — a phrase names a symptom, not a cause, and eight review rounds
-  produced a new counter-example each. The promise now rests on reproduction; deriving
-  causal classes from reproduction findings is itself a later task, after the first
-  reproduction slice.
+  produced a new counter-example each. The reading layer asserts no cause at all
+  (owner's decision 2026-09-22). The promise now rests on reproduction; anything beyond
+  findings-without-classes is a later task.
 - [ ] CI-failure reproduction: restore the artifact and its context at the run's actual checkout SHA, run deterministic checks and L2 on a supported build configuration, report findings with status and evidence — no causal class @owner:repo:deployer @id:ci-failure-reproduction @epic:eco.dark-factory
   Spec: `docs/superpowers/specs/2026-09-22-ci-failure-reproduction-design.md` on the docs
   branch `docs/ci-failure-reproduction-spec` (rev 3 of the diagnosis line, DRAFT revised
@@ -196,16 +196,17 @@ them is the next thing to pick up.
   `todo://deployer/ci-failure-diagnosis` that survived acceptance — the Addendum of the
   2026-09-21 spec: `forge.py` (single `gh api` chokepoint, attempt fixed once, per-job and
   run-level completeness, no invented line→step binding, annotation level as data,
-  status-less `gh` failures propagate, short listings refuse), `diagnose.py` as a reporting
-  layer (every match cited, observations survive every outcome, symptoms are observations),
-  the CLI with exit codes 0/3/4/5/2 and the verdict document. The remaining causal
-  classification is a HEURISTIC with stated limitations (tool framing = source, not cause;
-  a checkout path = location, not ownership), pinned by cause twins; no class from this
-  layer is a basis for an automatic action. Live runs on 5e3a119: run-1 UNCLASSIFIED (COPY
-  of a missing path — a symptom), run-2 ENVIRONMENT (heuristic; the owner's objection is
-  recorded in the Addendum), run-3 PROJECT (heuristic), control → refusal. Run-5 (injected
-  `FROM` syntax error, 2026-09-22) is a saved experiment on `rescue/pr3-negchecks-tail`
-  @ 9e89daa, not a fixture of this tree. Paid benchmark #2 promoted as golden 2.0 (12/12).
+  status-less `gh` failures propagate, short listings refuse), `diagnose.py` as a reading
+  layer (every shape an observation, every matched line reported and its block cited,
+  observations survive every outcome), the CLI with exit codes 3/4/5/2 and the verdict
+  document (schema 1.1). No causal classes: `CLASSIFIED`/exit 0 are not produced, `kind`
+  is always null and `causes` always empty (owner's decision 2026-09-22; the cause-twin
+  notes in `tests/test_diagnose_matrix.py` record why no class could stand). Live runs on
+  the final head all read UNCLASSIFIED with their observations: run-1 `copy/add source not
+  found`, run-2 `connection timed out`, run-3 `assertion error`, control → refusal. Run-5
+  (injected `FROM` syntax error, 2026-09-22, reads `dockerfile parse error`) is a saved
+  experiment on `rescue/pr3-negchecks-tail` @ 9e89daa, not a fixture of this tree. Paid
+  benchmark #2 promoted as golden 2.0 (12/12).
 - [x] Failure classification channel: an exit code alone no longer establishes a cause @owner:repo:deployer @id:failure-classification-channel @epic:eco.research-bench
   Closed by the taxonomy work of `todo://deployer/ci-failure-diagnosis` (PR-1), which found the
   hole at THREE sites, not the two the design named:
