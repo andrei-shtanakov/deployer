@@ -1,0 +1,17 @@
+# Polygon for CI-failure diagnosis acceptance (todo://deployer/ci-failure-diagnosis).
+# workflow_dispatch ONLY: it never runs on push or pull_request, so it never
+# becomes a PR check. The watcher excludes it by this path and by the trigger,
+# not by the displayed name. Job name is deliberately NOT `test`.
+name: diagnosis-polygon
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  polygon:
+    runs-on: ubuntu-24.04
+    steps:
+      - run: echo "safe default; failure scenarios live on the experiment ref"

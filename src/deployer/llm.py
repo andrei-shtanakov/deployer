@@ -113,8 +113,10 @@ Rules:
   <the workflow YAML>
   (order: Dockerfile section first, compose section if any, ci last).
   Workflow rules: trigger on push and pull_request (never
-  pull_request_target); one job on the fixed runner label
-  ubuntu-24.04; steps: `uses: {ACTIONS_CHECKOUT_PIN}` (use this exact
+  pull_request_target) — unless the deploy intent's ci.trigger_mode is
+  "manual", in which case trigger on workflow_dispatch only (never
+  push, pull_request, or pull_request_target); one job on the fixed
+  runner label ubuntu-24.04; steps: `uses: {ACTIONS_CHECKOUT_PIN}` (use this exact
   pinned reference), then `run: docker build --file ./Dockerfile .`.
   Pin every action to a full commit SHA. The workflow only builds:
   never push images, never docker login, never reference secrets.

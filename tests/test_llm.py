@@ -235,6 +235,13 @@ def test_system_prompt_carries_ci_rules() -> None:
     assert "never push" in SYSTEM_PROMPT
 
 
+def test_system_prompt_carries_manual_trigger_mode_rule() -> None:
+    from deployer.llm import SYSTEM_PROMPT
+
+    assert "workflow_dispatch" in SYSTEM_PROMPT
+    assert "trigger_mode" in SYSTEM_PROMPT
+
+
 def test_actions_checkout_pin_shape() -> None:
     import re
 

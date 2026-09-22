@@ -605,16 +605,37 @@ def _build_line_ok(line: str) -> bool:
     return file_value in ("Dockerfile", "./Dockerfile") and tokens[-1] == "."
 
 
-def _ci_wiring_problems(workflow: dict, raw: str) -> list[str]:
+def _check_ci_triggers(workflow: dict, trigger_mode: str) -> list[str]:
+    """`manual` permits exactly one event, workflow_dispatch.
+
+    Every other event — push, pull_request, pull_request_target, schedule,
+    or anything else — is forbidden (spec §6.1). `default` keeps the
+    original rule: push and pull_request required, pull_request_target
+    forbidden.
+    """
     problems: list[str] = []
     triggers = _ci_triggers(workflow)
     if triggers is None:
         raise RuntimeError("ci_parses must guarantee an unambiguous trigger key")
-    for wanted in ("push", "pull_request"):
-        if wanted not in triggers:
-            problems.append(f"workflow must trigger on {wanted}")
+    if trigger_mode == "manual":
+        if "workflow_dispatch" not in triggers:
+            problems.append("manual trigger_mode requires workflow_dispatch")
+        for event in sorted(triggers):
+            if event != "workflow_dispatch":
+                problems.append(f"manual trigger_mode forbids {event}")
+    else:
+        for wanted in ("push", "pull_request"):
+            if wanted not in triggers:
+                problems.append(f"workflow must trigger on {wanted}")
     if "pull_request_target" in triggers:
         problems.append("pull_request_target is forbidden (security)")
+    return problems
+
+
+def _ci_wiring_problems(
+    workflow: dict, raw: str, trigger_mode: str = "default"
+) -> list[str]:
+    problems: list[str] = _check_ci_triggers(workflow, trigger_mode)
     jobs = workflow.get("jobs", {})
     paired = False
     for job in jobs.values():
@@ -760,7 +781,9 @@ def _check_actionlint(ci: str) -> tuple[CheckResult, bool]:
         )
 
 
-def _ci_l1_checks(ci: str | None) -> tuple[list[CheckResult], bool]:
+def _ci_l1_checks(
+    ci: str | None, trigger_mode: str = "default"
+) -> tuple[list[CheckResult], bool]:
     """Static checks for the CI artifact of a ci-target.
 
     Cascade: ci_present -> ci_parses -> {ci_wiring, ci_pinned,
@@ -834,7 +857,7 @@ def _ci_l1_checks(ci: str | None) -> tuple[list[CheckResult], bool]:
         return results, False
     results.append(_check_passed("ci_parses"))
 
-    wiring = _ci_wiring_problems(workflow, ci)
+    wiring = _ci_wiring_problems(workflow, ci, trigger_mode)
     results.append(
         _check_failed("ci_wiring", "; ".join(wiring))
         if wiring
@@ -1761,7 +1784,7 @@ def verify(
     if target.dependencies:
         report.results.extend(_compose_l1_checks(compose, target))
     if target.ci is not None:
-        ci_results, actionlint_available = _ci_l1_checks(ci)
+        ci_results, actionlint_available = _ci_l1_checks(ci, target.ci.trigger_mode)
         report.results.extend(ci_results)
         report.actionlint_available = actionlint_available
     report.runtime = runtime
