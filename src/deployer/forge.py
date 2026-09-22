@@ -375,6 +375,23 @@ class _Gh:
         return collected, "present" if collected else "absent"
 
 
+def _render_annotation(level: Any, message: Any) -> str:
+    """Render a GitHub annotation as evidence text, level on every line.
+
+    A GitHub annotation's level (``warning``/``notice``/``failure``/``error``)
+    is a property of the whole message, not just its first line. Prefixing
+    only line 1 (the mechanical, single-``f-string`` framing this replaces)
+    left a multi-line message's later lines looking level-less to
+    ``diagnose``, which reads the level per matched line. Splitting on
+    ``\\n`` and prefixing each non-empty line keeps that downstream reading
+    faithful to the level the whole message actually carries.
+    """
+    prefix = f"{level}: "
+    return "\n".join(
+        f"{prefix}{line}" if line else line for line in str(message).split("\n")
+    )
+
+
 def _build_job(
     record: dict[str, Any],
     job_id: int,
@@ -399,7 +416,7 @@ def _build_job(
     job_evidence.extend(
         Evidence(
             source=job_id,
-            text=f"{a.get('annotation_level')}: {a.get('message')}",
+            text=_render_annotation(a.get("annotation_level"), a.get("message")),
         )
         for a in annotations
     )

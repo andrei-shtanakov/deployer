@@ -406,6 +406,21 @@ def test_annotations_become_job_evidence(fake_gh):
     ]
 
 
+def test_a_multiline_annotation_message_is_prefixed_on_every_line(fake_gh):
+    """Round 6: an annotation's `annotation_level` applies to the whole
+    message, not just its first line -- `diagnose` reads the level per
+    matched line, so a message split across lines must carry the prefix on
+    each one to be read faithfully."""
+    fake_gh.annotations = [
+        {"annotation_level": "warning", "message": "a\nb"},
+    ]
+    snapshot = fetch_failed_run(RunRef("o/r", 1), attempt=1, runner=fake_gh)
+    assert isinstance(snapshot, FailedRun)
+    assert snapshot.jobs[0].evidence[-1] == Evidence(
+        source=1, text="warning: a\nwarning: b"
+    )
+
+
 # --- completeness -----------------------------------------------------------
 
 

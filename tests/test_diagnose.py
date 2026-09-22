@@ -884,3 +884,50 @@ def test_an_annotation_that_is_still_a_single_line_stays_unclassified():
     )
     assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
     assert v.evidence == []
+
+
+# --- PR #72 round 6: an annotation's level spans its whole message ----------
+
+
+def test_a_multiline_annotation_is_warning_shaped_from_its_own_start():
+    """The round 6 finding: `forge` used to prefix only the first line of a
+    multi-line annotation message, so the per-line warning check saw a later
+    line bare of any level and let it establish a class. An annotation's
+    level is a property of the whole message, not of whichever line a rule
+    happens to match -- so it is read once, at the text's start. Built
+    directly (not via `forge`) to pin the diagnose-side guarantee on its
+    own, independent of the forge-side rendering fix."""
+    target = failed_step(1, "Process completed with exit code 1.")
+    annotation = Evidence(
+        JOB_ID,
+        "warning: Recovered network issue\nConnection timed out; retry succeeded",
+    )
+    v = classify_failure(
+        job_with(evidence=[annotation], steps=[target]),
+        step=target,
+        completeness=COMPLETE,
+    )
+    assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
+    assert v.evidence == []
+    assert any(o.startswith("warning-shaped:") for o in v.observations)
+    d = diagnose_run(run_with(job_with(evidence=[annotation], steps=[target])))
+    assert d.outcome == "UNCLASSIFIED"
+    assert d.causes == []
+
+
+def test_a_multiline_failure_annotation_still_establishes_a_class():
+    """The positive twin: `failure: ` at the message's start is failure
+    evidence for every line of the message, exactly as `warning: ` there is
+    warning-shaped for every line."""
+    target = failed_step(1, "Process completed with exit code 1.")
+    annotation = Evidence(
+        JOB_ID,
+        "failure: Recovered network issue\nConnection timed out; retry succeeded",
+    )
+    v = classify_failure(
+        job_with(evidence=[annotation], steps=[target]),
+        step=target,
+        completeness=COMPLETE,
+    )
+    assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.ENVIRONMENT
+    assert v.evidence == [annotation]

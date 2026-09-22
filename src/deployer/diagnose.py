@@ -308,11 +308,17 @@ def _evidence_pool(job: FailedJob, step: FailedStep | None) -> list[Evidence]:
 # kind may establish a class off such a match; every kind keeps it as an
 # observation. (Round 2 applied this to ENVIRONMENT rules only, which left
 # that annotation reading as AUTHORING and exiting 0 on a class nobody had
-# evidence for.) The judgement is made on the matched line itself, never on
-# where the whole evidence block happens to start: a multi-line log block
+# evidence for.) A log block's judgement is made on the matched line itself,
+# never on where the whole block happens to start: a multi-line log block
 # whose `warning: `/`notice: ` line sits mid-block is not warning-shaped at
 # its first line, and a block that DOES open with one of those levels must
 # not blanket-exclude a genuine marker on a later line (round 5, finding 1).
+# An annotation is different: `forge._build_job` renders ONE level for the
+# WHOLE message and (round 6) prefixes every line of it with that level, so
+# for evidence sourced from an annotation (`item.source` is the job id, an
+# int) the level read at the message's START governs every line, whichever
+# one a rule matches -- a per-line read would otherwise take a later,
+# prefix-less line of a `warning: `-level message as bare failure evidence.
 # The first mitigation for todo://deployer/diagnose-rule-catalogue-precision.
 _APT_WARNING_RE = re.compile(rf"^{_LINE_PREFIX}W: ")
 _ANNOTATION_WARNING_RE = re.compile(r"^(?:warning|notice): ")
@@ -320,12 +326,19 @@ _ANNOTATION_WARNING_RE = re.compile(r"^(?:warning|notice): ")
 WARNING_SHAPED_NOTE = "warning-shaped"
 
 
-def _is_warning_shaped(line: str) -> bool:
-    """Whether the matched `line` reports a noticed, not fatal, problem.
+def _is_warning_shaped(item: Evidence, line: str) -> bool:
+    """Whether `line`, matched inside `item`, reports a noticed, not fatal,
+    problem.
 
-    Two shapes, both judged on the same line: apt's `W: ` prefix, and a
-    `forge`-rendered annotation opening with `warning: `/`notice: `.
+    An annotation (`item.source` is the job id, an int) carries one level
+    for its whole message: the level at the TEXT's start governs every
+    line, regardless which line matched. A log block (`source` is `None`)
+    or a step-bound block has no whole-block level, so it is judged per
+    matched line instead: apt's `W: ` prefix, or a `forge`-rendered
+    `warning: `/`notice: ` opening that particular line.
     """
+    if isinstance(item.source, int):
+        return bool(_ANNOTATION_WARNING_RE.match(item.text))
     return bool(_APT_WARNING_RE.match(line) or _ANNOTATION_WARNING_RE.match(line))
 
 
@@ -342,7 +355,7 @@ def _matches(item: Evidence) -> tuple[list[_Match], list[_Match]]:
         skipped: _Match | None = None
         for hit in rule.pattern.finditer(item.text):
             line = _line_at(item.text, hit.start())
-            if _is_warning_shaped(line):
+            if _is_warning_shaped(item, line):
                 skipped = skipped or _Match(rule, item, line)
                 continue
             found.append(_Match(rule, item, line))
