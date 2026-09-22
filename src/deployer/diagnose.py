@@ -302,9 +302,14 @@ def _evidence_pool(job: FailedJob, step: FailedStep | None) -> list[Evidence]:
 # Because in practice every step's evidence pool is the whole job log (all
 # real citations are job-level), one warning-shaped line was enough to pair
 # with a genuine AUTHORING marker and turn a clean verdict into `ambiguous:`,
-# or to classify ENVIRONMENT off a retry that succeeded. ENVIRONMENT rules
-# therefore skip such a match and keep it as an observation — the first
-# mitigation for todo://deployer/diagnose-rule-catalogue-precision.
+# or to classify ENVIRONMENT off a retry that succeeded. A warning is not the
+# failure whatever it mentions — `warning: no such file optional-cache.json;
+# continuing without cache` says the build carried on — so NO rule of any
+# kind may establish a class off such a match; every kind keeps it as an
+# observation. (Round 2 applied this to ENVIRONMENT rules only, which left
+# that annotation reading as AUTHORING and exiting 0 on a class nobody had
+# evidence for.) The first mitigation for
+# todo://deployer/diagnose-rule-catalogue-precision.
 _APT_WARNING_RE = re.compile(rf"^{_LINE_PREFIX}W: ")
 _ANNOTATION_WARNING_RE = re.compile(r"^(?:warning|notice): ")
 
@@ -323,9 +328,9 @@ def _is_warning_shaped(text: str, line: str) -> bool:
 def _matches(item: Evidence) -> tuple[list[_Match], list[_Match]]:
     """Every rule against one piece of evidence: (established, warning-shaped).
 
-    An ENVIRONMENT rule keeps looking past a match on warning-shaped evidence,
+    A rule of ANY kind keeps looking past a match on warning-shaped evidence,
     and the first one it passed over is returned separately so the verdict can
-    observe it without citing it; other kinds take the first match as before.
+    observe it without citing it.
     """
     found: list[_Match] = []
     warned: list[_Match] = []
@@ -333,9 +338,7 @@ def _matches(item: Evidence) -> tuple[list[_Match], list[_Match]]:
         skipped: _Match | None = None
         for hit in rule.pattern.finditer(item.text):
             line = _line_at(item.text, hit.start())
-            if rule.kind is FailureKind.ENVIRONMENT and _is_warning_shaped(
-                item.text, line
-            ):
+            if _is_warning_shaped(item.text, line):
                 skipped = skipped or _Match(rule, item, line)
                 continue
             found.append(_Match(rule, item, line))

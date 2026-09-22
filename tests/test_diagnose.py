@@ -710,10 +710,55 @@ def test_a_warning_line_does_not_mask_the_same_marker_elsewhere():
     assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.ENVIRONMENT
 
 
-def test_the_warning_exclusion_is_environment_only():
-    """An AUTHORING marker on a `W: ` line is still an AUTHORING marker: the
-    exclusion answers apt's retry noise, it is not a general line filter."""
+def test_a_warning_shaped_line_establishes_no_class_at_all():
+    """Flipped in round 3. The filter used to answer apt's retry noise only,
+    so an AUTHORING marker on a `W: ` line still established AUTHORING. A
+    warning is not the failure whatever it mentions: apt reports a problem it
+    recovered from with the same `W: ` prefix for every subject."""
     text = 'W: failed to compute cache key: "/x": not found'
+    v = classify_failure(job_with(text=text), step=None, completeness=COMPLETE)
+    assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
+    assert v.evidence == []
+    assert v.observations == [f"warning-shaped: copy/add source not found: {text}"]
+
+
+def test_a_warning_annotation_naming_a_missing_file_is_not_authoring():
+    """The live shape of the same class: a step that failed for its own
+    reason, plus a `warning: ` annotation about an optional file the build
+    carried on without. Read as AUTHORING it made `deployer diagnose` exit 0
+    with a class nobody had evidence for."""
+    target = failed_step(1, "Process completed with exit code 1.")
+    annotation = Evidence(
+        JOB_ID, "warning: no such file optional-cache.json; continuing without cache"
+    )
+    v = classify_failure(
+        job_with(evidence=[annotation], steps=[target]),
+        step=target,
+        completeness=COMPLETE,
+    )
+    assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
+    assert v.evidence == []
+    assert v.observations == [f"warning-shaped: no such file: {annotation.text}"]
+
+
+def test_a_failure_annotation_naming_a_missing_file_is_still_authoring():
+    """The positive twin by level: `failure: ` is forge rendering a failing
+    annotation, so the very same sentence does establish the class."""
+    target = failed_step(1, "Process completed with exit code 1.")
+    annotation = Evidence(JOB_ID, "failure: no such file: /app/src/main.py")
+    v = classify_failure(
+        job_with(evidence=[annotation], steps=[target]),
+        step=target,
+        completeness=COMPLETE,
+    )
+    assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.AUTHORING
+    assert v.evidence == [annotation]
+
+
+def test_an_unprefixed_log_line_naming_a_missing_file_is_still_authoring():
+    """The positive twin by shape: a plain build-log line carries no level,
+    and an unlevelled line is failure evidence."""
+    text = "#8 0.42 cp: cannot stat '/app/main.py': No such file or directory"
     v = classify_failure(job_with(text=text), step=None, completeness=COMPLETE)
     assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.AUTHORING
 
