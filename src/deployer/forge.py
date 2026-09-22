@@ -19,7 +19,7 @@ from pydantic import TypeAdapter
 GH_TIMEOUT_S = 30.0
 """Wall-clock budget for one ``gh api`` invocation."""
 
-SNAPSHOT_SCHEMA_VERSION = "1.1"
+SNAPSHOT_SCHEMA_VERSION = "1.2"
 
 _PER_PAGE = 100
 _FAILED_CONCLUSIONS = frozenset({"failure", "timed_out"})
@@ -56,14 +56,28 @@ class StepRef:
 
 @dataclass(frozen=True)
 class Evidence:
-    """A block of text and where it came from.
+    """A block of text, where it came from, and the level it was filed under.
 
     ``source`` is a step, a job id (job-level evidence such as an annotation),
     or ``None`` when the API gave no binding and none was invented.
+
+    ``level`` is a GitHub annotation's raw ``annotation_level``
+    (``failure``/``warning``/``notice``/...), and ``None`` for anything read
+    out of a log, which has no level of its own.
+
+    Both are DATA beside the text, never rendered into it. ``text`` is the
+    message verbatim, exactly as GitHub gave it: this module reports facts
+    and ``diagnose.py`` matches its rules against them, so anything forge
+    wrote into the text would be one more thing every text rule has to see
+    through. It was: the level used to be a ``"<level>: "`` prefix, which an
+    empty first line pushed out of reach, and which stood between a rule and
+    the exception line that rule must skip. A readable rendering of the level
+    belongs where a human reads it, not in the evidence.
     """
 
     source: StepRef | int | None
     text: str
+    level: str | None = None
 
 
 @dataclass(frozen=True)
@@ -192,12 +206,20 @@ _run_adapter: TypeAdapter[FailedRun] = TypeAdapter(FailedRun)
 
 
 def dump_snapshot(run: FailedRun) -> str:
-    """Serialize a snapshot as versioned JSON (``snapshot_schema_version``)."""
+    """Serialize a snapshot as versioned JSON (``snapshot_schema_version``).
+
+    Schema 1.2 adds ``level`` to each piece of evidence; like the per-job
+    ``completeness`` of 1.1 it is additive, so an older document still loads.
+    """
     return _run_adapter.dump_json(run, indent=2).decode()
 
 
 def load_snapshot(text: str) -> FailedRun:
-    """Parse JSON written by :func:`dump_snapshot`."""
+    """Parse JSON written by :func:`dump_snapshot`.
+
+    Evidence stored before 1.2 has no ``level`` and reads back as ``None``:
+    level-less, which is what a log block is.
+    """
     return _run_adapter.validate_json(text)
 
 
@@ -375,21 +397,10 @@ class _Gh:
         return collected, "present" if collected else "absent"
 
 
-def _render_annotation(level: Any, message: Any) -> str:
-    """Render a GitHub annotation as evidence text, level on every line.
-
-    A GitHub annotation's level (``warning``/``notice``/``failure``/``error``)
-    is a property of the whole message, not just its first line. Prefixing
-    only line 1 (the mechanical, single-``f-string`` framing this replaces)
-    left a multi-line message's later lines looking level-less to
-    ``diagnose``, which reads the level per matched line. Splitting on
-    ``\\n`` and prefixing each non-empty line keeps that downstream reading
-    faithful to the level the whole message actually carries.
-    """
-    prefix = f"{level}: "
-    return "\n".join(
-        f"{prefix}{line}" if line else line for line in str(message).split("\n")
-    )
+def _level_of(annotation: dict[str, Any]) -> str | None:
+    """An annotation's raw ``annotation_level``, or ``None`` if it carries none."""
+    level = annotation.get("annotation_level")
+    return None if level is None else str(level)
 
 
 def _build_job(
@@ -414,10 +425,7 @@ def _build_job(
     # Blocks bound to a green step: the step is not kept, the fact is.
     job_evidence.extend(e for bound in step_evidence.values() for e in bound)
     job_evidence.extend(
-        Evidence(
-            source=job_id,
-            text=_render_annotation(a.get("annotation_level"), a.get("message")),
-        )
+        Evidence(source=job_id, text=str(a.get("message")), level=_level_of(a))
         for a in annotations
     )
     return FailedJob(

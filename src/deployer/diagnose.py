@@ -167,7 +167,7 @@ class _Match:
     line: str
 
     def describe(self) -> str:
-        return f"{self.rule.name}: {self.line}"
+        return f"{self.rule.name}: {_for_operator(self.evidence, self.line)}"
 
 
 def diagnose_run(snapshot: FailedRun) -> RunDiagnosis:
@@ -238,7 +238,7 @@ def classify_failure(
         for match in warned
     ]
     exceptions = [
-        f"exception: {line}"
+        f"exception: {_for_operator(item, line)}"
         for item in pool
         for line in _EXCEPTION_LINE_RE.findall(item.text)
     ]
@@ -294,34 +294,36 @@ def _evidence_pool(job: FailedJob, step: FailedStep | None) -> list[Evidence]:
     ]
 
 
-# One notion, two sources. apt prefixes a recovered problem with `W: ` and a
-# real one with `E: `, per line inside a log block; and `forge._build_job`
-# renders a job annotation as `<level>: <message>`, so a line reading
-# `warning: `/`notice: ` is GitHub saying it noticed something, while
-# `error: `/`failure: ` (and an unprefixed log line) are failure evidence.
+# One notion, two sources — and only one of them is text. apt prefixes a
+# recovered problem with `W: ` and a real one with `E: `, per line inside a
+# log block; a GitHub annotation carries a level of its own, which `forge`
+# records as `Evidence.level` (round 7). So `warning`/`notice` is GitHub
+# saying it noticed something, while `failure`/`error` — and any level this
+# catalogue has not seen, and an unlevelled log line — are failure evidence.
 # Because in practice every step's evidence pool is the whole job log (all
 # real citations are job-level), one warning-shaped line was enough to pair
 # with a genuine AUTHORING marker and turn a clean verdict into `ambiguous:`,
 # or to classify ENVIRONMENT off a retry that succeeded. A warning is not the
-# failure whatever it mentions — `warning: no such file optional-cache.json;
+# failure whatever it mentions — `no such file optional-cache.json;
 # continuing without cache` says the build carried on — so NO rule of any
 # kind may establish a class off such a match; every kind keeps it as an
 # observation. (Round 2 applied this to ENVIRONMENT rules only, which left
 # that annotation reading as AUTHORING and exiting 0 on a class nobody had
-# evidence for.) A log block's judgement is made on the matched line itself,
-# never on where the whole block happens to start: a multi-line log block
-# whose `warning: `/`notice: ` line sits mid-block is not warning-shaped at
-# its first line, and a block that DOES open with one of those levels must
-# not blanket-exclude a genuine marker on a later line (round 5, finding 1).
-# An annotation is different: `forge._build_job` renders ONE level for the
-# WHOLE message and (round 6) prefixes every line of it with that level, so
-# for evidence sourced from an annotation (`item.source` is the job id, an
-# int) the level read at the message's START governs every line, whichever
-# one a rule matches -- a per-line read would otherwise take a later,
-# prefix-less line of a `warning: `-level message as bare failure evidence.
+# evidence for.)
+#
+# The two sources are judged differently because they are differently
+# shaped. An annotation's level governs its WHOLE message, whichever line a
+# rule matched — and being data, no text can hide it: rounds 5 and 6 read
+# the level off the text, so a `warning: ` prefix on line 1 only, and then an
+# empty first line, each let a later line establish a class the run had no
+# evidence for. A log block has no level of its own, so it is judged on the
+# matched line itself, never on where the block happens to start: a `W: `
+# line mid-block is warning-shaped on its own, and a block that DOES open
+# with one must not blanket-exclude a genuine marker on a later line (round
+# 5, finding 1).
 # The first mitigation for todo://deployer/diagnose-rule-catalogue-precision.
 _APT_WARNING_RE = re.compile(rf"^{_LINE_PREFIX}W: ")
-_ANNOTATION_WARNING_RE = re.compile(r"^(?:warning|notice): ")
+_NOTICED_LEVELS = frozenset({"warning", "notice"})
 
 WARNING_SHAPED_NOTE = "warning-shaped"
 
@@ -330,22 +332,29 @@ def _is_warning_shaped(item: Evidence, line: str) -> bool:
     """Whether `line`, matched inside `item`, reports a noticed, not fatal,
     problem.
 
-    An annotation (`item.source` is the job id, an int) carries one level
-    for its whole message: the level at the TEXT's start governs every
-    line, regardless which line matched. A log block (`source` is `None`)
-    or a step-bound block has no whole-block level, so it is judged per
-    matched line instead: apt's `W: ` prefix, or a `forge`-rendered
-    `warning: `/`notice: ` opening that particular line.
+    An annotation (`item.level` is not None) is judged by its level alone,
+    for every line of its message. A log block carries no level, so it is
+    judged per matched line instead: apt's `W: ` prefix on that one line.
     """
-    if isinstance(item.source, int):
-        return bool(_ANNOTATION_WARNING_RE.match(item.text))
-    return bool(_APT_WARNING_RE.match(line) or _ANNOTATION_WARNING_RE.match(line))
+    if item.level is not None:
+        return item.level in _NOTICED_LEVELS
+    return bool(_APT_WARNING_RE.match(line))
+
+
+def _for_operator(item: Evidence, line: str) -> str:
+    """One line of evidence as an operator should read it.
+
+    An annotation's level is data, not text (`forge.Evidence`), so it is
+    rendered back onto the line here -- at the one place a human reads it,
+    and nowhere a rule can trip over it.
+    """
+    return line if item.level is None else f"{item.level}: {line}"
 
 
 def _matches(item: Evidence) -> tuple[list[_Match], list[_Match]]:
     """Every rule against one piece of evidence: (established, warning-shaped).
 
-    A rule of ANY kind keeps looking past a match on warning-shaped evidence,
+    A rule of ANY kind keeps looking past a match it judged warning-shaped,
     and the first one it passed over is returned separately so the verdict can
     observe it without citing it.
     """

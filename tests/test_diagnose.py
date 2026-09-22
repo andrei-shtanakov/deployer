@@ -192,7 +192,7 @@ def test_step_verdict_excludes_evidence_bound_to_another_step():
 def test_step_verdict_uses_its_own_and_unbound_job_evidence():
     target = failed_step(3, "##[group]Run pytest")
     unbound = Evidence(None, "FAILED tests/test_x.py::test_x - AssertionError: 1 != 2")
-    annotation = Evidence(JOB_ID, "failure: Process completed with exit code 1.")
+    annotation = Evidence(JOB_ID, "Process completed with exit code 1.", "failure")
     job = job_with(evidence=[unbound, annotation], steps=[target])
     v = classify_failure(job, step=target, completeness=COMPLETE)
     assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.PROJECT
@@ -350,7 +350,7 @@ def test_buildkit_framing_does_not_reopen_the_split_line_gap():
 def test_step_verdict_cites_a_job_annotation_with_a_marker():
     """Review #6: int-source (annotation) evidence is in the step pool and citable."""
     target = failed_step(3)
-    annotation = Evidence(JOB_ID, "failure: Temporary failure in name resolution")
+    annotation = Evidence(JOB_ID, "Temporary failure in name resolution", "failure")
     v = classify_failure(
         job_with(evidence=[annotation], steps=[target]),
         step=target,
@@ -610,7 +610,7 @@ def test_render_verdict_carries_its_own_schema_version_first():
         if isinstance(where, dict):
             assert set(where) == {"job_id", "number"}
     # The nested run keeps its own, distinct schema version.
-    assert document["run"]["snapshot_schema_version"] == "1.1"
+    assert document["run"]["snapshot_schema_version"] == "1.2"
 
 
 # --- final review: I1 pin, I2 apt-warning mitigation ------------------------
@@ -729,7 +729,9 @@ def test_a_warning_annotation_naming_a_missing_file_is_not_authoring():
     with a class nobody had evidence for."""
     target = failed_step(1, "Process completed with exit code 1.")
     annotation = Evidence(
-        JOB_ID, "warning: no such file optional-cache.json; continuing without cache"
+        JOB_ID,
+        "no such file optional-cache.json; continuing without cache",
+        "warning",
     )
     v = classify_failure(
         job_with(evidence=[annotation], steps=[target]),
@@ -738,14 +740,16 @@ def test_a_warning_annotation_naming_a_missing_file_is_not_authoring():
     )
     assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
     assert v.evidence == []
-    assert v.observations == [f"warning-shaped: no such file: {annotation.text}"]
+    assert v.observations == [
+        f"warning-shaped: no such file: warning: {annotation.text}"
+    ]
 
 
 def test_a_failure_annotation_naming_a_missing_file_is_still_authoring():
-    """The positive twin by level: `failure: ` is forge rendering a failing
-    annotation, so the very same sentence does establish the class."""
+    """The positive twin by level: `failure` is a failing annotation, so the
+    very same sentence does establish the class."""
     target = failed_step(1, "Process completed with exit code 1.")
-    annotation = Evidence(JOB_ID, "failure: no such file: /app/src/main.py")
+    annotation = Evidence(JOB_ID, "no such file: /app/src/main.py", "failure")
     v = classify_failure(
         job_with(evidence=[annotation], steps=[target]),
         step=target,
@@ -770,14 +774,15 @@ def _step_with_a_warning_annotation(level: str) -> FailedJob:
     """One failed step whose log says only that the step exited non-zero, plus
     a job annotation at `level` naming a recovered network problem."""
     target = failed_step(1, "Process completed with exit code 1.")
-    annotation = Evidence(JOB_ID, f"{level}: Connection timed out; retry succeeded")
+    annotation = Evidence(JOB_ID, "Connection timed out; retry succeeded", level)
     return job_with(evidence=[annotation], steps=[target])
 
 
 def test_a_warning_level_annotation_does_not_establish_environment():
-    """A `warning: ` annotation is forge rendering GitHub's annotation level,
-    not a failure: the step's only failure evidence is the exit code, so the
-    honest verdict is UNCLASSIFIED with the warning kept as an observation."""
+    """A `warning` annotation is GitHub saying it noticed something, not a
+    failure: the step's only failure evidence is the exit code, so the
+    honest verdict is UNCLASSIFIED with the warning kept as an observation.
+    The level is rendered back into the observation for the operator."""
     job = _step_with_a_warning_annotation("warning")
     v = classify_failure(job, step=job.steps[0], completeness=COMPLETE)
     assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
@@ -805,10 +810,10 @@ def test_the_run_of_a_warning_annotation_is_unclassified_not_classified():
 
 
 def test_an_error_level_annotation_is_still_environment_evidence():
-    """The positive twin of the level test: `error: `, like `failure: `, is
+    """The positive twin of the level test: `error`, like `failure`, is
     failure evidence and keeps establishing a class."""
     target = failed_step(1, "Process completed with exit code 1.")
-    annotation = Evidence(JOB_ID, "error: Temporary failure in name resolution")
+    annotation = Evidence(JOB_ID, "Temporary failure in name resolution", "error")
     v = classify_failure(
         job_with(evidence=[annotation], steps=[target]),
         step=target,
@@ -822,7 +827,7 @@ def test_a_warning_annotation_does_not_mask_a_real_log_line():
     """Per piece of evidence, not per run: an unprefixed log line naming the
     same problem still establishes ENVIRONMENT."""
     target = failed_step(1, "curl: (6) Could not resolve host: pypi.org")
-    annotation = Evidence(JOB_ID, "warning: Connection timed out; retry succeeded")
+    annotation = Evidence(JOB_ID, "Connection timed out; retry succeeded", "warning")
     v = classify_failure(
         job_with(evidence=[annotation], steps=[target]),
         step=target,
@@ -837,33 +842,33 @@ def test_a_warning_annotation_does_not_mask_a_real_log_line():
 
 def test_a_warning_line_mid_block_does_not_mask_the_block():
     """The review's probe. A single Evidence block mixes a plain line, a
-    `warning: ` line, and the step's own exit-code line; the `warning: `
-    line is not at the block's start. Judged on the matched line itself,
-    the timeout marker sits on the warning line and establishes nothing;
-    judged on the block's start (the old bug) it would not either, but for
-    the wrong reason -- the assertion below pins the intended reason via
-    the observation text naming that exact line."""
+    `W: ` line, and the step's own exit-code line; the `W: ` line is not at
+    the block's start. Judged on the matched line itself, the timeout marker
+    sits on the warning line and establishes nothing; judged on the block's
+    start (the old bug) it would not either, but for the wrong reason -- the
+    assertion below pins the intended reason via the observation text naming
+    that exact line. (Round 7: a log block carries no annotation level, so
+    apt's `W: ` is the whole of the per-line rule.)"""
     text = (
         "Starting checks\n"
-        "warning: Connection timed out; retry succeeded\n"
+        "W: Connection timed out; retrying\n"
         "Process completed with exit code 1."
     )
     v = classify_failure(job_with(text=text), step=None, completeness=COMPLETE)
     assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
     assert v.evidence == []
     assert v.observations == [
-        "warning-shaped: connection timed out: "
-        "warning: Connection timed out; retry succeeded"
+        "warning-shaped: connection timed out: W: Connection timed out; retrying"
     ]
 
 
 def test_a_warning_shaped_first_line_does_not_mask_a_real_marker_later_in_the_block():
     """The regression this fix must not introduce: a block that DOES start
-    with `warning: ` still lets a later, genuinely failing line establish a
-    class -- the exclusion is judged per matched line, never by whether the
-    block as a whole happens to open with a warning shape."""
+    with a warning-shaped line still lets a later, genuinely failing line
+    establish a class -- the exclusion is judged per matched line, never by
+    whether the block as a whole happens to open with a warning shape."""
     text = (
-        "warning: something noticed; continuing\n"
+        "W: something noticed; continuing\n"
         "E: Failed to fetch http://deb.debian.org/debian/x.deb  "
         "Connection timed out [IP: 1.2.3.4 80]"
     )
@@ -872,11 +877,10 @@ def test_a_warning_shaped_first_line_does_not_mask_a_real_marker_later_in_the_bl
 
 
 def test_an_annotation_that_is_still_a_single_line_stays_unclassified():
-    """The existing annotation shape must keep working: a single-line
-    `warning: ` annotation is both the block and the matched line, so the
-    per-line judgement covers it exactly as the per-block judgement did."""
+    """The commonest annotation shape must keep working: a single-line
+    `warning` annotation is judged by its level like any other."""
     target = failed_step(1, "Process completed with exit code 1.")
-    annotation = Evidence(JOB_ID, "warning: Connection timed out; retry succeeded")
+    annotation = Evidence(JOB_ID, "Connection timed out; retry succeeded", "warning")
     v = classify_failure(
         job_with(evidence=[annotation], steps=[target]),
         step=target,
@@ -889,18 +893,17 @@ def test_an_annotation_that_is_still_a_single_line_stays_unclassified():
 # --- PR #72 round 6: an annotation's level spans its whole message ----------
 
 
-def test_a_multiline_annotation_is_warning_shaped_from_its_own_start():
-    """The round 6 finding: `forge` used to prefix only the first line of a
-    multi-line annotation message, so the per-line warning check saw a later
-    line bare of any level and let it establish a class. An annotation's
-    level is a property of the whole message, not of whichever line a rule
-    happens to match -- so it is read once, at the text's start. Built
-    directly (not via `forge`) to pin the diagnose-side guarantee on its
-    own, independent of the forge-side rendering fix."""
+def test_a_multiline_warning_annotation_is_warning_shaped_throughout():
+    """The round 6 finding: a multi-line annotation message used to leave its
+    later lines looking level-less, so one of them could establish a class.
+    An annotation's level is a property of the whole message, not of
+    whichever line a rule happens to match -- and since round 7 it is a
+    field, so no line of the message can contradict it."""
     target = failed_step(1, "Process completed with exit code 1.")
     annotation = Evidence(
         JOB_ID,
-        "warning: Recovered network issue\nConnection timed out; retry succeeded",
+        "Recovered network issue\nConnection timed out; retry succeeded",
+        "warning",
     )
     v = classify_failure(
         job_with(evidence=[annotation], steps=[target]),
@@ -916,14 +919,87 @@ def test_a_multiline_annotation_is_warning_shaped_from_its_own_start():
 
 
 def test_a_multiline_failure_annotation_still_establishes_a_class():
-    """The positive twin: `failure: ` at the message's start is failure
-    evidence for every line of the message, exactly as `warning: ` there is
-    warning-shaped for every line."""
+    """The positive twin: a `failure` level is failure evidence for every
+    line of the message, exactly as `warning` is warning-shaped for every
+    line."""
     target = failed_step(1, "Process completed with exit code 1.")
     annotation = Evidence(
         JOB_ID,
-        "failure: Recovered network issue\nConnection timed out; retry succeeded",
+        "Recovered network issue\nConnection timed out; retry succeeded",
+        "failure",
     )
+    v = classify_failure(
+        job_with(evidence=[annotation], steps=[target]),
+        step=target,
+        completeness=COMPLETE,
+    )
+    assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.ENVIRONMENT
+    assert v.evidence == [annotation]
+
+
+# --- PR #72 round 7: an annotation's level is data, never a text prefix ------
+
+
+def test_an_annotation_opening_with_an_empty_line_is_still_warning_shaped():
+    """Round 7, finding 1. The level was read off the start of the evidence
+    text, so a message whose first line is empty pushed it out of reach and a
+    recovered timeout was read as ENVIRONMENT -- a run reported CLASSIFIED,
+    exit 0, off a warning. A level carried as data cannot be hidden by any
+    text at all."""
+    target = failed_step(1, "Process completed with exit code 1.")
+    annotation = Evidence(JOB_ID, "\nConnection timed out; retry succeeded", "warning")
+    v = classify_failure(
+        job_with(evidence=[annotation], steps=[target]),
+        step=target,
+        completeness=COMPLETE,
+    )
+    assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
+    assert v.evidence == []
+    assert v.observations == [
+        "warning-shaped: connection timed out: "
+        "warning: Connection timed out; retry succeeded"
+    ]
+    d = diagnose_run(run_with(job_with(evidence=[annotation], steps=[target])))
+    assert d.outcome == "UNCLASSIFIED"
+    assert d.causes == []
+
+
+def test_a_python_exception_in_an_annotation_is_an_observation_not_authoring():
+    """Round 7, finding 2. The `no such file` rule skips exception-shaped
+    lines, but the rendered `failure: ` prefix stood between the line start
+    and the exception name, so the identical sentence was an observation as a
+    log line and AUTHORING as an annotation. The rule now reads the raw
+    message; the level is rendered back only for the operator."""
+    target = failed_step(1, "Process completed with exit code 1.")
+    message = "FileNotFoundError: [Errno 2] No such file or directory: 'x'"
+    annotation = Evidence(JOB_ID, message, "failure")
+    v = classify_failure(
+        job_with(evidence=[annotation], steps=[target]),
+        step=target,
+        completeness=COMPLETE,
+    )
+    assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
+    assert v.evidence == []
+    assert v.observations == [f"exception: failure: {message}"]
+
+
+def test_the_same_exception_line_reads_the_same_as_a_log_line():
+    """The twin of the test above: the log block carries no level, and the
+    verdict is the same observation. Rendering, not classification, is the
+    only thing the level changes."""
+    message = "FileNotFoundError: [Errno 2] No such file or directory: 'x'"
+    v = classify_failure(job_with(text=message), step=None, completeness=COMPLETE)
+    assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
+    assert v.observations == [f"exception: {message}"]
+
+
+def test_an_unknown_annotation_level_is_failure_evidence():
+    """Only `warning` and `notice` are GitHub saying it noticed something;
+    any other level -- `failure`, `error`, or one this catalogue has not
+    seen -- is failure evidence, so an unknown level never silently
+    suppresses a marker."""
+    target = failed_step(1, "Process completed with exit code 1.")
+    annotation = Evidence(JOB_ID, "Temporary failure in name resolution", "fatal")
     v = classify_failure(
         job_with(evidence=[annotation], steps=[target]),
         step=target,

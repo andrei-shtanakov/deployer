@@ -401,24 +401,43 @@ def test_annotations_become_job_evidence(fake_gh):
     assert snapshot.completeness.annotations == "present"
     tail = snapshot.jobs[0].evidence[-2:]
     assert tail == [
-        Evidence(source=1, text="failure: Process completed with exit code 1."),
-        Evidence(source=1, text="warning: deprecated"),
+        Evidence(
+            source=1,
+            text="Process completed with exit code 1.",
+            level="failure",
+        ),
+        Evidence(source=1, text="deprecated", level="warning"),
     ]
 
 
-def test_a_multiline_annotation_message_is_prefixed_on_every_line(fake_gh):
-    """Round 6: an annotation's `annotation_level` applies to the whole
-    message, not just its first line -- `diagnose` reads the level per
-    matched line, so a message split across lines must carry the prefix on
-    each one to be read faithfully."""
+def test_an_annotation_keeps_its_message_verbatim_and_its_level_as_data(fake_gh):
+    """Round 7: the level used to be rendered into the evidence text, so
+    every text rule downstream had to see through it -- a message opening
+    with an empty line hid the level, and the `failure: ` prefix stood
+    between the `no such file` rule and the exception line it must skip.
+    The message is now the evidence text verbatim; the level is a field.
+    """
     fake_gh.annotations = [
         {"annotation_level": "warning", "message": "a\nb"},
+        {"annotation_level": "failure", "message": "\nConnection timed out"},
     ]
     snapshot = fetch_failed_run(RunRef("o/r", 1), attempt=1, runner=fake_gh)
     assert isinstance(snapshot, FailedRun)
-    assert snapshot.jobs[0].evidence[-1] == Evidence(
-        source=1, text="warning: a\nwarning: b"
-    )
+    assert snapshot.jobs[0].evidence[-2:] == [
+        Evidence(source=1, text="a\nb", level="warning"),
+        Evidence(source=1, text="\nConnection timed out", level="failure"),
+    ]
+
+
+def test_log_block_evidence_carries_no_level(fake_gh):
+    """A log block has no annotation level, so `level` is None and
+    `diagnose` judges it line by line instead of by a whole-block level."""
+    fake_gh.job_pages = [[job(1, steps=[step(1, "Test")])]]
+    fake_gh.logs = f"{_TS}##[group]Run Test\n{_TS}one\n{_TS}##[endgroup]\n{_TS}two"
+    snapshot = fetch_failed_run(RunRef("o/r", 1), attempt=1, runner=fake_gh)
+    assert isinstance(snapshot, FailedRun)
+    assert snapshot.jobs[0].steps[0].evidence[0].level is None
+    assert [e.level for e in snapshot.jobs[0].evidence] == [None]
 
 
 # --- completeness -----------------------------------------------------------
@@ -599,7 +618,7 @@ def test_snapshot_round_trips_through_versioned_json(fake_gh):
     assert isinstance(snapshot, FailedRun)
     text = dump_snapshot(snapshot)
     document = json.loads(text)
-    assert document["snapshot_schema_version"] == "1.1"
+    assert document["snapshot_schema_version"] == "1.2"
     assert document["jobs"][0]["completeness"] == {
         "logs": "present",
         "annotations": "present",
@@ -609,6 +628,7 @@ def test_snapshot_round_trips_through_versioned_json(fake_gh):
     sources = {type(e.source) for j in restored.jobs for e in j.evidence}
     assert sources == {type(None), int}
     assert restored.jobs[0].steps[0].evidence[0].source == StepRef(1, 1)
+    assert restored.jobs[0].evidence[-1].level == "failure"
 
 
 def test_a_schema_1_0_snapshot_still_loads(fake_gh):
@@ -641,6 +661,38 @@ def test_a_schema_1_0_snapshot_still_loads(fake_gh):
     restored = load_snapshot(old)
     assert restored.snapshot_schema_version == "1.0"
     assert restored.jobs[0].completeness == Completeness("present", "absent")
+    assert restored.jobs[0].evidence[0].level is None
+
+
+def test_a_schema_1_1_snapshot_without_evidence_levels_still_loads():
+    """`level` on a piece of evidence is additive too: 1.1 documents predate
+    it, and a snapshot written before round 7 carries the level inside the
+    annotation's text. It reads back as level-less evidence — which is what
+    a log block is — rather than failing to load."""
+    old = json.dumps(
+        {
+            "repo": "o/r",
+            "run_id": 1,
+            "attempt": 1,
+            "head_sha": "abc123",
+            "url": "https://github.com/o/r/actions/runs/1",
+            "jobs": [
+                {
+                    "job_id": 1,
+                    "name": "job-1",
+                    "conclusion": "failure",
+                    "steps": [],
+                    "evidence": [{"source": 1, "text": "failure: a line"}],
+                    "completeness": {"logs": "present", "annotations": "present"},
+                }
+            ],
+            "completeness": {"logs": "present", "annotations": "present"},
+            "snapshot_schema_version": "1.1",
+        }
+    )
+    restored = load_snapshot(old)
+    assert restored.snapshot_schema_version == "1.1"
+    assert restored.jobs[0].evidence[0] == Evidence(1, "failure: a line", None)
 
 
 def test_snapshot_types_construct_positionally():
@@ -648,9 +700,11 @@ def test_snapshot_types_construct_positionally():
     refusal = AdapterRefusal("not_failed", "conclusion is success")
     assert refusal.reason == "not_failed"
     run = FailedRun("o/r", 1, 1, "sha", "url", [], Completeness("present", "absent"))
-    assert run.snapshot_schema_version == "1.1"
+    assert run.snapshot_schema_version == "1.2"
     assert FailedJob(1, "j", "failure", [], []).steps == []
     assert FailedStep(StepRef(1, 1), "s", "failure", []).ref.number == 1
+    assert Evidence(None, "a line").level is None
+    assert Evidence(1, "a line", "warning") == Evidence(1, "a line", level="warning")
 
 
 # --- the real runner --------------------------------------------------------
