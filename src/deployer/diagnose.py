@@ -6,6 +6,9 @@ produced to a verdict per failure. Three outcomes, kept deliberately distinct:
 ("I looked and do not know") and ``EVIDENCE_UNAVAILABLE`` ("I could not look").
 Rules are data, every rule is evaluated against every piece of evidence, and a
 conflict between kinds is reported as ambiguity, never resolved by order.
+
+What a rule may say, and what only ``SYMPTOMS`` may say, is fixed by the
+owner's unified rule, quoted verbatim above ``RULES``.
 """
 
 import json
@@ -32,6 +35,7 @@ VERDICT_SCHEMA_VERSION = "1.0"
 _JOB_LEVEL_NOTE = "cited evidence is job-level (no step binding)"
 _NO_RULE_NOTE = "no rule matched"
 _EMPTY_SET_NOTE = "failed run exposes no failed job or step"
+SYMPTOM_NOTE = "symptom"
 
 # The shape of a Python exception line, optionally under pytest's ``E`` prefix.
 _EXCEPTION_NAME = r"[A-Za-z_]\w*(?:\.\w+)*(?:Error|Exception)"
@@ -68,28 +72,69 @@ def _exact(kind: FailureKind, name: str, pattern: str) -> Rule:
     return Rule(kind, name, re.compile(pattern, re.MULTILINE))
 
 
+def _symptom(name: str, pattern: str) -> Rule:
+    """A marker that names a SYMPTOM, not a cause: observed, never classified.
+
+    The kind is ``UNKNOWN`` — the one ``CLASSIFIED`` never admits — so a
+    symptom cannot establish a class even if it is read by mistake.
+    """
+    return Rule(
+        FailureKind.UNKNOWN, name, re.compile(pattern, re.IGNORECASE | re.MULTILINE)
+    )
+
+
+# The unified rule this catalogue is audited against (owner, 2026-09-22):
+#
+# - The LEVEL of a message decides how evidence is weighed (warning/notice →
+#   observation only), never establishes a cause.
+# - AUTHORING requires POSITIVE evidence of a defect in the AUTHORED ARTIFACT
+#   (Dockerfile / workflow / image entrypoint). A bare `no such file` is a
+#   SYMPTOM — project, environment or invocation can all produce it — and is
+#   insufficient.
+# - Every positive rule has a NEGATIVE TWIN: the same marker text in a context
+#   with a different cause must NOT yield the class.
+#
+# So each AUTHORING rule below matches a shape only the tool that owns the
+# artifact prints: buildkit's and docker's own COPY/ADD failures, the runner's
+# own workflow-YAML errors, the container runtime's own `exec:` line. The
+# symptoms those failures share with every other cause live in `SYMPTOMS`.
+_QUOTED_PATH_NOT_FOUND = r'[^\n]*"[^"\n]*": not found[ \t]*$'
+
 RULES: tuple[Rule, ...] = (
     _prose(FailureKind.AUTHORING, "dockerfile parse error", r"dockerfile parse error"),
     _prose(FailureKind.AUTHORING, "unknown instruction", r"unknown instruction"),
+    # buildkit's own shape for a COPY/ADD source missing from the build
+    # context: it names the path it could not find, quoted, at the line's end.
+    # `failed to solve` alone heads every buildkit failure, a RUN step that
+    # exited non-zero included, so the quoted path is what makes the line an
+    # artifact defect rather than a symptom of one.
     _prose(
         FailureKind.AUTHORING,
         "copy/add source not found",
-        r"failed to (?:solve|compute cache key)[^\n]*: not found",
+        rf"failed to (?:solve|compute cache key){_QUOTED_PATH_NOT_FOUND}",
     ),
-    # A Python ``FileNotFoundError`` line is an exception observation, not a
-    # Dockerfile/shell marker: the rule skips exception-shaped lines.
+    # docker's own shape for the same defect (classic builder, and buildkit
+    # when it reports the stat behind the failure).
     _prose(
         FailureKind.AUTHORING,
-        "no such file",
-        rf"^(?!{_LINE_PREFIX}{_EXCEPTION_LINE})[^\n]*no such file",
+        "copy/add failed in build context",
+        r"(?:COPY|ADD) failed:[^\n]*"
+        r"(?:no such file or directory|file not found in build context)",
     ),
-    _prose(FailureKind.AUTHORING, "executable not found", r"executable file not found"),
-    _prose(FailureKind.AUTHORING, "exec format error", r"exec format error"),
     _prose(FailureKind.AUTHORING, "unresolvable action", r"unable to resolve action"),
     _prose(
         FailureKind.AUTHORING,
         "unrecognized named-value",
         r"unrecognized named-value",
+    ),
+    # docker's/containerd's own shape when the image's CMD/ENTRYPOINT names a
+    # binary the image does not carry: `exec: "<binary>": executable file not
+    # found in $PATH`. Both halves on one line, because the sentence alone is
+    # printed by anything that spawns a process.
+    _prose(
+        FailureKind.AUTHORING,
+        "entrypoint executable not found",
+        r"exec:[^\n]*executable file not found in \$PATH",
     ),
     _prose(
         FailureKind.ENVIRONMENT,
@@ -130,6 +175,34 @@ RULES: tuple[Rule, ...] = (
     _exact(FailureKind.PROJECT, "pytest assert", rf"^{_LINE_PREFIX}E[ \t]+assert "),
 )
 """Every rule is evaluated against every piece of evidence; order is cosmetic."""
+
+SYMPTOMS: tuple[Rule, ...] = (
+    # A missing file is what a defect in the artifact, in the project, in the
+    # environment and in the invocation all look like from the outside. The
+    # exception-shaped lookahead keeps a Python `FileNotFoundError` to the one
+    # `exception:` observation it already gets, rather than reporting it twice.
+    _symptom(
+        "no such file",
+        rf"^(?!{_LINE_PREFIX}{_EXCEPTION_LINE})[^\n]*no such file",
+    ),
+    # An amd64 image on an arm64 runner is an environment mismatch as readily
+    # as a wrong `--platform` in the Dockerfile.
+    _symptom("exec format error", r"exec format error"),
+    # The bare sentence, outside the `exec:` shape above: pytest, tox and any
+    # process spawner print it about a binary that is nobody's entrypoint.
+    _symptom(
+        "executable not found",
+        r"^(?![^\n]*exec:[^\n]*executable file not found in \$PATH)"
+        r"[^\n]*executable file not found",
+    ),
+)
+"""Markers that name a SYMPTOM, never a cause (the second bullet above).
+
+They are NOT classifying: they are reported as ``symptom: <name>: <line>``
+observations so the operator still sees what the run printed, and they take
+no part in the ambiguity check — a symptom beside an established cause is a
+detail of that failure, not a second kind competing with it.
+"""
 
 
 @dataclass(frozen=True)
@@ -242,6 +315,11 @@ def classify_failure(
         for item in pool
         for line in _EXCEPTION_LINE_RE.findall(item.text)
     ]
+    symptoms = [
+        f"{SYMPTOM_NOTE}: {match.describe()}"
+        for item in pool
+        for match in _symptom_matches(item)
+    ]
     if _incomplete(completeness):
         found = [match.describe() for match in matches]
         return FailureVerdict(
@@ -258,11 +336,13 @@ def classify_failure(
             "UNCLASSIFIED",
             FailureKind.UNKNOWN,
             [],
-            [_ambiguity(matches, kinds), *warnings, *exceptions],
+            [_ambiguity(matches, kinds), *warnings, *exceptions, *symptoms],
         )
     if len(kinds) == 1:
         cited = list(dict.fromkeys(match.evidence for match in matches))
-        observations = [match.describe() for match in matches] + warnings + exceptions
+        observations = (
+            [match.describe() for match in matches] + warnings + exceptions + symptoms
+        )
         if step is not None and any(
             not isinstance(item.source, StepRef) for item in cited
         ):
@@ -273,7 +353,7 @@ def classify_failure(
         "UNCLASSIFIED",
         FailureKind.UNKNOWN,
         [],
-        warnings + exceptions or [_NO_RULE_NOTE],
+        warnings + exceptions + symptoms or [_NO_RULE_NOTE],
     )
 
 
@@ -379,6 +459,21 @@ def _matches(item: Evidence) -> tuple[list[_Match], list[_Match]]:
             if skipped is not None:
                 warned.append(skipped)
     return found, warned
+
+
+def _symptom_matches(item: Evidence) -> list[_Match]:
+    """The symptom markers one piece of evidence carries: observed, not cited.
+
+    Unlike :func:`_matches` these establish nothing, so the warning shape
+    changes nothing about them either: the rendered line carries its own
+    ``W: `` prefix or annotation level for the operator to read.
+    """
+    found: list[_Match] = []
+    for rule in SYMPTOMS:
+        hit = rule.pattern.search(item.text)
+        if hit is not None:
+            found.append(_Match(rule, item, _line_at(item.text, hit.start())))
+    return found
 
 
 def _line_at(text: str, index: int) -> str:

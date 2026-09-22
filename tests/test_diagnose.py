@@ -4,6 +4,7 @@ import json
 
 from deployer.diagnose import (
     RULES,
+    SYMPTOMS,
     FailureVerdict,
     RunDiagnosis,
     classify_failure,
@@ -726,7 +727,8 @@ def test_a_warning_annotation_naming_a_missing_file_is_not_authoring():
     """The live shape of the same class: a step that failed for its own
     reason, plus a `warning: ` annotation about an optional file the build
     carried on without. Read as AUTHORING it made `deployer diagnose` exit 0
-    with a class nobody had evidence for."""
+    with a class nobody had evidence for. It is now doubly excluded -- by its
+    level, and because a bare `no such file` names no cause at any level."""
     target = failed_step(1, "Process completed with exit code 1.")
     annotation = Evidence(
         JOB_ID,
@@ -740,16 +742,23 @@ def test_a_warning_annotation_naming_a_missing_file_is_not_authoring():
     )
     assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
     assert v.evidence == []
-    assert v.observations == [
-        f"warning-shaped: no such file: warning: {annotation.text}"
-    ]
+    assert v.observations == [f"symptom: no such file: warning: {annotation.text}"]
 
 
-def test_a_failure_annotation_naming_a_missing_file_is_still_authoring():
-    """The positive twin by level: `failure` is a failing annotation, so the
-    very same sentence does establish the class."""
+def test_a_failure_annotation_naming_an_artifact_defect_is_authoring():
+    """The positive twin by level: `failure` is a failing annotation, so a
+    marker that does name a defect of the artifact establishes the class.
+
+    The marker changed with the catalogue audit: the sentence this test used
+    to carry (`no such file: /app/src/main.py`) is a symptom, and a symptom
+    establishes nothing at any level -- see the demotion tests below."""
     target = failed_step(1, "Process completed with exit code 1.")
-    annotation = Evidence(JOB_ID, "no such file: /app/src/main.py", "failure")
+    annotation = Evidence(
+        JOB_ID,
+        "COPY failed: file not found in build context or excluded by "
+        ".dockerignore: stat app.py: no such file or directory",
+        "failure",
+    )
     v = classify_failure(
         job_with(evidence=[annotation], steps=[target]),
         step=target,
@@ -759,10 +768,13 @@ def test_a_failure_annotation_naming_a_missing_file_is_still_authoring():
     assert v.evidence == [annotation]
 
 
-def test_an_unprefixed_log_line_naming_a_missing_file_is_still_authoring():
+def test_an_unprefixed_log_line_naming_an_artifact_defect_is_authoring():
     """The positive twin by shape: a plain build-log line carries no level,
     and an unlevelled line is failure evidence."""
-    text = "#8 0.42 cp: cannot stat '/app/main.py': No such file or directory"
+    text = (
+        "#8 0.42 ERROR: failed to solve: failed to compute cache key: "
+        '"/app/main.py": not found'
+    )
     v = classify_failure(job_with(text=text), step=None, completeness=COMPLETE)
     assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.AUTHORING
 
@@ -1016,18 +1028,19 @@ def test_a_warning_prefixed_log_line_is_warning_shaped():
     """Round 7 dropped `warning: `/`notice: ` from the per-line rule as an
     artefact of forge's old rendering. That was true of annotations and
     wrong about logs: compilers, pip and shell tooling all emit `warning: `
-    lines of their own, and one of them naming a missing optional file must
-    not establish AUTHORING any more than the annotation did."""
+    lines of their own, and one of them naming a problem it recovered from
+    must not establish a class any more than the annotation did."""
     text = (
         "Starting\n"
-        "warning: no such file optional-cache.json\n"
+        "warning: Could not resolve host: proxy.internal; using the direct route\n"
         "Process completed with exit code 1."
     )
     v = classify_failure(job_with(text=text), step=None, completeness=COMPLETE)
     assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
     assert v.evidence == []
     assert v.observations == [
-        "warning-shaped: no such file: warning: no such file optional-cache.json"
+        "warning-shaped: host unresolvable: warning: Could not resolve host: "
+        "proxy.internal; using the direct route"
     ]
 
 
@@ -1044,7 +1057,148 @@ def test_a_warning_log_line_is_warning_shaped_under_buildkit_framing():
     """`docker build` frames every RUN-step line as `#<step> <seconds> `, so
     the warning shape is read after `_LINE_PREFIX`, like every other line
     rule -- not at the raw start of the line."""
-    text = "#8 0.42 warning: no such file optional-cache.json"
+    text = "#8 0.42 warning: Could not resolve host: proxy.internal"
     v = classify_failure(job_with(text=text), step=None, completeness=COMPLETE)
     assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
-    assert v.observations == [f"warning-shaped: no such file: {text}"]
+    assert v.observations == [f"warning-shaped: host unresolvable: {text}"]
+
+
+# --- PR #72: the owner's unified rule ---------------------------------------
+# The three bullets live verbatim above `RULES`. What they cost here: every
+# demoted marker needs a row proving it no longer names a cause, and every
+# kept AUTHORING rule needs a negative twin -- the same words in a context
+# with a different cause, which must not yield the class.
+
+
+def _verdict(text: str) -> FailureVerdict:
+    """The job-level verdict over one unbound, completely read log block."""
+    return classify_failure(job_with(text=text), step=None, completeness=COMPLETE)
+
+
+def test_a_bare_no_such_file_line_is_a_symptom_not_authoring():
+    """Demotion. A wrong invocation, a missing dependency and a project defect
+    all print this; the authored artifact is one candidate among several. It
+    is recorded so the operator sees it, and it names no cause."""
+    text = "#8 0.42 cp: cannot stat '/app/main.py': No such file or directory"
+    v = _verdict(text)
+    assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
+    assert v.evidence == []
+    assert v.observations == [f"symptom: no such file: {text}"]
+
+
+def test_exec_format_error_is_a_symptom_not_authoring():
+    """Demotion. An amd64 image on an arm64 runner is an environment mismatch
+    as readily as a wrong `--platform` in the Dockerfile."""
+    text = "standard_init_linux.go:228: exec user process caused: exec format error"
+    v = _verdict(text)
+    assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
+    assert v.evidence == []
+    assert v.observations == [f"symptom: exec format error: {text}"]
+
+
+def test_executable_file_not_found_outside_the_exec_shape_is_a_symptom():
+    """Demotion. Only docker's own `exec:` line says the IMAGE's entrypoint is
+    the thing that is missing; the bare sentence says nothing of the kind."""
+    text = "E   RuntimeError: executable file not found in the sandbox"
+    v = _verdict(text)
+    assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
+    assert v.evidence == []
+    assert v.observations == [
+        "exception: RuntimeError: executable file not found in the sandbox",
+        f"symptom: executable not found: {text}",
+    ]
+
+
+def test_a_plain_shell_stat_line_is_not_a_copy_failure():
+    """Negative twin of the COPY/ADD rules: the same words without docker's
+    own framing are a shell reporting a missing file, whoever's fault it is."""
+    text = "stat app.py: no such file or directory"
+    v = _verdict(text)
+    assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
+    assert v.observations == [f"symptom: no such file: {text}"]
+
+
+def test_cat_cannot_open_a_config_is_not_a_copy_failure():
+    """The same twin in the shape a test step prints."""
+    text = "cat: config.yml: No such file or directory"
+    v = _verdict(text)
+    assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
+    assert v.observations == [f"symptom: no such file: {text}"]
+
+
+def test_a_buildkit_run_failure_without_a_missing_path_is_not_authoring():
+    """Negative twin of the buildkit COPY shape. `failed to solve` heads every
+    buildkit failure, including a RUN step whose command exited non-zero --
+    the commonest PROJECT shape there is. Only the quoted path the build could
+    not find makes it a defect of the artifact."""
+    text = (
+        'ERROR: failed to solve: process "/bin/sh -c uv sync --frozen" '
+        "did not complete successfully: exit code: 1"
+    )
+    v = _verdict(text)
+    assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
+    assert v.evidence == []
+    assert v.observations == ["no rule matched"]
+
+
+def test_a_shell_command_not_found_is_not_an_entrypoint_defect():
+    """Negative twin of the entrypoint rule: a shell inside a RUN step, not
+    the image's CMD/ENTRYPOINT."""
+    v = _verdict("bash: foo: command not found")
+    assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
+    assert v.observations == ["no rule matched"]
+
+
+def test_a_docker_entrypoint_without_its_binary_is_authoring():
+    """The positive twin: docker/containerd's own `exec:` shape names the
+    image's entrypoint, which the Dockerfile authored."""
+    text = (
+        "docker: Error response from daemon: failed to create task for container: "
+        "OCI runtime create failed: unable to start container process: "
+        'exec: "serve": executable file not found in $PATH: unknown.'
+    )
+    v = _verdict(text)
+    assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.AUTHORING
+    assert v.evidence == [Evidence(None, text)]
+    assert v.observations == [f"entrypoint executable not found: {text}"]
+
+
+def test_the_buildkit_copy_shape_must_name_the_missing_path():
+    """The kept shape is buildkit's own: `failed to solve`/`failed to compute
+    cache key` AND the quoted path it could not find, at the line's end."""
+    v = _verdict('ERROR: failed to compute cache key: "/docs/setup.md": not found')
+    assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.AUTHORING
+
+
+def test_symptoms_are_a_separate_table_that_names_no_cause():
+    """Structural, not per-verdict: a symptom cannot be a class because the
+    only kind it carries is the one `CLASSIFIED` never admits."""
+    assert SYMPTOMS
+    assert all(rule.kind is FailureKind.UNKNOWN for rule in SYMPTOMS)
+    assert len({rule.name for rule in SYMPTOMS}) == len(SYMPTOMS)
+    assert {rule.name for rule in SYMPTOMS}.isdisjoint({rule.name for rule in RULES})
+
+
+def test_no_rule_of_the_catalogue_fires_on_a_bare_symptom_line():
+    """The demotion checked against the catalogue itself, not one verdict."""
+    for text in (
+        "stat app.py: no such file or directory",
+        "cat: config.yml: No such file or directory",
+        "standard_init_linux.go:228: exec user process caused: exec format error",
+        "E   RuntimeError: executable file not found in the sandbox",
+        "bash: foo: command not found",
+    ):
+        assert not [rule.name for rule in RULES if rule.pattern.search(text)], text
+
+
+def test_a_symptom_beside_an_established_cause_is_observed_not_a_conflict():
+    """A symptom is not a second kind: it cannot turn a clean verdict into
+    `ambiguous:`, and the operator still reads it."""
+    text = (
+        'ERROR: failed to solve: failed to compute cache key: "/docs/setup.md": '
+        "not found\n"
+        "cp: cannot stat '/app/main.py': No such file or directory"
+    )
+    v = _verdict(text)
+    assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.AUTHORING
+    assert v.observations[-1].startswith("symptom: no such file: ")
