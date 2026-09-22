@@ -281,6 +281,15 @@ class _Gh:
             page += 1
 
     def logs(self, job_id: int) -> tuple[str, LogsState]:
+        """A job's log text and what its absence means.
+
+        Only an HTTP status is data about the run: 410 is GitHub's expired-log
+        answer (``unavailable``), any other status is a fetch that GitHub
+        answered badly (``error``). A ``GhError`` with no status means ``gh``
+        itself never reached GitHub — unknown flag, timeout, missing binary —
+        which is a broken instrument, not missing data, so it propagates
+        rather than being recorded as an unreadable log.
+        """
         try:
             # Real build logs routinely carry the runner's ANSI colouring
             # (e.g. the echoed step command); gh refuses to print those
@@ -289,6 +298,8 @@ class _Gh:
                 f"actions/jobs/{job_id}/logs", extra=("--allow-escape-sequences",)
             )
         except GhError as exc:
+            if exc.status is None:
+                raise
             return "", "unavailable" if exc.status == 410 else "error"
         return (text, "present") if text.strip() else ("", "unavailable")
 

@@ -154,7 +154,7 @@ def test_three_completeness_states_are_distinct(fake_gh):
     unavailable = fetch_failed_run(RunRef("o/r", 1), attempt=1, runner=fake_gh)
     assert isinstance(unavailable, FailedRun)
     assert unavailable.completeness.logs == "unavailable"
-    fake_gh.logs = GhError("404")
+    fake_gh.logs = GhError("gh: Not Found (HTTP 404)", status=404)
     errored = fetch_failed_run(RunRef("o/r", 1), attempt=1, runner=fake_gh)
     assert isinstance(errored, FailedRun)
     assert errored.completeness.logs == "error"
@@ -389,7 +389,7 @@ def test_annotation_error_is_recorded_not_raised(fake_gh):
 def test_completeness_is_the_worst_across_kept_jobs(fake_gh):
     """One job's logs failing outranks another job's logs arriving."""
     fake_gh.job_pages = [[job(1), job(2)]]
-    logs_by_job = {1: "fine", 2: GhError("boom")}
+    logs_by_job = {1: "fine", 2: GhError("gh: Not Found (HTTP 404)", status=404)}
 
     def logs_per_job(argv: list[str], *, timeout: float) -> str:
         m = _LOGS_RE.search(argv[-1])
@@ -404,6 +404,25 @@ def test_completeness_is_the_worst_across_kept_jobs(fake_gh):
         api = staticmethod(logs_per_job)
 
     snapshot = fetch_failed_run(RunRef("o/r", 1), attempt=1, runner=Mixed())
+    assert isinstance(snapshot, FailedRun)
+    assert snapshot.completeness.logs == "error"
+
+
+def test_a_gh_failure_with_no_http_status_propagates(fake_gh):
+    """A `gh` that never reached GitHub — unknown flag, timeout, missing
+    binary — is a broken instrument, not missing data. Filing it under
+    `logs="error"` reports a tooling defect to the operator as an
+    unreadable log and turns every run into EVIDENCE_UNAVAILABLE.
+    """
+    fake_gh.logs = GhError("unknown flag: --allow-escape-sequences")
+    with pytest.raises(GhError):
+        fetch_failed_run(RunRef("o/r", 1), attempt=1, runner=fake_gh)
+
+
+def test_an_http_status_error_on_logs_is_still_recorded_as_data(fake_gh):
+    """The twin: GitHub answered, so the answer is a fact about the run."""
+    fake_gh.logs = GhError("gh: Internal Server Error (HTTP 500)", status=500)
+    snapshot = fetch_failed_run(RunRef("o/r", 1), attempt=1, runner=fake_gh)
     assert isinstance(snapshot, FailedRun)
     assert snapshot.completeness.logs == "error"
 
