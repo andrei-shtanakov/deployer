@@ -1057,7 +1057,8 @@ def _install_precedes_source_copy(dockerfile: str) -> bool:
 
     Walks the instructions in order (continuations joined, comments dropped
     by `parse_dockerfile`) and returns True if the first project-installing
-    RUN — one without a bind mount, see below — comes before any instruction
+    RUN — one whose EXECUTED command installs the project (`_installs_project`)
+    and that carries no bind mount, see below — comes before any instruction
     that brings sources in. Three routes count as sources arriving: a
     COPY/ADD of something other than a manifest file (`_copies_sources`), a
     `COPY --from=<name>` naming a stage this Dockerfile itself declares
@@ -1113,40 +1114,108 @@ def _copies_from_declared_stage(copy_args: str, stage_names: set[str]) -> bool:
     return False
 
 
-def _installs_project(run_args: str) -> bool:
-    """True when any command in a RUN installs the project itself.
+#: `VAR=value` at the head of a shell command: an environment prefix, not the
+#: command.
+_ASSIGNMENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 
-    Dependency-only installs are excluded: `uv sync --no-install-project`,
-    `poetry install --no-root` and `pip install -r requirements.txt` all read
-    a manifest without needing the package sources.
+#: Command segments of a shell-form RUN. A token-level split, not a shell
+#: parser: a separator inside quotes splits too, which can only cost a
+#: recognition (UNKNOWN), never invent one.
+_SEGMENT_RE = re.compile(r"&&|\|\||[;|]")
+
+
+def _installs_project(run_args: str) -> bool:
+    """True when a command this RUN executes installs the project itself.
+
+    What is executed is read, never a word sequence anywhere in the line —
+    `RUN echo about to run uv sync` installs nothing. Exec form (`RUN ["uv",
+    "sync"]`) is parsed as the JSON argv it is. Shell form has RUN's own
+    flags (`--mount=`, `--network=`, ...) stripped, is split into command
+    segments on `&&`, `||`, `;` and `|`, and each segment is matched at its
+    LEADING tokens once `VAR=value` assignments and a leading `env` are
+    dropped.
+
+    Recognised: `uv sync` (unless the segment also carries
+    `--no-install-project`), `poetry install` (unless `--no-root`), and
+    `pip`/`pip3`/`uv pip`/`python -m pip` `install` with a `.` operand
+    (`pip install .`, `pip install -e .`). Dependency-only installs are
+    excluded, because they read a manifest without needing the package
+    sources.
+
+    A heredoc RUN (`<<` leading the shell form) is unrecognised: its body is
+    not on this instruction line, so nothing may be read off it and the
+    answer is False — an honest UNKNOWN downstream, never a wrong AUTHORING.
     """
-    for command in re.split(r"&&|\|\||[;|]", run_args):
-        tokens = command.split()
-        if _has_words(tokens, "uv", "sync"):
-            if "--no-install-project" not in tokens:
-                return True
-        elif _has_words(tokens, "poetry", "install"):
-            if "--no-root" not in tokens:
-                return True
-        elif _is_pip_install(tokens) and "." in tokens:
-            return True
-    return False
+    argv = _exec_form_argv(run_args)
+    if argv is not None:
+        return _is_install_command(argv)
+    shell = _strip_run_flags(run_args)
+    if shell.startswith("<<"):
+        return False
+    return any(
+        _is_install_command(_drop_env_prefix(segment.split()))
+        for segment in _SEGMENT_RE.split(shell)
+    )
+
+
+def _exec_form_argv(run_args: str) -> list[str] | None:
+    """The argv of an exec-form `RUN ["cmd", ...]`, or None for shell form."""
+    text = run_args.strip()
+    if not text.startswith("["):
+        return None
+    try:
+        parsed = json.loads(text)
+    except ValueError:
+        return None
+    if isinstance(parsed, list) and all(isinstance(token, str) for token in parsed):
+        return parsed
+    return None
+
+
+def _strip_run_flags(run_args: str) -> str:
+    """`run_args` without the leading `--flag=value` options RUN itself takes."""
+    text = run_args.strip()
+    while text.startswith("--"):
+        _, _, text = text.partition(" ")
+        text = text.strip()
+    return text
+
+
+def _drop_env_prefix(tokens: list[str]) -> list[str]:
+    """One segment's tokens without a leading `env` and `VAR=value` prefixes."""
+    index = 0
+    while index < len(tokens) and (
+        tokens[index] == "env" or _ASSIGNMENT_RE.match(tokens[index])
+    ):
+        index += 1
+    return tokens[index:]
+
+
+def _is_install_command(tokens: list[str]) -> bool:
+    """True when `tokens` — one command's argv — installs the project itself."""
+    if _leads_with(tokens, "uv", "sync"):
+        return "--no-install-project" not in tokens
+    if _leads_with(tokens, "poetry", "install"):
+        return "--no-root" not in tokens
+    return _is_pip_install(tokens) and "." in tokens
 
 
 def _is_pip_install(tokens: list[str]) -> bool:
-    return (
-        _has_words(tokens, "uv", "pip", "install")
-        or _has_words(tokens, "pip", "install")
-        or _has_words(tokens, "pip3", "install")
-    )
-
-
-def _has_words(tokens: list[str], *words: str) -> bool:
-    """True when `words` appear as consecutive tokens (env/sudo prefixes ok)."""
-    span = len(words)
     return any(
-        tuple(tokens[i : i + span]) == words for i in range(len(tokens) - span + 1)
+        _leads_with(tokens, *words)
+        for words in (
+            ("uv", "pip", "install"),
+            ("pip", "install"),
+            ("pip3", "install"),
+            ("python", "-m", "pip", "install"),
+            ("python3", "-m", "pip", "install"),
+        )
     )
+
+
+def _leads_with(tokens: list[str], *words: str) -> bool:
+    """True when the command's own leading tokens are exactly `words`."""
+    return tuple(tokens[: len(words)]) == words
 
 
 def _copies_sources(copy_args: str) -> bool:

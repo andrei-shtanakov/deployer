@@ -2317,3 +2317,133 @@ def test_atp_smoke_timeout_is_environment(tmp_path: Path, monkeypatch) -> None:
     assert result.status is CheckStatus.FAILED
     assert result.failure_kind is FailureKind.ENVIRONMENT
     assert available is True
+
+
+# --- PR #72 round 2, finding 2: the executed command, not its words ----------
+
+
+# The golden Dockerfile with one narrating `echo` added before the source
+# COPY. Nothing about the build changed: `uv sync` is an argument of `echo`.
+_ECHO_MENTIONS_INSTALL_DOCKERFILE = _CORRECT_ORDER_DOCKERFILE.replace(
+    "COPY src/uv_minimal ./src/uv_minimal\n",
+    "RUN echo about to run uv sync\nCOPY src/uv_minimal ./src/uv_minimal\n",
+)
+
+
+def test_an_echo_naming_the_install_is_not_an_install() -> None:
+    """A word sequence anywhere in a RUN used to count as the command. An
+    `echo` that names `uv sync` then turned the golden Dockerfile into a
+    copy-order defect — a false AUTHORING against a correct build."""
+    assert _install_precedes_source_copy(_ECHO_MENTIONS_INSTALL_DOCKERFILE) is False
+
+
+def test_the_echo_dockerfile_classifies_unknown_not_authoring() -> None:
+    """The verdict that reaches the report: same hatchling output, a
+    Dockerfile whose copy order is correct — UNKNOWN is the honest class."""
+    assert (
+        _classify_build(
+            _HATCHLING_MISSING_FILES_EXCERPT, _ECHO_MENTIONS_INSTALL_DOCKERFILE
+        )
+        is FailureKind.UNKNOWN
+    )
+
+
+def test_a_heredoc_run_is_unrecognised_not_an_install() -> None:
+    """The docstring promises heredoc `RUN <<EOF` is unrecognised: its body
+    is not on the instruction line, so nothing may be read off it."""
+    dockerfile = (
+        "FROM python:3.12-slim\n"
+        "COPY pyproject.toml uv.lock ./\n"
+        "RUN <<EOF\n"
+        "uv sync --frozen\n"
+        "EOF\n"
+        "COPY src ./src\n"
+    )
+    assert _install_precedes_source_copy(dockerfile) is False
+
+
+def test_exec_form_install_is_recognised() -> None:
+    """`RUN ["uv", "sync", "--frozen"]` is a JSON argv, not a shell string:
+    splitting it on whitespace left `["uv",` as the first token and the
+    install went unseen — a false negative on a real copy-order defect."""
+    dockerfile = (
+        "FROM python:3.12-slim\n"
+        "COPY pyproject.toml uv.lock ./\n"
+        'RUN ["uv", "sync", "--frozen"]\n'
+        "COPY src ./src\n"
+    )
+    assert _install_precedes_source_copy(dockerfile) is True
+
+
+def test_exec_form_dependency_only_sync_is_not_an_install() -> None:
+    """The exec-form twin of `--no-install-project`."""
+    dockerfile = (
+        "FROM python:3.12-slim\n"
+        "COPY pyproject.toml uv.lock ./\n"
+        'RUN ["uv", "sync", "--frozen", "--no-install-project"]\n'
+        "COPY src ./src\n"
+    )
+    assert _install_precedes_source_copy(dockerfile) is False
+
+
+def test_a_leading_env_assignment_does_not_hide_the_install() -> None:
+    """`VAR=value cmd` is a command with an environment prefix."""
+    dockerfile = (
+        "FROM python:3.12-slim\n"
+        "COPY pyproject.toml uv.lock ./\n"
+        "RUN VIRTUAL_ENV=/app/.venv uv sync --frozen\n"
+        "COPY src ./src\n"
+    )
+    assert _install_precedes_source_copy(dockerfile) is True
+
+
+def test_a_leading_env_command_does_not_hide_the_install() -> None:
+    dockerfile = (
+        "FROM python:3.12-slim\n"
+        "COPY pyproject.toml uv.lock ./\n"
+        "RUN env UV_CACHE_DIR=/tmp/uv uv sync --frozen\n"
+        "COPY src ./src\n"
+    )
+    assert _install_precedes_source_copy(dockerfile) is True
+
+
+def test_the_install_may_be_a_later_segment_of_a_chain() -> None:
+    """Segments are split on `&&`, `||`, `;` and `|`; each is matched at its
+    own leading tokens."""
+    dockerfile = (
+        "FROM python:3.12-slim\n"
+        "COPY pyproject.toml uv.lock ./\n"
+        "RUN apt-get update && uv sync --frozen\n"
+        "COPY src ./src\n"
+    )
+    assert _install_precedes_source_copy(dockerfile) is True
+
+
+def test_python_m_pip_install_dot_is_an_install() -> None:
+    dockerfile = (
+        "FROM python:3.12-slim\n"
+        "COPY pyproject.toml ./\n"
+        "RUN python -m pip install .\n"
+        "COPY src ./src\n"
+    )
+    assert _install_precedes_source_copy(dockerfile) is True
+
+
+def test_a_pip_install_without_a_local_operand_is_dependency_only() -> None:
+    dockerfile = (
+        "FROM python:3.12-slim\n"
+        "COPY requirements.txt ./\n"
+        "RUN pip install -r requirements.txt\n"
+        "COPY src ./src\n"
+    )
+    assert _install_precedes_source_copy(dockerfile) is False
+
+
+def test_the_evidence_dockerfile_is_still_a_copy_order_defect() -> None:
+    """The regression guard for the live acceptance case: the real
+    Dockerfile must keep reading as AUTHORING through the rewrite."""
+    assert _install_precedes_source_copy(_COPY_ORDER_DEFECT_DOCKERFILE) is True
+    assert (
+        _classify_build(_HATCHLING_MISSING_FILES_EXCERPT, _COPY_ORDER_DEFECT_DOCKERFILE)
+        is FailureKind.AUTHORING
+    )
