@@ -45,6 +45,26 @@ contract was wrong only after it has users. The order below is deliberate — ea
 tagged with what blocks it, so the sequencing survives without anyone re-reading this
 paragraph.
 
+- [ ] CI-failure diagnosis: read a real failed GitHub run of our own authored ci.yml, establish why it failed, emit a verdict citing evidence @owner:repo:deployer @id:ci-failure-diagnosis @blocked_by:todo://deployer/ci-failure-reproduction @epic:eco.dark-factory
+  REOPENED 2026-09-22. PR #72 proposes only the reading layer
+  (`todo://deployer/ci-failure-reading-layer`); establishing the cause from log phrases did
+  not survive acceptance — a phrase names a symptom, not a cause, and eight review rounds
+  produced a new counter-example each. The promise now rests on reproduction; deriving
+  causal classes from reproduction findings is itself a later task, after the first
+  reproduction slice.
+- [ ] CI-failure reproduction: restore the artifact and its context at the run's actual checkout SHA, run deterministic checks and L2 on a supported build configuration, report findings with status and evidence — no causal class @owner:repo:deployer @id:ci-failure-reproduction @epic:eco.dark-factory
+  Spec: `docs/superpowers/specs/2026-09-22-ci-failure-reproduction-design.md` on the docs
+  branch `docs/ci-failure-reproduction-spec` (rev 3 of the diagnosis line, DRAFT revised
+  after the owner's review → external review by exact SHA → plan). Fixed points: `exact` is
+  a property of the restored TREE, earned from the actual checkout SHA and the absence of
+  transforming steps, else `approximation` with the unmet conditions named; the command
+  from the log is never executed — only a parsed, supported build configuration through
+  L2, else refusal; a successful build does not license a run — only a declared test, run
+  intent or healthcheck, else "build ok; behaviour not verified"; this repo's parser, the
+  builder's `--check` (Buildx ≥ 0.15 / Dockerfile 1.8; Podman has none) and the actual
+  build are three separate things with detected availability; findings use a small
+  separate result type, not `CheckResult`; images may be fetched under an explicit
+  `--reproduce`, digests recorded, no offline promise; no ENVIRONMENT candidate.
 - [ ] Fix authoring from a diagnosis: artifact edit, L1/L2, confirm the diagnosed cause is gone @owner:repo:deployer @blocked_by:todo://deployer/ci-failure-diagnosis @id:ci-fix-authoring @epic:eco.dark-factory
   — the other half of the founding doc's "generate/fix ... diagnose failed CI", split
   out with the owner 2026-09-21 so the diagnosis slice can be accepted on its own.
@@ -170,55 +190,22 @@ them is the next thing to pick up.
 
 ## Shipped
 
-- [x] CI-failure diagnosis: read a real failed GitHub run of our own authored ci.yml, classify the cause, emit a verdict citing evidence @owner:repo:deployer @id:ci-failure-diagnosis @epic:eco.dark-factory
-  Shipped in three PRs: #70 taxonomy + report schema 2.0 (closed
-  `todo://deployer/failure-classification-channel`), #71 bootstrap (`CISpec.trigger_mode`,
-  dispatch-only polygon workflow — preparatory, closed nothing), and the diagnosis PR:
-  `forge.py` (the single `gh api` chokepoint returning a `FailedRun` snapshot — attempt fixed
-  once before any read, refusal of unfinished/successful runs, three-state completeness, no
-  invented line→step binding, argv-only subprocess with timeout and no prompts),
-  `diagnose.py` (pure classifier: rules are data and all evaluated, a class only with a
-  citation, PROJECT only on explicit assertion evidence, conflict → UNCLASSIFIED "ambiguous",
-  incomplete → EVIDENCE_UNAVAILABLE, the empty set never CLASSIFIED, causes never lost in the
-  run summary) and `deployer diagnose` (exit 0/3/4 per outcome, 5 adapter refusal, 2 errors;
-  verdict document with its own `verdict_schema_version` 1.0).
-  Live acceptance 2026-09-22 (§8.2), four `workflow_dispatch` runs of the artifact authored by
-  `deployer author` with `trigger_mode: manual` on orphan refs `polygon/run-1..4` (none an open
-  PR head, checked per SHA before each dispatch):
-  - run 35680991093 @ d6e330f — COPY of a missing path → UNCLASSIFIED
-    (observation `copy/add source not found`), exit 3. It read AUTHORING at
-    acceptance; the owner's bounded evidence pass of 2026-09-22 corrected it,
-    because the snapshot cannot tell a wrong path from a file the project
-    moved after authoring, so no AUTHORING is established. The honest result
-    under the evidence rule, and the expectation was corrected rather than the
-    catalogue widened to keep the run green.
-  - run 35680992960 @ 37242cc — apt source at an unroutable host, 15 s timeout → ENVIRONMENT, exit 0
-  - run 35680994771 @ 43d7c39 — project's own unittest fails inside the image build → PROJECT, exit 0
-  - run 35680997065 @ 4695504 — the same artifact without the defect → passed → refusal `not_failed`, exit 5
-  The FIRST pass read all three failures as EVIDENCE_UNAVAILABLE (exit 4) — honest, and it
-  exposed two defects only a live forge could: `gh api` refuses log bodies with ANSI escapes
-  (every real docker-build log) and buildkit frames step output as `#N t.ttt ` which defeated
-  the `^`-anchored rules. Both fixed against the real logs; the SAME runs were re-diagnosed
-  offline (the classifier is pure) and the anonymised snapshots are
-  `tests/fixtures/runs/{authoring,environment,project}.json`, replayed by
-  `tests/test_fixture_runs.py` — which since the evidence pass asserts the
-  OUTCOME per fixture: two established classes (ENVIRONMENT, PROJECT), each
-  with its citation, and run 1's honest UNCLASSIFIED with its observation.
-  All citations are job-level (`source=None`) — see
-  `todo://deployer/forge-step-level-log-binding`.
-  Paid benchmark (§8.3, anthropic + podman, 12 cases): 11 matched; `bench compare` vs golden
-  v1.0 explained before any promote — ci-build iterations 1→2 on a sentinel-less first reply
-  (AUTHORING on positive evidence, repaired); uv-minimal `success → unknown_failure` because the
-  model put `uv sync --frozen` before `COPY src` and the build classifier had NO positive
-  AUTHORING marker for hatchling's "Unable to determine which files to ship" — the old code
-  repaired it by fallthrough, the new one honestly stopped. Marker added
-  (`BUILD_AUTHORING_MARKERS`, evidence-based) and then tightened in final review: the
-  message has two causes, so it establishes AUTHORING only with Dockerfile evidence (the
-  project installed before its sources are copied in) and is UNKNOWN otherwise.
-  No promote from that run — promoting a baseline with uv-minimal red would make
-  `unknown_failure` the reference state for that case and hide future regressions there;
-  a second full paid run after the artifact-evidence rule, then promote, is the owner's
-  authorised next step.
+- [x] CI-failure reading layer: a versioned snapshot of a failed run, evidence completeness, observations, `deployer diagnose` @owner:repo:deployer @id:ci-failure-reading-layer @epic:eco.dark-factory
+  Proposed by PR #72 (not merged at the time of writing; this checkbox follows the repo's
+  rhythm for a closing PR and asserts nothing about a merge). The part of
+  `todo://deployer/ci-failure-diagnosis` that survived acceptance — the Addendum of the
+  2026-09-21 spec: `forge.py` (single `gh api` chokepoint, attempt fixed once, per-job and
+  run-level completeness, no invented line→step binding, annotation level as data,
+  status-less `gh` failures propagate, short listings refuse), `diagnose.py` as a reporting
+  layer (every match cited, observations survive every outcome, symptoms are observations),
+  the CLI with exit codes 0/3/4/5/2 and the verdict document. The remaining causal
+  classification is a HEURISTIC with stated limitations (tool framing = source, not cause;
+  a checkout path = location, not ownership), pinned by cause twins; no class from this
+  layer is a basis for an automatic action. Live runs on 5e3a119: run-1 UNCLASSIFIED (COPY
+  of a missing path — a symptom), run-2 ENVIRONMENT (heuristic; the owner's objection is
+  recorded in the Addendum), run-3 PROJECT (heuristic), control → refusal. Run-5 (injected
+  `FROM` syntax error, 2026-09-22) is a saved experiment on `rescue/pr3-negchecks-tail`
+  @ 9e89daa, not a fixture of this tree. Paid benchmark #2 promoted as golden 2.0 (12/12).
 - [x] Failure classification channel: an exit code alone no longer establishes a cause @owner:repo:deployer @id:failure-classification-channel @epic:eco.research-bench
   Closed by the taxonomy work of `todo://deployer/ci-failure-diagnosis` (PR-1), which found the
   hole at THREE sites, not the two the design named:

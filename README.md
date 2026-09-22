@@ -118,13 +118,17 @@ uv run deployer diagnose --repo owner/name --run-id N [--attempt N]
 # either form accepts --output-file verdict.json
 ```
 
-Reads a failed GitHub Actions run and classifies each failure, citing the log
-line that established the cause. Exit codes:
+Reads a failed GitHub Actions run into a snapshot of facts, reports what the
+evidence shows (cited lines, observations, what could not be read) and, for a
+small set of shapes, attaches a **heuristic** class with stated limitations —
+see the Addendum of `docs/superpowers/specs/2026-09-21-ci-failure-diagnosis-design.md`.
+A class from this command is not an established cause and is not a basis for
+any automatic action. Exit codes:
 
 | code | meaning |
 |---|---|
-| `0` | `CLASSIFIED` — every failure has a cause with a citation |
-| `3` | `UNCLASSIFIED` — the evidence was complete and nothing established a cause |
+| `0` | `CLASSIFIED` — every failure matched a classifying shape, each with a citation |
+| `3` | `UNCLASSIFIED` — the evidence was complete and no classifying shape matched |
 | `4` | `EVIDENCE_UNAVAILABLE` — the evidence could not be read; **not** a success |
 | `5` | adapter refusal — the run is not a finished, failed run |
 | `2` | bad argument, or the run metadata could not be fetched |

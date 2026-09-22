@@ -378,3 +378,62 @@ Refreshing the baseline does not by itself prove correctness.
   anything is built on it.
 
 [gh-dispatch]: https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow
+
+---
+
+## Addendum (2026-09-22) — the reduced contract of PR-3
+
+The causal half of this design did not survive acceptance. Eight review rounds of PR-3
+found, each time, another log phrase whose class was not established by the evidence:
+a phrase names a symptom, not a cause, and a catalogue of phrases cannot be made sound
+by adding exceptions. The owner stopped the catalogue on 2026-09-22. What PR-3
+*proposes* (it is not merged) is therefore **narrower than §3–§8 promised**, and its
+contract is this:
+
+1. **Facts** — `forge.py` reads a finished, failed run into a versioned `FailedRun`
+   snapshot: identity, attempt fixed once, per-job and run-level `Completeness`, log
+   blocks with the runner's `##[group]` binding where it exists and `source=None`
+   where it does not, annotations with their level as data. A `gh` failure without an
+   HTTP status propagates; a short jobs listing is an adapter error, never a partial
+   snapshot.
+2. **Evidence completeness** — `EVIDENCE_UNAVAILABLE` is distinct from
+   `UNCLASSIFIED`; a sibling job's unreadable log never erases another job's readable
+   evidence; every matched line is cited; observations survive every outcome.
+3. **Observations** — symptoms (`no such file`, `exec format error`, COPY-not-found,
+   `unknown instruction`, entrypoint not found, unresolvable action), exceptions,
+   warning-shaped lines and annotations are reported as observations, never as a
+   class.
+4. **CLI** — `deployer diagnose` with its exit codes (0 / 3 / 4 / 5 / 2) and the
+   verdict document (`verdict_schema_version` 1.0, snapshot 1.2).
+
+**What remains of causal classification is a heuristic, and is documented as one.**
+On the head this addendum describes (`5e3a119`), `diagnose.py` still assigns a
+class in four shapes: a Dockerfile syntax error in the parser's own framing
+(AUTHORING); a workflow-validation error in GitHub's framing (AUTHORING); a network
+failure on a line carrying a tool's own framing — apt, curl, git, uv, pip, buildkit,
+the docker daemon, the runner (ENVIRONMENT); an assertion with a traceback frame or
+pytest node id inside the checkout (PROJECT). Each has a stated residual pinned by a
+cause twin in `tests/test_diagnose_matrix.py`, and the residuals are real: tool
+framing establishes the *source* of a message, not its cause — a wrong address from
+the project's own configuration prints the same apt line as an unreachable mirror
+(the live run-2, an apt source at a custom unroutable address, reads ENVIRONMENT for
+exactly this reason); a path inside the checkout establishes where an assertion
+*ran*, not whose it is. These classes are therefore **heuristic results with known
+limitations, not established causes.** Consumers must treat them so: **no class
+assigned by this layer is a basis for an automatic action** — in particular the
+authoring loop's repair decision must not be driven by it. That constraint limits
+what the class may be used for; it is not evidence that the class is right.
+
+The live acceptance of §8.2 does not close on this head. On `5e3a119`: run-1 (COPY
+of a missing path) → `UNCLASSIFIED` with the observation; run-2 → `ENVIRONMENT`
+under the tool-framing heuristic with the objection above recorded; run-3 →
+`PROJECT` under the provenance heuristic; the control → refusal. A fifth run with an
+injected `FROM` syntax error (2026-09-22, `polygon/run-5` @ `937d465`, run
+`35706782471`) reads `AUTHORING` through the Dockerfile-parser rule; its evidence
+(injection diff, verdict, log, anonymised snapshot) is preserved on the rescue
+branch `rescue/pr3-negchecks-tail` at `9e89daa`, **not** in this PR's tree, and no
+test in this PR replays it. The original promise — read a failed run and establish
+why it failed — is **open**, and is taken up by
+`docs/superpowers/specs/2026-09-22-ci-failure-reproduction-design.md` (a separate
+docs branch), which grounds the diagnosis in the artifact, its restored context and
+L2 reproduction rather than in log phrases. This layer is that slice's input.

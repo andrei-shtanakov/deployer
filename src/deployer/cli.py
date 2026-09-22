@@ -712,7 +712,13 @@ def main(argv: list[str] | None = None) -> int:
     _add_runtime_flags(p_author)
     p_author.set_defaults(func=_cmd_author)
 
-    p_diagnose = sub.add_parser("diagnose", help="diagnose a failed CI run")
+    p_diagnose = sub.add_parser(
+        "diagnose",
+        help=(
+            "read a failed CI run: facts, evidence, observations "
+            "(classes are heuristic)"
+        ),
+    )
     p_diagnose.add_argument(
         "run_url", nargs="?", default=None, help="GitHub Actions run URL"
     )
