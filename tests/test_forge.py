@@ -427,6 +427,37 @@ def test_an_http_status_error_on_logs_is_still_recorded_as_data(fake_gh):
     assert snapshot.completeness.logs == "error"
 
 
+def test_a_status_less_gh_failure_on_annotations_propagates_too(fake_gh):
+    """The same class as the logs path: a `gh` that never reached GitHub is a
+    broken instrument, not an annotations endpoint that answered badly."""
+    fake_gh.annotations = GhError("unknown flag: --paginate")
+    with pytest.raises(GhError):
+        fetch_failed_run(RunRef("o/r", 1), attempt=1, runner=fake_gh)
+
+
+def test_a_status_error_on_annotations_keeps_the_partial_list(fake_gh):
+    """The twin: GitHub answered, so the state is data — and the pages that
+    did arrive before the bad one are kept as evidence."""
+    page_one = [{"annotation_level": "failure", "message": f"m{i}"} for i in range(100)]
+
+    def annotations_then_fail(argv: list[str], *, timeout: float) -> str:
+        m = _ANNOTATIONS_RE.search(argv[-1])
+        if m:
+            if int(m.group(2)) == 1:
+                return json.dumps(page_one)
+            raise GhError("gh: Internal Server Error (HTTP 500)", status=500)
+        return FakeGh.api(fake_gh, argv, timeout=timeout)
+
+    class Paged:
+        api = staticmethod(annotations_then_fail)
+
+    snapshot = fetch_failed_run(RunRef("o/r", 1), attempt=1, runner=Paged())
+    assert isinstance(snapshot, FailedRun)
+    assert snapshot.completeness.annotations == "error"
+    annotation_evidence = [e for e in snapshot.jobs[0].evidence if e.source == 1]
+    assert len(annotation_evidence) == 100
+
+
 def test_run_level_gh_error_propagates(fake_gh):
     class Broken:
         def api(self, argv: list[str], *, timeout: float) -> str:

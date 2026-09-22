@@ -304,6 +304,13 @@ class _Gh:
         return (text, "present") if text.strip() else ("", "unavailable")
 
     def annotations(self, job_id: int) -> tuple[list[dict[str, Any]], AnnotationsState]:
+        """A job's annotations and what a short read means.
+
+        Same rule as :meth:`logs`: an HTTP status means GitHub answered, so a
+        failed fetch is data about the run (``error``, with whatever pages did
+        arrive kept). A ``GhError`` with no status means ``gh`` itself never
+        reached GitHub, which is a broken instrument and propagates.
+        """
         base = f"check-runs/{job_id}/annotations"
         collected: list[dict[str, Any]] = []
         page = 1
@@ -314,7 +321,9 @@ class _Gh:
                 if len(items) < _PER_PAGE:
                     break
                 page += 1
-        except GhError:
+        except GhError as exc:
+            if exc.status is None:
+                raise
             return collected, "error"
         return collected, "present" if collected else "absent"
 
