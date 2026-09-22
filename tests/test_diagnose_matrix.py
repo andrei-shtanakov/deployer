@@ -11,7 +11,13 @@ says it must produce:
   each artifact shape is a row and each of its NEGATIVE TWINS -- the same words
   in a context with another cause -- is a row of its own expecting no class;
 - a symptom establishes nothing at any level, and a conflict between two kinds
-  is ambiguity, not a winner.
+  is ambiguity, not a winner;
+- a TOOL'S FRAMING establishes the source of a message, not its cause, so an
+  unreachable-endpoint rule also needs a KNOWN INFRASTRUCTURE host on the line
+  (owner's check (1), 2026-09-22) -- `wrong-configured-address` rows;
+- a PATH INSIDE THE CHECKOUT establishes where an assertion ran, not whose it
+  was, so a frame under a CI-harness directory is no provenance (check (2)),
+  while a test vendored into `tests/` stays PROJECT by repository ownership.
 
 Beside the negative twins, which vary the SHAPE, the table carries CAUSE TWINS,
 which keep the message text identical and vary only what produced it. Both
@@ -164,6 +170,18 @@ PROJECT_MARKERS = (
 # still match them; `classify_failure` refuses to call any of it a class.
 PROVENANCELESS_MARKERS = (
     ("bare-assertion-error", "AssertionError: 1 != 2"),
+    # Inside the checkout and still not the project's (owner's check (2),
+    # 2026-09-22): the CI harness' own script, which the runner invokes and
+    # which asserts ITS preconditions.
+    (
+        "ci-harness-frame",
+        '  File ".github/scripts/setup.py", line 3, in main\n'
+        "AssertionError: precondition",
+    ),
+    (
+        "ci-directory-node-id",
+        "FAILED ci/test_preflight.py::test_env - AssertionError: 1 != 2",
+    ),
     ("runner-setup-assertion", 'File "<string>", line 1, in <module>'),
     (
         "vendored-doctest-assertion",
@@ -193,6 +211,25 @@ UNFRAMED_ENVIRONMENT_MARKERS = (
     ("bare-503", "error parsing HTTP 503 response body: 503 Service Unavailable"),
     ("bare-disk-full", "tmpfs write failed: no space left on device"),
     ("bare-name-resolution", "Temporary failure in name resolution"),
+)
+
+# The tool's OWN framing, at an endpoint nothing reaches by default (owner's
+# check (1), 2026-09-22). The rules match the framing exactly as in
+# `ENVIRONMENT_MARKERS`; what stops them is the host, so these rows are the
+# cross-product proof that the demotion holds at every source and level.
+MISCONFIGURED_ENDPOINT_MARKERS = (
+    ("curl-invalid-index", "curl: (6) Could not resolve host: pypi.invalid"),
+    (
+        "apt-unroutable-address",
+        "E: Failed to fetch http://10.255.255.1/debian/x.deb  Connection "
+        "timed out [IP: 10.255.255.1 80]",
+    ),
+    ("uv-corporate-mirror", "error: Failed to fetch: `https://mirror.corp/simple/x/`"),
+    (
+        "git-private-forge",
+        "fatal: unable to access 'https://git.internal.example/o/r/': "
+        "Could not resolve host: git.internal.example",
+    ),
 )
 
 SYMPTOM_MARKERS = (
@@ -741,18 +778,22 @@ CAUSE_TWINS: tuple[CauseTwin, ...] = (
         rule="connection timed out",
         slug="connection-timed-out",
         marker=(
-            "#11 15.43   Could not connect to 10.255.255.1:80 (10.255.255.1), "
+            "#11 15.43   Could not connect to deb.debian.org:80 (1.2.3.4), "
             "connection timed out"
         ),
         base=ENVIRONMENT,
         note=(
-            "an unroutable mirror vs the runner's egress firewall: ENVIRONMENT "
-            "for both -- apt's own detail line names the host AND the port it "
-            "could not reach. Verbatim from live acceptance run 2"
+            "the runner's egress firewall vs the mirror itself refusing to "
+            "answer: ENVIRONMENT for both -- apt's own detail line names the "
+            "host AND the port it could not reach, and the host is the "
+            "default Debian mirror, so no address the project configured can "
+            "have been the thing that was wrong. The pair used to carry live "
+            "acceptance run 2 verbatim; that line named `10.255.255.1` and "
+            "now sits in `connection-timed-out-wrong-configured-address`"
         ),
-        cause_a="unroutable-mirror",
+        cause_a="runner-egress-firewall",
         preamble_a="#11 [stage-0 4/9] RUN apt-get update",
-        cause_b="runner-egress-firewall",
+        cause_b="mirror-not-answering",
         preamble_b="#11 [stage-0 4/9] RUN apt-get -o Acquire::Retries=0 update",
     ),
     CauseTwin(
@@ -824,6 +865,85 @@ CAUSE_TWINS: tuple[CauseTwin, ...] = (
         preamble_a="##[group]Run pytest",
         cause_b="runner-service-restarted",
         preamble_b="##[group]Run pytest -x",
+    ),
+    # --- ENVIRONMENT, framed, at an endpoint the configuration chose ---------
+    # The owner's check (1), 2026-09-22: "Tool framing (curl/apt/docker)
+    # establishes the SOURCE of a message, not its cause: a wrong address
+    # from configuration also yields a network error." Each pair below is
+    # framed by the tool exactly as its ENVIRONMENT sibling above -- and the
+    # endpoint is one nothing reaches by default, so the first cause is a
+    # misconfigured ADDRESS and the second the network. UNCLASSIFIED for
+    # both: the snapshot cannot say which, and naming the environment would
+    # be right by luck.
+    CauseTwin(
+        rule="host unresolvable",
+        slug="host-unresolvable-wrong-configured-address",
+        marker="curl: (6) Could not resolve host: pypi.invalid",
+        base=None,
+        note=(
+            "a typo in the index URL vs the runner's resolver down: "
+            "UNCLASSIFIED for both -- curl's framing says curl could not "
+            "resolve it, and `pypi.invalid` is not a name anything reaches "
+            "by default, so the address is as likely the defect as the "
+            "resolver"
+        ),
+        cause_a="typo-in-the-index-url",
+        preamble_a="##[group]Run curl -sSf https://pypi.invalid/simple/",
+        cause_b="runner-dns-down",
+        preamble_b="##[group]Run curl -sSf $INDEX_URL/simple/",
+    ),
+    CauseTwin(
+        rule="name resolution failure",
+        slug="name-resolution-failure-wrong-configured-address",
+        marker="E: Temporary failure resolving 'mirror.corp'",
+        base=None,
+        note=(
+            "a `sources.list` pointing at a mirror that no longer exists vs "
+            "the resolver down for one that does: UNCLASSIFIED for both -- "
+            "apt names the host either way, and the name is the artifact's "
+            "choice"
+        ),
+        cause_a="mirror-decommissioned",
+        preamble_a="#9 [stage-0 3/9] RUN apt-get update",
+        cause_b="resolver-down",
+        preamble_b="#9 [stage-0 3/9] RUN apt-get update -o Debug::Acquire::http=1",
+    ),
+    CauseTwin(
+        rule="connection timed out",
+        slug="connection-timed-out-wrong-configured-address",
+        marker=(
+            "#11 15.43   Could not connect to 10.255.255.1:80 (10.255.255.1), "
+            "connection timed out"
+        ),
+        base=None,
+        note=(
+            "a private address the `sources.list` line got wrong vs the "
+            "runner's egress firewall blocking a mirror that is really "
+            "there: UNCLASSIFIED for both. Verbatim from live acceptance run "
+            "2, which read ENVIRONMENT at acceptance and does not any more: "
+            "an unroutable RFC1918 address is precisely what a misconfigured "
+            "endpoint looks like, and the framing only says apt was the one "
+            "that could not reach it"
+        ),
+        cause_a="unroutable-address-in-sources-list",
+        preamble_a="#11 [stage-0 4/9] RUN apt-get update",
+        cause_b="runner-egress-firewall",
+        preamble_b="#11 [stage-0 4/9] RUN apt-get -o Acquire::Retries=0 update",
+    ),
+    CauseTwin(
+        rule="fetch failure",
+        slug="fetch-failure-wrong-configured-address",
+        marker="error: Failed to fetch: `https://mirror.corp/simple/anyio/`",
+        base=None,
+        note=(
+            "`UV_INDEX_URL` pointing at a mirror that is gone vs one that is "
+            "up and unreachable from this runner: UNCLASSIFIED for both -- "
+            "uv's own framing, an endpoint only this project asks for"
+        ),
+        cause_a="index-url-stale",
+        preamble_a="#7 [stage-0 2/9] RUN uv sync --frozen",
+        cause_b="mirror-unreachable-from-the-runner",
+        preamble_b="#7 [stage-0 2/9] RUN uv sync --frozen --no-cache",
     ),
     # --- ENVIRONMENT, unframed: the words without the tool -------------------
     # Where the old table set a real failure against a test PRINTING the
@@ -1058,6 +1178,49 @@ CAUSE_TWINS: tuple[CauseTwin, ...] = (
         cause_b="vendored-dependency-doctest",
         preamble_b="##[group]Run pytest --doctest-modules vendor/",
     ),
+    # --- PROJECT: location inside the checkout is not ownership --------------
+    # The owner's check (2), 2026-09-22: "A path inside the checkout
+    # establishes the LOCATION of an assertion, not project ownership: a CI
+    # setup script can live there."
+    CauseTwin(
+        rule="assertion error",
+        slug="assertion-error-in-the-ci-harness",
+        marker=(
+            '  File "/home/runner/work/r/r/.github/scripts/setup.py", line 3, '
+            "in main\nAssertionError: precondition"
+        ),
+        base=None,
+        note=(
+            "the harness asserting a precondition the project broke vs the "
+            "harness script itself being wrong: UNCLASSIFIED for both -- the "
+            "frame is inside the checkout and under `.github/`, which says "
+            "WHERE the assertion ran and nothing about whose it was"
+        ),
+        cause_a="project-broke-the-precondition",
+        preamble_a="##[group]Run python .github/scripts/setup.py",
+        cause_b="harness-script-defect",
+        preamble_b="##[group]Run python .github/scripts/setup.py --strict",
+    ),
+    CauseTwin(
+        rule="assertion error",
+        slug="assertion-error-vendored-under-tests",
+        marker=(
+            '  File "/app/tests/vendor/test_third_party.py", line 10, in '
+            "test_x\nAssertionError: 1 != 2"
+        ),
+        base=PROJECT,
+        note=(
+            "a suite the project wrote vs a third-party suite it vendored "
+            "into `tests/`: PROJECT for both, by repository OWNERSHIP -- the "
+            "project chose to carry that file and to run it, so the tree "
+            "under test is what failed. The class names the tree, never the "
+            "author, and `tests/` is not a CI-harness directory"
+        ),
+        cause_a="own-suite",
+        preamble_a="##[group]Run pytest tests/",
+        cause_b="vendored-third-party-suite",
+        preamble_b="##[group]Run pytest tests/vendor/",
+    ),
     # --- the shapes demoted on 2026-09-22 ------------------------------------
     CauseTwin(
         rule="entrypoint executable not found",
@@ -1126,6 +1289,7 @@ ROWS: tuple[Row, ...] = (
     *_cross("demoted", DEMOTED_MARKERS, None),
     *_cross("unprovenanced", PROVENANCELESS_MARKERS, None),
     *_cross("unframed-environment", UNFRAMED_ENVIRONMENT_MARKERS, None),
+    *_cross("wrong-configured-address", MISCONFIGURED_ENDPOINT_MARKERS, None),
     *_cross("unknown", UNKNOWN_MARKERS, None),
     *[
         row

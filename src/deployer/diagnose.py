@@ -55,11 +55,17 @@ _EXCEPTION_LINE_RE = re.compile(
 
 @dataclass(frozen=True)
 class Rule:
-    """One marker: the kind it establishes, a name to cite, and its pattern."""
+    """One marker: the kind it establishes, a name to cite, and its pattern.
+
+    ``endpoint`` marks the rules about an UNREACHABLE ENDPOINT, which carry
+    one more requirement than their pattern: the line must name a host the
+    tool reaches by default (owner's check (1) above ``RULES``).
+    """
 
     kind: FailureKind
     name: str
     pattern: re.Pattern[str]
+    endpoint: bool = False
 
 
 def _prose(kind: FailureKind, name: str, pattern: str) -> Rule:
@@ -70,6 +76,20 @@ def _prose(kind: FailureKind, name: str, pattern: str) -> Rule:
 def _exact(kind: FailureKind, name: str, pattern: str) -> Rule:
     """A rule over a machine-shaped line: case-sensitive, one line at a time."""
     return Rule(kind, name, re.compile(pattern, re.MULTILINE))
+
+
+def _endpoint(name: str, pattern: str) -> Rule:
+    """An ENVIRONMENT rule whose line must also name a known infra host.
+
+    Always ``ENVIRONMENT``: the four rules that read "the endpoint could not
+    be reached" are the only ones a misconfigured ADDRESS can forge.
+    """
+    return Rule(
+        FailureKind.ENVIRONMENT,
+        name,
+        re.compile(pattern, re.IGNORECASE | re.MULTILINE),
+        endpoint=True,
+    )
 
 
 def _symptom(name: str, pattern: str) -> Rule:
@@ -146,6 +166,42 @@ def _symptom(name: str, pattern: str) -> Rule:
 #   is what refuses to call it a class when the same piece of evidence does
 #   not say WHOSE assertion failed.
 #
+# Sharpened again by the owner on 2026-09-22, in two checks this catalogue
+# now answers to, quoted verbatim:
+#
+#   (1) Tool framing (curl/apt/docker) establishes the SOURCE of a message,
+#       not its cause: a wrong address from configuration also yields a
+#       network error.
+#   (2) A path inside the checkout establishes the LOCATION of an assertion,
+#       not project ownership: a CI setup script can live there.
+#
+# What (1) costs ENVIRONMENT: the four UNREACHABLE-ENDPOINT rules -- `host
+# unresolvable`, `name resolution failure`, `connection timed out`, `fetch
+# failure` -- keep their tool framing AND additionally require the endpoint
+# named on the line to be a KNOWN INFRASTRUCTURE host the tool reaches by
+# default (`KNOWN_INFRA_HOSTS`). `curl: (6) Could not resolve host:
+# pypi.invalid` is curl saying curl could not resolve it, and a typo in an
+# index URL prints it exactly as a broken resolver does; against `pypi.org`
+# there is no address left to have got wrong. A custom mirror, a private
+# address, `localhost`, an `.invalid` name -- and a line that names no
+# endpoint at all -- become `symptom:` observations, and the verdict is
+# UNCLASSIFIED. The rules where the infrastructure itself ANSWERED or failed
+# keep only their framing, because there is no endpoint to misconfigure:
+# `docker daemon unreachable` (the local socket), `runner shutdown` (the
+# runner about itself), `disk full` (the daemon's own storage path),
+# `registry rate limit` (the registry's own refusal) and `service
+# unavailable` (a 503 a tool read, whoever it was talking to). The price is
+# stated: a genuinely unreachable custom mirror now goes unnamed, which is
+# live acceptance run 2 -- and that is the cost of never naming a
+# `sources.list` line as the runner's network.
+#
+# What (2) costs PROJECT: a frame or node id under a CI-HARNESS directory
+# (`.github/`, `.ci/`, `ci/`, `scripts/ci/` as path components) is where the
+# assertion RAN, not whose it was -- the runner's own setup script lives in
+# the checkout and asserts its preconditions there. A test vendored INSIDE
+# `tests/` stays PROJECT: the class names the tree that was built and tested,
+# and the project chose to carry that file.
+#
 # The symptoms these failures share with every other cause live in `SYMPTOMS`
 # — including, since this pass, both COPY/ADD shapes. The build context IS
 # the checkout the Dockerfile was authored against (spec §6.4 scenario A), so
@@ -154,6 +210,61 @@ def _symptom(name: str, pattern: str) -> Rule:
 # Dockerfile was authored print the identical line, and the snapshot cannot
 # say which side moved. Naming AUTHORING there would be right by luck.
 _QUOTED_PATH_NOT_FOUND = r'[^\n]*"[^"\n]*": not found[ \t]*$'
+
+# The endpoints an unreachable-endpoint rule may rest on: the infrastructure
+# a build tool reaches BY DEFAULT, so that nothing a project configures could
+# have made the address wrong. Deliberately short -- every name added here is
+# a claim that reaching it is the environment's job, not the artifact's.
+KNOWN_INFRA_HOSTS = frozenset(
+    {
+        "deb.debian.org",
+        "security.debian.org",
+        "archive.ubuntu.com",
+        "security.ubuntu.com",
+        "ports.ubuntu.com",
+        "pypi.org",
+        "files.pythonhosted.org",
+        "registry-1.docker.io",
+        "docker.io",
+        "index.docker.io",
+        "auth.docker.io",
+        "production.cloudflare.docker.com",
+        "ghcr.io",
+        "pkg-containers.githubusercontent.com",
+        "github.com",
+        "api.github.com",
+        "objects.githubusercontent.com",
+        "codeload.github.com",
+        "astral.sh",
+        "pypi.python.org",
+    }
+)
+
+# A dotted name as a log line carries it: the host of a URL, or a bare
+# `host[:port]`. The lookbehind keeps the tail of a longer name (or of a
+# path component) from being read as a host of its own.
+_HOST_RE = re.compile(
+    r"(?<![A-Za-z0-9._-])"
+    r"(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\.)+"
+    r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?"
+)
+
+
+def _names_infra_host(line: str) -> bool:
+    """Whether the line names an endpoint the tool reaches by default.
+
+    A simple SUFFIX rule over the listed names: `pypi.org` and any subdomain
+    of it qualify, while `notgithub.com` and `github.com.elsewhere.test` are
+    other hosts entirely. Only subdomains OF A LISTED NAME count, which is
+    why the list spells out `objects.githubusercontent.com` rather than
+    trusting the parent domain.
+    """
+    return any(
+        host == name or host.endswith(f".{name}")
+        for host in (match.group(0).lower() for match in _HOST_RE.finditer(line))
+        for name in KNOWN_INFRA_HOSTS
+    )
+
 
 # The tool framings the ENVIRONMENT rules require, each named for the tool
 # that prints it. They are line fragments, never anchored to the line's head:
@@ -194,36 +305,41 @@ RULES: tuple[Rule, ...] = (
         "docker daemon unreachable",
         r"(?:cannot connect to the docker daemon|error during connect:)",
     ),
-    # curl, git, apt or uv saying DNS failed. The bare sentence is a symptom:
-    # an offline-probe step prints it on purpose.
-    _prose(
-        FailureKind.ENVIRONMENT,
+    # curl, git, apt or uv saying DNS failed, about a host they reach by
+    # default. The bare sentence is a symptom (an offline-probe step prints
+    # it on purpose), and so is the framed sentence about an endpoint the
+    # configuration chose: a typo in an index URL does not resolve either.
+    _endpoint(
         "host unresolvable",
         rf"(?:{_CURL}|{_GIT_ACCESS}|{_APT_ERROR}|{_UV_ERROR})"
         r"[^\n]*could not resolve host",
     ),
     # apt names the host it could not resolve, which is framing enough; pip
     # and uv need their own error framing, since pip's `WARNING: Retrying`
-    # says the same words about a problem it went on to recover from.
-    _prose(
-        FailureKind.ENVIRONMENT,
+    # says the same words about a problem it went on to recover from. The
+    # named host must still be one of `KNOWN_INFRA_HOSTS`.
+    _endpoint(
         "name resolution failure",
         r"(?:temporary failure resolving '[^'\n]+'"
         rf"|(?:{_APT_ERROR}|{_PIP_ERROR})[^\n]*temporary failure in name resolution"
         rf"|{_UV_ERROR}[^\n]*failed to lookup address)",
     ),
-    # apt's and uv's own fetch failures. `TypeError: Failed to fetch` --
-    # jest's message, the over-firer recorded in TODO.md -- carries neither
-    # framing: no `E: ` at the head of a word, and no trailing colon.
-    _prose(
-        FailureKind.ENVIRONMENT,
+    # apt's and uv's own fetch failures, against a default index or mirror.
+    # `TypeError: Failed to fetch` -- jest's message, the over-firer recorded
+    # in TODO.md -- carries neither framing: no `E: ` at the head of a word,
+    # and no trailing colon. `error: Failed to fetch:
+    # \`https://mirror.corp/simple/x/\`` carries uv's framing and fails the
+    # host check instead.
+    _endpoint(
         "fetch failure",
         rf"(?:{_APT_ERROR}Failed to fetch\b|error: Failed to fetch:)",
     ),
     # apt's `Err:` detail line names the host and port it could not reach;
-    # the other tools carry their own framing before the phrase.
-    _prose(
-        FailureKind.ENVIRONMENT,
+    # the other tools carry their own framing before the phrase. Live
+    # acceptance run 2 -- apt against `10.255.255.1` -- is framed and fails
+    # the host check: an unroutable private address is what a `sources.list`
+    # line chose, and a curl timeout naming no endpoint at all is no better.
+    _endpoint(
         "connection timed out",
         rf"(?:{_APT_UNREACHABLE}[^\n]*connection timed out"
         rf"|(?:{_APT_ERROR}|{_CURL}|{_GIT_ACCESS}|{_UV_ERROR}|{_BUILDKIT})"
@@ -449,7 +565,10 @@ def classify_failure(
     landed on carries no provenance for the assertion (see
     :func:`_has_project_provenance`): an assertion that does not say whose
     it was establishes nothing, and cannot make an unrelated cause ambiguous
-    either.
+    either. An unreachable-endpoint match against a host outside
+    ``KNOWN_INFRA_HOSTS`` is demoted to a ``symptom:`` observation by
+    :func:`_matches` for the same reason, and is likewise not a competing
+    kind.
 
     Every observation names the LINE it was read from, and every matched line
     gets one, so a cited block never hides a second match behind its first.
@@ -462,11 +581,11 @@ def classify_failure(
     pool = _evidence_pool(job, step)
     per_item = [_matches(item) for item in pool]
     matches, unprovenanced = _partition_by_provenance(
-        [match for found, _ in per_item for match in found]
+        [match for found, _, _ in per_item for match in found]
     )
     demoted = [
         f"{WARNING_SHAPED_NOTE}: {match.describe()}"
-        for _, warned in per_item
+        for _, warned, _ in per_item
         for match in warned
     ] + [f"{NO_PROVENANCE_NOTE}: {match.describe()}" for match in unprovenanced]
     exceptions = [
@@ -475,6 +594,10 @@ def classify_failure(
         for line in _EXCEPTION_LINE_RE.findall(item.text)
     ]
     symptoms = [
+        f"{SYMPTOM_NOTE}: {match.describe()}"
+        for _, _, off_infra in per_item
+        for match in off_infra
+    ] + [
         f"{SYMPTOM_NOTE}: {match.describe()}"
         for item in pool
         for match in _symptom_matches(item)
@@ -606,6 +729,14 @@ _PROVENANCE_RE = re.compile(
 # Not the checkout: an installed dependency, the runner's own temp area, or
 # a synthetic frame (`<string>`/`<stdin>`, what `python -c` reports).
 _NOT_THE_CHECKOUT = ("site-packages", "dist-packages", "/_temp/", "/tmp/")
+# Inside the checkout, and still not the project's (owner's check (2)): the
+# CI harness' own directories. A setup script the runner invokes lives there
+# and asserts ITS preconditions, so the path says where the assertion ran,
+# never whose it was. Path COMPONENTS, not substrings: `scripts/ci/` must not
+# be found inside `scripts/cinema/`, and a project directory named
+# `municipal/` holds no `ci` component. `("scripts", "ci")` is subsumed by
+# `("ci",)` and spelled out anyway, because the owner named all four.
+_CI_HARNESS_DIRS = ((".github",), (".ci",), ("ci",), ("scripts", "ci"))
 # An ABSOLUTE frame is the checkout's only where the path says so. `/app/
 # tests/test_greeting.py` qualifies: it is the image's WORKDIR copy of the
 # project, which is what live acceptance run 3 really printed.
@@ -628,15 +759,34 @@ def _is_project_path(path: str) -> bool:
     A RELATIVE path is the checkout's by construction — pytest prints node
     ids relative to its rootdir, and a traceback frame is relative when the
     process was started inside the tree. An ABSOLUTE one is the checkout's
-    only when it sits under the project's own directories.
+    only when it sits under the project's own directories. Either way a path
+    through a CI-harness directory is not the project's, however far inside
+    the checkout it sits (:func:`_is_ci_harness_path`).
     """
     if path.startswith("<"):
         return False
     if any(part in path for part in _NOT_THE_CHECKOUT):
         return False
+    if _is_ci_harness_path(path):
+        return False
     if not path.startswith("/"):
         return True
     return any(part in path for part in _CHECKOUT_DIRS)
+
+
+def _is_ci_harness_path(path: str) -> bool:
+    """Whether the path runs through one of the CI harness' own directories.
+
+    A relative path is the checkout's by construction and an absolute one
+    under `tests/`/`src/` is too, so this is the check that asks WHOSE file
+    it is rather than where it sits.
+    """
+    parts = tuple(path.split("/"))
+    return any(
+        parts[index : index + len(harness)] == harness
+        for harness in _CI_HARNESS_DIRS
+        for index in range(len(parts))
+    )
 
 
 def _partition_by_provenance(
@@ -686,16 +836,24 @@ def _matched_lines(rule: Rule, item: Evidence) -> list[str]:
     )
 
 
-def _matches(item: Evidence) -> tuple[list[_Match], list[_Match]]:
-    """Every rule against one piece of evidence: (established, warning-shaped).
+def _matches(item: Evidence) -> tuple[list[_Match], list[_Match], list[_Match]]:
+    """Every rule against one piece of evidence, in three buckets.
 
-    A rule of ANY kind keeps looking past a match it judged warning-shaped.
-    The lines it passed over are returned separately, and only when that rule
-    established nothing at all, so the verdict can observe a noticed problem
-    without citing it and without repeating what it did cite.
+    ``(established, warning-shaped, off-infrastructure)``. A rule of ANY kind
+    keeps looking past a match it judged warning-shaped. The lines it passed
+    over are returned separately, and only when that rule established nothing
+    at all, so the verdict can observe a noticed problem without citing it
+    and without repeating what it did cite.
+
+    The third bucket is an endpoint rule's match on a line that names no
+    known infrastructure host (owner's check (1)): reported as a symptom
+    whatever else that rule found, because it is a real thing the run
+    printed and the reason it establishes nothing is about the endpoint, not
+    about the rule.
     """
     found: list[_Match] = []
     warned: list[_Match] = []
+    off_infra: list[_Match] = []
     for rule in RULES:
         established: list[_Match] = []
         skipped: list[_Match] = []
@@ -703,12 +861,14 @@ def _matches(item: Evidence) -> tuple[list[_Match], list[_Match]]:
             match = _Match(rule, item, line)
             if _is_warning_shaped(item, line):
                 skipped.append(match)
+            elif rule.endpoint and not _names_infra_host(line):
+                off_infra.append(match)
             else:
                 established.append(match)
         found.extend(established)
         if not established:
             warned.extend(skipped)
-    return found, warned
+    return found, warned, off_infra
 
 
 def _symptom_matches(item: Evidence) -> list[_Match]:

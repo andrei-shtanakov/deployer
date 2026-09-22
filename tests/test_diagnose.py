@@ -369,9 +369,11 @@ def test_leading_whitespace_before_pytest_assert_is_still_project():
 def test_buildkit_framed_connection_timeout_is_environment():
     """The prose ENVIRONMENT rules are unanchored; this is a pin. The line is
     apt's `Err:` detail, which names the host and the port it could not
-    reach -- the framing the evidence rule requires."""
+    reach -- the framing the evidence rule requires -- and the host is the
+    default Debian mirror, which is what the owner's check (1) requires on
+    top of it."""
     text = (
-        "#11 15.43   Could not connect to 10.255.255.1:80 (10.255.255.1), "
+        "#11 15.43   Could not connect to deb.debian.org:80 (1.2.3.4), "
         "connection timed out"
     )
     v = classify_failure(job_with(text=text), step=None, completeness=COMPLETE)
@@ -750,11 +752,17 @@ def test_recovered_apt_warning_does_not_dilute_an_authoring_verdict():
 
 
 def test_apt_error_line_is_still_environment():
-    """The negative twin, verbatim from live acceptance run 2: apt's `E: `
-    prefix is a real failure and must keep firing."""
+    """The negative twin of the recovered `W: ` line above: apt's `E: `
+    prefix is a real failure and must keep firing.
+
+    Live acceptance run 2 printed this shape against `10.255.255.1`, and
+    since the owner's check (1) that address is not enough -- see
+    `test_apt_fetching_from_an_unroutable_custom_address_establishes_nothing`.
+    What this test pins is the `E: `/`W: ` distinction, so it uses the
+    default mirror and holds the endpoint constant."""
     text = (
-        "#11 15.89 E: Failed to fetch http://10.255.255.1/debian/x.deb  "
-        "Connection timed out [IP: 10.255.255.1 80]"
+        "#11 15.89 E: Failed to fetch http://deb.debian.org/debian/x.deb  "
+        "Connection timed out [IP: 1.2.3.4 80]"
     )
     v = classify_failure(job_with(text=text), step=None, completeness=COMPLETE)
     assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.ENVIRONMENT
@@ -1572,9 +1580,13 @@ def test_a_test_printing_a_timeout_is_not_an_environment_failure():
 
 def test_apts_own_unreachable_line_is_still_environment():
     """apt names the host AND the port it could not reach -- framing the
-    application above does not have. Verbatim from live acceptance run 2."""
+    application above does not have -- and since the owner's check (1) the
+    host it names must be one apt reaches by default. Live acceptance run 2
+    printed this line about `10.255.255.1` and no longer establishes the
+    class; `test_apts_unreachable_line_for_a_custom_address_...` carries it
+    verbatim."""
     text = (
-        "#11 15.43   Could not connect to 10.255.255.1:80 (10.255.255.1), "
+        "#11 15.43   Could not connect to deb.debian.org:80 (1.2.3.4), "
         "connection timed out"
     )
     v = _verdict(text)
@@ -1582,8 +1594,22 @@ def test_apts_own_unreachable_line_is_still_environment():
 
 
 def test_curls_own_timeout_line_is_still_environment():
-    v = _verdict("curl: (28) Operation timed out after 5001 milliseconds")
+    """curl's framing plus the endpoint it was working on."""
+    v = _verdict(
+        "curl: (28) Failed to connect to pypi.org port 443 after 5001 ms: "
+        "Connection timed out"
+    )
     assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.ENVIRONMENT
+
+
+def test_curls_timeout_naming_no_endpoint_establishes_nothing():
+    """The cost of the owner's check (1), stated: curl's short timeout line
+    names no host, so nothing in it says the address was not the thing that
+    was wrong."""
+    text = "curl: (28) Operation timed out after 5001 milliseconds"
+    v = _verdict(text)
+    assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
+    assert v.observations == [f"symptom: connection timed out: {text}"]
 
 
 def test_gits_own_transport_failure_is_still_environment():
@@ -1596,11 +1622,25 @@ def test_gits_own_transport_failure_is_still_environment():
 
 
 def test_uvs_own_error_chain_is_still_environment():
+    """uv's chain, as uv really prints it: the head names the index it was
+    fetching, and the rule reads one line at a time."""
     text = (
+        "error: Failed to fetch: `https://pypi.org/simple/anyio/`\n"
         "  Caused by: failed to lookup address information: Name or service not known"
     )
     v = _verdict(text)
     assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.ENVIRONMENT
+
+
+def test_uvs_caused_by_line_alone_establishes_nothing():
+    """The same cost as curl's short line: a `Caused by:` line names the
+    failure mode and no endpoint at all."""
+    text = (
+        "  Caused by: failed to lookup address information: Name or service not known"
+    )
+    v = _verdict(text)
+    assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
+    assert v.observations == [f"symptom: name resolution failure: {text}"]
 
 
 def test_pips_retry_warning_is_a_noticed_problem_not_a_cause():
@@ -1616,10 +1656,16 @@ def test_pips_retry_warning_is_a_noticed_problem_not_a_cause():
 
 
 def test_pips_own_install_failure_is_environment():
-    """The positive twin: pip's `ERROR: ` is the failure, not the retry."""
+    """The positive twin: pip's `ERROR: ` is the failure, not the retry.
+
+    pip writes the whole chain on one line, and the pool it could not reach
+    is named in it -- which is what the owner's check (1) reads."""
     text = (
         "ERROR: Could not install packages due to an OSError: "
-        "[Errno -3] Temporary failure in name resolution"
+        "HTTPSConnectionPool(host='pypi.org', port=443): Max retries "
+        "exceeded with url: /simple/anyio/ (Caused by NewConnectionError("
+        "'Failed to establish a new connection: [Errno -3] Temporary "
+        "failure in name resolution'))"
     )
     v = _verdict(text)
     assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.ENVIRONMENT
@@ -1764,3 +1810,203 @@ def test_an_unprovenanced_assertion_does_not_make_a_real_cause_ambiguous():
     assert any(
         o.startswith("assertion without project provenance: ") for o in v.observations
     )
+
+
+# --- the endpoint must be one the tool reaches by default -------------------
+# Owner's check (1), 2026-09-22: tool framing (curl/apt/docker) establishes the
+# SOURCE of a message, not its cause — a wrong address from configuration also
+# yields a network error. So an "unreachable endpoint" rule fires only where
+# the line names a KNOWN INFRASTRUCTURE host; any other endpoint is observed.
+
+
+def test_curl_failing_on_a_custom_endpoint_establishes_nothing():
+    """`pypi.invalid` is not a host curl reaches by default: a typo in the
+    index URL prints this line exactly as a broken resolver does."""
+    text = "curl: (6) Could not resolve host: pypi.invalid"
+    v = _verdict(text)
+    assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
+    assert v.evidence == []
+    assert v.observations == [f"symptom: host unresolvable: {text}"]
+
+
+def test_curl_failing_on_a_known_infrastructure_host_is_environment():
+    """The positive twin: nothing a project configures makes `pypi.org` the
+    wrong address."""
+    v = _verdict("curl: (6) Could not resolve host: pypi.org")
+    assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.ENVIRONMENT
+
+
+def test_apt_fetching_from_an_unroutable_custom_address_establishes_nothing():
+    """Live acceptance run 2, verbatim. `10.255.255.1` is a private address a
+    `sources.list` line put there; apt's `E: ` says apt could not fetch, not
+    that the runner's network is at fault."""
+    text = (
+        "#11 15.89 E: Failed to fetch http://10.255.255.1/debian/x.deb  "
+        "Connection timed out [IP: 10.255.255.1 80]"
+    )
+    v = _verdict(text)
+    assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
+    assert v.evidence == []
+    assert v.observations == [
+        f"symptom: fetch failure: {text}",
+        f"symptom: connection timed out: {text}",
+    ]
+
+
+def test_apt_fetching_from_the_debian_mirror_is_environment():
+    """The positive twin: `deb.debian.org` is the default source, so the
+    failure is the environment's."""
+    v = _verdict(
+        "#11 15.89 E: Failed to fetch http://deb.debian.org/debian/x.deb  "
+        "Connection timed out [IP: 1.2.3.4 80]"
+    )
+    v2 = _verdict(
+        "#11 15.43   Could not connect to deb.debian.org:80 (1.2.3.4), "
+        "connection timed out"
+    )
+    assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.ENVIRONMENT
+    assert v2.outcome == "CLASSIFIED" and v2.kind is FailureKind.ENVIRONMENT
+
+
+def test_apts_unreachable_line_for_a_custom_address_establishes_nothing():
+    """apt's `Err:` detail line names host and port — the framing the rule
+    used to rest on — for a mirror the sources.list chose."""
+    text = (
+        "#11 15.43   Could not connect to 10.255.255.1:80 (10.255.255.1), "
+        "connection timed out"
+    )
+    v = _verdict(text)
+    assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
+    assert v.observations == [f"symptom: connection timed out: {text}"]
+
+
+def test_git_failing_on_github_is_environment():
+    v = _verdict(
+        "fatal: unable to access 'https://github.com/o/r/': "
+        "Could not resolve host: github.com"
+    )
+    assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.ENVIRONMENT
+
+
+def test_git_failing_on_a_private_forge_establishes_nothing():
+    """The same git framing against a host the workflow configured: a stale
+    internal hostname prints this, and so does a real outage."""
+    text = (
+        "fatal: unable to access 'https://git.internal.example/o/r/': "
+        "Could not resolve host: git.internal.example"
+    )
+    v = _verdict(text)
+    assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
+    assert v.observations == [f"symptom: host unresolvable: {text}"]
+
+
+def test_uv_fetching_from_a_corporate_mirror_establishes_nothing():
+    text = "error: Failed to fetch: `https://mirror.corp/simple/x/`"
+    v = _verdict(text)
+    assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
+    assert v.observations == [f"symptom: fetch failure: {text}"]
+
+
+def test_uv_fetching_from_pypi_is_environment():
+    v = _verdict("error: Failed to fetch: `https://pypi.org/simple/x/`")
+    assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.ENVIRONMENT
+
+
+def test_a_subdomain_of_a_known_infrastructure_host_still_counts():
+    """The list holds the names, and a subdomain of one is the same
+    infrastructure: `files.pythonhosted.org` is reached through it."""
+    v = _verdict("curl: (6) Could not resolve host: cdn.files.pythonhosted.org")
+    assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.ENVIRONMENT
+
+
+def test_a_host_merely_ending_in_a_known_name_is_not_that_host():
+    """A suffix rule on the NAMES, not on the text: `notgithub.com` and
+    `github.com.evil.test` are other hosts entirely."""
+    for host in ("notgithub.com", "github.com.attacker.test"):
+        v = _verdict(f"curl: (6) Could not resolve host: {host}")
+        assert v.outcome == "UNCLASSIFIED", host
+
+
+def test_the_infrastructure_rules_that_keep_only_their_framing():
+    """Where the infrastructure itself answered or failed there is no
+    endpoint to misconfigure: the daemon's socket, the runner, the disk, the
+    registry's own refusal and a 503 a tool read."""
+    for text in (
+        "Cannot connect to the Docker daemon at unix:///var/run/docker.sock.",
+        "The runner has received a shutdown signal.",
+        "write /var/lib/docker/tmp/x: no space left on device",
+        "toomanyrequests: You have reached your pull rate limit.",
+        "ERROR: failed to solve: failed to do request: "
+        "acme-internal.registry.test/base:1: 503 Service Unavailable",
+    ):
+        v = _verdict(text)
+        assert (v.outcome, v.kind) == ("CLASSIFIED", FailureKind.ENVIRONMENT), text
+
+
+def test_an_endpoint_symptom_does_not_make_a_real_cause_ambiguous():
+    """A demoted endpoint match is an observation, not a competing kind."""
+    v = _verdict(
+        "curl: (6) Could not resolve host: mirror.corp\n"
+        '  File "tests/test_greet.py", line 10, in test_greet\n'
+        "AssertionError: 1 != 2"
+    )
+    assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.PROJECT
+    assert any(o.startswith("symptom: host unresolvable: ") for o in v.observations)
+
+
+# --- a path inside the checkout is a LOCATION, not ownership ----------------
+# Owner's check (2), 2026-09-22: a CI setup script can live in the checkout,
+# so a frame under a CI-harness directory names where the assertion ran, not
+# whose it was.
+
+
+def test_a_frame_under_dot_github_is_not_project_provenance():
+    v = _verdict(
+        '  File "/home/runner/work/r/r/.github/scripts/setup.py", line 3, in main\n'
+        "AssertionError: precondition"
+    )
+    assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
+    assert v.evidence == []
+
+
+def test_a_frame_under_a_ci_directory_is_not_project_provenance():
+    v = _verdict(
+        '  File "/home/runner/work/r/r/ci/check.py", line 3, in main\n'
+        "AssertionError: precondition"
+    )
+    assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
+
+
+def test_a_relative_ci_harness_frame_is_not_project_provenance():
+    """The shape the absolute rule never reached: a frame is relative
+    whenever the process was started inside the tree, which is how the
+    runner invokes a harness script."""
+    for path in (".github/scripts/setup.py", "ci/check.py", "scripts/ci/preflight.py"):
+        v = _verdict(f'  File "{path}", line 3, in main\nAssertionError: precondition')
+        assert v.outcome == "UNCLASSIFIED", path
+        assert any(
+            o.startswith("assertion without project provenance: ")
+            for o in v.observations
+        ), path
+
+
+def test_a_ci_harness_node_id_is_not_project_provenance():
+    """pytest run over the harness' own checks: the node id is relative, and
+    the directory is the harness'."""
+    v = _verdict("FAILED .ci/test_preflight.py::test_env - AssertionError: 1 != 2")
+    assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
+
+
+def test_a_test_vendored_into_the_checkout_is_still_project():
+    """Ownership, not authorship: a third-party test carried inside `tests/`
+    is a file of the tree the project chose to build and test."""
+    v = _verdict(
+        '  File "/app/tests/vendor/test_third_party.py", line 10, in test_x\n'
+        "AssertionError: 1 != 2"
+    )
+    assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.PROJECT
+
+
+def test_the_projects_own_node_id_is_still_project():
+    v = _verdict("FAILED tests/test_x.py::test_y - AssertionError: 1 != 2")
+    assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.PROJECT

@@ -8,13 +8,17 @@ names, step numbers and the rest of the log text kept. The classifier is pure,
 so replaying the snapshot IS the live diagnosis — these tests fail if the
 catalogue or the evidence discipline regresses.
 
-Two of the three establish a class; run 1 does NOT, and that is the honest
-result rather than a regression. Its line is buildkit's COPY/ADD shape, which
-the owner's evidence rule moved to ``SYMPTOMS`` on 2026-09-22: a path the COPY
-never had right and a file the project moved after the Dockerfile was authored
-print the identical sentence, so the snapshot cannot establish AUTHORING. The
-expectation was corrected; the catalogue was NOT widened to keep the run
-green. The discrimination the live runs still prove is ENVIRONMENT vs PROJECT.
+One of the three establishes a class; runs 1 and 2 do NOT, and both are the
+honest result rather than a regression. Run 1's line is buildkit's COPY/ADD
+shape, which the owner's evidence rule moved to ``SYMPTOMS`` on 2026-09-22: a
+path the COPY never had right and a file the project moved after the
+Dockerfile was authored print the identical sentence, so the snapshot cannot
+establish AUTHORING. Run 2's apt failure is against ``10.255.255.1``, an
+address the polygon workflow itself put in ``sources.list``, and the owner's
+check (1) of the same day says a tool's framing names the SOURCE of the
+message and not its cause: a wrong address yields the same network error. In
+both cases the expectation was corrected and the catalogue was NOT widened to
+keep the run green.
 """
 
 from pathlib import Path
@@ -38,9 +42,9 @@ CASES: list[tuple[str, Outcome, FailureKind | None, str]] = [
     ),
     (
         "environment",
-        "CLASSIFIED",
-        FailureKind.ENVIRONMENT,
-        "connection timed out",
+        "UNCLASSIFIED",
+        None,
+        "symptom: fetch failure: ",
     ),
     (
         "project",
@@ -87,14 +91,14 @@ def test_fixture_is_complete_and_anonymised(name: str) -> None:
     assert "\x1b" not in raw
 
 
-def test_the_live_classes_are_distinct_and_run_1_establishes_none() -> None:
-    """What the live runs prove after the evidence rule: two classes, and one
-    honest UNCLASSIFIED.
+def test_each_live_run_establishes_only_what_it_carries() -> None:
+    """What the live runs prove after the two evidence checks: one class, and
+    two honest UNCLASSIFIED.
 
-    Before the rule this read "three runs, three classes". The third class
-    came from a marker that two different causes print, so it was a wrong
-    diagnosis on one of them — the count went down because the answers got
-    truer, and that is the assertion worth keeping."""
+    Before the checks this read "three runs, three classes". Two of those
+    classes came from markers that two different causes print, so each was a
+    wrong diagnosis on one of them — the count went down because the answers
+    got truer, and that is the assertion worth keeping."""
     kinds = set()
     for name, outcome, _, _ in CASES:
         causes = diagnose_run(_load(name)).causes
@@ -103,4 +107,4 @@ def test_the_live_classes_are_distinct_and_run_1_establishes_none() -> None:
             continue
         assert causes, f"{name}: no cause established"
         kinds.add(causes[0])
-    assert kinds == {FailureKind.ENVIRONMENT, FailureKind.PROJECT}
+    assert kinds == {FailureKind.PROJECT}
