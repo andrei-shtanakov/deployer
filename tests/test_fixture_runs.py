@@ -2,10 +2,11 @@
 
 Each fixture under ``tests/fixtures/runs/`` is the anonymised ``FailedRun``
 snapshot of one real ``workflow_dispatch`` run of the authored polygon
-workflow (2026-09-22): identity rewritten to ``example/project``, ids, SHAs,
-step numbers and log text kept. The classifier is pure, so replaying the
-snapshot IS the live diagnosis — these tests fail if the catalogue or the
-evidence discipline regresses.
+workflow (2026-09-22): repository identity rewritten to ``example/project``
+(``repo``, ``url`` and the runner's checkout paths); run/job ids, SHAs, branch
+names, step numbers and the rest of the log text kept. The classifier is pure,
+so replaying the snapshot IS the live diagnosis — these tests fail if the
+catalogue or the evidence discipline regresses.
 """
 
 from pathlib import Path
@@ -51,6 +52,9 @@ def test_fixture_is_complete_and_anonymised(name: str) -> None:
     assert snapshot.repo == "example/project"
     raw = (FIXTURES / f"{name}.json").read_text()
     assert "andrei" not in raw.lower()
+    # The weak proxy above passed while the real repository name survived 12x
+    # per fixture in the runner's checkout paths.
+    assert "work/deployer" not in raw
     assert "\x1b" not in raw
 
 
