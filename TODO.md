@@ -45,30 +45,6 @@ contract was wrong only after it has users. The order below is deliberate — ea
 tagged with what blocks it, so the sequencing survives without anyone re-reading this
 paragraph.
 
-- [ ] CI-failure diagnosis: read a real failed GitHub run of our own authored ci.yml, classify the cause, emit a verdict citing evidence @owner:repo:deployer @id:ci-failure-diagnosis @epic:eco.dark-factory
-  — the founding doc's "diagnose failed CI" half, and the next applied slice now that
-  the first seam (`todo://deployer/first-consumer-seam`, shipped — see `## Shipped`) is
-  proven. Scope decided with the owner 2026-09-21: this slice ends at the DIAGNOSIS;
-  authoring the fix is `todo://deployer/ci-fix-authoring`, so the original one-line
-  promise "read a failed run, author the fix" is NOT closed by this item alone.
-  Source of the failed run: a real GitHub Actions run of the `ci.yml` this repo
-  authored. That is what proves work against a real forge; reading a run from a
-  neighbour's repository stays unproven and is a later slice. Agreeing with a neighbour
-  is deliberately not a blocker here.
-  Regression: an anonymised fixture taken from that real run, replayed offline. The
-  existing synthetic case stays as an extra test. A live GH run is for integration
-  acceptance, not for every test run.
-  CI authoring is widened only as far as the scenario needs; growing the CI generator
-  is out of scope.
-  Closes here: both classification holes of
-  `todo://deployer/failure-classification-channel`.
-  Done when: the full acceptance of the design's §8 passes — offline regression on
-  fixtures, a MINIMUM OF FOUR live dispatches (three failures plus the PROJECT
-  control that must pass), and the paid benchmark whose golden diff is explained
-  before promote. Evidence kept: run URL, commit SHA, failing job/step, logs. The
-  verdict cites evidence from the run; "logs unavailable" is a distinct outcome from
-  "CI failure diagnosed"; insufficient evidence yields declared uncertainty, never an
-  invented cause. The preparatory bootstrap PR does NOT close this item.
 - [ ] Fix authoring from a diagnosis: artifact edit, L1/L2, confirm the diagnosed cause is gone @owner:repo:deployer @blocked_by:todo://deployer/ci-failure-diagnosis @id:ci-fix-authoring @epic:eco.dark-factory
   — the other half of the founding doc's "generate/fix ... diagnose failed CI", split
   out with the owner 2026-09-21 so the diagnosis slice can be accepted on its own.
@@ -76,6 +52,21 @@ paragraph.
   a guess. How a fix is confirmed is decided in its own design — L1/L2 alone are NOT
   enough to claim "the CI is fixed", because they verify the artifact this repo
   produced, not the run that failed.
+- [ ] Step-level log binding in forge: read the run-level log archive so a step's OUTPUT is bound to its StepRef, not only its `##[group]` header block @owner:repo:deployer @id:forge-step-level-log-binding @epic:eco.dark-factory
+  Today `actions/jobs/{id}/logs` gives no line→step binding beyond the runner's `##[group]Run
+  <name>` block, so the diagnostic text (test output, build errors) lands as honest job-level
+  evidence with `source=None` and every live verdict carries "cited evidence is job-level".
+  The per-attempt zip (`actions/runs/{id}/attempts/{n}/logs`) has one file per step and would
+  give the exact binding; it is a binary download, a different subprocess contract from the
+  text endpoint, hence its own slice. Sibling: "nothing was fetched" should be a `Completeness`
+  state of its own instead of being inferred from `jobs == []` in `diagnose_run`.
+- [ ] Rule-catalogue precision for `diagnose.py`: over-firing prose markers and missed shapes, driven by fixtures @owner:repo:deployer @id:diagnose-rule-catalogue-precision @epic:eco.dark-factory
+  Known over-firers (acceptable in the first slice, recorded by review): `failed to fetch`
+  (jest's `TypeError: Failed to fetch`), `connection timed out` / `503` printed by tests that
+  exercise retry paths, `exec format error` (runner-arch mismatch is ENVIRONMENT as often as a
+  wrong `--platform` is AUTHORING). Missed shape: `_RUN_URL_RE` accepts only `github.com`
+  (GitHub Enterprise hosts exit 2). Every change enters with a fixture line from a real run,
+  as the buildkit `#N t.ttt` framing and the hatchling copy-order marker did in the first slice.
 - [ ] Further artifact types: Helm, Terraform @id:further-artifact-types @epic:eco.dark-factory
   — deliberately last; wait until the extension contract is confirmed by a live consumer
 
@@ -166,6 +157,40 @@ them is the next thing to pick up.
 
 ## Shipped
 
+- [x] CI-failure diagnosis: read a real failed GitHub run of our own authored ci.yml, classify the cause, emit a verdict citing evidence @owner:repo:deployer @id:ci-failure-diagnosis @epic:eco.dark-factory
+  Shipped in three PRs: #70 taxonomy + report schema 2.0 (closed
+  `todo://deployer/failure-classification-channel`), #71 bootstrap (`CISpec.trigger_mode`,
+  dispatch-only polygon workflow — preparatory, closed nothing), and the diagnosis PR:
+  `forge.py` (the single `gh api` chokepoint returning a `FailedRun` snapshot — attempt fixed
+  once before any read, refusal of unfinished/successful runs, three-state completeness, no
+  invented line→step binding, argv-only subprocess with timeout and no prompts),
+  `diagnose.py` (pure classifier: rules are data and all evaluated, a class only with a
+  citation, PROJECT only on explicit assertion evidence, conflict → UNCLASSIFIED "ambiguous",
+  incomplete → EVIDENCE_UNAVAILABLE, the empty set never CLASSIFIED, causes never lost in the
+  run summary) and `deployer diagnose` (exit 0/3/4 per outcome, 5 adapter refusal, 2 errors;
+  verdict document with its own `verdict_schema_version` 1.0).
+  Live acceptance 2026-09-22 (§8.2), four `workflow_dispatch` runs of the artifact authored by
+  `deployer author` with `trigger_mode: manual` on orphan refs `polygon/run-1..4` (none an open
+  PR head, checked per SHA before each dispatch):
+  - run 35680991093 @ d6e330f — COPY of a missing path → AUTHORING, exit 0
+  - run 35680992960 @ 37242cc — apt source at an unroutable host, 15 s timeout → ENVIRONMENT, exit 0
+  - run 35680994771 @ 43d7c39 — project's own unittest fails inside the image build → PROJECT, exit 0
+  - run 35680997065 @ 4695504 — the same artifact without the defect → passed → refusal `not_failed`, exit 5
+  The FIRST pass read all three failures as EVIDENCE_UNAVAILABLE (exit 4) — honest, and it
+  exposed two defects only a live forge could: `gh api` refuses log bodies with ANSI escapes
+  (every real docker-build log) and buildkit frames step output as `#N t.ttt ` which defeated
+  the `^`-anchored rules. Both fixed against the real logs; the SAME runs were re-diagnosed
+  offline (the classifier is pure) and the anonymised snapshots are
+  `tests/fixtures/runs/{authoring,environment,project}.json`, replayed by
+  `tests/test_fixture_runs.py`. All citations are job-level (`source=None`) — see
+  `todo://deployer/forge-step-level-log-binding`.
+  Paid benchmark (§8.3, anthropic + podman, 12 cases): 11 matched; `bench compare` vs golden
+  v1.0 explained before any promote — ci-build iterations 1→2 on a sentinel-less first reply
+  (AUTHORING on positive evidence, repaired); uv-minimal `success → unknown_failure` because the
+  model put `uv sync --frozen` before `COPY src` and the build classifier had NO positive
+  AUTHORING marker for hatchling's "Unable to determine which files to ship" — the old code
+  repaired it by fallthrough, the new one honestly stopped. Marker added
+  (`BUILD_AUTHORING_MARKERS`, evidence-based). Baseline: see the golden note in the PR.
 - [x] Failure classification channel: an exit code alone no longer establishes a cause @owner:repo:deployer @id:failure-classification-channel @epic:eco.research-bench
   Closed by the taxonomy work of `todo://deployer/ci-failure-diagnosis` (PR-1), which found the
   hole at THREE sites, not the two the design named:
