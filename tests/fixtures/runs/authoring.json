@@ -112,12 +112,16 @@
           "source": 106597702099,
           "text": "failure: Process completed with exit code 1."
         }
-      ]
+      ],
+      "completeness": {
+        "logs": "present",
+        "annotations": "present"
+      }
     }
   ],
   "completeness": {
     "logs": "present",
     "annotations": "present"
   },
-  "snapshot_schema_version": "1.0"
+  "snapshot_schema_version": "1.1"
 }
