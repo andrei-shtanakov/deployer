@@ -606,6 +606,13 @@ def _build_line_ok(line: str) -> bool:
 
 
 def _check_ci_triggers(workflow: dict, trigger_mode: str) -> list[str]:
+    """`manual` permits exactly one event, workflow_dispatch.
+
+    Every other event — push, pull_request, pull_request_target, schedule,
+    or anything else — is forbidden (spec §6.1). `default` keeps the
+    original rule: push and pull_request required, pull_request_target
+    forbidden.
+    """
     problems: list[str] = []
     triggers = _ci_triggers(workflow)
     if triggers is None:
@@ -613,9 +620,9 @@ def _check_ci_triggers(workflow: dict, trigger_mode: str) -> list[str]:
     if trigger_mode == "manual":
         if "workflow_dispatch" not in triggers:
             problems.append("manual trigger_mode requires workflow_dispatch")
-        for forbidden in ("push", "pull_request"):
-            if forbidden in triggers:
-                problems.append(f"manual trigger_mode forbids {forbidden}")
+        for event in sorted(triggers):
+            if event != "workflow_dispatch":
+                problems.append(f"manual trigger_mode forbids {event}")
     else:
         for wanted in ("push", "pull_request"):
             if wanted not in triggers:

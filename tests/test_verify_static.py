@@ -1484,6 +1484,31 @@ def test_manual_mode_keeps_every_other_constraint() -> None:
     assert "pull_request_target is forbidden (security)" in problems
 
 
+def test_manual_mode_forbids_every_trigger_except_dispatch() -> None:
+    """manual permits ONLY workflow_dispatch (spec §6.1) — any other event,
+
+    even one that isn't push/pull_request/pull_request_target, is forbidden.
+    """
+    from deployer.verify import _check_ci_triggers
+
+    problems = _check_ci_triggers(
+        {
+            "on": {
+                "workflow_dispatch": None,
+                "schedule": [{"cron": "0 0 * * *"}],
+            }
+        },
+        trigger_mode="manual",
+    )
+    assert "manual trigger_mode forbids schedule" in problems
+
+    problems = _check_ci_triggers(
+        {"on": {"workflow_dispatch": None, "repository_dispatch": None}},
+        trigger_mode="manual",
+    )
+    assert "manual trigger_mode forbids repository_dispatch" in problems
+
+
 @pytest.mark.parametrize(
     "mutate",
     [
