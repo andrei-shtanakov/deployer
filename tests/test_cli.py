@@ -1451,3 +1451,11 @@ def test_summary_lists_job_level_and_step_level_where(monkeypatch, capsys) -> No
     out = capsys.readouterr().out
     assert "job 42" in out
     assert "job 42 step 2" in out
+
+
+def test_output_file_write_failure_exits_2_not_a_traceback(tmp_path, capsys) -> None:
+    """--output-file is an operator argument: an unwritable path is a clean
+    exit 2, not an uncaught OSError — the document IS the deliverable."""
+    bad_path = tmp_path / "nonexistent-dir-xyz" / "v.json"
+    assert cli.main(["diagnose", RUN_URL, "--output-file", str(bad_path)]) == 2
+    assert "cannot write" in capsys.readouterr().err

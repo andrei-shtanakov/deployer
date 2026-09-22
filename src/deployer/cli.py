@@ -447,7 +447,11 @@ def _cmd_diagnose(args: argparse.Namespace) -> int:
     diagnosis = diagnose_run(result)
     _print_diagnosis(diagnosis)
     if args.output_file is not None:
-        Path(args.output_file).write_text(render_verdict(diagnosis))
+        try:
+            Path(args.output_file).write_text(render_verdict(diagnosis))
+        except OSError as exc:
+            print(f"error: cannot write {args.output_file}: {exc}", file=sys.stderr)
+            return 2
     return _EXIT_BY_OUTCOME[diagnosis.outcome]
 
 

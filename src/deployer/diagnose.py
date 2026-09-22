@@ -318,4 +318,4 @@ def render_verdict(diagnosis: RunDiagnosis) -> str:
     """
     payload = _diagnosis_adapter.dump_python(diagnosis, mode="json")
     document = {"verdict_schema_version": VERDICT_SCHEMA_VERSION, **payload}
-    return json.dumps(document, indent=2)
+    return json.dumps(document, indent=2) + "\n"
