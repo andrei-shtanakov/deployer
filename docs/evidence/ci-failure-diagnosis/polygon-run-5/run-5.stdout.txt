@@ -1,0 +1,3 @@
+outcome: CLASSIFIED
+causes: authoring
+[job 106677521527 step 3] CLASSIFIED authoring: dockerfile parse error: ERROR: failed to build: failed to solve: dockerfile parse error on line 1: FROM requires either one or three arguments

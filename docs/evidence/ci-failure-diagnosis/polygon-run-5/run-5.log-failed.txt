@@ -1,0 +1,18 @@
+build	Run docker build --file ./Dockerfile .	﻿2026-09-22T08:48:11.0090735Z ##[group]Run docker build --file ./Dockerfile .
+build	Run docker build --file ./Dockerfile .	2026-09-22T08:48:11.0091357Z ^[[36;1mdocker build --file ./Dockerfile .^[[0m
+build	Run docker build --file ./Dockerfile .	2026-09-22T08:48:11.0115247Z shell: /usr/bin/bash -e {0}
+build	Run docker build --file ./Dockerfile .	2026-09-22T08:48:11.0115737Z ##[endgroup]
+build	Run docker build --file ./Dockerfile .	2026-09-22T08:48:14.4431700Z #0 building with "default" instance using docker driver
+build	Run docker build --file ./Dockerfile .	2026-09-22T08:48:14.4432838Z 
+build	Run docker build --file ./Dockerfile .	2026-09-22T08:48:14.4433177Z #1 [internal] load build definition from Dockerfile
+build	Run docker build --file ./Dockerfile .	2026-09-22T08:48:14.4434234Z #1 transferring dockerfile:
+build	Run docker build --file ./Dockerfile .	2026-09-22T08:48:14.4796838Z #1 transferring dockerfile: 364B done
+build	Run docker build --file ./Dockerfile .	2026-09-22T08:48:14.4797318Z #1 DONE 0.1s
+build	Run docker build --file ./Dockerfile .	2026-09-22T08:48:14.4816770Z Dockerfile:1
+build	Run docker build --file ./Dockerfile .	2026-09-22T08:48:14.4817299Z --------------------
+build	Run docker build --file ./Dockerfile .	2026-09-22T08:48:14.4817836Z    1 | >>> FROM python:3.12-slim extra
+build	Run docker build --file ./Dockerfile .	2026-09-22T08:48:14.4818356Z    2 |     
+build	Run docker build --file ./Dockerfile .	2026-09-22T08:48:14.4818734Z    3 |     COPY --from=ghcr.io/astral-sh/uv:0.5.11 /uv /uvx /bin/
+build	Run docker build --file ./Dockerfile .	2026-09-22T08:48:14.4819280Z --------------------
+build	Run docker build --file ./Dockerfile .	2026-09-22T08:48:14.4819850Z ERROR: failed to build: failed to solve: dockerfile parse error on line 1: FROM requires either one or three arguments
+build	Run docker build --file ./Dockerfile .	2026-09-22T08:48:14.4852079Z ##[error]Process completed with exit code 1.
