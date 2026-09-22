@@ -15,6 +15,7 @@ from deployer.forge import (
     GhError,
     RunRef,
     StepRef,
+    load_snapshot,
 )
 from deployer.models import (
     CheckResult,
@@ -1459,3 +1460,96 @@ def test_output_file_write_failure_exits_2_not_a_traceback(tmp_path, capsys) -> 
     bad_path = tmp_path / "nonexistent-dir-xyz" / "v.json"
     assert cli.main(["diagnose", RUN_URL, "--output-file", str(bad_path)]) == 2
     assert "cannot write" in capsys.readouterr().err
+
+
+# --- final review: slug/attempt validation, single print, offline fixture ---
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://github.com/../..%2Fx/actions/runs/1",
+        "https://github.com/o/r%2F../actions/runs/1",
+    ],
+)
+def test_a_url_whose_slug_is_not_a_repo_name_is_rejected(url, capsys) -> None:
+    """The slug is interpolated straight into `repos/{repo}/...`, so a run URL
+    pasted from an issue could steer `gh api` at a path other than the one it
+    appears to name."""
+    assert cli.main(["diagnose", url]) == 2
+    assert "owner/name" in capsys.readouterr().err
+
+
+def test_a_repo_flag_that_is_not_a_repo_name_is_rejected(capsys) -> None:
+    assert cli.main(["diagnose", "--repo", "a b", "--run-id", "1"]) == 2
+    assert "owner/name" in capsys.readouterr().err
+
+
+def test_an_ordinary_slug_still_passes_both_branches(monkeypatch) -> None:
+    """The twin: dots, dashes and underscores are legal in a repo name."""
+    seen: list[RunRef] = []
+
+    def spy(ref, *, attempt, **kwargs):
+        seen.append(ref)
+        return _minimal_run()
+
+    monkeypatch.setattr(cli, "fetch_failed_run", spy)
+    cli.main(["diagnose", "https://github.com/a-b/c.d_e/actions/runs/7"])
+    cli.main(["diagnose", "--repo", "a-b/c.d_e", "--run-id", "7"])
+    assert seen == [RunRef("a-b/c.d_e", 7), RunRef("a-b/c.d_e", 7)]
+
+
+def test_a_url_attempt_of_zero_is_rejected_like_the_flag(capsys) -> None:
+    """`--attempt 0` already got a clean exit 2; the URL's attempt reached
+    `gh` and 404'd. Same check, same message, both doors."""
+    url = "https://github.com/o/r/actions/runs/1/attempts/0"
+    assert cli.main(["diagnose", url]) == 2
+    assert "positive integer" in capsys.readouterr().err
+
+
+def test_run_level_observations_are_printed_once(monkeypatch, capsys) -> None:
+    """stdout carries the human summary, stderr the diagnostics (spec §7).
+    The EVIDENCE_UNAVAILABLE branch used to repeat the observations on both."""
+    monkeypatch.setattr(
+        cli,
+        "diagnose_run",
+        lambda s: RunDiagnosis(
+            run=_minimal_run(),
+            failures=[],
+            outcome="EVIDENCE_UNAVAILABLE",
+            causes=[],
+            observations=["logs fetch error"],
+        ),
+    )
+    assert cli.main(["diagnose", RUN_URL]) == 4
+    captured = capsys.readouterr()
+    assert captured.out.count("logs fetch error") == 1
+    assert "logs fetch error" not in captured.err
+    assert "completeness:" in captured.err
+
+
+def test_run_id_and_attempt_document_themselves_in_help(capsys) -> None:
+    """Every other diagnose argument already does."""
+    with pytest.raises(SystemExit):
+        cli.main(["diagnose", "--help"])
+    help_text = capsys.readouterr().out
+    assert "the run's numeric id (with --repo)" in help_text
+    assert "re-run attempt number" in help_text
+
+
+def test_the_real_project_fixture_diagnoses_through_the_cli(
+    monkeypatch, tmp_path
+) -> None:
+    """The seam the live runs proved, under regression: a real anonymised
+    snapshot through the real `diagnose_run` and the real exit-code map.
+    Every other CLI diagnose test stubs one of the two."""
+    fixture = Path(__file__).parent / "fixtures" / "runs" / "project.json"
+    snapshot = load_snapshot(fixture.read_text())
+    monkeypatch.setattr(cli, "fetch_failed_run", lambda *a, **k: snapshot)
+
+    out = tmp_path / "v.json"
+    assert cli.main(["diagnose", RUN_URL, "--output-file", str(out)]) == 0
+
+    document = json.loads(out.read_text())
+    assert document["outcome"] == "CLASSIFIED"
+    assert document["causes"] == ["project"]

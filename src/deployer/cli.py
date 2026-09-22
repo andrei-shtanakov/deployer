@@ -47,6 +47,12 @@ _RUN_URL_RE = re.compile(
     r"github\.com/([^/]+/[^/]+)/actions/runs/(\d+)(?:/attempts/(\d+))?"
 )
 
+#: A GitHub repository slug. The value is interpolated straight into
+#: `repos/{repo}/...` (`forge.py`), so a run URL pasted from an issue or
+#: handed over by an agent could otherwise steer `gh api` at a path other
+#: than the one the URL appears to name.
+_REPO_SLUG_RE = re.compile(r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$")
+
 _EXIT_BY_OUTCOME: dict[str, int] = {
     "CLASSIFIED": 0,
     "UNCLASSIFIED": 3,
@@ -380,8 +386,17 @@ def _resolve_run_ref(args: argparse.Namespace) -> tuple[RunRef, int | None] | st
         if match is None:
             return f"not a recognized GitHub Actions run URL: {args.run_url}"
         repo, run_id_text, url_attempt_text = match.groups()
+        if not _REPO_SLUG_RE.match(repo):
+            return f"not a repository owner/name: {repo}"
         run_id = int(run_id_text)
-        url_attempt = int(url_attempt_text) if url_attempt_text is not None else None
+        url_attempt: int | None = None
+        if url_attempt_text is not None:
+            parsed_url_attempt = _parse_positive_int(
+                url_attempt_text, "the run URL's attempt"
+            )
+            if isinstance(parsed_url_attempt, str):
+                return parsed_url_attempt
+            url_attempt = parsed_url_attempt
         if (
             url_attempt is not None
             and flag_attempt is not None
@@ -394,6 +409,8 @@ def _resolve_run_ref(args: argparse.Namespace) -> tuple[RunRef, int | None] | st
         resolved_attempt = flag_attempt if flag_attempt is not None else url_attempt
         return RunRef(repo, run_id), resolved_attempt
 
+    if not _REPO_SLUG_RE.match(args.repo):
+        return f"--repo must be a repository owner/name: {args.repo}"
     run_id_result = _parse_positive_int(args.run_id, "--run-id")
     if isinstance(run_id_result, str):
         return run_id_result
@@ -407,7 +424,12 @@ def _format_where(where: StepRef | int) -> str:
 
 
 def _print_diagnosis(diagnosis: RunDiagnosis) -> None:
-    """Human summary on stdout; diagnostics (completeness, gaps) on stderr."""
+    """Human summary on stdout; instrument diagnostics on stderr (spec §7).
+
+    Run-level observations — what was missing, or that there was nothing to
+    diagnose — belong to the summary and are printed once, on stdout. stderr
+    carries only what the operator needs to judge the read itself.
+    """
     causes = ", ".join(kind.value for kind in diagnosis.causes) or "-"
     print(f"outcome: {diagnosis.outcome}")
     print(f"causes: {causes}")
@@ -425,9 +447,6 @@ def _print_diagnosis(diagnosis: RunDiagnosis) -> None:
         f"annotations={completeness.annotations}",
         file=sys.stderr,
     )
-    if diagnosis.outcome == "EVIDENCE_UNAVAILABLE":
-        for observation in diagnosis.observations:
-            print(observation, file=sys.stderr)
 
 
 def _cmd_diagnose(args: argparse.Namespace) -> int:
@@ -691,8 +710,12 @@ def main(argv: list[str] | None = None) -> int:
         "run_url", nargs="?", default=None, help="GitHub Actions run URL"
     )
     p_diagnose.add_argument("--repo", default=None, help="owner/name")
-    p_diagnose.add_argument("--run-id", default=None)
-    p_diagnose.add_argument("--attempt", default=None)
+    p_diagnose.add_argument(
+        "--run-id", default=None, help="the run's numeric id (with --repo)"
+    )
+    p_diagnose.add_argument(
+        "--attempt", default=None, help="re-run attempt number (default: the latest)"
+    )
     p_diagnose.add_argument(
         "--output-file", default=None, help="write the verdict document here"
     )
