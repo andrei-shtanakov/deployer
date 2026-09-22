@@ -1388,21 +1388,20 @@ def _is_transport_failure(output: str) -> bool:
     return any(marker in lowered for marker in _TRANSPORT_MARKERS)
 
 
-#: Positive evidence that the image's own entrypoint/command is wrong — an
-#: authoring cause that can be cited, unlike a bare exit code.
-AUTHORING_MARKERS = (
-    "no such file",
-    "executable file not found",
-    "exec format error",
-)
-
-
 def _classify_exit(returncode: int, output: str) -> FailureKind:
-    """Classify any nonzero `run_completes` exit.
+    """Classify any nonzero `run_completes` exit: ENVIRONMENT, else UNKNOWN.
 
-    An exit code alone does not establish a cause. AUTHORING requires its
-    own positive marker (AUTHORING_MARKERS); absent that, the honest answer
-    is UNKNOWN — not an invented AUTHORING.
+    An exit code alone does not establish a cause, and on this path neither
+    does any marker in the output. There is no AUTHORING branch: the run
+    output is not bound to the authored artifact (owner's rule, 2026-09-22).
+    `exec: "app": executable file not found in $PATH` proves that a missing
+    executable was asked for, not that its name came from the image's
+    CMD/ENTRYPOINT — the identical line is printed when the command is
+    overridden at run time — and `no such file` or `exec format error` name
+    an artifact defect, a project defect, an environment mismatch and a wrong
+    invocation indifferently. `_classify_build` keeps its AUTHORING branch
+    because it HAS that binding: it weighs the Dockerfile it built beside
+    the message.
 
     The transport-marker check for ENVIRONMENT is deliberately gated to
     125/126: those are the container-runtime CLI's own reserved codes for
@@ -1414,11 +1413,8 @@ def _classify_exit(returncode: int, output: str) -> FailureKind:
     class of bug `_run_completes`'s narrow marker set already guards
     against for the app-output case.
     """
-    lowered = output.lower()
     if returncode in (125, 126) and _is_transport_failure(output):
         return FailureKind.ENVIRONMENT
-    if any(marker in lowered for marker in AUTHORING_MARKERS):
-        return FailureKind.AUTHORING
     return FailureKind.UNKNOWN
 
 
