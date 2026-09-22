@@ -1007,3 +1007,44 @@ def test_an_unknown_annotation_level_is_failure_evidence():
     )
     assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.ENVIRONMENT
     assert v.evidence == [annotation]
+
+
+# --- PR #72 round 7, follow-up: a log line's own warning shapes -------------
+
+
+def test_a_warning_prefixed_log_line_is_warning_shaped():
+    """Round 7 dropped `warning: `/`notice: ` from the per-line rule as an
+    artefact of forge's old rendering. That was true of annotations and
+    wrong about logs: compilers, pip and shell tooling all emit `warning: `
+    lines of their own, and one of them naming a missing optional file must
+    not establish AUTHORING any more than the annotation did."""
+    text = (
+        "Starting\n"
+        "warning: no such file optional-cache.json\n"
+        "Process completed with exit code 1."
+    )
+    v = classify_failure(job_with(text=text), step=None, completeness=COMPLETE)
+    assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
+    assert v.evidence == []
+    assert v.observations == [
+        "warning-shaped: no such file: warning: no such file optional-cache.json"
+    ]
+
+
+def test_a_notice_prefixed_log_line_is_warning_shaped():
+    """The other noticed-not-fatal shape, on a log line rather than a level."""
+    text = "notice: Connection timed out; the retry succeeded"
+    v = classify_failure(job_with(text=text), step=None, completeness=COMPLETE)
+    assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
+    assert v.evidence == []
+    assert v.observations == [f"warning-shaped: connection timed out: {text}"]
+
+
+def test_a_warning_log_line_is_warning_shaped_under_buildkit_framing():
+    """`docker build` frames every RUN-step line as `#<step> <seconds> `, so
+    the warning shape is read after `_LINE_PREFIX`, like every other line
+    rule -- not at the raw start of the line."""
+    text = "#8 0.42 warning: no such file optional-cache.json"
+    v = classify_failure(job_with(text=text), step=None, completeness=COMPLETE)
+    assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
+    assert v.observations == [f"warning-shaped: no such file: {text}"]

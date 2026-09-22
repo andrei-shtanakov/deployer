@@ -294,12 +294,14 @@ def _evidence_pool(job: FailedJob, step: FailedStep | None) -> list[Evidence]:
     ]
 
 
-# One notion, two sources — and only one of them is text. apt prefixes a
-# recovered problem with `W: ` and a real one with `E: `, per line inside a
-# log block; a GitHub annotation carries a level of its own, which `forge`
-# records as `Evidence.level` (round 7). So `warning`/`notice` is GitHub
-# saying it noticed something, while `failure`/`error` — and any level this
-# catalogue has not seen, and an unlevelled log line — are failure evidence.
+# One notion, two sources. A log line says it for itself: apt prefixes a
+# recovered problem with `W: ` and a real one with `E: `, and compilers, pip
+# and shell tooling write `warning: `/`notice: ` at the head of the line.
+# A GitHub annotation instead carries a level of its own, which `forge`
+# records as `Evidence.level` (round 7). So `warning`/`notice`, as a level
+# or as a line's own prefix, is a noticed problem, while `failure`/`error`
+# — and any level this catalogue has not seen, and an unprefixed log line
+# — are failure evidence.
 # Because in practice every step's evidence pool is the whole job log (all
 # real citations are job-level), one warning-shaped line was enough to pair
 # with a genuine AUTHORING marker and turn a clean verdict into `ambiguous:`,
@@ -316,13 +318,16 @@ def _evidence_pool(job: FailedJob, step: FailedStep | None) -> list[Evidence]:
 # rule matched — and being data, no text can hide it: rounds 5 and 6 read
 # the level off the text, so a `warning: ` prefix on line 1 only, and then an
 # empty first line, each let a later line establish a class the run had no
-# evidence for. A log block has no level of its own, so it is judged on the
-# matched line itself, never on where the block happens to start: a `W: `
-# line mid-block is warning-shaped on its own, and a block that DOES open
-# with one must not blanket-exclude a genuine marker on a later line (round
-# 5, finding 1).
+# evidence for. A log block has no level at all, so it is judged on the
+# matched line itself, never on where the block happens to start: a
+# warning-prefixed line mid-block is warning-shaped on its own, and a block
+# that DOES open with one must not blanket-exclude a genuine marker on a
+# later line (round 5, finding 1). Round 7 first dropped the prose prefixes
+# from the line rule as an artefact of forge's old rendering; that held for
+# annotations and was wrong about logs, whose own `warning: ` lines predate
+# and outlive any rendering of ours.
 # The first mitigation for todo://deployer/diagnose-rule-catalogue-precision.
-_APT_WARNING_RE = re.compile(rf"^{_LINE_PREFIX}W: ")
+_LINE_WARNING_RE = re.compile(rf"^{_LINE_PREFIX}(?:W|warning|notice): ")
 _NOTICED_LEVELS = frozenset({"warning", "notice"})
 
 WARNING_SHAPED_NOTE = "warning-shaped"
@@ -334,11 +339,12 @@ def _is_warning_shaped(item: Evidence, line: str) -> bool:
 
     An annotation (`item.level` is not None) is judged by its level alone,
     for every line of its message. A log block carries no level, so it is
-    judged per matched line instead: apt's `W: ` prefix on that one line.
+    judged per matched line instead: apt's `W: `, or a `warning: `/`notice: `
+    the tool wrote itself, at the head of that one line.
     """
     if item.level is not None:
         return item.level in _NOTICED_LEVELS
-    return bool(_APT_WARNING_RE.match(line))
+    return bool(_LINE_WARNING_RE.match(line))
 
 
 def _for_operator(item: Evidence, line: str) -> str:
