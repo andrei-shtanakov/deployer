@@ -81,6 +81,10 @@ class FakeGh:
     # What the endpoint claims the attempt has; by default the truth (the
     # pages actually served), so a test can make the count lie on purpose.
     job_total: int | None = None
+    # Raw page bodies, exactly as returned by the endpoint, for a test that
+    # needs a shape `job_pages`/`job_total` cannot express (a missing key, a
+    # wrong-typed value). Takes precedence over `job_pages` when set.
+    raw_job_pages: list[dict[str, Any]] | None = None
     annotations: list[dict[str, Any]] | GhError = field(default_factory=list)
     logs: str | GhError | None = "plain job log"
     calls: list[Call] = field(default_factory=list)
@@ -101,6 +105,11 @@ class FakeGh:
 
     def _jobs_page(self, attempt: int, page: int) -> str:
         self.job_calls.append(JobCall(attempt=attempt, page=page))
+        if self.raw_job_pages is not None:
+            body = (
+                self.raw_job_pages[page - 1] if page <= len(self.raw_job_pages) else {}
+            )
+            return json.dumps(body)
         total = (
             self.job_total
             if self.job_total is not None
@@ -296,6 +305,38 @@ def test_a_total_count_that_lies_high_is_read_honestly_as_a_short_listing(fake_g
     with pytest.raises(GhError) as caught:
         fetch_failed_run(RunRef("o/r", 1), attempt=1, runner=fake_gh)
     assert str(caught.value) == "jobs listing incomplete: 1 of 50"
+
+
+def test_a_jobs_page_missing_total_count_and_jobs_is_malformed_not_complete(fake_gh):
+    """A page 2 body of `{}` must never read as "attempt has 1 job, done".
+
+    Before this reading, `total = int(body.get("total_count", len(collected)))`
+    fell back to the jobs collected so far, so a malformed page silently
+    looked like a complete listing instead of a broken response.
+    """
+    fake_gh.raw_job_pages = [{"total_count": 2, "jobs": [job(1)]}, {}]
+    with pytest.raises(GhError) as caught:
+        fetch_failed_run(RunRef("o/r", 1), attempt=1, runner=fake_gh)
+    assert str(caught.value).startswith("jobs listing malformed:")
+    assert caught.value.status is None
+
+
+def test_a_jobs_listing_whose_total_count_changes_mid_listing_is_inconsistent(fake_gh):
+    fake_gh.raw_job_pages = [
+        {"total_count": 2, "jobs": [job(1)]},
+        {"total_count": 3, "jobs": [job(2)]},
+    ]
+    with pytest.raises(GhError) as caught:
+        fetch_failed_run(RunRef("o/r", 1), attempt=1, runner=fake_gh)
+    assert str(caught.value) == "jobs listing inconsistent: total_count 2 then 3"
+    assert caught.value.status is None
+
+
+def test_a_jobs_page_whose_jobs_field_is_not_a_list_is_malformed(fake_gh):
+    fake_gh.raw_job_pages = [{"total_count": 2, "jobs": "nope"}]
+    with pytest.raises(GhError) as caught:
+        fetch_failed_run(RunRef("o/r", 1), attempt=1, runner=fake_gh)
+    assert str(caught.value).startswith("jobs listing malformed:")
 
 
 def test_a_jobs_listing_that_meets_its_count_never_asks_for_an_empty_page(fake_gh):

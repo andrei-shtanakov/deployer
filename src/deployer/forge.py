@@ -332,18 +332,41 @@ class _Gh:
         missing, and only one of the two is safe to assume, so it refuses
         either way. Meeting the count — not exhausting the pages — is what
         ends the loop, and the empty page still ends it rather than looping.
+
+        Each page's shape is validated before it is trusted: ``jobs`` must
+        be a list and ``total_count`` an int, else the page is malformed —
+        without this, a page missing both (``{}``) reads as ``total =
+        len(collected)``, i.e. "done", turning a broken response into a
+        falsely complete listing. The count is fixed from the first page;
+        a later page claiming a different ``total_count`` is inconsistent,
+        not a correction, since the adapter has no way to tell which of the
+        two counts (if either) is the true one.
         """
         base = f"actions/runs/{run_id}/attempts/{attempt}/jobs"
         collected: list[dict[str, Any]] = []
+        total: int | None = None
         page = 1
         while True:
             body = self.json(f"{base}?per_page={_PER_PAGE}&page={page}")
-            items = list(body.get("jobs") or [])
-            collected.extend(items)
-            total = int(body.get("total_count", len(collected)))
+            page_jobs = body.get("jobs")
+            page_total = body.get("total_count")
+            if not isinstance(page_jobs, list) or not isinstance(page_total, int):
+                raise GhError(
+                    f"jobs listing malformed: page {page} has "
+                    f"jobs={page_jobs!r} total_count={page_total!r}",
+                    None,
+                )
+            if total is None:
+                total = page_total
+            elif page_total != total:
+                raise GhError(
+                    f"jobs listing inconsistent: total_count {total} then {page_total}",
+                    None,
+                )
+            collected.extend(page_jobs)
             if len(collected) >= total:
                 return collected
-            if not items:
+            if not page_jobs:
                 raise GhError(
                     f"jobs listing incomplete: {len(collected)} of {total}", None
                 )
