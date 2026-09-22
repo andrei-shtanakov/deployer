@@ -753,12 +753,14 @@ def test_manifest_only_copies_do_not_count_as_source() -> None:
 
 def test_continuation_lines_are_parsed_as_one_run() -> None:
     """A `\\`-continued RUN is one instruction; the install must be seen in
-    it, and a `--no-install-project` on a later physical line must count."""
+    it, and a `--no-install-project` on a later physical line must count.
+    (No `&&` here: chained RUNs are unrecognised since round 4 — see
+    `test_a_chained_install_is_unrecognised` — so this fixture stays a
+    single command split only by continuation lines.)"""
     defective = (
         "FROM python:3.12-slim\n"
         "COPY pyproject.toml ./\n"
-        "RUN apt-get update && \\\n"
-        "    uv sync \\\n"
+        "RUN uv sync \\\n"
         "      --frozen\n"
         "COPY src ./src\n"
     )
@@ -2407,16 +2409,18 @@ def test_a_leading_env_command_does_not_hide_the_install() -> None:
     assert _install_precedes_source_copy(dockerfile) is True
 
 
-def test_the_install_may_be_a_later_segment_of_a_chain() -> None:
-    """Segments are split on `&&`, `||`, `;` and `|`; each is matched at its
-    own leading tokens."""
+def test_a_chained_install_is_unrecognised() -> None:
+    """A RUN with any operator token — `&&` included — is unrecognised, not
+    matched at a later segment: `shlex` cannot tell a real `&&` from a quoted
+    one (see the round-4 tests below), so the walker gives up on the whole
+    line rather than risk reading a quoted operator as a real chain."""
     dockerfile = (
         "FROM python:3.12-slim\n"
         "COPY pyproject.toml uv.lock ./\n"
         "RUN apt-get update && uv sync --frozen\n"
         "COPY src ./src\n"
     )
-    assert _install_precedes_source_copy(dockerfile) is True
+    assert _install_precedes_source_copy(dockerfile) is False
 
 
 def test_python_m_pip_install_dot_is_an_install() -> None:
@@ -2500,19 +2504,20 @@ def test_an_unbalanced_quote_is_unrecognised_not_an_install() -> None:
     assert _install_precedes_source_copy(dockerfile) is False
 
 
-def test_a_semicolon_attached_to_a_token_still_ends_the_segment() -> None:
+def test_a_semicolon_attached_to_a_token_is_unrecognised() -> None:
     """`cd /app; uv sync` has no space before the `;`, so the separator
-    arrives glued to the previous token — it must still close the segment."""
+    arrives glued to the previous token — `_lex_shell` still reads it as its
+    own operator token, and any operator token makes the RUN unrecognised."""
     dockerfile = (
         "FROM python:3.12-slim\n"
         "COPY pyproject.toml uv.lock ./\n"
         "RUN cd /app; uv sync --frozen\n"
         "COPY src ./src\n"
     )
-    assert _install_precedes_source_copy(dockerfile) is True
+    assert _install_precedes_source_copy(dockerfile) is False
 
 
-def test_a_semicolon_on_a_bare_command_still_ends_the_segment() -> None:
+def test_a_semicolon_on_a_bare_command_is_unrecognised() -> None:
     """The one-token case: the whole token is the command plus its `;`."""
     dockerfile = (
         "FROM python:3.12-slim\n"
@@ -2520,7 +2525,7 @@ def test_a_semicolon_on_a_bare_command_still_ends_the_segment() -> None:
         "RUN true; uv sync --frozen\n"
         "COPY src ./src\n"
     )
-    assert _install_precedes_source_copy(dockerfile) is True
+    assert _install_precedes_source_copy(dockerfile) is False
 
 
 # --- PR #72 round 3, finding 1 again: the lexer must know its own operators --
@@ -2551,19 +2556,20 @@ def test_the_quoted_semicolon_dockerfile_classifies_unknown_not_authoring() -> N
     )
 
 
-def test_a_glued_chain_operator_still_starts_a_command() -> None:
-    """`true&&uv sync` has no spaces around the `&&`: the shell still reads an
-    operator there, and a word-level split did not."""
+def test_a_glued_chain_operator_is_unrecognised() -> None:
+    """`true&&uv sync` has no spaces around the `&&`: the shell still reads
+    an operator there, and any operator token — quoted or not, `_lex_shell`
+    cannot tell them apart — makes the RUN unrecognised rather than chained."""
     dockerfile = (
         "FROM python:3.12-slim\n"
         "COPY pyproject.toml uv.lock ./\n"
         "RUN true&&uv sync --frozen\n"
         "COPY src ./src\n"
     )
-    assert _install_precedes_source_copy(dockerfile) is True
+    assert _install_precedes_source_copy(dockerfile) is False
 
 
-def test_a_glued_semicolon_still_starts_a_command() -> None:
+def test_a_glued_semicolon_is_unrecognised() -> None:
     """The `;` twin of the glued operator."""
     dockerfile = (
         "FROM python:3.12-slim\n"
@@ -2571,4 +2577,40 @@ def test_a_glued_semicolon_still_starts_a_command() -> None:
         "RUN true;uv sync --frozen\n"
         "COPY src ./src\n"
     )
-    assert _install_precedes_source_copy(dockerfile) is True
+    assert _install_precedes_source_copy(dockerfile) is False
+
+
+# --- PR #72 round 4: a quoted operator token is indistinguishable from a ----
+# --- real one, so ANY operator token makes the whole RUN unrecognised ------
+
+
+# The golden Dockerfile with an `echo` whose QUOTED argument is bare `;`.
+# `shlex`'s posix quote removal strips the quotes before the walker ever
+# sees the token, so `echo ';' uv sync --frozen` — one `echo` call, `;` and
+# `uv sync --frozen` both plain arguments — lexes to the same token list as
+# a real chain: `['echo', ';', 'uv', 'sync', '--frozen']`. The round-3 fix
+# only re-checked the FIRST token for an operator and still matched later
+# segments as commands, so this shape still read as a false AUTHORING.
+_BARE_SEMICOLON_ARG_DOCKERFILE = _CORRECT_ORDER_DOCKERFILE.replace(
+    "COPY src/uv_minimal ./src/uv_minimal\n",
+    "RUN echo ';' uv sync --frozen\nCOPY src/uv_minimal ./src/uv_minimal\n",
+)
+
+
+def test_a_quoted_bare_semicolon_argument_is_unrecognised() -> None:
+    """`echo ';' uv sync --frozen` runs one command: `echo`, with `;` as a
+    plain argument. `shlex` cannot tell that from a real `;` operator once
+    quotes are removed, so the walker must not read `uv sync` as a later
+    command — the honest answer is unrecognised, not a copy-order defect."""
+    assert _install_precedes_source_copy(_BARE_SEMICOLON_ARG_DOCKERFILE) is False
+
+
+def test_the_bare_semicolon_dockerfile_classifies_unknown_not_authoring() -> None:
+    """The verdict that reaches the report: correct copy order stays
+    UNKNOWN, never AUTHORING."""
+    assert (
+        _classify_build(
+            _HATCHLING_MISSING_FILES_EXCERPT, _BARE_SEMICOLON_ARG_DOCKERFILE
+        )
+        is FailureKind.UNKNOWN
+    )

@@ -1129,41 +1129,48 @@ _SHELL_PUNCTUATION = frozenset("();<>|&")
 
 
 def _installs_project(run_args: str) -> bool:
-    """True when a command this RUN executes installs the project itself.
+    """True when the command this RUN executes IS an install of the project.
 
     What is executed is read, never a word sequence anywhere in the line —
     `RUN echo about to run uv sync` installs nothing, and neither does `RUN
     echo 'prepare; uv sync'`, whose separator is quoted text. Exec form
-    (`RUN ["uv", "sync"]`) is parsed as the JSON argv it is. Shell form has
-    RUN's own flags (`--mount=`, `--network=`, ...) stripped, is tokenised by
-    `_lex_shell`, which decides what is an operator and what is a word the
-    way the shell does, is cut into command segments at those operators
-    (`_shell_segments`), and each segment is matched at its LEADING tokens
-    once `VAR=value` assignments and a leading `env` are dropped.
+    (`RUN ["uv", "sync"]`) is parsed as the JSON argv it is. Shell form has a
+    leading `--mount=` flag stripped (RUN's own bind-mount option —
+    `_BIND_MOUNT_RE` already excuses it separately, in
+    `_install_precedes_source_copy`) and is tokenised by `_lex_shell`, which
+    decides what is an operator and what is a word the way the shell does.
+    Either form then has a leading `env` and `VAR=value` assignments dropped
+    and is matched at its LEADING tokens.
 
-    Recognised: `uv sync` (unless the segment also carries
-    `--no-install-project`), `poetry install` (unless `--no-root`), and
-    `pip`/`pip3`/`uv pip`/`python -m pip` `install` with a `.` operand
-    (`pip install .`, `pip install -e .`). Dependency-only installs are
-    excluded, because they read a manifest without needing the package
-    sources.
+    Recognised: `uv sync` (unless it also carries `--no-install-project`),
+    `poetry install` (unless `--no-root`), and `pip`/`pip3`/`uv pip`/`python
+    -m pip` `install` with a `.` operand (`pip install .`, `pip install -e
+    .`). Dependency-only installs are excluded, because they read a manifest
+    without needing the package sources.
 
-    Two shell forms are unrecognised, both answering False — an honest
-    UNKNOWN downstream, never a wrong AUTHORING: one the lexer rejects
-    (unbalanced quotes), which this walker cannot claim to have read, and one
-    opening with an operator — a heredoc RUN (`RUN <<EOF`) or a redirect —
-    whose real command is not on this instruction line.
+    A shell-form RUN is UNRECOGNISED — answering False, an honest UNKNOWN
+    downstream, never a wrong AUTHORING — whenever `_lex_shell` cannot
+    tokenise it (unbalanced quotes), whenever it tokenises to nothing, or
+    whenever ANY token is a bare shell operator (`_is_shell_operator`),
+    wherever it falls in the line. That last rule gives up real recognition
+    on a chained RUN like `apt-get update && uv sync --frozen`, which used
+    to be matched at its later segment: `shlex`'s posix quote removal makes
+    a QUOTED separator indistinguishable from a real one once the quotes are
+    gone — `RUN echo ';' uv sync --frozen` is one `echo` call with `;` and
+    `uv sync --frozen` as plain arguments, yet lexes to the same token list
+    as a real `;`-chain. Segmenting on every operator token read a fake
+    install out of that line. Refusing to recognise ANY multi-operator RUN
+    is the only way to stop reading a quoted separator as a real one; the
+    hatchling marker then falls back to UNKNOWN, which the owner's rule
+    prefers to a wrong AUTHORING.
     """
     argv = _exec_form_argv(run_args)
     if argv is not None:
-        return _is_install_command(argv)
-    tokens = _lex_shell(_strip_run_flags(run_args))
-    if not tokens or _is_shell_operator(tokens[0]):
+        return _is_install_command(_drop_env_prefix(argv))
+    tokens = _lex_shell(_strip_mount_flag(run_args))
+    if not tokens or any(_is_shell_operator(token) for token in tokens):
         return False
-    return any(
-        _is_install_command(_drop_env_prefix(segment))
-        for segment in _shell_segments(tokens)
-    )
+    return _is_install_command(_drop_env_prefix(tokens))
 
 
 def _lex_shell(shell: str) -> list[str]:
@@ -1190,21 +1197,6 @@ def _is_shell_operator(token: str) -> bool:
     return bool(token) and all(char in _SHELL_PUNCTUATION for char in token)
 
 
-def _shell_segments(tokens: list[str]) -> list[list[str]]:
-    """`tokens` cut into the command segments the shell would run: an operator
-    token ends the segment before it and is dropped."""
-    segments: list[list[str]] = []
-    current: list[str] = []
-    for token in tokens:
-        if _is_shell_operator(token):
-            segments.append(current)
-            current = []
-        else:
-            current.append(token)
-    segments.append(current)
-    return segments
-
-
 def _exec_form_argv(run_args: str) -> list[str] | None:
     """The argv of an exec-form `RUN ["cmd", ...]`, or None for shell form."""
     text = run_args.strip()
@@ -1219,10 +1211,15 @@ def _exec_form_argv(run_args: str) -> list[str] | None:
     return None
 
 
-def _strip_run_flags(run_args: str) -> str:
-    """`run_args` without the leading `--flag=value` options RUN itself takes."""
+def _strip_mount_flag(run_args: str) -> str:
+    """`run_args` without a leading `--mount=...` flag — RUN's own bind-mount
+    option, already excused via `_BIND_MOUNT_RE` in
+    `_install_precedes_source_copy`. Any OTHER leading `--flag` (say
+    `--network=`) is left in place; it then simply fails to match an install
+    command's leading tokens, which reads as unrecognised rather than
+    misreading the flag as part of the command."""
     text = run_args.strip()
-    while text.startswith("--"):
+    while text.startswith("--mount="):
         _, _, text = text.partition(" ")
         text = text.strip()
     return text
