@@ -115,6 +115,20 @@ def _symptom(name: str, pattern: str) -> Rule:
 #   parser over the workflow YAML. A missing secret VALUE is a different
 #   message (the expression evaluates to empty); this one says the NAME is not
 #   in the language.
+#
+# Anchored (owner finding, 2026-09-22, final review round): the two bullets
+# above are true only of the WORDS the parser itself prints, and
+# `unknown instruction` / `unrecognized named-value` are ordinary English an
+# application can say about its own business — `ValueError: unknown
+# instruction: frobnicate` has never seen a Dockerfile, and a pytest
+# assertion can quote `unrecognized named-value` without being GitHub's
+# validator. Both rules require the parser's OWN framing on the SAME LINE as
+# the words, never the words alone: buildkit's and the legacy daemon's
+# `...dockerfile parse error (?:on )?line N: unknown instruction: X` put
+# both on one line, and so does GitHub's own
+# `The workflow is not valid. .github/workflows/...: Unrecognized
+# named-value: ...`. `dockerfile parse error` alone needs no anchor: no
+# other tool prints that sentence.
 # - `copy/add source not found` / `copy/add failed in build context`: the
 #   builder resolved a COPY/ADD source against the build context and printed
 #   the path it could not find. The build context IS the checkout the
@@ -131,7 +145,16 @@ _QUOTED_PATH_NOT_FOUND = r'[^\n]*"[^"\n]*": not found[ \t]*$'
 
 RULES: tuple[Rule, ...] = (
     _prose(FailureKind.AUTHORING, "dockerfile parse error", r"dockerfile parse error"),
-    _prose(FailureKind.AUTHORING, "unknown instruction", r"unknown instruction"),
+    # Anchored to the parser's own line (see the note above): buildkit and
+    # the legacy daemon both put the framing and the bad instruction on ONE
+    # line, so requiring both there -- not the bare word "unknown
+    # instruction" -- is exactly "the parser said so", never a coincidence
+    # of two unrelated sentences sharing a page.
+    _prose(
+        FailureKind.AUTHORING,
+        "unknown instruction",
+        r"dockerfile parse error[^\n]*unknown instruction",
+    ),
     # buildkit's own shape for a COPY/ADD source missing from the build
     # context: it names the path it could not find, quoted, at the line's end.
     # `failed to solve` alone heads every buildkit failure, a RUN step that
@@ -150,10 +173,14 @@ RULES: tuple[Rule, ...] = (
         r"(?:COPY|ADD) failed:[^\n]*"
         r"(?:no such file or directory|file not found in build context)",
     ),
+    # Anchored the same way: GitHub's own validator prints "The workflow is
+    # not valid." and/or the failing `.github/workflows/...` path on the
+    # SAME line as "Unrecognized named-value" -- an assertion or a third
+    # party tool that merely mentions the phrase carries neither.
     _prose(
         FailureKind.AUTHORING,
         "unrecognized named-value",
-        r"unrecognized named-value",
+        r"(?:workflow is not valid|\.github/workflows/)[^\n]*unrecognized named-value",
     ),
     _prose(
         FailureKind.ENVIRONMENT,
@@ -452,7 +479,12 @@ def _evidence_pool(job: FailedJob, step: FailedStep | None) -> list[Evidence]:
 # annotations and was wrong about logs, whose own `warning: ` lines predate
 # and outlive any rendering of ours.
 # The first mitigation for todo://deployer/diagnose-rule-catalogue-precision.
-_LINE_WARNING_RE = re.compile(rf"^{_LINE_PREFIX}(?:W|warning|notice): ")
+#
+# Case-insensitive (owner finding, 2026-09-22, final review round): a tool
+# that writes `WARNING:` (all caps, the shape several CI actions use) or
+# `Warning:` defeated a case-sensitive prefix just as completely as no
+# prefix at all, and a recovered problem behind it established a class.
+_LINE_WARNING_RE = re.compile(rf"^{_LINE_PREFIX}(?:W|warning|notice): ", re.IGNORECASE)
 _NOTICED_LEVELS = frozenset({"warning", "notice"})
 
 WARNING_SHAPED_NOTE = "warning-shaped"

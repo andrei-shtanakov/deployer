@@ -89,7 +89,11 @@ ARTIFACT_MARKERS = (
         "dockerfile-parse-error",
         "Dockerfile parse error on line 3: unexpected end of statement",
     ),
-    ("unknown-instruction", "ERROR: unknown instruction: FORM (did you mean FROM?)"),
+    (
+        "unknown-instruction",
+        "dockerfile parse error on line 3: unknown instruction: FORM "
+        "(did you mean FROM?)",
+    ),
     (
         "copy-not-found",
         "ERROR: failed to solve: failed to compute cache key: failed to "
@@ -102,8 +106,9 @@ ARTIFACT_MARKERS = (
     ),
     (
         "unrecognized-named-value",
-        "Unrecognized named-value: 'secret'. Located at position 1 within "
-        "expression: secret.TOKEN",
+        "The workflow is not valid. .github/workflows/ci.yml (Line: 31, "
+        "Col: 9): Unrecognized named-value: 'secret'. Located at position 1 "
+        "within expression: secret.TOKEN",
     ),
 )
 
@@ -157,17 +162,25 @@ SYMPTOM_MARKERS = (
 UNKNOWN_MARKERS = (("exit-code", "Process completed with exit code 1."),)
 
 # The negative twins: the marker text of a kept AUTHORING rule in a context
-# with another cause. `ambiguous` marks the twins that collide with a PROJECT
-# rule -- the catalogue reads those shapes as prose, so the honest verdict is
-# the conflict, not the class. Either way: NOT AUTHORING.
+# with another cause -- NOT AUTHORING, either way. `expected_base` is what
+# the row honestly resolves to: `None` for most (no rule matches the bare
+# words at all, so `no rule matched`/UNCLASSIFIED); `ambiguous` marks the
+# ones that still collide with a PROJECT rule because the surviving
+# AUTHORING shape (bare `dockerfile parse error`, unanchored on purpose --
+# nothing else prints that sentence) reads the same prose. The two shapes
+# the final review round anchored to the parser's own framing
+# (`unknown instruction`, `unrecognized named-value`) no longer collide at
+# all: inside an `AssertionError:`/pytest-assert line the bare words are
+# PROJECT evidence outright, so `expected_base=PROJECT` and no ambiguity.
 TWINS = (
-    ("shell-stat", "stat app.py: no such file or directory", False),
-    ("cat-missing-config", "cat: config.yml: No such file or directory", False),
+    ("shell-stat", "stat app.py: no such file or directory", False, None),
+    ("cat-missing-config", "cat: config.yml: No such file or directory", False, None),
     (
         "buildkit-run-exit",
         'ERROR: failed to solve: process "/bin/sh -c uv sync --frozen" did '
         "not complete successfully: exit code: 1",
         False,
+        None,
     ),
     # buildkit's other `: not found` ending: an image reference it could not
     # pull. A misspelled tag in the authored FROM and a registry that does not
@@ -179,44 +192,54 @@ TWINS = (
         "ERROR: failed to solve: python:3.12-slim: "
         "docker.io/library/python:3.12-slim: not found",
         False,
+        None,
     ),
-    ("shell-command-not-found", "bash: foo: command not found", False),
+    ("shell-command-not-found", "bash: foo: command not found", False, None),
     (
         "pytest-executable-not-found",
         "E   RuntimeError: executable file not found in the sandbox",
         False,
+        None,
     ),
     (
         "assertion-about-parse-error",
         "E   AssertionError: expected 'Dockerfile parse error' in captured stderr",
         True,
+        None,
     ),
     (
         "assertion-about-unknown-instruction",
         "E   AssertionError: unknown instruction: FORM was not reported",
-        True,
+        False,
+        PROJECT,
     ),
     (
         "assertion-about-named-value",
         "E   AssertionError: Unrecognized named-value was expected",
-        True,
+        False,
+        PROJECT,
     ),
 )
 
 # --- the variants ------------------------------------------------------------
 
 # A log line's own severity, at its head: apt's `W: `, the `warning: `/
-# `notice: ` compilers and pip write, and buildkit's `#<step> <seconds> `
-# framing, which is not a severity at all and must not read as one.
+# `notice: ` compilers and pip write -- in whatever case the tool wrote them
+# (final review round, finding 2: `WARNING:`/`Notice:` defeated a
+# case-sensitive prefix as completely as no prefix at all) -- and buildkit's
+# `#<step> <seconds> ` framing, which is not a severity at all and must not
+# read as one.
 LOG_SHAPES = (
     ("plain", "plain line", ""),
     ("w", "W: line", "W: "),
     ("warning", "warning: line", "warning: "),
+    ("warning-upper", "WARNING: line", "WARNING: "),
     ("notice", "notice: line", "notice: "),
+    ("notice-title", "Notice: line", "Notice: "),
     ("buildkit", "#7 1.2 line", "#7 1.2 "),
 )
-_NOTICED_SHAPES = frozenset({"w", "warning", "notice"})
-_SEVERITY_PREFIXES = ("W: ", "warning: ", "notice: ")
+_NOTICED_SHAPES = frozenset({"w", "warning", "warning-upper", "notice", "notice-title"})
+_SEVERITY_PREFIXES = ("W: ", "warning: ", "WARNING: ", "notice: ", "Notice: ")
 
 ANNOTATION_LEVELS: tuple[str | None, ...] = (
     "warning",
@@ -487,7 +510,10 @@ CAUSE_TWINS: tuple[CauseTwin, ...] = (
     CauseTwin(
         rule="unknown instruction",
         slug="unknown-instruction",
-        marker="ERROR: unknown instruction: RUN --mount=type=cache,target=/root/.cache",
+        marker=(
+            "ERROR: failed to solve: dockerfile parse error on line 7: "
+            "unknown instruction: RUN --mount=type=cache,target=/root/.cache"
+        ),
         base=ARTIFACT,
         note=(
             "a typo in the authored file vs an instruction a builder too old to "
@@ -504,8 +530,9 @@ CAUSE_TWINS: tuple[CauseTwin, ...] = (
         rule="unrecognized named-value",
         slug="unrecognized-named-value",
         marker=(
-            "Unrecognized named-value: 'secret'. Located at position 1 within "
-            "expression: secret.TOKEN"
+            "The workflow is not valid. .github/workflows/ci.yml (Line: 31, "
+            "Col: 9): Unrecognized named-value: 'secret'. Located at "
+            "position 1 within expression: secret.TOKEN"
         ),
         base=ARTIFACT,
         note=(
@@ -829,12 +856,17 @@ ROWS: tuple[Row, ...] = (
     *_cross("unknown", UNKNOWN_MARKERS, None),
     *[
         row
-        for marker_id, text, ambiguous in TWINS
+        for marker_id, text, ambiguous, expected_base in TWINS
         for row in _log_rows(
-            "twin", marker_id, text, None, ambiguous, shapes=(LOG_SHAPES[0],)
+            "twin",
+            marker_id,
+            text,
+            expected_base,
+            ambiguous,
+            shapes=(LOG_SHAPES[0],),
         )
         + _annotation_rows(
-            "twin", marker_id, text, None, ambiguous, levels=("failure",)
+            "twin", marker_id, text, expected_base, ambiguous, levels=("failure",)
         )
     ],
     *_placement_rows(
@@ -905,7 +937,7 @@ def test_every_artifact_shape_has_a_negative_twin() -> None:
         for row in ROWS
         if row.context == "twin" and row.expected_kind is FailureKind.AUTHORING
     ]
-    assert len({marker_id for marker_id, _, _ in TWINS}) >= len(ARTIFACT_MARKERS)
+    assert len({marker_id for marker_id, _, _, _ in TWINS}) >= len(ARTIFACT_MARKERS)
 
 
 def test_every_catalogue_rule_has_a_cause_twin_pair() -> None:

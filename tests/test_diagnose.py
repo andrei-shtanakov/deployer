@@ -1257,20 +1257,33 @@ def test_two_copy_failures_in_one_block_are_two_observations_one_citation():
 
 
 def test_an_observation_quotes_the_line_the_rule_matched_not_the_first():
-    """A marker on line 3 of a block is quoted from line 3."""
-    marker = "ERROR: unknown instruction: FORM (did you mean FROM?)"
+    """A marker on line 3 of a block is quoted from line 3.
+
+    The marker is buildkit's real one-line shape (final round, finding 1):
+    the parser's framing and the bad instruction on the SAME line -- a bare
+    `unknown instruction: FORM` no longer establishes anything on its own.
+    It also satisfies the bare `dockerfile parse error` rule, so both fire
+    on the identical line, each cited once.
+    """
+    marker = (
+        "dockerfile parse error on line 3: unknown instruction: FORM "
+        "(did you mean FROM?)"
+    )
     v = _verdict(f"#1 [internal] load build definition\n#1 transferring\n{marker}")
     assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.AUTHORING
-    assert v.observations == [f"unknown instruction: {marker}"]
+    assert v.observations == [
+        f"dockerfile parse error: {marker}",
+        f"unknown instruction: {marker}",
+    ]
 
 
 def test_one_line_matched_twice_by_a_rule_is_cited_once():
     """Deduplication: `finditer` can land twice inside one line, and the
     operator reads lines, not match offsets."""
-    line = "ERROR: unknown instruction: FORM -- no unknown instruction is accepted"
+    line = "connection timed out; retry also connection timed out"
     v = _verdict(line)
-    assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.AUTHORING
-    assert v.observations == [f"unknown instruction: {line}"]
+    assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.ENVIRONMENT
+    assert v.observations == [f"connection timed out: {line}"]
 
 
 def test_evidence_unavailable_keeps_the_symptoms_and_exceptions_found():
@@ -1305,3 +1318,114 @@ def test_evidence_unavailable_keeps_a_warning_shaped_match_too():
     assert v.outcome == "EVIDENCE_UNAVAILABLE"
     assert [o for o in v.observations if o.startswith("warning-shaped: ")]
     assert v.observations[-1] == "logs unavailable"
+
+
+# --- PR #72 final review round, finding 1: AUTHORING prose anchored to the --
+# parser's own framing, not the bare words -----------------------------------
+# `unknown instruction` and `unrecognized named-value` are ordinary English:
+# an application can say the first about its own vocabulary, and a test can
+# quote the second while asserting on it. Anchoring both to the parser's own
+# line (buildkit/the legacy daemon; GitHub's workflow validator) is what
+# makes "no other cause prints that shape" actually true.
+
+
+def test_a_bare_unknown_instruction_in_an_application_exception_is_not_authoring():
+    """The finding itself: an app's own `ValueError` about ITS OWN unknown
+    instruction has never seen a Dockerfile. The exception rule still
+    records it; no class is established."""
+    text = "ValueError: unknown instruction: frobnicate"
+    v = _verdict(text)
+    assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
+    assert v.evidence == []
+    assert v.observations == [f"exception: {text}"]
+
+
+def test_buildkits_own_one_line_shape_still_establishes_unknown_instruction():
+    """The real shape (owner ruling, 2026-09-22): buildkit puts the parser's
+    framing and the bad instruction on ONE line, not a `Dockerfile:N` header
+    with the error on a line of its own. The line also satisfies the bare
+    `dockerfile parse error` rule, so both are cited."""
+    text = "dockerfile parse error on line 7: unknown instruction: FROBNICATE"
+    v = _verdict(text)
+    assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.AUTHORING
+    assert v.observations == [
+        f"dockerfile parse error: {text}",
+        f"unknown instruction: {text}",
+    ]
+
+
+def test_the_legacy_daemons_one_line_shape_also_establishes_it():
+    """The pre-buildkit daemon's framing, without buildkit's own prefix
+    words -- still the parser's line, framing then instruction, together."""
+    text = (
+        "Error response from daemon: dockerfile parse error line 7: "
+        "unknown instruction: FROBNICATE"
+    )
+    v = _verdict(text)
+    assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.AUTHORING
+
+
+def test_githubs_own_one_line_shape_still_establishes_unrecognized_named_value():
+    """GitHub's real validator line: framing and marker together."""
+    text = (
+        "The workflow is not valid. .github/workflows/ci.yml (Line: 12, "
+        "Col: 9): Unrecognized named-value: 'foo'"
+    )
+    v = _verdict(text)
+    assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.AUTHORING
+
+
+def test_a_pytest_assertion_quoting_the_words_is_project_not_authoring():
+    """Corrected during review: `E   assert "unrecognized named-value" in
+    out` is PROJECT evidence outright (pytest's own bare-assert shape) --
+    the anchored AUTHORING rule does not also fire on it, so there is no
+    ambiguity left to resolve, only the one honest kind."""
+    text = 'E   assert "unrecognized named-value" in out'
+    v = _verdict(text)
+    assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.PROJECT
+
+
+def test_a_third_partys_own_message_is_not_authoring():
+    """Not GitHub's framing: a tool that happens to share the phrase."""
+    text = "my-tool: unrecognized named-value 'x'"
+    v = _verdict(text)
+    assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
+    assert v.evidence == []
+    assert v.observations == ["no rule matched"]
+
+
+# --- PR #72 final review round, finding 2: warning prefixes are -------------
+# case-insensitive ------------------------------------------------------------
+# `_LINE_WARNING_RE` was case-sensitive, so `WARNING:`/`Warning:` -- shapes
+# several CI actions and tools actually write -- defeated it exactly as
+# completely as no prefix at all.
+
+
+def test_upper_case_warning_prefix_does_not_establish_environment():
+    """The bug, in the shape the review found it: `WARNING:` (all caps)
+    read as fresh failure evidence instead of a noticed, recovered problem."""
+    text = "WARNING: Connection timed out; retry succeeded"
+    v = _verdict(text)
+    assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
+    assert v.evidence == []
+    assert v.observations == [f"warning-shaped: connection timed out: {text}"]
+
+
+def test_title_case_warning_prefix_is_also_warning_shaped():
+    text = "Warning: Connection timed out; retry succeeded"
+    v = _verdict(text)
+    assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
+    assert v.observations == [f"warning-shaped: connection timed out: {text}"]
+
+
+def test_upper_case_warning_run_does_not_classify_the_exit_code_either():
+    """The full two-line shape: a `WARNING:` line the run recovered from,
+    followed only by the step's own exit code -- must not read as
+    ENVIRONMENT with a class the operator would exit 0 with, undiagnosed."""
+    text = (
+        "WARNING: Connection timed out; retry succeeded\n"
+        "Process completed with exit code 1."
+    )
+    v = _verdict(text)
+    assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
+    assert v.evidence == []
