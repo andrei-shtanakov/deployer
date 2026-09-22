@@ -1,14 +1,31 @@
-"""Pure classification of a :class:`FailedRun` snapshot: verdicts with evidence.
+"""The reading layer over a :class:`FailedRun` snapshot. It asserts no cause.
 
-No network, no I/O: the module is a function from the dataclasses ``forge.py``
-produced to a verdict per failure. Three outcomes, kept deliberately distinct:
-``CLASSIFIED`` (a rule established the cause and cites it), ``UNCLASSIFIED``
-("I looked and do not know") and ``EVIDENCE_UNAVAILABLE`` ("I could not look").
-Rules are data, every rule is evaluated against every piece of evidence, and a
-conflict between kinds is reported as ambiguity, never resolved by order.
+The contract (owner's decision, 2026-09-22 — causal classification removed
+from this layer):
 
-What a rule may say, and what only ``SYMPTOMS`` may say, is fixed by the
-owner's unified rule, quoted verbatim above ``RULES``.
+- Kept: the facts ``forge.py`` read, the evidence, the observations, and the
+  completeness of the read.
+- A snapshot read completely is ``UNCLASSIFIED``: every line an observation
+  shape matched is reported and its block cited; nothing more is concluded.
+  A snapshot read incompletely is ``EVIDENCE_UNAVAILABLE``, with what is
+  missing named beside the observations the partial read did yield.
+- ``CLASSIFIED`` is never produced here, and neither is a kind or a cause.
+  ``Outcome``, ``FailureVerdict.kind`` and ``RunDiagnosis.causes`` keep their
+  places so the verdict document's shape is stable; from this module they
+  read ``null``/``[]``, always. Whether a cause can be established at all is
+  the question of the reproduction line
+  (``docs/superpowers/specs/2026-09-22-ci-failure-reproduction-design.md``),
+  not of a phrase found in a log.
+
+No network, no I/O: a pure function from the dataclasses ``forge.py``
+produced to one verdict per failure and a run summary. Every observation
+shape is data (``OBSERVATIONS``), every shape is tried against every piece of
+evidence, and every matched line is reported once, as ``"<name>: <line>"`` —
+prefixed ``warning-shaped: `` when a tool marked the line as noticed rather
+than fatal.
+
+Verdict schema 1.1 (additive over 1.0): ``causes`` is always ``[]`` and every
+``kind`` is ``null``; no key was added or removed.
 """
 
 import json
@@ -26,139 +43,51 @@ from deployer.forge import (
     FailedStep,
     StepRef,
 )
-from deployer.models import FailureKind
 
+# ``CLASSIFIED`` is kept for the document's schema; this module never produces it.
 Outcome = Literal["CLASSIFIED", "UNCLASSIFIED", "EVIDENCE_UNAVAILABLE"]
 
-VERDICT_SCHEMA_VERSION = "1.0"
+VERDICT_SCHEMA_VERSION = "1.1"
 
 _JOB_LEVEL_NOTE = "cited evidence is job-level (no step binding)"
-_NO_RULE_NOTE = "no rule matched"
+_NO_OBSERVATION_NOTE = "no observation matched"
 _EMPTY_SET_NOTE = "failed run exposes no failed job or step"
-SYMPTOM_NOTE = "symptom"
+WARNING_SHAPED_NOTE = "warning-shaped"
 
 # The shape of a Python exception line, optionally under pytest's ``E`` prefix.
 _EXCEPTION_NAME = r"[A-Za-z_]\w*(?:\.\w+)*(?:Error|Exception)"
 _EXCEPTION_LINE = rf"(?:E[ \t]+)?{_EXCEPTION_NAME}: "
 # `docker build` frames every RUN-step output line as `#<step> <seconds> `
 # (buildkit); diagnose, not forge, knows what docker is, so the framing is
-# tolerated here, at the line-shape rules, not stripped at the source.
+# tolerated here, at the line-shape patterns, not stripped at the source.
 _LINE_PREFIX = r"[ \t]*(?:#\d+ \d+\.\d+ )?"
-# Exception lines other than the assertion rules below: recorded as
-# observations, never as a class (spec §5: wrong dependencies or a wrong
-# invocation produce the same symptom as a project defect).
-_EXCEPTION_LINE_RE = re.compile(
-    rf"^{_LINE_PREFIX}(?:E[ \t]+)?((?!AssertionError\b){_EXCEPTION_NAME}: .+)$",
-    re.MULTILINE,
-)
 
 
 @dataclass(frozen=True)
-class Rule:
-    """One marker: the kind it establishes, a name to cite, and its pattern."""
+class Observation:
+    """One shape worth reporting: a name to report it under, and its pattern."""
 
-    kind: FailureKind
     name: str
     pattern: re.Pattern[str]
 
 
-def _prose(kind: FailureKind, name: str, pattern: str) -> Rule:
-    """A rule over prose: case-insensitive, one line at a time."""
-    return Rule(kind, name, re.compile(pattern, re.IGNORECASE | re.MULTILINE))
+def _prose(name: str, pattern: str) -> Observation:
+    """A shape over prose: case-insensitive, one line at a time."""
+    return Observation(name, re.compile(pattern, re.IGNORECASE | re.MULTILINE))
 
 
-def _exact(kind: FailureKind, name: str, pattern: str) -> Rule:
-    """A rule over a machine-shaped line: case-sensitive, one line at a time."""
-    return Rule(kind, name, re.compile(pattern, re.MULTILINE))
+def _exact(name: str, pattern: str) -> Observation:
+    """A shape over a machine-shaped line: case-sensitive, one line at a time."""
+    return Observation(name, re.compile(pattern, re.MULTILINE))
 
 
-def _symptom(name: str, pattern: str) -> Rule:
-    """A marker that names a SYMPTOM, not a cause: observed, never classified.
-
-    The kind is ``UNKNOWN`` — the one ``CLASSIFIED`` never admits — so a
-    symptom cannot establish a class even if it is read by mistake.
-    """
-    return Rule(
-        FailureKind.UNKNOWN, name, re.compile(pattern, re.IGNORECASE | re.MULTILINE)
-    )
-
-
-# The unified rule this catalogue is audited against (owner, 2026-09-22):
-#
-# - The LEVEL of a message decides how evidence is weighed (warning/notice →
-#   observation only), never establishes a cause.
-# - AUTHORING requires POSITIVE evidence of a defect in the AUTHORED ARTIFACT
-#   (Dockerfile / workflow / image entrypoint). A bare `no such file` is a
-#   SYMPTOM — project, environment or invocation can all produce it — and is
-#   insufficient.
-# - Every positive rule has a NEGATIVE TWIN: the same marker text in a context
-#   with a different cause must NOT yield the class.
-#
-# Sharpened by the owner on the same day: a CONTAINER-RUNTIME shape is not by
-# itself an artifact defect. `exec: "x": executable file not found in $PATH`
-# proves that a missing executable was asked for, not that its name came from
-# the authored CMD/ENTRYPOINT — the command is overridable at run time — and
-# `unable to resolve action` is printed just as faithfully for a reference that
-# was valid when the workflow was written and whose upstream tag has since been
-# deleted. Where the snapshot cannot tell the causes apart, it observes: both
-# shapes live in `SYMPTOMS` now.
-#
-# Generalised by the owner (2026-09-22, bounded deterministic pass) into the
-# rule the whole catalogue now answers to:
-#
-#   A CLASS IS ESTABLISHED ONLY WHERE THE SHAPE OF THE EVIDENCE TIES THE
-#   MESSAGE TO ITS CAUSE. Without sufficient provenance the honest answer is
-#   an observation and UNCLASSIFIED — and a classification known to fire on
-#   the wrong cause is a WRONG DIAGNOSIS, not a limitation to be pinned and
-#   shipped.
-#
-# So the catalogue is NOT widened to keep a live scenario green: live
-# acceptance run 1 (a COPY of a path that is not in the build context) reads
-# UNCLASSIFIED now, and the expectation was corrected rather than the rule.
-# What the rule costs each kind:
-#
-# - AUTHORING keeps only what the tool that OWNS the artifact says about the
-#   artifact's own text. `dockerfile parse error`: the parser read the
-#   Dockerfile's bytes and could not — no environment state, no project code
-#   and no invocation can make a well-formed instruction unparseable.
-#   `unrecognized named-value`: the same, for the runner's own expression
-#   parser over the workflow YAML (a missing secret VALUE is a different
-#   message — the expression evaluates to empty; this one says the NAME is
-#   not in the language), and it demands GitHub's own framing on the SAME
-#   line, because a pytest assertion can quote the phrase without being the
-#   validator. `unknown instruction` is a SYMPTOM outright: it is ordinary
-#   English about a vocabulary, and `ValueError: unknown instruction:
-#   frobnicate` has never seen a Dockerfile. A `dockerfile parse error` line
-#   that carries those words therefore establishes nothing either — the words
-#   are what an application would be quoting, and the parser's framing beside
-#   them proves only that both sentences share a line.
-# - ENVIRONMENT matches only a line carrying a TOOL'S OWN framing: apt's
-#   `E: `, curl's `curl: (N)`, git's `fatal: unable to access '...':`, uv's
-#   error chain, buildkit's `failed to solve:`, the docker daemon's own
-#   reply, the registry's `toomanyrequests:`, the runner's own sentence. The
-#   BARE phrases — `connection timed out`, `503 Service Unavailable`, `no
-#   space left on device`, `temporary failure in name resolution`, `could not
-#   resolve host` — are printed verbatim by any application under test that
-#   exercises a retry path, so on their own they are symptoms. Each
-#   alternative below is named for the tool it was taken from.
-# - PROJECT needs PROVENANCE beside the assertion (`_has_project_provenance`).
-#   The rules match the assertion shapes exactly as before; `classify_failure`
-#   is what refuses to call it a class when the same piece of evidence does
-#   not say WHOSE assertion failed.
-#
-# The symptoms these failures share with every other cause live in `SYMPTOMS`
-# — including, since this pass, both COPY/ADD shapes. The build context IS
-# the checkout the Dockerfile was authored against (spec §6.4 scenario A), so
-# the line is a genuine mismatch between the instruction and its context; but
-# a path the COPY never had right and a file the project moved AFTER the
-# Dockerfile was authored print the identical line, and the snapshot cannot
-# say which side moved. Naming AUTHORING there would be right by luck.
-_QUOTED_PATH_NOT_FOUND = r'[^\n]*"[^"\n]*": not found[ \t]*$'
-
-# The tool framings the ENVIRONMENT rules require, each named for the tool
-# that prints it. They are line fragments, never anchored to the line's head:
+# The tool framings the network shapes require, each named for the tool that
+# prints it. They are line fragments, never anchored to the line's head:
 # buildkit frames a step's output as `#N t.ttt ` and then reprints the failing
-# lines a second time, under `------`, with a bare `t.ttt ` instead.
+# lines a second time, under `------`, with a bare `t.ttt ` instead. The bare
+# phrases (`connection timed out`, `503 Service Unavailable`, `no space left on
+# device`, ...) are printed verbatim by any application under test that
+# exercises a retry path, so on their own they are not a shape.
 _APT_ERROR = r"(?:^|[ \t])E: "
 _APT_UNREACHABLE = r"could not connect to \S+?:\d+"
 _CURL = r"curl: \(\d+\)"
@@ -168,36 +97,62 @@ _UV_ERROR = r"(?:error: Failed to fetch:|Caused by:)"
 _BUILDKIT = r"failed to solve:"
 _DAEMON = r"(?:Error response from daemon:|error during connect:)"
 _TIMED_OUT = r"(?:connection timed out|operation timed out|i/o timeout)"
+# buildkit's ending for a COPY/ADD source it could not find in the build
+# context: the path, quoted, at the line's end. An image reference it could
+# not pull ends `: not found` too, without the quotes.
+_QUOTED_PATH_NOT_FOUND = r'[^\n]*"[^"\n]*": not found[ \t]*$'
 
-RULES: tuple[Rule, ...] = (
-    # The Dockerfile parser's own sentence -- no other tool prints it -- but
-    # never on a line that also carries `unknown instruction`: those words
-    # are a symptom now, and a line holding both proves only that the two
-    # sentences share a line.
+OBSERVATIONS: tuple[Observation, ...] = (
+    # --- what the tool that owns an artifact said about its text ------------
+    # The Dockerfile parser's own sentence. A line that also carries
+    # `unknown instruction` is reported under those words instead, once.
     _prose(
-        FailureKind.AUTHORING,
         "dockerfile parse error",
         r"dockerfile parse error(?![^\n]*unknown instruction)",
     ),
-    # Anchored to the validator's own line: GitHub prints "The workflow is
-    # not valid." and/or the failing `.github/workflows/...` path on the
-    # SAME line as "Unrecognized named-value" -- an assertion or a third
-    # party tool that merely mentions the phrase carries neither.
+    _prose("unknown instruction", r"unknown instruction"),
+    # GitHub's workflow validator prints "The workflow is not valid." and/or
+    # the `.github/workflows/...` path on the SAME line as the phrase; a test
+    # or a third-party tool quoting the phrase carries neither.
     _prose(
-        FailureKind.AUTHORING,
         "unrecognized named-value",
         r"(?:workflow is not valid|\.github/workflows/)[^\n]*unrecognized named-value",
     ),
-    # docker's own reply when its socket is not answering.
+    # The runner could not fetch a `uses:` reference.
+    _prose("unresolvable action", r"unable to resolve action"),
+    # --- the build context ---------------------------------------------------
+    # buildkit's shape for a COPY/ADD source missing from the build context,
+    # and the legacy daemon's shape for the same.
     _prose(
-        FailureKind.ENVIRONMENT,
+        "copy/add source not found",
+        rf"failed to (?:solve|compute cache key){_QUOTED_PATH_NOT_FOUND}",
+    ),
+    _prose(
+        "copy/add failed in build context",
+        r"(?:COPY|ADD) failed:[^\n]*"
+        r"(?:no such file or directory|file not found in build context)",
+    ),
+    # --- the container runtime ------------------------------------------------
+    # docker's/containerd's own shape when the process it was told to start
+    # is not in the image: `exec: "<binary>": executable file not found in
+    # $PATH`. The bare sentence, outside that shape, is reported apart --
+    # pytest, tox and any process spawner print it about a binary of theirs.
+    _prose(
+        "entrypoint executable not found",
+        r"exec:[^\n]*executable file not found in \$PATH",
+    ),
+    _prose(
+        "executable not found",
+        r"^(?![^\n]*exec:[^\n]*executable file not found in \$PATH)"
+        r"[^\n]*executable file not found",
+    ),
+    _prose("exec format error", r"exec format error"),
+    # --- a tool's own report of the network, the registry, the runner --------
+    _prose(
         "docker daemon unreachable",
         r"(?:cannot connect to the docker daemon|error during connect:)",
     ),
-    # curl, git, apt or uv saying DNS failed. The bare sentence is a symptom:
-    # an offline-probe step prints it on purpose.
     _prose(
-        FailureKind.ENVIRONMENT,
         "host unresolvable",
         rf"(?:{_CURL}|{_GIT_ACCESS}|{_APT_ERROR}|{_UV_ERROR})"
         r"[^\n]*could not resolve host",
@@ -206,185 +161,106 @@ RULES: tuple[Rule, ...] = (
     # and uv need their own error framing, since pip's `WARNING: Retrying`
     # says the same words about a problem it went on to recover from.
     _prose(
-        FailureKind.ENVIRONMENT,
         "name resolution failure",
         r"(?:temporary failure resolving '[^'\n]+'"
         rf"|(?:{_APT_ERROR}|{_PIP_ERROR})[^\n]*temporary failure in name resolution"
         rf"|{_UV_ERROR}[^\n]*failed to lookup address)",
     ),
-    # apt's and uv's own fetch failures. `TypeError: Failed to fetch` --
-    # jest's message, the over-firer recorded in TODO.md -- carries neither
-    # framing: no `E: ` at the head of a word, and no trailing colon.
+    # apt's and uv's own fetch failures. jest's `TypeError: Failed to fetch`
+    # carries neither framing: no `E: ` at the head of a word, no trailing colon.
     _prose(
-        FailureKind.ENVIRONMENT,
         "fetch failure",
         rf"(?:{_APT_ERROR}Failed to fetch\b|error: Failed to fetch:)",
     ),
     # apt's `Err:` detail line names the host and port it could not reach;
     # the other tools carry their own framing before the phrase.
     _prose(
-        FailureKind.ENVIRONMENT,
         "connection timed out",
         rf"(?:{_APT_UNREACHABLE}[^\n]*connection timed out"
         rf"|(?:{_APT_ERROR}|{_CURL}|{_GIT_ACCESS}|{_UV_ERROR}|{_BUILDKIT})"
         rf"[^\n]*{_TIMED_OUT})",
     ),
-    # The registry's own refusal, or buildkit reporting it.
     _prose(
-        FailureKind.ENVIRONMENT,
         "registry rate limit",
         rf"(?:toomanyrequests:[^\n]*rate limit|{_BUILDKIT}[^\n]*toomanyrequests)",
     ),
-    # An upstream 503 as a TOOL read it, not as an app's fixture printed it.
     _prose(
-        FailureKind.ENVIRONMENT,
         "service unavailable",
         rf"(?:{_BUILDKIT}|{_DAEMON}|{_CURL}|{_APT_ERROR}|{_UV_ERROR})"
         r"[^\n]*503 service unavailable",
     ),
-    # buildkit, the daemon, or the daemon's own storage path: a test writing
-    # to a deliberately tiny tmpfs prints the bare sentence and nothing else.
     _prose(
-        FailureKind.ENVIRONMENT,
         "disk full",
         rf"(?:{_BUILDKIT}|{_DAEMON}|/var/lib/docker[^\n]*?:)"
         r"[^\n]*no space left on device",
     ),
-    # The runner's own sentence about itself.
-    _prose(
-        FailureKind.ENVIRONMENT,
-        "runner shutdown",
-        r"the runner has received a shutdown signal",
-    ),
-    # The assertion shapes. Each matches as it always did; none of them
-    # establishes PROJECT unless the SAME piece of evidence also carries a
-    # frame or node id pointing into the checkout (`_has_project_provenance`,
-    # applied in `classify_failure`).
+    _prose("runner shutdown", r"the runner has received a shutdown signal"),
+    # --- assertions, in the shapes Python and pytest print them --------------
+    _exact("assertion error", rf"^{_LINE_PREFIX}(?:E[ \t]+)?AssertionError: "),
     _exact(
-        FailureKind.PROJECT,
-        "assertion error",
-        rf"^{_LINE_PREFIX}(?:E[ \t]+)?AssertionError: ",
+        "pytest failed with assertion", rf"^{_LINE_PREFIX}FAILED \S+ - AssertionError"
     ),
+    _exact("pytest bare assert", rf"^{_LINE_PREFIX}FAILED \S+ - assert "),
+    _exact("pytest assert", rf"^{_LINE_PREFIX}E[ \t]+assert "),
+    # --- any other exception line ----------------------------------------------
     _exact(
-        FailureKind.PROJECT,
-        "pytest failed with assertion",
-        rf"^{_LINE_PREFIX}FAILED \S+ - AssertionError",
+        "exception",
+        rf"^{_LINE_PREFIX}(?:E[ \t]+)?(?!AssertionError\b){_EXCEPTION_NAME}: .+$",
     ),
-    _exact(
-        FailureKind.PROJECT,
-        "pytest bare assert",
-        rf"^{_LINE_PREFIX}FAILED \S+ - assert ",
-    ),
-    _exact(FailureKind.PROJECT, "pytest assert", rf"^{_LINE_PREFIX}E[ \t]+assert "),
+    # --- the sentence every missing file prints -------------------------------
+    # The exception-shaped lookahead keeps a Python `FileNotFoundError` to the
+    # one `exception` observation it already gets, rather than reporting it
+    # twice.
+    _prose("no such file", rf"^(?!{_LINE_PREFIX}{_EXCEPTION_LINE})[^\n]*no such file"),
 )
-"""Every rule is evaluated against every piece of evidence; order is cosmetic."""
-
-SYMPTOMS: tuple[Rule, ...] = (
-    # buildkit's own shape for a COPY/ADD source missing from the build
-    # context (the path it could not find, quoted, at the line's end), and
-    # docker's shape for the same. AUTHORING until this pass: the build
-    # context IS the checkout, so the line is a real mismatch between the
-    # instruction and its context -- but a path the COPY never had right and
-    # a file the project moved AFTER the Dockerfile was authored print the
-    # identical line. The snapshot cannot say which side moved, so it says
-    # what it saw. Listed before `no such file` so the operator reads the
-    # builder's own shape first.
-    _symptom(
-        "copy/add source not found",
-        rf"failed to (?:solve|compute cache key){_QUOTED_PATH_NOT_FOUND}",
-    ),
-    _symptom(
-        "copy/add failed in build context",
-        r"(?:COPY|ADD) failed:[^\n]*"
-        r"(?:no such file or directory|file not found in build context)",
-    ),
-    # Demoted with them: `unknown instruction` is ordinary English about a
-    # vocabulary, and an application says it about its own -- the parser's
-    # framing on the same line proves only that both sentences share a line.
-    _symptom("unknown instruction", r"unknown instruction"),
-    # A missing file is what a defect in the artifact, in the project, in the
-    # environment and in the invocation all look like from the outside. The
-    # exception-shaped lookahead keeps a Python `FileNotFoundError` to the one
-    # `exception:` observation it already gets, rather than reporting it twice.
-    _symptom(
-        "no such file",
-        rf"^(?!{_LINE_PREFIX}{_EXCEPTION_LINE})[^\n]*no such file",
-    ),
-    # An amd64 image on an arm64 runner is an environment mismatch as readily
-    # as a wrong `--platform` in the Dockerfile.
-    _symptom("exec format error", r"exec format error"),
-    # docker's/containerd's own shape when the process it was told to start is
-    # not in the image: `exec: "<binary>": executable file not found in $PATH`.
-    # It was an AUTHORING rule until the owner's ruling of 2026-09-22: the line
-    # names the binary, never WHO named it, and `docker run --entrypoint`, a
-    # job's `container.options`, a compose `command:` and `kubectl run --` all
-    # override the image's CMD/ENTRYPOINT with a name of their own. Kept as its
-    # own symptom, apart from the bare sentence below, because the shape still
-    # tells the operator it was the container runtime that failed to start.
-    _symptom(
-        "entrypoint executable not found",
-        r"exec:[^\n]*executable file not found in \$PATH",
-    ),
-    # The bare sentence, outside the `exec:` shape above: pytest, tox and any
-    # process spawner print it about a binary that is nobody's entrypoint.
-    _symptom(
-        "executable not found",
-        r"^(?![^\n]*exec:[^\n]*executable file not found in \$PATH)"
-        r"[^\n]*executable file not found",
-    ),
-    # The runner could not fetch a `uses:` reference. A typo in the authored
-    # workflow prints it; so does a tag, branch or whole repository the
-    # upstream deleted after the workflow was written, and so does a private
-    # action the token may no longer read. Demoted 2026-09-22 with the `exec:`
-    # shape above, for the same reason: the snapshot carries nothing that tells
-    # a defect in the YAML from a change on the other side of the reference.
-    _symptom("unresolvable action", r"unable to resolve action"),
-)
-"""Markers that name a SYMPTOM, never a cause (the second bullet above).
-
-They are NOT classifying: they are reported as ``symptom: <name>: <line>``
-observations so the operator still sees what the run printed, and they take
-no part in the ambiguity check — a symptom beside an established cause is a
-detail of that failure, not a second kind competing with it.
-"""
+"""Every shape is tried against every piece of evidence; order is the order
+the observations are reported in, and nothing else."""
 
 
 @dataclass(frozen=True)
 class FailureVerdict:
-    """The verdict for one failure: a step, or a job with no itemised steps."""
+    """The verdict for one failure: a step, or a job with no itemised steps.
+
+    ``evidence`` cites every block in which an observation matched, once, in
+    pool order; ``observations`` name every matched line. ``kind`` is always
+    ``None``: it keeps its key in the document, and this layer asserts no
+    cause.
+    """
 
     where: StepRef | int
     outcome: Outcome
-    kind: FailureKind | None
     evidence: list[Evidence]
     observations: list[str]
+    kind: None = None
 
 
 @dataclass(frozen=True)
 class RunDiagnosis:
-    """The run summary: every verdict, one outcome, the distinct causes.
+    """The run summary: every verdict, one outcome, and run-level observations.
 
-    ``causes`` lists the kinds established by ``CLASSIFIED`` verdicts, sorted
-    and deduplicated, and is kept whatever ``outcome`` says. ``observations``
-    are run-level: what is missing, or that the run exposed nothing to
-    diagnose.
+    ``causes`` is always empty: it keeps its key in the document, and this
+    layer asserts no cause. ``observations`` are run-level: what is missing,
+    or that the run exposed nothing to diagnose.
     """
 
     run: FailedRun
     failures: list[FailureVerdict]
     outcome: Outcome
-    causes: list[FailureKind]
+    causes: list[str]
     observations: list[str]
 
 
 @dataclass(frozen=True)
 class _Match:
-    rule: Rule
+    shape: Observation
     evidence: Evidence
     line: str
 
     def describe(self) -> str:
-        return f"{self.rule.name}: {_for_operator(self.evidence, self.line)}"
+        label = f"{self.shape.name}: {_for_operator(self.evidence, self.line)}"
+        if _is_warning_shaped(self.evidence, self.line):
+            return f"{WARNING_SHAPED_NOTE}: {label}"
+        return label
 
 
 def diagnose_run(snapshot: FailedRun) -> RunDiagnosis:
@@ -392,127 +268,59 @@ def diagnose_run(snapshot: FailedRun) -> RunDiagnosis:
 
     Each verdict is judged against ITS OWN job's ``completeness``: a sibling
     job whose log could not be fetched does not speak for a job that was
-    read completely, so an established cause is never lost to it (spec §4).
-    The run summary still reports the gap.
+    read completely, so what that job's read found is never lost to it
+    (spec §4). The run summary still reports the gap.
 
     Precedence: evidence incomplete anywhere → ``EVIDENCE_UNAVAILABLE``; else
-    any unclassified failure, or nothing to diagnose at all → ``UNCLASSIFIED``;
-    else ``CLASSIFIED``. The empty set is never vacuously classified. Whatever
-    the outcome, ``causes`` keeps the kinds the ``CLASSIFIED`` verdicts
-    established.
+    ``UNCLASSIFIED``, including for a run that exposes nothing to diagnose.
 
     With zero kept jobs forge fetched nothing, so its worst-of reads
     ``unavailable``/``absent`` without anything having been lost; there only
     an ``error`` state counts as incompleteness.
     """
     failures = [
-        classify_failure(job, step, job.completeness)
+        read_failure(job, step, job.completeness)
         for job in snapshot.jobs
         for step in (job.steps or [None])
     ]
-    observations: list[str] = []
-    outcome: Outcome
     lost = (
         _lost(snapshot.completeness)
         if not snapshot.jobs
         else _incomplete(snapshot.completeness)
     )
     if lost or any(v.outcome == "EVIDENCE_UNAVAILABLE" for v in failures):
-        outcome = "EVIDENCE_UNAVAILABLE"
-        observations = _run_missing(snapshot)
-    elif not failures or any(v.outcome == "UNCLASSIFIED" for v in failures):
-        outcome = "UNCLASSIFIED"
-        if not failures:
-            observations = [_EMPTY_SET_NOTE]
-    else:
-        outcome = "CLASSIFIED"
-    causes = sorted(
-        {v.kind for v in failures if v.outcome == "CLASSIFIED" and v.kind},
-        key=lambda kind: kind.value,
-    )
-    return RunDiagnosis(snapshot, failures, outcome, causes, observations)
+        return RunDiagnosis(
+            snapshot, failures, "EVIDENCE_UNAVAILABLE", [], _run_missing(snapshot)
+        )
+    observations = [] if failures else [_EMPTY_SET_NOTE]
+    return RunDiagnosis(snapshot, failures, "UNCLASSIFIED", [], observations)
 
 
-def classify_failure(
+def read_failure(
     job: FailedJob, step: FailedStep | None, completeness: Completeness
 ) -> FailureVerdict:
-    """Classify one failure from its evidence pool; never from rule order.
+    """Read one failure from its evidence pool: observations and citations.
 
-    ``step=None`` is the job-level verdict for a job without kept steps. All
-    matches are collected first; then incompleteness wins over any marker,
-    two distinct kinds are ambiguity, one kind is a class with its citations,
-    and none is ``UNKNOWN`` with whatever was observed. A marker that landed
-    on warning-shaped evidence establishes nothing and is carried through as
-    an observation, whatever the outcome.
-
-    A PROJECT match is demoted the same way when the piece of evidence it
-    landed on carries no provenance for the assertion (see
-    :func:`_has_project_provenance`): an assertion that does not say whose
-    it was establishes nothing, and cannot make an unrelated cause ambiguous
-    either.
-
-    Every observation names the LINE it was read from, and every matched line
-    gets one, so a cited block never hides a second match behind its first.
-    ``EVIDENCE_UNAVAILABLE`` keeps all four kinds of observation beside the
-    note of what could not be read (spec §3: "markers already found are
-    preserved as observations") — an unreadable run must not be made to look
-    emptier than the part of it that WAS read.
+    ``step=None`` is the job-level verdict for a job without kept steps.
+    Every shape is tried against every piece of the pool; every matched line
+    is an observation and every block with a match is cited. A step verdict
+    that cites job-level evidence says so. Incompleteness names what could
+    not be read, beside what the partial read DID show (spec §3: "markers
+    already found are preserved as observations") — an unreadable run must
+    not be made to look emptier than the part of it that was read.
     """
     where = step.ref if step is not None else job.job_id
-    pool = _evidence_pool(job, step)
-    per_item = [_matches(item) for item in pool]
-    matches, unprovenanced = _partition_by_provenance(
-        [match for found, _ in per_item for match in found]
-    )
-    demoted = [
-        f"{WARNING_SHAPED_NOTE}: {match.describe()}"
-        for _, warned in per_item
-        for match in warned
-    ] + [f"{NO_PROVENANCE_NOTE}: {match.describe()}" for match in unprovenanced]
-    exceptions = [
-        f"exception: {_for_operator(item, line)}"
-        for item in pool
-        for line in _EXCEPTION_LINE_RE.findall(item.text)
-    ]
-    symptoms = [
-        f"{SYMPTOM_NOTE}: {match.describe()}"
-        for item in pool
-        for match in _symptom_matches(item)
-    ]
+    matches = [match for item in _evidence_pool(job, step) for match in _observe(item)]
+    cited = list(dict.fromkeys(match.evidence for match in matches))
+    observations = [match.describe() for match in matches]
+    if step is not None and any(not isinstance(item.source, StepRef) for item in cited):
+        observations.append(_JOB_LEVEL_NOTE)
     if _incomplete(completeness):
-        found = [match.describe() for match in matches]
         return FailureVerdict(
-            where,
-            "EVIDENCE_UNAVAILABLE",
-            None,
-            [],
-            found + demoted + exceptions + symptoms + _missing(completeness),
+            where, "EVIDENCE_UNAVAILABLE", cited, observations + _missing(completeness)
         )
-    kinds = sorted({match.rule.kind for match in matches}, key=lambda k: k.value)
-    if len(kinds) >= 2:
-        return FailureVerdict(
-            where,
-            "UNCLASSIFIED",
-            FailureKind.UNKNOWN,
-            [],
-            [_ambiguity(matches, kinds), *demoted, *exceptions, *symptoms],
-        )
-    if len(kinds) == 1:
-        cited = list(dict.fromkeys(match.evidence for match in matches))
-        observations = (
-            [match.describe() for match in matches] + demoted + exceptions + symptoms
-        )
-        if step is not None and any(
-            not isinstance(item.source, StepRef) for item in cited
-        ):
-            observations.append(_JOB_LEVEL_NOTE)
-        return FailureVerdict(where, "CLASSIFIED", kinds[0], cited, observations)
     return FailureVerdict(
-        where,
-        "UNCLASSIFIED",
-        FailureKind.UNKNOWN,
-        [],
-        demoted + exceptions + symptoms or [_NO_RULE_NOTE],
+        where, "UNCLASSIFIED", cited, observations or [_NO_OBSERVATION_NOTE]
     )
 
 
@@ -533,197 +341,30 @@ def _evidence_pool(job: FailedJob, step: FailedStep | None) -> list[Evidence]:
     ]
 
 
-# One notion, two sources. A log line says it for itself: apt prefixes a
-# recovered problem with `W: ` and a real one with `E: `, and compilers, pip
-# and shell tooling write `warning: `/`notice: ` at the head of the line.
-# A GitHub annotation instead carries a level of its own, which `forge`
-# records as `Evidence.level` (round 7). So `warning`/`notice`, as a level
-# or as a line's own prefix, is a noticed problem, while `failure`/`error`
-# — and any level this catalogue has not seen, and an unprefixed log line
-# — are failure evidence.
-# Because in practice every step's evidence pool is the whole job log (all
-# real citations are job-level), one warning-shaped line was enough to pair
-# with a genuine AUTHORING marker and turn a clean verdict into `ambiguous:`,
-# or to classify ENVIRONMENT off a retry that succeeded. A warning is not the
-# failure whatever it mentions — `no such file optional-cache.json;
-# continuing without cache` says the build carried on — so NO rule of any
-# kind may establish a class off such a match; every kind keeps it as an
-# observation. (Round 2 applied this to ENVIRONMENT rules only, which left
-# that annotation reading as AUTHORING and exiting 0 on a class nobody had
-# evidence for.)
-#
-# The two sources are judged differently because they are differently
-# shaped. An annotation's level governs its WHOLE message, whichever line a
-# rule matched — and being data, no text can hide it: rounds 5 and 6 read
-# the level off the text, so a `warning: ` prefix on line 1 only, and then an
-# empty first line, each let a later line establish a class the run had no
-# evidence for. A log block has no level at all, so it is judged on the
-# matched line itself, never on where the block happens to start: a
-# warning-prefixed line mid-block is warning-shaped on its own, and a block
-# that DOES open with one must not blanket-exclude a genuine marker on a
-# later line (round 5, finding 1). Round 7 first dropped the prose prefixes
-# from the line rule as an artefact of forge's old rendering; that held for
-# annotations and was wrong about logs, whose own `warning: ` lines predate
-# and outlive any rendering of ours.
-# The first mitigation for todo://deployer/diagnose-rule-catalogue-precision.
-#
-# Case-insensitive (owner finding, 2026-09-22, final review round): a tool
-# that writes `WARNING:` (all caps, the shape several CI actions use) or
-# `Warning:` defeated a case-sensitive prefix just as completely as no
-# prefix at all, and a recovered problem behind it established a class.
-_LINE_WARNING_RE = re.compile(rf"^{_LINE_PREFIX}(?:W|warning|notice): ", re.IGNORECASE)
-_NOTICED_LEVELS = frozenset({"warning", "notice"})
-
-WARNING_SHAPED_NOTE = "warning-shaped"
+def _observe(item: Evidence) -> list[_Match]:
+    """Every shape against one piece of evidence: every matched line, once each."""
+    return [
+        _Match(shape, item, line)
+        for shape in OBSERVATIONS
+        for line in _matched_lines(shape, item)
+    ]
 
 
-def _is_warning_shaped(item: Evidence, line: str) -> bool:
-    """Whether `line`, matched inside `item`, reports a noticed, not fatal,
-    problem.
-
-    An annotation (`item.level` is not None) is judged by its level alone,
-    for every line of its message. A log block carries no level, so it is
-    judged per matched line instead: apt's `W: `, or a `warning: `/`notice: `
-    the tool wrote itself, at the head of that one line.
-    """
-    if item.level is not None:
-        return item.level in _NOTICED_LEVELS
-    return bool(_LINE_WARNING_RE.match(line))
-
-
-# PROJECT's provenance (owner's evidence rule, 2026-09-22). `AssertionError:
-# 1 != 2` is printed by the project's own suite, by a CI setup script the
-# runner invokes with `python -c`, and by an installed dependency's doctest
-# collected by the same run. What tells them apart is the FILE the failing
-# frame names, so a class is established only where the SAME piece of
-# evidence carries one of the two shapes that name it: a traceback frame, or
-# a pytest node id. The node id is provenance in its own right, which is why
-# `FAILED tests/test_x.py::test_y - AssertionError: ...` needs nothing else.
-_PROVENANCE_RE = re.compile(
-    rf'File "(?P<frame>[^"\n]+)", line \d+|^{_LINE_PREFIX}FAILED (?P<node>\S+?)::',
-    re.MULTILINE,
-)
-# Not the checkout: an installed dependency, the runner's own temp area, or
-# a synthetic frame (`<string>`/`<stdin>`, what `python -c` reports).
-_NOT_THE_CHECKOUT = ("site-packages", "dist-packages", "/_temp/", "/tmp/")
-# An ABSOLUTE frame is the checkout's only where the path says so. `/app/
-# tests/test_greeting.py` qualifies: it is the image's WORKDIR copy of the
-# project, which is what live acceptance run 3 really printed.
-_CHECKOUT_DIRS = ("/tests/", "/src/")
-
-NO_PROVENANCE_NOTE = "assertion without project provenance"
-
-
-def _has_project_provenance(item: Evidence) -> bool:
-    """Whether this piece of evidence says WHOSE assertion failed."""
-    return any(
-        _is_project_path(frame or node)
-        for frame, node in _PROVENANCE_RE.findall(item.text)
-    )
-
-
-def _is_project_path(path: str) -> bool:
-    """Whether a frame's path names a file of the checkout under diagnosis.
-
-    A RELATIVE path is the checkout's by construction — pytest prints node
-    ids relative to its rootdir, and a traceback frame is relative when the
-    process was started inside the tree. An ABSOLUTE one is the checkout's
-    only when it sits under the project's own directories.
-    """
-    if path.startswith("<"):
-        return False
-    if any(part in path for part in _NOT_THE_CHECKOUT):
-        return False
-    if not path.startswith("/"):
-        return True
-    return any(part in path for part in _CHECKOUT_DIRS)
-
-
-def _partition_by_provenance(
-    matches: list[_Match],
-) -> tuple[list[_Match], list[_Match]]:
-    """Split the matches into (established, PROJECT matches without provenance).
-
-    Only the PROJECT kind is gated: the other kinds are tied to their cause by
-    the shape of the line itself (a tool's own framing, a parser's own
-    sentence), which is the same requirement read off a different feature.
-    """
-    established: list[_Match] = []
-    unprovenanced: list[_Match] = []
-    for match in matches:
-        if match.rule.kind is FailureKind.PROJECT and not _has_project_provenance(
-            match.evidence
-        ):
-            unprovenanced.append(match)
-        else:
-            established.append(match)
-    return established, unprovenanced
-
-
-def _for_operator(item: Evidence, line: str) -> str:
-    """One line of evidence as an operator should read it.
-
-    An annotation's level is data, not text (`forge.Evidence`), so it is
-    rendered back onto the line here -- at the one place a human reads it,
-    and nowhere a rule can trip over it.
-    """
-    return line if item.level is None else f"{item.level}: {line}"
-
-
-def _matched_lines(rule: Rule, item: Evidence) -> list[str]:
-    """Every line of ``item`` the rule matched: document order, once each.
+def _matched_lines(shape: Observation, item: Evidence) -> list[str]:
+    """Every line of ``item`` the shape matched: document order, once each.
 
     ALL of them, not the first: the citation is the block, so a verdict that
-    named only the first match reported one missing file out of two and left
-    the operator to guess there was a second. Deduplicated by line text —
-    a pattern can land twice inside one line, and an operator reads lines,
-    not match offsets.
+    named only the first match would report one missing file out of two and
+    leave the operator to guess there was a second. Deduplicated by line
+    text — a pattern can land twice inside one line, and an operator reads
+    lines, not match offsets.
     """
     return list(
         dict.fromkeys(
-            _line_at(item.text, hit.start()) for hit in rule.pattern.finditer(item.text)
+            _line_at(item.text, hit.start())
+            for hit in shape.pattern.finditer(item.text)
         )
     )
-
-
-def _matches(item: Evidence) -> tuple[list[_Match], list[_Match]]:
-    """Every rule against one piece of evidence: (established, warning-shaped).
-
-    A rule of ANY kind keeps looking past a match it judged warning-shaped.
-    The lines it passed over are returned separately, and only when that rule
-    established nothing at all, so the verdict can observe a noticed problem
-    without citing it and without repeating what it did cite.
-    """
-    found: list[_Match] = []
-    warned: list[_Match] = []
-    for rule in RULES:
-        established: list[_Match] = []
-        skipped: list[_Match] = []
-        for line in _matched_lines(rule, item):
-            match = _Match(rule, item, line)
-            if _is_warning_shaped(item, line):
-                skipped.append(match)
-            else:
-                established.append(match)
-        found.extend(established)
-        if not established:
-            warned.extend(skipped)
-    return found, warned
-
-
-def _symptom_matches(item: Evidence) -> list[_Match]:
-    """The symptom markers one piece of evidence carries: observed, not cited.
-
-    Every matched line, as in :func:`_matches`. Unlike those these establish
-    nothing, so the warning shape changes nothing about them either: the
-    rendered line carries its own ``W: `` prefix or annotation level for the
-    operator to read.
-    """
-    return [
-        _Match(rule, item, line)
-        for rule in SYMPTOMS
-        for line in _matched_lines(rule, item)
-    ]
 
 
 def _line_at(text: str, index: int) -> str:
@@ -732,12 +373,34 @@ def _line_at(text: str, index: int) -> str:
     return text[start : end if end >= 0 else len(text)]
 
 
-def _ambiguity(matches: list[_Match], kinds: list[FailureKind]) -> str:
-    parts: list[str] = []
-    for kind in kinds:
-        markers = "; ".join(m.describe() for m in matches if m.rule.kind is kind)
-        parts.append(f"{kind.value} [{markers}]")
-    return "ambiguous: " + " vs ".join(parts)
+def _for_operator(item: Evidence, line: str) -> str:
+    """One line of evidence as an operator should read it.
+
+    An annotation's level is data, not text (`forge.Evidence`), so it is
+    rendered back onto the line here -- at the one place a human reads it,
+    and nowhere a shape can trip over it.
+    """
+    return line if item.level is None else f"{item.level}: {line}"
+
+
+# One notion, two sources. A log line says it for itself: apt prefixes a
+# recovered problem with `W: ` and a real one with `E: `, and compilers, pip
+# and shell tooling write `warning: `/`notice: ` at the head of the line, in
+# whatever case. A GitHub annotation instead carries a level of its own,
+# which `forge` records as `Evidence.level`; it governs the whole message,
+# whichever line matched, and being data no text can hide it. A log block
+# has no level, so it is judged on the matched line itself, never on where
+# the block happens to start. `failure`/`error`, any level this catalogue
+# has not seen, and an unprefixed log line are not warning-shaped.
+_LINE_WARNING_RE = re.compile(rf"^{_LINE_PREFIX}(?:W|warning|notice): ", re.IGNORECASE)
+_NOTICED_LEVELS = frozenset({"warning", "notice"})
+
+
+def _is_warning_shaped(item: Evidence, line: str) -> bool:
+    """Whether `line`, matched inside `item`, was marked noticed, not fatal."""
+    if item.level is not None:
+        return item.level in _NOTICED_LEVELS
+    return bool(_LINE_WARNING_RE.match(line))
 
 
 def _incomplete(completeness: Completeness) -> bool:

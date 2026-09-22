@@ -55,6 +55,9 @@ _RUN_URL_RE = re.compile(
 #: `owner/..` or `../..` reads as path traversal against `repos/{repo}/...`.
 _REPO_SLUG_RE = re.compile(r"^(?!\.+/)[A-Za-z0-9._-]+/(?!\.+$)[A-Za-z0-9._-]+$")
 
+# `diagnose.py` asserts no cause and never produces `CLASSIFIED`; the key is
+# kept so the map covers the `Outcome` literal, and exit 0 is not reachable
+# through this command.
 _EXIT_BY_OUTCOME: dict[str, int] = {
     "CLASSIFIED": 0,
     "UNCLASSIFIED": 3,
@@ -437,15 +440,11 @@ def _print_diagnosis(diagnosis: RunDiagnosis) -> None:
     diagnose — belong to the summary and are printed once, on stdout. stderr
     carries only what the operator needs to judge the read itself.
     """
-    causes = ", ".join(kind.value for kind in diagnosis.causes) or "-"
     print(f"outcome: {diagnosis.outcome}")
-    print(f"causes: {causes}")
+    print(f"causes: {', '.join(diagnosis.causes) or 'none asserted'}")
     for verdict in diagnosis.failures:
-        kind = verdict.kind.value if verdict.kind is not None else "-"
         observation = verdict.observations[0] if verdict.observations else "-"
-        print(
-            f"[{_format_where(verdict.where)}] {verdict.outcome} {kind}: {observation}"
-        )
+        print(f"[{_format_where(verdict.where)}] {verdict.outcome}: {observation}")
     for observation in diagnosis.observations:
         print(observation)
     completeness = diagnosis.run.completeness
@@ -714,10 +713,7 @@ def main(argv: list[str] | None = None) -> int:
 
     p_diagnose = sub.add_parser(
         "diagnose",
-        help=(
-            "read a failed CI run: facts, evidence, observations "
-            "(classes are heuristic)"
-        ),
+        help="read a failed CI run: facts, evidence, observations; no cause asserted",
     )
     p_diagnose.add_argument(
         "run_url", nargs="?", default=None, help="GitHub Actions run URL"
