@@ -15,9 +15,14 @@ says it must produce:
 
 Beside the negative twins, which vary the SHAPE, the table carries CAUSE TWINS,
 which keep the message text identical and vary only what produced it. Both
-members of such a pair expect the SAME verdict -- where that verdict is a
-class, the pair pins an over-firing the catalogue cannot currently avoid, and
-its ``note`` says so in the open.
+members of such a pair expect the SAME verdict, and since the owner's evidence
+rule of 2026-09-22 that verdict is the HONEST one: a class only where the two
+causes really are the same failing condition, and UNCLASSIFIED wherever the
+line could as easily have been printed by an application saying the words for
+itself. No pair reads "a class we know is wrong for one of these" any more --
+that was a wrong diagnosis, not a limitation -- and several rules therefore
+carry two pairs: the tool-framed one that keeps the class, and the unframed
+one that no longer gets it.
 
 The rows are built by helpers from a small table of markers so that the cross
 product is exhaustive rather than anecdotal; ``print_table()`` (``python -m``
@@ -516,11 +521,21 @@ in one pool are the real conflict, and order does not pick a winner."""
 # members differed would mean the snapshot CAN separate the causes, and the
 # rule could then be made to.
 #
-# Where the pair is UNCLASSIFIED, the demotion is doing its job. Where it is
-# CLASSIFIED, the class is what the catalogue answers to BOTH causes, and the
-# note says so: that is the over-firing, pinned here in the open rather than
-# discovered in production. Rewriting a note into "the twin is now separable"
-# takes a new discriminator in the evidence, not a better guess.
+# What changed in the bounded pass of the same day: a CLASSIFIED pair may no
+# longer mean "the class the catalogue answers to both causes, over-firing on
+# one of them". That is a wrong diagnosis, and the rule was narrowed instead.
+# A pair reads CLASSIFIED only where both causes really are the same failing
+# condition — the tool that printed the line could not do the thing it was
+# asked to do, whoever arranged that — and its note says what the class does
+# NOT claim. Everywhere the old note said "known over-firing" or "known
+# limitation", the marker turned out to be separable after all, by the
+# feature the rule now requires: a TOOL'S OWN FRAMING for ENVIRONMENT, and
+# PROVENANCE for PROJECT. Those pairs are UNCLASSIFIED now, and the rules
+# keep a framed/provenanced pair of their own beside them.
+#
+# The price is stated too, in `service-unavailable-unframed`: a real upstream
+# failure reported by a tool this catalogue does not know goes unnamed. That
+# is the cost of never naming the fixture that prints the same three words.
 #
 # The preambles are ordinary log lines from each scenario. They deliberately
 # do not encode the cause: a real snapshot does not either, which is the
@@ -555,31 +570,14 @@ CAUSE_TWINS: tuple[CauseTwin, ...] = (
         note=(
             "hand-written Dockerfile vs one a build script generated: AUTHORING "
             "either way -- the class names the artifact whose text will not "
-            "parse, never who typed it"
+            "parse, never who typed it. A plain syntax error, with no "
+            "`unknown instruction` beside it, is the whole of what the rule "
+            "keeps"
         ),
         cause_a="hand-written",
         preamble_a="#1 [internal] load build definition from Dockerfile",
         cause_b="script-generated",
         preamble_b="#1 [internal] load build definition from Dockerfile.gen",
-    ),
-    CauseTwin(
-        rule="unknown instruction",
-        slug="unknown-instruction",
-        marker=(
-            "ERROR: failed to solve: dockerfile parse error on line 7: "
-            "unknown instruction: RUN --mount=type=cache,target=/root/.cache"
-        ),
-        base=ARTIFACT,
-        note=(
-            "a typo in the authored file vs an instruction a builder too old to "
-            "know it rejects: AUTHORING either way, and the second is a residual "
-            "-- the artifact and the builder it is built by are a pair the "
-            "snapshot cannot take apart"
-        ),
-        cause_a="typo",
-        preamble_a="#1 [internal] load build definition from Dockerfile",
-        cause_b="builder-too-old",
-        preamble_b='#0 building with "default" instance using docker driver',
     ),
     CauseTwin(
         rule="unrecognized named-value",
@@ -592,13 +590,36 @@ CAUSE_TWINS: tuple[CauseTwin, ...] = (
         base=ARTIFACT,
         note=(
             "the repo's own workflow vs a reusable workflow it calls: AUTHORING "
-            "either way -- workflow YAML is not in the language, but the "
-            "snapshot does not say whose YAML"
+            "either way -- GitHub's own validator says the NAME is not in the "
+            "language, which only workflow YAML can be wrong about; whose YAML "
+            "it is the snapshot does not say, and the class does not claim"
         ),
         cause_a="own-workflow",
         preamble_a="##[error].github/workflows/ci.yml (Line: 31, Col: 9)",
         cause_b="called-reusable-workflow",
         preamble_b="##[error]org/ci-workflows/.github/workflows/build.yml@v2",
+    ),
+    # --- the AUTHORING shapes demoted by the evidence rule --------------------
+    CauseTwin(
+        rule="unknown instruction",
+        slug="unknown-instruction",
+        marker=(
+            "dockerfile parse error on line 7: unknown instruction: "
+            "RUN --mount=type=cache,target=/root/.cache"
+        ),
+        base=None,
+        note=(
+            "a typo in the authored file vs an instruction a builder too old to "
+            "know it rejects: UNCLASSIFIED for both now. The pair used to read "
+            "AUTHORING on the parser's framing sharing the line -- but that is "
+            "exactly what an application quoting the parser also prints, so the "
+            "framing beside the words proves only that two sentences share a "
+            "line. Reported as `symptom: unknown instruction`"
+        ),
+        cause_a="typo",
+        preamble_a="#1 [internal] load build definition from Dockerfile",
+        cause_b="builder-too-old",
+        preamble_b='#0 building with "default" instance using docker driver',
     ),
     CauseTwin(
         rule="copy/add source not found",
@@ -607,13 +628,14 @@ CAUSE_TWINS: tuple[CauseTwin, ...] = (
             "ERROR: failed to solve: failed to compute cache key: failed to "
             'calculate checksum of ref abc::def: "/docs/setup.md": not found'
         ),
-        base=ARTIFACT,
+        base=None,
         note=(
             "a path the COPY never had right vs a file the project removed "
-            "AFTER the Dockerfile was authored: AUTHORING either way (spec "
-            "6.4 A -- the build context IS the checkout the Dockerfile was "
-            "authored against), and the second is the stated residual: the "
-            "class names the mismatch, not which side moved"
+            "AFTER the Dockerfile was authored: UNCLASSIFIED for both now. The "
+            "pair used to read AUTHORING with the second written off as a "
+            "stated residual -- but the snapshot cannot say which side moved, "
+            "so naming the artifact was right by luck. This is live acceptance "
+            "run 1, and its expectation was corrected rather than the rule"
         ),
         cause_a="wrong-path",
         preamble_a="#12 [stage-0 7/9] COPY docs/setup.md ./setup.md",
@@ -627,33 +649,41 @@ CAUSE_TWINS: tuple[CauseTwin, ...] = (
             "COPY failed: file not found in build context or excluded by "
             ".dockerignore: stat app.py: no such file or directory"
         ),
-        base=ARTIFACT,
+        base=None,
         note=(
             "a source that is not in the repo vs one the .dockerignore excludes: "
-            "AUTHORING either way -- docker prints the same sentence for both, "
-            "and both are a mismatch between the instruction and its context"
+            "UNCLASSIFIED for both now, with docker's shape demoted beside "
+            "buildkit's -- the class, not the instance"
         ),
         cause_a="absent-from-repo",
         preamble_a=_BUILD_CONTEXT,
         cause_b="excluded-by-dockerignore",
         preamble_b=_SMALL_CONTEXT,
     ),
-    # --- the ENVIRONMENT rules -----------------------------------------------
+    # --- ENVIRONMENT, framed: the tool says IT could not ----------------------
+    # Both members are a genuine failure of the tool that printed the line, so
+    # the class is right for both. What the class claims is the CONDITION the
+    # step ran into, never who arranged it. The pairs that used to set a real
+    # failure against a test PRINTING the phrase are below instead, unframed:
+    # that scenario no longer produces these lines at all.
     CauseTwin(
         rule="docker daemon unreachable",
         slug="docker-daemon-unreachable",
-        marker=("Cannot connect to the Docker daemon at unix:///var/run/docker.sock."),
+        marker=(
+            "Cannot connect to the Docker daemon at unix:///var/run/docker.sock."
+            " Is the docker daemon running?"
+        ),
         base=ENVIRONMENT,
         note=(
-            "the runner's daemon really down vs the project's own test printing "
-            "its client's error path: ENVIRONMENT for both today -- KNOWN "
-            "over-firing, the snapshot cannot tell a tool's failure from a test "
-            "that provokes one"
+            "the runner's daemon stopped vs a self-hosted runner whose socket "
+            "was never mounted into the job container: ENVIRONMENT for both -- "
+            "docker's own client says IT could not reach a daemon, and both "
+            "are that same missing condition"
         ),
         cause_a="daemon-down",
         preamble_a="##[group]Run docker build .",
-        cause_b="project-error-path-test",
-        preamble_b="##[group]Run pytest tests/test_docker_client.py -k offline",
+        cause_b="socket-not-in-the-job-container",
+        preamble_b="##[group]Run docker compose up -d",
     ),
     CauseTwin(
         rule="host unresolvable",
@@ -661,14 +691,15 @@ CAUSE_TWINS: tuple[CauseTwin, ...] = (
         marker="curl: (6) Could not resolve host: pypi.org",
         base=ENVIRONMENT,
         note=(
-            "the runner's DNS down vs a step that deliberately curls an "
-            "unreachable host to prove the image needs no network: ENVIRONMENT "
-            "for both today -- known over-firing"
+            "the runner's resolver down vs an egress proxy refusing the name: "
+            "ENVIRONMENT for both -- curl's own exit-code framing says curl "
+            "could not resolve it, and the class names that, not the reason "
+            "the name did not resolve"
         ),
         cause_a="runner-dns-down",
         preamble_a="##[group]Run curl -sSf https://pypi.org/simple/",
-        cause_b="deliberate-offline-probe",
-        preamble_b="##[group]Run scripts/assert-no-network.sh",
+        cause_b="egress-proxy-blocks-the-name",
+        preamble_b="##[group]Run curl -sSf https://pypi.org/simple/ --proxy $PROXY",
     ),
     CauseTwin(
         rule="name resolution failure",
@@ -677,8 +708,9 @@ CAUSE_TWINS: tuple[CauseTwin, ...] = (
         base=ENVIRONMENT,
         note=(
             "the runner's resolver down vs a build step run with networking "
-            "switched off on purpose: ENVIRONMENT for both today -- known "
-            "over-firing"
+            "switched off on purpose: ENVIRONMENT for both -- apt names the "
+            "host it could not resolve either way, and a deliberately absent "
+            "network is still the environment the step was given"
         ),
         cause_a="resolver-down",
         preamble_a="#9 [stage-0 3/9] RUN apt-get update",
@@ -695,9 +727,10 @@ CAUSE_TWINS: tuple[CauseTwin, ...] = (
         base=ENVIRONMENT,
         note=(
             "a mirror that rotated the package out vs a version the Dockerfile "
-            "pinned that the suite no longer carries: ENVIRONMENT for both "
-            "today -- known over-firing, and the second is really an artifact "
-            "defect the snapshot cannot see"
+            "pinned that the suite no longer carries: ENVIRONMENT for both -- "
+            "apt says IT could not fetch what it was asked for. RESIDUAL, "
+            "stated: the second is arguably an artifact defect, and the "
+            "snapshot cannot see the pin"
         ),
         cause_a="mirror-rotated",
         preamble_a="#9 [stage-0 3/9] RUN apt-get install -y libpq5",
@@ -707,17 +740,20 @@ CAUSE_TWINS: tuple[CauseTwin, ...] = (
     CauseTwin(
         rule="connection timed out",
         slug="connection-timed-out",
-        marker="requests: connection timed out after 5s",
+        marker=(
+            "#11 15.43   Could not connect to 10.255.255.1:80 (10.255.255.1), "
+            "connection timed out"
+        ),
         base=ENVIRONMENT,
         note=(
-            "the runner's network vs the app's OWN retry test printing the "
-            "phrase it is testing: ENVIRONMENT for both today -- known "
-            "over-firing, pinned"
+            "an unroutable mirror vs the runner's egress firewall: ENVIRONMENT "
+            "for both -- apt's own detail line names the host AND the port it "
+            "could not reach. Verbatim from live acceptance run 2"
         ),
-        cause_a="runner-network",
-        preamble_a="##[group]Run python -m app.sync --once",
-        cause_b="app-retry-test",
-        preamble_b="##[group]Run pytest tests/test_retry.py -k timeout",
+        cause_a="unroutable-mirror",
+        preamble_a="#11 [stage-0 4/9] RUN apt-get update",
+        cause_b="runner-egress-firewall",
+        preamble_b="#11 [stage-0 4/9] RUN apt-get -o Acquire::Retries=0 update",
     ),
     CauseTwin(
         rule="registry rate limit",
@@ -725,29 +761,33 @@ CAUSE_TWINS: tuple[CauseTwin, ...] = (
         marker="toomanyrequests: You have reached your pull rate limit.",
         base=ENVIRONMENT,
         note=(
-            "a shared runner IP that exhausted the anonymous quota vs a test "
-            "replaying a recorded 429 body: ENVIRONMENT for both today -- known "
-            "over-firing"
+            "a shared runner IP that exhausted the anonymous quota vs a job "
+            "that lost its registry login: ENVIRONMENT for both -- the "
+            "registry's own refusal, and in both the pull is the thing that "
+            "could not be made"
         ),
         cause_a="quota-exhausted",
         preamble_a="#1 [internal] load metadata for docker.io/library/python:3.12",
-        cause_b="recorded-response-replayed",
-        preamble_b="##[group]Run pytest tests/test_registry.py -k ratelimit",
+        cause_b="registry-login-lost",
+        preamble_b="#1 [internal] load metadata for docker.io/acme/base:1.2",
     ),
     CauseTwin(
         rule="service unavailable",
         slug="service-unavailable",
-        marker="error parsing HTTP 503 response body: 503 Service Unavailable",
+        marker=(
+            "ERROR: failed to solve: failed to do request: "
+            "docker.io/library/python:3.12-slim: 503 Service Unavailable"
+        ),
         base=ENVIRONMENT,
         note=(
-            "the registry really down vs the app's HTTP fixture printing a "
-            "canned upstream response: ENVIRONMENT for both today -- known "
-            "over-firing"
+            "the registry down vs the registry shedding load: ENVIRONMENT for "
+            "both -- buildkit says IT got the 503, which is what separates "
+            "this line from an app's fixture printing the same three words"
         ),
         cause_a="registry-down",
         preamble_a="#1 [internal] load metadata for docker.io/library/python:3.12",
-        cause_b="canned-fixture-response",
-        preamble_b="##[group]Run pytest tests/test_upstream.py -k unavailable",
+        cause_b="registry-shedding-load",
+        preamble_b="#1 [internal] load metadata for docker.io/library/python:3.12",
     ),
     CauseTwin(
         rule="disk full",
@@ -755,14 +795,14 @@ CAUSE_TWINS: tuple[CauseTwin, ...] = (
         marker="write /var/lib/docker/tmp/x: no space left on device",
         base=ENVIRONMENT,
         note=(
-            "the runner's disk filled vs a test writing to a deliberately tiny "
-            "tmpfs to prove the app survives ENOSPC: ENVIRONMENT for both today "
-            "-- known over-firing"
+            "the runner's disk filled by earlier jobs vs an image whose layers "
+            "do not fit it at all: ENVIRONMENT for both -- the path is the "
+            "daemon's own storage, so it is the runner that ran out"
         ),
         cause_a="runner-disk-filled",
         preamble_a="#12 [stage-0 7/9] COPY . /app",
-        cause_b="deliberate-enospc-test",
-        preamble_b="##[group]Run pytest tests/test_spool.py -k enospc",
+        cause_b="layers-larger-than-the-runner",
+        preamble_b="#12 [stage-0 7/9] COPY model-weights/ /app/weights",
     ),
     CauseTwin(
         rule="runner shutdown",
@@ -773,25 +813,160 @@ CAUSE_TWINS: tuple[CauseTwin, ...] = (
         ),
         base=ENVIRONMENT,
         note=(
-            "a spot instance reclaimed mid-job vs a human cancelling the run: "
-            "ENVIRONMENT for both today -- known over-firing, and a cancelled "
-            "run is not a failure of anything at all"
+            "a spot instance reclaimed mid-job vs the runner service restarted "
+            "under it: ENVIRONMENT for both -- the runner's own sentence about "
+            "itself. The twin that used to sit here, a human cancelling the "
+            "run, is GONE: a cancelled run's conclusion is `cancelled`, which "
+            "`forge` refuses (`_FAILED_CONCLUSIONS`), so it never reaches the "
+            "classifier to be misread"
         ),
         cause_a="instance-reclaimed",
         preamble_a="##[group]Run pytest",
-        cause_b="run-cancelled-by-a-human",
+        cause_b="runner-service-restarted",
         preamble_b="##[group]Run pytest -x",
     ),
-    # --- the PROJECT rules ---------------------------------------------------
+    # --- ENVIRONMENT, unframed: the words without the tool -------------------
+    # Where the old table set a real failure against a test PRINTING the
+    # phrase, the two are separable after all -- by the framing. These pairs
+    # carry the scenario that used to make the class an over-firing, and both
+    # members are UNCLASSIFIED because nothing in the line says who printed it.
+    CauseTwin(
+        rule="connection timed out",
+        slug="connection-timed-out-unframed",
+        marker="requests: connection timed out after 5s",
+        base=None,
+        note=(
+            "the runner's network vs the app's OWN retry test printing the "
+            "phrase it is testing: UNCLASSIFIED for both -- the pair that used "
+            "to pin this as a known over-firing, now answered honestly"
+        ),
+        cause_a="runner-network",
+        preamble_a="##[group]Run python -m app.sync --once",
+        cause_b="app-retry-test",
+        preamble_b="##[group]Run pytest tests/test_retry.py -k timeout",
+    ),
+    CauseTwin(
+        rule="service unavailable",
+        slug="service-unavailable-unframed",
+        marker="error parsing HTTP 503 response body: 503 Service Unavailable",
+        base=None,
+        note=(
+            "an upstream really down, reported by a tool this catalogue does "
+            "not know, vs the app's HTTP fixture printing a canned response: "
+            "UNCLASSIFIED for both. The cost of the rule is stated here -- the "
+            "first is a real ENVIRONMENT failure the snapshot now declines to "
+            "name, which is the price of never naming the second"
+        ),
+        cause_a="upstream-down-unknown-tool",
+        preamble_a="##[group]Run python -m app.publish",
+        cause_b="canned-fixture-response",
+        preamble_b="##[group]Run pytest tests/test_upstream.py -k unavailable",
+    ),
+    CauseTwin(
+        rule="host unresolvable",
+        slug="host-unresolvable-unframed",
+        marker="ConnectionError: Could not resolve host: pypi.org",
+        base=None,
+        note=(
+            "the runner's DNS down vs a step that deliberately probes an "
+            "unreachable host to prove the image needs no network: "
+            "UNCLASSIFIED for both -- an exception carries no tool's framing"
+        ),
+        cause_a="runner-dns-down",
+        preamble_a="##[group]Run python -m app.sync --once",
+        cause_b="deliberate-offline-probe",
+        preamble_b="##[group]Run pytest tests/test_offline.py",
+    ),
+    CauseTwin(
+        rule="name resolution failure",
+        slug="name-resolution-failure-unframed",
+        marker="Temporary failure in name resolution",
+        base=None,
+        note=(
+            "the resolver down vs a DNS test printing what it asserts on: "
+            "UNCLASSIFIED for both -- the bare sentence names no tool"
+        ),
+        cause_a="resolver-down",
+        preamble_a="##[group]Run python -m app.sync --once",
+        cause_b="app-dns-test",
+        preamble_b="##[group]Run pytest tests/test_dns.py -k failure",
+    ),
+    CauseTwin(
+        rule="fetch failure",
+        slug="fetch-failure-unframed",
+        marker="TypeError: Failed to fetch",
+        base=None,
+        note=(
+            "a browser test whose fetch really failed vs one asserting on the "
+            "message: UNCLASSIFIED for both -- and this is the over-firer "
+            "`TODO.md` recorded by name, closed by the framing requirement "
+            "rather than by a narrower phrase"
+        ),
+        cause_a="browser-test-offline",
+        preamble_a="##[group]Run npx jest",
+        cause_b="browser-test-asserting-the-message",
+        preamble_b="##[group]Run npx jest --testPathPattern errors",
+    ),
+    CauseTwin(
+        rule="disk full",
+        slug="disk-full-unframed",
+        marker="tmpfs write failed: no space left on device",
+        base=None,
+        note=(
+            "the runner's disk filled vs a test writing to a deliberately tiny "
+            "tmpfs to prove the app survives ENOSPC: UNCLASSIFIED for both"
+        ),
+        cause_a="runner-disk-filled",
+        preamble_a="##[group]Run python -m app.spool",
+        cause_b="deliberate-enospc-test",
+        preamble_b="##[group]Run pytest tests/test_spool.py -k enospc",
+    ),
+    CauseTwin(
+        rule="registry rate limit",
+        slug="registry-rate-limit-unframed",
+        marker="assert 'toomanyrequests' in body",
+        base=None,
+        note=(
+            "a test replaying a recorded 429 body vs one asserting the client "
+            "handles it: UNCLASSIFIED for both -- the word alone is not the "
+            "registry speaking"
+        ),
+        cause_a="recorded-response-replayed",
+        preamble_a="##[group]Run pytest tests/test_registry.py -k ratelimit",
+        cause_b="contract-test",
+        preamble_b="##[group]Run pytest tests/test_registry.py -k contract",
+    ),
+    # --- PROJECT: with provenance, and without -------------------------------
+    CauseTwin(
+        rule="assertion error",
+        slug="assertion-error-with-frame",
+        marker=(
+            '  File "/app/tests/test_greet.py", line 10, in test_greet\n'
+            "AssertionError: 1 != 2"
+        ),
+        base=PROJECT,
+        note=(
+            "the project's own test vs one the CI harness copied INTO the "
+            "checkout: PROJECT for both -- the frame names a file of the tree "
+            "that was built and tested, and a file vendored there is part of "
+            "it. RESIDUAL, stated: the class names the tree, not the author"
+        ),
+        cause_a="project-test",
+        preamble_a="##[group]Run pytest tests/test_greet.py",
+        cause_b="test-vendored-into-the-checkout",
+        preamble_b="##[group]Run pytest tests/",
+    ),
     CauseTwin(
         rule="assertion error",
         slug="assertion-error",
         marker="AssertionError: 1 != 2",
-        base=PROJECT,
+        base=None,
         note=(
             "the project's own test vs the CI's setup script asserting a "
-            "precondition: PROJECT for both today -- KNOWN limitation, the "
-            "snapshot does not say whose assertion failed"
+            "precondition: UNCLASSIFIED for both. The pair used to read "
+            "PROJECT and call the confusion a known limitation; without a "
+            "frame the snapshot does not say whose assertion failed, and it "
+            "now says so -- `assertion without project provenance`"
         ),
         cause_a="project-test",
         preamble_a="##[group]Run pytest tests/test_greet.py",
@@ -804,14 +979,35 @@ CAUSE_TWINS: tuple[CauseTwin, ...] = (
         marker="FAILED tests/test_greet.py::test_greet - AssertionError: 1 != 2",
         base=PROJECT,
         note=(
-            "the project's own suite vs a test file the CI harness vendored "
-            "into the checkout: PROJECT for both today -- known limitation, the "
-            "path in the line is not proof of ownership"
+            "the project's own suite vs a test file vendored into the "
+            "checkout: PROJECT for both -- pytest prints the node id relative "
+            "to its rootdir, so the path IS the checkout's. The residual is "
+            "the same as the frame pair's, and no larger"
         ),
         cause_a="project-suite",
         preamble_a="##[group]Run pytest",
-        cause_b="harness-vendored-test",
-        preamble_b="##[group]Run pytest --rootdir=/opt/ci-harness",
+        cause_b="test-vendored-into-the-checkout",
+        preamble_b="##[group]Run pytest tests/",
+    ),
+    CauseTwin(
+        rule="pytest failed with assertion",
+        slug="pytest-failed-assertion-outside-the-checkout",
+        marker=(
+            "FAILED /usr/lib/python3/dist-packages/vendorlib/tests/test_a.py"
+            "::test_a - AssertionError: 1 != 2"
+        ),
+        base=None,
+        note=(
+            "a conftest plugin the CI image installs vs a vendored "
+            "dependency's own suite collected by the same run: UNCLASSIFIED "
+            "for both -- the node id names a path outside the checkout, which "
+            "is the discriminator the old 'known limitation' note said did "
+            "not exist"
+        ),
+        cause_a="ci-installed-plugin",
+        preamble_a="##[group]Run pytest -p ci_harness.plugin",
+        cause_b="vendored-dependency-suite",
+        preamble_b="##[group]Run pytest --pyargs vendorlib",
     ),
     CauseTwin(
         rule="pytest bare assert",
@@ -819,23 +1015,43 @@ CAUSE_TWINS: tuple[CauseTwin, ...] = (
         marker="FAILED tests/test_greet.py::test_greet - assert 1 == 2",
         base=PROJECT,
         note=(
-            "the project's own assertion vs one in a conftest plugin the CI "
-            "image installs: PROJECT for both today -- known limitation"
+            "the project's own assertion vs one in a conftest plugin that "
+            "lives in the checkout: PROJECT for both -- both are files of the "
+            "tree under test"
         ),
         cause_a="project-assertion",
         preamble_a="##[group]Run pytest",
-        cause_b="ci-installed-plugin",
-        preamble_b="##[group]Run pytest -p ci_harness.plugin",
+        cause_b="checkout-conftest-assertion",
+        preamble_b="##[group]Run pytest -p no:cacheprovider",
     ),
     CauseTwin(
         rule="pytest assert",
         slug="pytest-assert",
-        marker="E       assert 'ci_build' == 'ci-build'",
+        marker=(
+            '  File "/app/tests/test_greet.py", line 10, in test_greet\n'
+            "E       assert 'ci_build' == 'ci-build'"
+        ),
         base=PROJECT,
         note=(
+            "the project's own test vs a doctest of a module in its own "
+            "`src/`: PROJECT for both -- the frame is inside the checkout "
+            "either way, which is exactly what the class claims"
+        ),
+        cause_a="project-test",
+        preamble_a="##[group]Run pytest",
+        cause_b="own-module-doctest",
+        preamble_b="##[group]Run pytest --doctest-modules src/",
+    ),
+    CauseTwin(
+        rule="pytest assert",
+        slug="pytest-assert-unprovenanced",
+        marker="E       assert 'ci_build' == 'ci-build'",
+        base=None,
+        note=(
             "the project's own test vs a doctest in a vendored dependency "
-            "collected by the same run: PROJECT for both today -- known "
-            "limitation"
+            "collected by the same run: UNCLASSIFIED for both -- pytest's `E` "
+            "line alone names no file, and the old note called that a known "
+            "limitation instead of declining to answer"
         ),
         cause_a="project-test",
         preamble_a="##[group]Run pytest",
@@ -1009,7 +1225,15 @@ def test_every_catalogue_rule_has_a_cause_twin_pair() -> None:
     assert {rule.name for rule in RULES} <= covered, (
         f"rules without a cause twin: {sorted({r.name for r in RULES} - covered)}"
     )
-    assert {"entrypoint executable not found", "unresolvable action"} <= covered
+    # The demoted shapes keep their pairs: a demotion with no twin is a
+    # claim nobody rechecks.
+    assert {
+        "entrypoint executable not found",
+        "unresolvable action",
+        "unknown instruction",
+        "copy/add source not found",
+        "copy/add failed in build context",
+    } <= covered
     assert len({twin.slug for twin in CAUSE_TWINS}) == len(CAUSE_TWINS)
 
 

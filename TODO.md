@@ -185,7 +185,13 @@ them is the next thing to pick up.
   Live acceptance 2026-09-22 (§8.2), four `workflow_dispatch` runs of the artifact authored by
   `deployer author` with `trigger_mode: manual` on orphan refs `polygon/run-1..4` (none an open
   PR head, checked per SHA before each dispatch):
-  - run 35680991093 @ d6e330f — COPY of a missing path → AUTHORING, exit 0
+  - run 35680991093 @ d6e330f — COPY of a missing path → UNCLASSIFIED
+    (observation `copy/add source not found`), exit 3. It read AUTHORING at
+    acceptance; the owner's bounded evidence pass of 2026-09-22 corrected it,
+    because the snapshot cannot tell a wrong path from a file the project
+    moved after authoring, so no AUTHORING is established. The honest result
+    under the evidence rule, and the expectation was corrected rather than the
+    catalogue widened to keep the run green.
   - run 35680992960 @ 37242cc — apt source at an unroutable host, 15 s timeout → ENVIRONMENT, exit 0
   - run 35680994771 @ 43d7c39 — project's own unittest fails inside the image build → PROJECT, exit 0
   - run 35680997065 @ 4695504 — the same artifact without the defect → passed → refusal `not_failed`, exit 5
@@ -195,7 +201,10 @@ them is the next thing to pick up.
   the `^`-anchored rules. Both fixed against the real logs; the SAME runs were re-diagnosed
   offline (the classifier is pure) and the anonymised snapshots are
   `tests/fixtures/runs/{authoring,environment,project}.json`, replayed by
-  `tests/test_fixture_runs.py`. All citations are job-level (`source=None`) — see
+  `tests/test_fixture_runs.py` — which since the evidence pass asserts the
+  OUTCOME per fixture: two established classes (ENVIRONMENT, PROJECT), each
+  with its citation, and run 1's honest UNCLASSIFIED with its observation.
+  All citations are job-level (`source=None`) — see
   `todo://deployer/forge-step-level-log-binding`.
   Paid benchmark (§8.3, anthropic + podman, 12 cases): 11 matched; `bench compare` vs golden
   v1.0 explained before any promote — ci-build iterations 1→2 on a sentinel-less first reply
