@@ -191,7 +191,8 @@ def fetch_failed_run(
     One run-metadata call decides both the refusal and the attempt; the
     attempt is fixed once, before any jobs or logs are read, so a re-run
     never mixes evidence from different attempts. A GhError on the run or
-    jobs calls propagates. Per-job log and annotation failures follow the
+    jobs calls propagates — including :meth:`_Gh.jobs` refusing a listing
+    that ended short of ``total_count``. Per-job log and annotation failures follow the
     same rule as :meth:`_Gh.logs`/:meth:`_Gh.annotations`: an HTTP-status
     ``GhError`` is data about the run and is recorded in ``Completeness``;
     a status-less ``GhError`` (timeout, ``gh`` could not start, an
@@ -271,7 +272,21 @@ class _Gh:
         return json.loads(self.text(path))
 
     def jobs(self, run_id: int, attempt: int) -> list[dict[str, Any]]:
-        """All jobs of one attempt, paginated until ``total_count`` is met."""
+        """All jobs of one attempt, paginated until ``total_count`` is met.
+
+        A listing that runs out of pages before the count is met is an
+        adapter error, not a shorter run: spec §2.1 forbids presenting a
+        partially collected snapshot as complete, and a snapshot missing a
+        job can be diagnosed all the way to ``CLASSIFIED`` (exit 0) over a
+        run whose other job was never read. The raised :class:`GhError` has
+        no HTTP status, so it propagates like any broken instrument.
+
+        That reading also covers a ``total_count`` that merely lies high:
+        the adapter cannot tell an inflated count from a page that went
+        missing, and only one of the two is safe to assume, so it refuses
+        either way. Meeting the count — not exhausting the pages — is what
+        ends the loop, and the empty page still ends it rather than looping.
+        """
         base = f"actions/runs/{run_id}/attempts/{attempt}/jobs"
         collected: list[dict[str, Any]] = []
         page = 1
@@ -280,8 +295,12 @@ class _Gh:
             items = list(body.get("jobs") or [])
             collected.extend(items)
             total = int(body.get("total_count", len(collected)))
-            if not items or len(collected) >= total:
+            if len(collected) >= total:
                 return collected
+            if not items:
+                raise GhError(
+                    f"jobs listing incomplete: {len(collected)} of {total}", None
+                )
             page += 1
 
     def logs(self, job_id: int) -> tuple[str, LogsState]:

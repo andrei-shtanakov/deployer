@@ -78,6 +78,9 @@ class FakeGh:
         }
     )
     job_pages: list[list[dict[str, Any]]] = field(default_factory=lambda: [[job(1)]])
+    # What the endpoint claims the attempt has; by default the truth (the
+    # pages actually served), so a test can make the count lie on purpose.
+    job_total: int | None = None
     annotations: list[dict[str, Any]] | GhError = field(default_factory=list)
     logs: str | GhError | None = "plain job log"
     calls: list[Call] = field(default_factory=list)
@@ -98,7 +101,11 @@ class FakeGh:
 
     def _jobs_page(self, attempt: int, page: int) -> str:
         self.job_calls.append(JobCall(attempt=attempt, page=page))
-        total = sum(len(p) for p in self.job_pages)
+        total = (
+            self.job_total
+            if self.job_total is not None
+            else sum(len(p) for p in self.job_pages)
+        )
         items = self.job_pages[page - 1] if page <= len(self.job_pages) else []
         return json.dumps({"total_count": total, "jobs": items})
 
@@ -261,6 +268,42 @@ def test_jobs_pagination_stops_at_total_count(fake_gh):
     fake_gh.job_pages = [[job(1)], [job(2)], [job(3)]]
     fetch_failed_run(RunRef("o/r", 1), attempt=1, runner=fake_gh)
     assert [c.page for c in fake_gh.job_calls] == [1, 2, 3]
+
+
+def test_a_short_jobs_listing_is_an_error_not_a_partial_snapshot(fake_gh):
+    """Spec §2.1: a partially collected snapshot is never presented as complete.
+
+    The endpoint says the attempt has two jobs and then serves an empty second
+    page. Snapshotting the one job that did arrive lets `diagnose` reach
+    CLASSIFIED — exit 0 — over a run whose other job was never looked at.
+    """
+    fake_gh.job_pages = [[job(1)], []]
+    fake_gh.job_total = 2
+    with pytest.raises(GhError) as caught:
+        fetch_failed_run(RunRef("o/r", 1), attempt=1, runner=fake_gh)
+    assert str(caught.value) == "jobs listing incomplete: 1 of 2"
+    assert caught.value.status is None
+
+
+def test_a_total_count_that_lies_high_is_read_honestly_as_a_short_listing(fake_gh):
+    """The adapter cannot tell an inflated `total_count` from a lost page.
+
+    Both say "you have fewer jobs than this attempt has", and only one of the
+    two readings is safe, so the short listing is refused either way.
+    """
+    fake_gh.job_pages = [[job(1)]]
+    fake_gh.job_total = 50
+    with pytest.raises(GhError) as caught:
+        fetch_failed_run(RunRef("o/r", 1), attempt=1, runner=fake_gh)
+    assert str(caught.value) == "jobs listing incomplete: 1 of 50"
+
+
+def test_a_jobs_listing_that_meets_its_count_never_asks_for_an_empty_page(fake_gh):
+    """The guard against an endless loop is the count being met, not exhaustion."""
+    fake_gh.job_pages = [[job(1), job(2)]]
+    snapshot = fetch_failed_run(RunRef("o/r", 1), attempt=1, runner=fake_gh)
+    assert isinstance(snapshot, FailedRun)
+    assert [c.page for c in fake_gh.job_calls] == [1]
 
 
 # --- evidence binding -------------------------------------------------------
