@@ -1066,12 +1066,16 @@ def _install_precedes_source_copy(dockerfile: str) -> bool:
     (`_copies_from_declared_stage` — it may carry the project out of that
     stage, unlike `--from=` on an external image), and a `RUN
     --mount=type=bind` on the installing RUN itself (the mounted context can
-    stand in for a COPY). Anything this walker does not recognise —
-    `ARG`-substituted paths, heredoc `RUN <<EOF`, a RUN line whose quoting
-    does not close — is treated as sources possibly already present, i.e. it
-    does not trigger True: the
-    honest failure mode is UNKNOWN, never a wrong AUTHORING. A Dockerfile
-    that never installs the project also returns False.
+    stand in for a COPY). The two sides fail closed in opposite directions,
+    each toward the honest answer: a RUN this walker does not recognise as
+    an install — `ARG`-substituted paths, heredoc `RUN <<EOF`, quoting that
+    does not close — never triggers True, since asserting an install that
+    was never confirmed would be a wrong AUTHORING, not an honest UNKNOWN;
+    a COPY/ADD this walker cannot read, or cannot prove is manifest-only,
+    counts as sources arriving (`_copies_sources`), since the opposite
+    guess — no sources — is what lets a genuine copy-order defect read as
+    UNKNOWN. A Dockerfile that never installs the project also returns
+    False.
     """
     stage_names = _declared_stage_names(parse_dockerfile(dockerfile))
     for instruction, args in parse_dockerfile(dockerfile):
@@ -1262,9 +1266,19 @@ def _leads_with(tokens: list[str], *words: str) -> bool:
     return tuple(tokens[: len(words)]) == words
 
 
+#: A leading `--flag` or `--flag=value` on a COPY/ADD line (`--chown=`,
+#: `--chmod=`, `--link`, `--from=`, ...), consumed one at a time from the
+#: front of the args before the source/dest list is parsed.
+_COPY_LEADING_FLAG_RE = re.compile(r"^(--[\w-]+(?:=\S*)?)\s*")
+
+
 def _copies_sources(copy_args: str) -> bool:
     """True when a COPY/ADD from the build context brings in anything beyond
-    manifest files.
+    manifest files — the fail-closed default: a COPY this walker cannot
+    parse, or whose source operands it cannot prove are all manifest files,
+    counts as sources arriving. Guessing "no sources" for anything unread is
+    the dangerous direction — it is exactly what lets an install that truly
+    precedes its sources read as UNKNOWN instead of AUTHORING.
 
     `COPY --from=` copies out of another stage or image, not this build
     context, so it is never a source copy by this function's reckoning —
@@ -1273,12 +1287,63 @@ def _copies_sources(copy_args: str) -> bool:
     `_copies_from_declared_stage`'s concern, checked separately by
     `_install_precedes_source_copy`.
     """
-    tokens = [token.strip("[],\"'") for token in copy_args.split()]
-    if any(token.startswith("--from=") for token in tokens):
+    flags, body = _copy_leading_flags(copy_args)
+    if any(flag.startswith("--from=") for flag in flags):
         return False
-    operands = [token for token in tokens if not token.startswith("--")]
-    sources = operands[:-1]  # the last operand is the destination
-    return any(not _is_manifest(source) for source in sources)
+    operands = _copy_source_operands(body)
+    if operands is None:
+        return True
+    return any(not _is_manifest(source) for source in operands)
+
+
+def _copy_leading_flags(copy_args: str) -> tuple[list[str], str]:
+    """`copy_args` split into its leading `--flag`/`--flag=value` tokens and
+    what remains: the JSON array, or the shell-form source/dest list."""
+    text = copy_args.strip()
+    flags: list[str] = []
+    while True:
+        match = _COPY_LEADING_FLAG_RE.match(text)
+        if match is None:
+            break
+        flags.append(match.group(1))
+        text = text[match.end() :]
+    return flags, text
+
+
+def _copy_source_operands(body: str) -> list[str] | None:
+    """The source operands of `body` (its last token, the destination,
+    dropped) — or None when `body` cannot be read as a source/dest list at
+    all: unparseable JSON, a JSON array holding something other than plain
+    strings, shell quoting `shlex` cannot close, or fewer than two tokens
+    (no destination to drop, so no operand list to trust). The caller treats
+    None exactly like an operand list that fails `_is_manifest`: sources
+    arrive.
+
+    JSON form (`body` starts with `[`) is exec-form COPY/ADD, parsed with
+    `json.loads` — never `str.split()`, which breaks on the comma-and-quote
+    punctuation JSON uses and silently produced too few tokens. Shell form
+    is tokenised with `shlex.split(posix=True)` so a quoted path with a
+    space in it stays one operand.
+    """
+    text = body.strip()
+    if text.startswith("["):
+        try:
+            parsed = json.loads(text)
+        except ValueError:
+            return None
+        if not isinstance(parsed, list) or not all(
+            isinstance(token, str) for token in parsed
+        ):
+            return None
+        tokens = parsed
+    else:
+        try:
+            tokens = shlex.split(text, posix=True)
+        except ValueError:
+            return None
+    if len(tokens) < 2:
+        return None
+    return tokens[:-1]  # the last token is the destination
 
 
 def _is_manifest(source: str) -> bool:

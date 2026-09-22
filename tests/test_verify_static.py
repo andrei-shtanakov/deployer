@@ -721,6 +721,75 @@ def test_install_precedes_source_copy_on_the_correct_dockerfile() -> None:
     assert _install_precedes_source_copy(_CORRECT_ORDER_DOCKERFILE) is False
 
 
+# --- PR #72 round 5, finding 2: an unrecognised COPY must fail closed -------
+#
+# The live incident: `COPY ["src/uv_minimal", "./src/uv_minimal"]` (JSON
+# exec form) read as `str.split()` gives one glued token, so the operand
+# list came back empty, `_copies_sources` said "no sources", and the
+# following `RUN uv sync --frozen` read as installing before its sources
+# arrived -- a false AUTHORING verdict on a Dockerfile that copied its
+# sources correctly, just in the form this walker could not read.
+
+
+def test_json_form_copy_of_sources_is_recognised_before_the_install() -> None:
+    """The incident, reproduced verbatim (no space after the comma, exactly
+    what `str.split()` glues into one token): JSON-form COPY of the real
+    package directory must be read as sources arriving, so the install
+    after it is no longer a copy-order defect and the hatchling marker
+    stays UNKNOWN."""
+    dockerfile = (
+        "FROM python:3.12-slim\n"
+        "WORKDIR /app\n"
+        'COPY ["src/uv_minimal","./src/uv_minimal"]\n'
+        "RUN uv sync --frozen\n"
+    )
+    assert _install_precedes_source_copy(dockerfile) is False
+    assert (
+        _classify_build(_HATCHLING_MISSING_FILES_EXCERPT, dockerfile)
+        is FailureKind.UNKNOWN
+    )
+
+
+def test_json_form_copy_of_manifests_only_still_counts_as_manifest_only() -> None:
+    """The positive twin: a JSON-form COPY naming only manifest files does
+    not excuse the sources -- the install after it is still a defect."""
+    dockerfile = (
+        "FROM python:3.12-slim\n"
+        'COPY ["pyproject.toml","uv.lock","./"]\n'
+        "RUN uv sync --frozen\n"
+    )
+    assert _install_precedes_source_copy(dockerfile) is True
+
+
+def test_an_unparseable_copy_line_counts_as_sources_arriving() -> None:
+    """Fail closed on the parser's own failure, not just the parsed content:
+    a COPY line `shlex` cannot tokenise must not be read as "no sources"."""
+    dockerfile = (
+        'FROM python:3.12-slim\nCOPY "unterminated src ./\nRUN uv sync --frozen\n'
+    )
+    assert _install_precedes_source_copy(dockerfile) is False
+
+
+def test_chown_flag_before_a_source_copy_does_not_hide_the_source() -> None:
+    """A leading `--chown=` (or `--chmod=`/`--link`) flag is dropped before
+    the operands are read, not left in the list to spoil `_is_manifest`."""
+    dockerfile = (
+        "FROM python:3.12-slim\n"
+        "COPY --chown=1000:1000 src ./src\n"
+        "RUN uv sync --frozen\n"
+    )
+    assert _install_precedes_source_copy(dockerfile) is False
+
+
+def test_chown_flag_before_manifest_only_copy_still_reads_as_manifest_only() -> None:
+    dockerfile = (
+        "FROM python:3.12-slim\n"
+        "COPY --chown=1000:1000 pyproject.toml uv.lock ./\n"
+        "RUN uv sync --frozen\n"
+    )
+    assert _install_precedes_source_copy(dockerfile) is True
+
+
 def test_copy_everything_before_the_install_is_not_a_copy_order_defect() -> None:
     """`COPY . .` brings the sources in, whatever else it brings."""
     dockerfile = "FROM python:3.12-slim\nWORKDIR /app\nCOPY . .\nRUN uv sync --frozen\n"
