@@ -19,6 +19,8 @@ from deployer.verify import (
     ATP_VERSION,
     HADOLINT_VERSION,
     _classify,
+    _classify_build,
+    _install_precedes_source_copy,
     _isolated_context,
     _run_healthcheck,
     _version_pin_matches,
@@ -622,6 +624,9 @@ def test_ordinary_build_error_is_unknown() -> None:
     assert _classify("E: Unable to locate package libfoo") is FailureKind.UNKNOWN
 
 
+# The decisive excerpt of the real `uv-minimal` acceptance build log: the
+# project was installed before its sources were in the image, so hatchling
+# found no package directory to ship.
 _HATCHLING_MISSING_FILES_EXCERPT = """\
   × Failed to build `uv-minimal @ file:///app`
   ├─▶ The build backend returned an error
@@ -629,23 +634,180 @@ _HATCHLING_MISSING_FILES_EXCERPT = """\
       ValueError: Unable to determine which files to ship
 """
 
+# The Dockerfile that produced that excerpt: `RUN uv sync --frozen` (no
+# `--no-install-project`) precedes `COPY src/uv_minimal`. A copy-order defect.
+_COPY_ORDER_DEFECT_DOCKERFILE = """\
+FROM python:3.12-slim
+COPY --from=ghcr.io/astral-sh/uv:0.5.11 /uv /bin/uv
+WORKDIR /app
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen
+COPY src/uv_minimal ./src/uv_minimal
+RUN useradd --create-home appuser
+USER appuser
+ENV PATH="/app/.venv/bin:$PATH"
+CMD ["python"]
+"""
 
-def test_hatchling_missing_files_is_authoring() -> None:
-    """Real evidence: `uv sync --frozen` run before the project sources were
-    copied in (a Dockerfile copy-order defect) makes hatchling unable to
-    find any files to ship. That is positive, cause-specific authoring
-    evidence, not a bare exit code — see the live acceptance evidence log
-    for `uv-minimal` in
-    .superpowers/sdd/2026-09-21-ci-failure-diagnosis/evidence/uv-minimal-build.log.
+# The correct order: dependencies with `--no-install-project`, then sources,
+# then the project. The same hatchling message out of THIS Dockerfile is not
+# a copy-order defect — the sources were there and hatchling still could not
+# select them, which points at the project's own packaging config.
+_CORRECT_ORDER_DOCKERFILE = """\
+FROM python:3.12-slim
+COPY --from=ghcr.io/astral-sh/uv:0.5.11 /uv /uvx /bin/
+WORKDIR /app
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-install-project
+COPY src/uv_minimal ./src/uv_minimal
+RUN uv sync --frozen
+ENV PATH="/app/.venv/bin:$PATH"
+CMD ["python", "-m", "uv_minimal"]
+"""
+
+
+def test_hatchling_missing_files_needs_the_dockerfile_to_be_authoring() -> None:
+    """The message alone is not a class: it is what hatchling prints for a
+    copy-order defect AND for a project whose own `tool.hatch.build` table
+    selects nothing. Only the Dockerfile tells the two apart, so the marker
+    establishes AUTHORING only next to that evidence.
     """
-    assert _classify(_HATCHLING_MISSING_FILES_EXCERPT) is FailureKind.AUTHORING
+    assert (
+        _classify_build(_HATCHLING_MISSING_FILES_EXCERPT, _COPY_ORDER_DEFECT_DOCKERFILE)
+        is FailureKind.AUTHORING
+    )
+
+
+def test_hatchling_missing_files_from_a_correct_dockerfile_is_unknown() -> None:
+    """The negative twin. Same output, sources copied before the project is
+    installed — the copy order cannot be the cause, and a packaging-config
+    defect is not something this check can assert, so UNKNOWN."""
+    assert (
+        _classify_build(_HATCHLING_MISSING_FILES_EXCERPT, _CORRECT_ORDER_DOCKERFILE)
+        is FailureKind.UNKNOWN
+    )
 
 
 def test_hatchling_missing_files_still_yields_to_environment_marker() -> None:
-    """Environment precedence is unchanged: an ENVIRONMENT marker anywhere
-    in the output still wins over the build-authoring marker."""
+    """Environment precedence is unchanged and is checked before the
+    Dockerfile is consulted at all."""
     combined = _HATCHLING_MISSING_FILES_EXCERPT + "connection timed out\n"
-    assert _classify(combined) is FailureKind.ENVIRONMENT
+    assert (
+        _classify_build(combined, _COPY_ORDER_DEFECT_DOCKERFILE)
+        is FailureKind.ENVIRONMENT
+    )
+
+
+def test_classify_build_without_any_marker_is_unknown() -> None:
+    """A copy-order defect is not itself a cause: without an output marker
+    naming one, the build failure stays unexplained."""
+    assert (
+        _classify_build("exit status 1", _COPY_ORDER_DEFECT_DOCKERFILE)
+        is FailureKind.UNKNOWN
+    )
+
+
+def test_plain_classify_no_longer_reads_the_hatchling_marker_alone() -> None:
+    """`_classify` serves the run/compose sites, which have no Dockerfile to
+    weigh; there the marker establishes nothing."""
+    assert _classify(_HATCHLING_MISSING_FILES_EXCERPT) is FailureKind.UNKNOWN
+
+
+def test_install_precedes_source_copy_on_the_defective_dockerfile() -> None:
+    assert _install_precedes_source_copy(_COPY_ORDER_DEFECT_DOCKERFILE) is True
+
+
+def test_install_precedes_source_copy_on_the_correct_dockerfile() -> None:
+    assert _install_precedes_source_copy(_CORRECT_ORDER_DOCKERFILE) is False
+
+
+def test_copy_everything_before_the_install_is_not_a_copy_order_defect() -> None:
+    """`COPY . .` brings the sources in, whatever else it brings."""
+    dockerfile = "FROM python:3.12-slim\nWORKDIR /app\nCOPY . .\nRUN uv sync --frozen\n"
+    assert _install_precedes_source_copy(dockerfile) is False
+
+
+def test_dependency_only_sync_then_copy_then_project_sync_is_correct() -> None:
+    """The `--no-install-project` first pass installs no project, so the
+    source COPY still comes before the first project-installing RUN."""
+    dockerfile = (
+        "FROM python:3.12-slim\n"
+        "COPY pyproject.toml uv.lock ./\n"
+        "RUN uv sync --frozen --no-install-project\n"
+        "COPY src ./src\n"
+        "RUN uv sync --frozen\n"
+    )
+    assert _install_precedes_source_copy(dockerfile) is False
+
+
+def test_manifest_only_copies_do_not_count_as_source() -> None:
+    """Manifests are what the install reads; copying them is not copying the
+    package. README/LICENSE are manifest-adjacent and equally not sources."""
+    dockerfile = (
+        "FROM python:3.12-slim\n"
+        "COPY requirements-dev.txt README.md LICENSE ./\n"
+        "RUN pip install -e .\n"
+    )
+    assert _install_precedes_source_copy(dockerfile) is True
+
+
+def test_continuation_lines_are_parsed_as_one_run() -> None:
+    """A `\\`-continued RUN is one instruction; the install must be seen in
+    it, and a `--no-install-project` on a later physical line must count."""
+    defective = (
+        "FROM python:3.12-slim\n"
+        "COPY pyproject.toml ./\n"
+        "RUN apt-get update && \\\n"
+        "    uv sync \\\n"
+        "      --frozen\n"
+        "COPY src ./src\n"
+    )
+    correct = defective.replace(
+        "      --frozen\n", "      --frozen --no-install-project\n"
+    )
+    assert _install_precedes_source_copy(defective) is True
+    assert _install_precedes_source_copy(correct) is False
+
+
+def test_copy_from_another_stage_is_not_a_source_copy() -> None:
+    """`COPY --from=` brings in a built artifact from elsewhere, not this
+    build context's sources — the uv binary line in the real Dockerfile."""
+    dockerfile = (
+        "FROM python:3.12-slim\n"
+        "COPY --from=ghcr.io/astral-sh/uv:0.5.11 /uv /bin/uv\n"
+        "RUN uv sync --frozen\n"
+    )
+    assert _install_precedes_source_copy(dockerfile) is True
+
+
+def test_a_dockerfile_that_never_installs_the_project_is_not_a_copy_order_defect() -> (
+    None
+):
+    dockerfile = 'FROM python:3.12-slim\nCOPY . .\nCMD ["python", "main.py"]\n'
+    assert _install_precedes_source_copy(dockerfile) is False
+
+
+def test_poetry_no_root_then_sources_then_root_install_is_correct() -> None:
+    dockerfile = (
+        "FROM python:3.12-slim\n"
+        "COPY pyproject.toml poetry.lock ./\n"
+        "RUN poetry install --no-root\n"
+        "COPY app ./app\n"
+        "RUN poetry install\n"
+    )
+    assert _install_precedes_source_copy(dockerfile) is False
+
+
+def test_requirements_install_is_not_a_project_install() -> None:
+    """`pip install -r requirements.txt` installs dependencies, not the
+    project, so a source COPY after it is not late."""
+    dockerfile = (
+        "FROM python:3.12-slim\n"
+        "COPY requirements.txt ./\n"
+        "RUN pip install -r requirements.txt\n"
+        "COPY src ./src\n"
+    )
+    assert _install_precedes_source_copy(dockerfile) is False
 
 
 def test_isolated_context_excludes_secrets_and_junk(tmp_path: Path) -> None:

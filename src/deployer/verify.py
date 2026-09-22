@@ -13,7 +13,7 @@ import time
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import yaml
 
@@ -996,35 +996,140 @@ ENVIRONMENT_MARKERS = (
 )
 
 
-#: Positive, cause-specific evidence that a build/run failure is an
-#: authoring defect rather than an unexplained exit. Every entry here must
-#: name a specific cause — a generic "the build backend returned an error"
-#: does not qualify, since it does not by itself point at anything the
-#: author could fix.
+#: Build-output markers that name a cause but do not by themselves establish
+#: one — each needs corroborating evidence from the Dockerfile before it may
+#: be read as AUTHORING. Used only by `_classify_build`.
 #:
-#: "unable to determine which files to ship": hatchling's own message when
-#: the project's package sources are absent from the build context at
-#: install time (e.g. `RUN uv sync --frozen` before `COPY src/...` in a
-#: Dockerfile) — a copy-order defect. Evidence: live acceptance run
-#: `uv-minimal`, .superpowers/sdd/2026-09-21-ci-failure-diagnosis/evidence/
-#: uv-minimal-build.log.
+#: "unable to determine which files to ship": hatchling's message when it can
+#: select no files for the wheel. The live `uv-minimal` acceptance build
+#: printed it as
+#:     ValueError: Unable to determine which files to ship
+#:     inside the wheel using the following heuristics: ...
+#:     The most likely cause of this is that there is no directory that
+#:     matches the name of your project (uv_minimal).
+#: The same message has two causes: the package sources are not in the build
+#: context yet (a Dockerfile copy-order defect — AUTHORING), or the project's
+#: own `tool.hatch.build` table selects nothing (a project defect this check
+#: cannot assert). `_install_precedes_source_copy` tells them apart.
 BUILD_AUTHORING_MARKERS: tuple[str, ...] = ("unable to determine which files to ship",)
 
 
-def _classify(output: str) -> FailureKind:
-    """Classify a build/run failure from its output.
+def _classify_build(output: str, dockerfile: str) -> FailureKind:
+    """Classify a build failure from its output and the Dockerfile built.
 
-    ENVIRONMENT is checked first and wins on any match. Otherwise AUTHORING
-    requires its own positive, cause-specific marker (BUILD_AUTHORING_MARKERS);
-    absent that, the honest answer is UNKNOWN — an exit code alone never
-    establishes a cause, and the old fallthrough to AUTHORING asserted one
-    that nothing in the output supported.
+    ENVIRONMENT is checked first and wins on any match, exactly as in
+    `_classify`. Otherwise a marker from BUILD_AUTHORING_MARKERS establishes
+    AUTHORING only when the Dockerfile corroborates it — the project is
+    installed before its sources are copied in. Absent that corroboration the
+    honest answer is UNKNOWN: the marker's two causes (copy order, packaging
+    config) are indistinguishable from the output alone.
     """
     lowered = output.lower()
     if any(marker in lowered for marker in ENVIRONMENT_MARKERS):
         return FailureKind.ENVIRONMENT
     if any(marker in lowered for marker in BUILD_AUTHORING_MARKERS):
-        return FailureKind.AUTHORING
+        if _install_precedes_source_copy(dockerfile):
+            return FailureKind.AUTHORING
+    return FailureKind.UNKNOWN
+
+
+#: Files an install step reads to resolve dependencies. Copying only these is
+#: not copying the package, so a source COPY is still outstanding afterwards.
+_MANIFEST_NAMES = frozenset(
+    {"pyproject.toml", "uv.lock", "poetry.lock", "setup.py", "setup.cfg"}
+)
+_MANIFEST_PATTERNS = (
+    re.compile(r"^requirements.*\.txt$", re.IGNORECASE),
+    re.compile(r"^README.*$"),
+    re.compile(r"^LICENSE.*$"),
+)
+
+
+def _install_precedes_source_copy(dockerfile: str) -> bool:
+    """True when the project is installed before its sources reach the image.
+
+    Walks the instructions in order (continuations joined, comments dropped by
+    `parse_dockerfile`) and returns True if the first project-installing RUN
+    comes before any COPY/ADD that brings in something other than manifest
+    files. A Dockerfile that never installs the project returns False.
+    """
+    for instruction, args in parse_dockerfile(dockerfile):
+        if instruction == "RUN" and _installs_project(args):
+            return True
+        if instruction in ("COPY", "ADD") and _copies_sources(args):
+            return False
+    return False
+
+
+def _installs_project(run_args: str) -> bool:
+    """True when any command in a RUN installs the project itself.
+
+    Dependency-only installs are excluded: `uv sync --no-install-project`,
+    `poetry install --no-root` and `pip install -r requirements.txt` all read
+    a manifest without needing the package sources.
+    """
+    for command in re.split(r"&&|\|\||[;|]", run_args):
+        tokens = command.split()
+        if _has_words(tokens, "uv", "sync"):
+            if "--no-install-project" not in tokens:
+                return True
+        elif _has_words(tokens, "poetry", "install"):
+            if "--no-root" not in tokens:
+                return True
+        elif _is_pip_install(tokens) and "." in tokens:
+            return True
+    return False
+
+
+def _is_pip_install(tokens: list[str]) -> bool:
+    return (
+        _has_words(tokens, "uv", "pip", "install")
+        or _has_words(tokens, "pip", "install")
+        or _has_words(tokens, "pip3", "install")
+    )
+
+
+def _has_words(tokens: list[str], *words: str) -> bool:
+    """True when `words` appear as consecutive tokens (env/sudo prefixes ok)."""
+    span = len(words)
+    return any(
+        tuple(tokens[i : i + span]) == words for i in range(len(tokens) - span + 1)
+    )
+
+
+def _copies_sources(copy_args: str) -> bool:
+    """True when a COPY/ADD brings in anything beyond manifest files.
+
+    `COPY --from=` copies out of another stage or image, not this build
+    context, so it never carries the project's sources.
+    """
+    tokens = [token.strip("[],\"'") for token in copy_args.split()]
+    if any(token.startswith("--from=") for token in tokens):
+        return False
+    operands = [token for token in tokens if not token.startswith("--")]
+    sources = operands[:-1]  # the last operand is the destination
+    return any(not _is_manifest(source) for source in sources)
+
+
+def _is_manifest(source: str) -> bool:
+    name = PurePosixPath(source).name
+    return name in _MANIFEST_NAMES or any(
+        pattern.match(name) for pattern in _MANIFEST_PATTERNS
+    )
+
+
+def _classify(output: str) -> FailureKind:
+    """Classify a run/compose failure from its output.
+
+    ENVIRONMENT is checked first and wins on any match. Absent an ENVIRONMENT
+    marker the honest answer is UNKNOWN — an exit code alone never establishes
+    a cause, and the old fallthrough to AUTHORING asserted one that nothing in
+    the output supported. Build failures go through `_classify_build`, which
+    can additionally weigh the Dockerfile.
+    """
+    lowered = output.lower()
+    if any(marker in lowered for marker in ENVIRONMENT_MARKERS):
+        return FailureKind.ENVIRONMENT
     return FailureKind.UNKNOWN
 
 
@@ -1262,7 +1367,7 @@ def _build(
         return CheckResult(
             check_id="build",
             status=CheckStatus.FAILED,
-            failure_kind=_classify(proc.stdout + "\n" + proc.stderr),
+            failure_kind=_classify_build(proc.stdout + "\n" + proc.stderr, dockerfile),
             message=_tail(proc.stderr or proc.stdout),
         )
     return CheckResult(check_id="build", status=CheckStatus.PASSED)
