@@ -173,16 +173,23 @@ class _Match:
 def diagnose_run(snapshot: FailedRun) -> RunDiagnosis:
     """One verdict per failed step (job-level when none is itemised), summarised.
 
+    Each verdict is judged against ITS OWN job's ``completeness``: a sibling
+    job whose log could not be fetched does not speak for a job that was
+    read completely, so an established cause is never lost to it (spec §4).
+    The run summary still reports the gap.
+
     Precedence: evidence incomplete anywhere → ``EVIDENCE_UNAVAILABLE``; else
     any unclassified failure, or nothing to diagnose at all → ``UNCLASSIFIED``;
-    else ``CLASSIFIED``. The empty set is never vacuously classified.
+    else ``CLASSIFIED``. The empty set is never vacuously classified. Whatever
+    the outcome, ``causes`` keeps the kinds the ``CLASSIFIED`` verdicts
+    established.
 
     With zero kept jobs forge fetched nothing, so its worst-of reads
     ``unavailable``/``absent`` without anything having been lost; there only
     an ``error`` state counts as incompleteness.
     """
     failures = [
-        classify_failure(job, step, snapshot.completeness)
+        classify_failure(job, step, job.completeness)
         for job in snapshot.jobs
         for step in (job.steps or [None])
     ]
@@ -195,7 +202,7 @@ def diagnose_run(snapshot: FailedRun) -> RunDiagnosis:
     )
     if lost or any(v.outcome == "EVIDENCE_UNAVAILABLE" for v in failures):
         outcome = "EVIDENCE_UNAVAILABLE"
-        observations = _missing(snapshot.completeness)
+        observations = _run_missing(snapshot)
     elif not failures or any(v.outcome == "UNCLASSIFIED" for v in failures):
         outcome = "UNCLASSIFIED"
         if not failures:
@@ -322,6 +329,22 @@ def _incomplete(completeness: Completeness) -> bool:
 def _lost(completeness: Completeness) -> bool:
     """A fetch failed; the stricter test for a snapshot that fetched nothing."""
     return completeness.logs == "error" or completeness.annotations == "error"
+
+
+def _run_missing(snapshot: FailedRun) -> list[str]:
+    """What is missing, naming the job it is missing from.
+
+    "logs fetch error" alone leaves the operator to guess which job of a
+    matrix was not read. The run's own worst-of is the fallback: with no
+    kept jobs there is nothing to name, and a hand-built snapshot may carry
+    an aggregate no job accounts for.
+    """
+    per_job = [
+        f"job {job.job_id}: {note}"
+        for job in snapshot.jobs
+        for note in _missing(job.completeness)
+    ]
+    return per_job or _missing(snapshot.completeness)
 
 
 def _missing(completeness: Completeness) -> list[str]:

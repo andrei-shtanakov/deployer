@@ -429,12 +429,10 @@ def test_annotation_error_is_recorded_not_raised(fake_gh):
     assert snapshot.completeness.annotations == "error"
 
 
-def test_completeness_is_the_worst_across_kept_jobs(fake_gh):
-    """One job's logs failing outranks another job's logs arriving."""
-    fake_gh.job_pages = [[job(1), job(2)]]
-    logs_by_job = {1: "fine", 2: GhError("gh: Not Found (HTTP 404)", status=404)}
+def _logs_per_job(fake_gh: FakeGh, logs_by_job: dict[int, str | GhError]) -> Any:
+    """A runner that answers each job's log endpoint differently."""
 
-    def logs_per_job(argv: list[str], *, timeout: float) -> str:
+    def answer(argv: list[str], *, timeout: float) -> str:
         m = _LOGS_RE.search(argv[-1])
         if m:
             result = logs_by_job[int(m.group(1))]
@@ -444,11 +442,43 @@ def test_completeness_is_the_worst_across_kept_jobs(fake_gh):
         return FakeGh.api(fake_gh, argv, timeout=timeout)
 
     class Mixed:
-        api = staticmethod(logs_per_job)
+        api = staticmethod(answer)
 
-    snapshot = fetch_failed_run(RunRef("o/r", 1), attempt=1, runner=Mixed())
+    return Mixed()
+
+
+def _one_readable_one_not(fake_gh: FakeGh) -> FailedRun:
+    """The fail-fast matrix shape: job 1 logs fine, job 2's log endpoint 404s."""
+    fake_gh.job_pages = [[job(1), job(2)]]
+    runner = _logs_per_job(
+        fake_gh, {1: "fine", 2: GhError("gh: Not Found (HTTP 404)", status=404)}
+    )
+    snapshot = fetch_failed_run(RunRef("o/r", 1), attempt=1, runner=runner)
     assert isinstance(snapshot, FailedRun)
-    assert snapshot.completeness.logs == "error"
+    return snapshot
+
+
+def test_completeness_is_the_worst_across_kept_jobs(fake_gh):
+    """One job's logs failing outranks another job's logs arriving."""
+    assert _one_readable_one_not(fake_gh).completeness.logs == "error"
+
+
+def test_each_job_carries_the_state_of_its_own_read(fake_gh):
+    """The run aggregate is the worst-of; a job says only what happened to it.
+
+    Without this, the sibling whose log 404s speaks for the job that was
+    read completely, and diagnose drops that job's established cause.
+    """
+    snapshot = _one_readable_one_not(fake_gh)
+    assert [j.completeness.logs for j in snapshot.jobs] == ["present", "error"]
+    assert [j.completeness.annotations for j in snapshot.jobs] == ["absent", "absent"]
+
+
+def test_a_hand_built_job_is_complete_by_construction():
+    """The default is what a job built in a test or a fixture asserts."""
+    assert FailedJob(1, "j", "failure", [], []).completeness == Completeness(
+        logs="present", annotations="absent"
+    )
 
 
 def test_a_gh_failure_with_no_http_status_propagates(fake_gh):
@@ -553,7 +583,12 @@ def test_snapshot_round_trips_through_versioned_json(fake_gh):
     snapshot = fetch_failed_run(RunRef("o/r", 1), attempt=1, runner=fake_gh)
     assert isinstance(snapshot, FailedRun)
     text = dump_snapshot(snapshot)
-    assert json.loads(text)["snapshot_schema_version"] == "1.0"
+    document = json.loads(text)
+    assert document["snapshot_schema_version"] == "1.1"
+    assert document["jobs"][0]["completeness"] == {
+        "logs": "present",
+        "annotations": "present",
+    }
     restored = load_snapshot(text)
     assert restored == snapshot
     sources = {type(e.source) for j in restored.jobs for e in j.evidence}
@@ -561,12 +596,44 @@ def test_snapshot_round_trips_through_versioned_json(fake_gh):
     assert restored.jobs[0].steps[0].evidence[0].source == StepRef(1, 1)
 
 
+def test_a_schema_1_0_snapshot_still_loads(fake_gh):
+    """`completeness` on a job is additive: 1.0 documents predate it.
+
+    A stored 1.0 snapshot says nothing about how each job was read, and the
+    default reads it as complete — which is what 1.0's whole-run
+    `completeness` already implied for every job it kept.
+    """
+    old = json.dumps(
+        {
+            "repo": "o/r",
+            "run_id": 1,
+            "attempt": 1,
+            "head_sha": "abc123",
+            "url": "https://github.com/o/r/actions/runs/1",
+            "jobs": [
+                {
+                    "job_id": 1,
+                    "name": "job-1",
+                    "conclusion": "failure",
+                    "steps": [],
+                    "evidence": [{"source": None, "text": "a line"}],
+                }
+            ],
+            "completeness": {"logs": "present", "annotations": "absent"},
+            "snapshot_schema_version": "1.0",
+        }
+    )
+    restored = load_snapshot(old)
+    assert restored.snapshot_schema_version == "1.0"
+    assert restored.jobs[0].completeness == Completeness("present", "absent")
+
+
 def test_snapshot_types_construct_positionally():
     assert RunRef("o/r", 1) == RunRef(repo="o/r", run_id=1)
     refusal = AdapterRefusal("not_failed", "conclusion is success")
     assert refusal.reason == "not_failed"
     run = FailedRun("o/r", 1, 1, "sha", "url", [], Completeness("present", "absent"))
-    assert run.snapshot_schema_version == "1.0"
+    assert run.snapshot_schema_version == "1.1"
     assert FailedJob(1, "j", "failure", [], []).steps == []
     assert FailedStep(StepRef(1, 1), "s", "failure", []).ref.number == 1
 

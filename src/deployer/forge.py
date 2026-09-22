@@ -19,7 +19,7 @@ from pydantic import TypeAdapter
 GH_TIMEOUT_S = 30.0
 """Wall-clock budget for one ``gh api`` invocation."""
 
-SNAPSHOT_SCHEMA_VERSION = "1.0"
+SNAPSHOT_SCHEMA_VERSION = "1.1"
 
 _PER_PAGE = 100
 _FAILED_CONCLUSIONS = frozenset({"failure", "timed_out"})
@@ -77,27 +77,45 @@ class FailedStep:
 
 
 @dataclass(frozen=True)
-class FailedJob:
-    """A non-green job with its kept steps and job-level evidence."""
-
-    job_id: int
-    name: str
-    conclusion: str
-    steps: list[FailedStep]
-    evidence: list[Evidence]
-
-
-@dataclass(frozen=True)
 class Completeness:
     """Per-source collection state: three distinct states, not a boolean.
 
-    With zero kept jobs nothing was fetched, so the states read
+    Recorded twice over: on each :class:`FailedJob`, for how that one job
+    was read, and once on the run as the worst-of aggregate over the kept
+    jobs. With zero kept jobs nothing was fetched, so the run's states read
     ``unavailable``/``absent``; check ``jobs`` before reading them as
     "logs expired".
     """
 
     logs: LogsState
     annotations: AnnotationsState
+
+
+COMPLETE_BY_CONSTRUCTION = Completeness(logs="present", annotations="absent")
+"""What a job built by hand — a test, a fixture — asserts about its own read.
+
+A job assembled in memory has no failed fetch behind it, and a stored
+snapshot from schema 1.0 says nothing per job; both read as "the log is
+here, there were no annotations", which is what 1.0's whole-run
+``completeness`` already implied for every job it kept.
+"""
+
+
+@dataclass(frozen=True)
+class FailedJob:
+    """A non-green job with its kept steps, job-level evidence and read state.
+
+    ``completeness`` is this job's own: a sibling whose log could not be
+    fetched says nothing about this one. The run's worst-of aggregate lives
+    on :class:`FailedRun`.
+    """
+
+    job_id: int
+    name: str
+    conclusion: str
+    steps: list[FailedStep]
+    evidence: list[Evidence]
+    completeness: Completeness = COMPLETE_BY_CONSTRUCTION
 
 
 @dataclass(frozen=True)
@@ -211,15 +229,19 @@ def fetch_failed_run(
         if job.get("conclusion") not in _GREEN_CONCLUSIONS
     ]
     jobs: list[FailedJob] = []
-    logs_states: list[LogsState] = []
-    annotations_states: list[AnnotationsState] = []
     for record in kept:
         job_id = int(record["id"])
         log_text, logs_state = gh.logs(job_id)
         annotations, annotations_state = gh.annotations(job_id)
-        logs_states.append(logs_state)
-        annotations_states.append(annotations_state)
-        jobs.append(_build_job(record, job_id, log_text, annotations))
+        jobs.append(
+            _build_job(
+                record,
+                job_id,
+                log_text,
+                annotations,
+                Completeness(logs=logs_state, annotations=annotations_state),
+            )
+        )
     return FailedRun(
         repo=ref.repo,
         run_id=ref.run_id,
@@ -228,8 +250,10 @@ def fetch_failed_run(
         url=str(run.get("html_url", "")),
         jobs=jobs,
         completeness=Completeness(
-            logs=_worst(logs_states, _LOGS_RANK, "unavailable"),
-            annotations=_worst(annotations_states, _ANNOTATIONS_RANK, "absent"),
+            logs=_worst([j.completeness.logs for j in jobs], _LOGS_RANK, "unavailable"),
+            annotations=_worst(
+                [j.completeness.annotations for j in jobs], _ANNOTATIONS_RANK, "absent"
+            ),
         ),
     )
 
@@ -356,6 +380,7 @@ def _build_job(
     job_id: int,
     log_text: str,
     annotations: list[dict[str, Any]],
+    completeness: Completeness,
 ) -> FailedJob:
     all_steps = list(record.get("steps") or [])
     step_evidence, job_evidence = _bind_log(log_text, job_id, all_steps)
@@ -384,6 +409,7 @@ def _build_job(
         conclusion=str(record.get("conclusion")),
         steps=steps,
         evidence=job_evidence,
+        completeness=completeness,
     )
 
 

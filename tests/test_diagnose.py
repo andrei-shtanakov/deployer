@@ -26,6 +26,9 @@ LOGS_UNAVAILABLE = Completeness(logs="unavailable", annotations="present")
 LOGS_ERROR = Completeness(logs="error", annotations="present")
 ANNOTATIONS_ERROR = Completeness(logs="present", annotations="error")
 ANNOTATIONS_ABSENT = Completeness(logs="present", annotations="absent")
+# What forge records for a job whose log came back and that had no
+# annotations: the default a hand-built job carries.
+READ_COMPLETELY = ANNOTATIONS_ABSENT
 
 
 def job_with(
@@ -34,6 +37,7 @@ def job_with(
     evidence: list[Evidence] | None = None,
     steps: list[FailedStep] | None = None,
     job_id: int = JOB_ID,
+    completeness: Completeness = READ_COMPLETELY,
 ) -> FailedJob:
     """A failed job; ``text`` lands in ``job.evidence`` unbound (source=None)."""
     if evidence is None:
@@ -44,6 +48,7 @@ def job_with(
         conclusion="failure",
         steps=steps or [],
         evidence=evidence,
+        completeness=completeness,
     )
 
 
@@ -552,11 +557,24 @@ def test_empty_set_with_lost_data_names_what_is_missing():
 
 def test_incomplete_run_keeps_the_established_causes_as_verdicts():
     """Precedence changes the summary, not what each failure found."""
-    d = diagnose_run(run_with(job_project(), completeness=ANNOTATIONS_ERROR))
+    job = job_project()
+    d = diagnose_run(run_with(job, completeness=ANNOTATIONS_ERROR))
     assert d.outcome == "EVIDENCE_UNAVAILABLE"
+    assert [v.outcome for v in d.failures] == ["CLASSIFIED"]
+    assert d.causes == [FailureKind.PROJECT]
+    assert any("AssertionError" in o for o in d.failures[0].observations)
+
+
+def test_a_job_read_incompletely_is_evidence_unavailable_on_its_own():
+    """Per-failure incompleteness still wins over that failure's markers."""
+    job = job_project()
+    unreadable = job_with(
+        text=job.evidence[0].text, completeness=ANNOTATIONS_ERROR, job_id=5
+    )
+    d = diagnose_run(run_with(unreadable))
     assert [v.outcome for v in d.failures] == ["EVIDENCE_UNAVAILABLE"]
     assert d.causes == []
-    assert any("AssertionError" in o for o in d.failures[0].observations)
+    assert d.observations == ["job 5: annotations fetch error"]
 
 
 def test_run_diagnosis_shape():
@@ -592,38 +610,68 @@ def test_render_verdict_carries_its_own_schema_version_first():
         if isinstance(where, dict):
             assert set(where) == {"job_id", "number"}
     # The nested run keeps its own, distinct schema version.
-    assert document["run"]["snapshot_schema_version"] == "1.0"
+    assert document["run"]["snapshot_schema_version"] == "1.1"
 
 
 # --- final review: I1 pin, I2 apt-warning mitigation ------------------------
 
 
-def test_sibling_job_log_error_currently_erases_an_established_cause():
-    """Documented limitation of run-global `Completeness`, pinned so a change
-    to it is deliberate.
-
-    The common shape is a fail-fast matrix: job 1 fails readably, job 2 is
-    cancelled before it starts and its log endpoint errors. `Completeness` is
-    one worst-of value for the whole run, so `diagnose_run` hands `error` to
-    every `classify_failure` and job 1's complete, unambiguously AUTHORING
-    evidence is dropped — spec §4's "established causes are never lost" holds
-    for the run summary but not per failure. The structural fix is per-job
-    completeness, tracked in `todo://deployer/forge-step-level-log-binding`.
-    """
+def _fail_fast_matrix() -> tuple[FailedJob, FailedJob]:
+    """Job 1 fails readably; job 2 is cancelled and its log endpoint errors."""
     readable = job_with(
         text='ERROR: failed to compute cache key: "/docs/setup.md": not found',
         job_id=1,
     )
-    unreadable = job_with(job_id=2)
+    unreadable = job_with(job_id=2, completeness=LOGS_ERROR)
+    return readable, unreadable
+
+
+def test_sibling_job_log_error_does_not_erase_an_established_cause():
+    """Spec §4: established causes of individual failures are never lost.
+
+    The common shape is a fail-fast matrix. `Completeness` used to be one
+    worst-of value for the whole run, handed to every `classify_failure`, so
+    job 1's complete and unambiguously AUTHORING evidence was dropped with
+    it. Each verdict now depends only on how ITS job was read; the run
+    outcome still reports that something could not be looked at.
+    """
+    readable, unreadable = _fail_fast_matrix()
     d = diagnose_run(run_with(readable, unreadable, completeness=LOGS_ERROR))
 
-    assert d.outcome == "EVIDENCE_UNAVAILABLE"
-    assert d.causes == []
     assert [v.outcome for v in d.failures] == [
-        "EVIDENCE_UNAVAILABLE",
+        "CLASSIFIED",
         "EVIDENCE_UNAVAILABLE",
     ]
-    assert all(v.kind is None and v.evidence == [] for v in d.failures)
+    established = d.failures[0]
+    assert established.kind is FailureKind.AUTHORING
+    assert any("/docs/setup.md" in e.text for e in established.evidence)
+    assert d.outcome == "EVIDENCE_UNAVAILABLE"
+    assert d.causes == [FailureKind.AUTHORING]
+
+
+def test_the_unreadable_sibling_is_named_in_the_run_observations():
+    """The operator has to know WHICH job was not read, not only that one was."""
+    d = diagnose_run(run_with(*_fail_fast_matrix(), completeness=LOGS_ERROR))
+    assert d.observations == ["job 2: logs fetch error"]
+
+
+def test_a_readable_sibling_pair_is_unaffected():
+    """Two complete jobs diagnose exactly as they did before per-job state."""
+    readable, _ = _fail_fast_matrix()
+    d = diagnose_run(run_with(readable, job_project(job_id=2)))
+    assert d.outcome == "CLASSIFIED"
+    assert [v.outcome for v in d.failures] == ["CLASSIFIED", "CLASSIFIED"]
+    assert d.causes == [FailureKind.AUTHORING, FailureKind.PROJECT]
+
+
+def test_the_unreadable_sibling_may_come_first():
+    """Whose log failed must not depend on the order jobs were listed in."""
+    readable, unreadable = _fail_fast_matrix()
+    forward = diagnose_run(run_with(readable, unreadable, completeness=LOGS_ERROR))
+    backward = diagnose_run(run_with(unreadable, readable, completeness=LOGS_ERROR))
+    assert forward.outcome == backward.outcome == "EVIDENCE_UNAVAILABLE"
+    assert forward.causes == backward.causes == [FailureKind.AUTHORING]
+    assert forward.observations == backward.observations
 
 
 def test_recovered_apt_warning_does_not_dilute_an_authoring_verdict():

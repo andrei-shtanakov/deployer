@@ -60,16 +60,11 @@ paragraph.
   give the exact binding; it is a binary download, a different subprocess contract from the
   text endpoint, hence its own slice. Sibling: "nothing was fetched" should be a `Completeness`
   state of its own instead of being inferred from `jobs == []` in `diagnose_run`.
-  Second sibling: `Completeness` is run-global, so ONE job's unreadable log turns EVERY
-  verdict into EVIDENCE_UNAVAILABLE with `kind=None, evidence=[]` — a sibling job whose own
-  evidence was complete and unambiguous loses its established cause. The common shape is a
-  fail-fast matrix (job 1 fails readably, job 2 is cancelled and its log endpoint errors).
-  Pinned as current behaviour by
-  `tests/test_diagnose.py::test_sibling_job_log_error_currently_erases_an_established_cause`;
-  the fix is per-job `Completeness` on `FailedJob`, a type change across forge, diagnose,
-  the three fixtures and the verdict schema. Third: with two failed steps in one job and one
-  unbound error block, both verdicts cite that same block, so the operator reads the same
-  error twice — step binding removes the duplication at its root.
+  Second sibling: with two failed steps in one job and one unbound error block, both verdicts
+  cite that same block, so the operator reads the same error twice — step binding removes the
+  duplication at its root. (The third, per-job `Completeness` so ONE job's unreadable log no
+  longer erases a sibling's established cause, is DONE: `FailedJob.completeness`, snapshot
+  schema 1.1.)
 - [ ] Rule-catalogue precision for `diagnose.py`: over-firing prose markers and missed shapes, driven by fixtures @owner:repo:deployer @id:diagnose-rule-catalogue-precision @epic:eco.dark-factory
   Known over-firers (acceptable in the first slice, recorded by review): `failed to fetch`
   (jest's `TypeError: Failed to fetch`), `connection timed out` / `503` printed by tests that

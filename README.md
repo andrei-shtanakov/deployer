@@ -133,7 +133,9 @@ stdout carries the human-readable summary, stderr the diagnostics.
 `--output-file` writes the verdict document, which carries its own
 `verdict_schema_version` (`"1.0"`, independent of the report `schema_version`
 above); the run snapshot nested in it carries `snapshot_schema_version`
-(`"1.0"` as well).
+(`"1.1"`). Schema 1.1 added a per-job `completeness` — how that one job was
+read — beside the run-level worst-of; it is additive, so a stored 1.0
+snapshot still loads and reads every job as completely read.
 
 Requires `gh` authenticated for the repository, and a `gh` new enough to
 support `gh api --allow-escape-sequences` (real build logs carry ANSI colour
