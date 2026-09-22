@@ -1,0 +1,123 @@
+{
+  "repo": "example/project",
+  "run_id": 35680992960,
+  "attempt": 1,
+  "head_sha": "37242cc19934c1bffff50f2be5ce5d249c4dd987",
+  "url": "https://github.com/example/project/actions/runs/35680992960",
+  "jobs": [
+    {
+      "job_id": 106597707650,
+      "name": "build",
+      "conclusion": "failure",
+      "steps": [
+        {
+          "ref": {
+            "job_id": 106597707650,
+            "number": 3
+          },
+          "name": "Run docker build --file ./Dockerfile .",
+          "conclusion": "failure",
+          "evidence": [
+            {
+              "source": {
+                "job_id": 106597707650,
+                "number": 3
+              },
+              "text": "##[group]Run docker build --file ./Dockerfile .\ndocker build --file ./Dockerfile .\nshell: /usr/bin/bash -e {0}\n##[endgroup]"
+            }
+          ]
+        }
+      ],
+      "evidence": [
+        {
+          "source": null,
+          "text": "﻿2026-09-22T02:51:24.8897652Z Current runner version: '2.337.0'"
+        },
+        {
+          "source": null,
+          "text": "##[group]Runner Image Provisioner\nHosted Compute Agent\nVersion: 20260828.587\nCommit: abac92662cab4cc7352de4f9f9d2e2419aad9c29\nBuild Date: 2026-08-28T16:44:25Z\nWorker ID: {90e024ac-6f20-4300-888d-08622fe16195}\nAzure Region: westus3\n##[endgroup]"
+        },
+        {
+          "source": null,
+          "text": "##[group]Operating System\nUbuntu\n24.04.5\nLTS\n##[endgroup]"
+        },
+        {
+          "source": null,
+          "text": "##[group]Runner Image\nImage: ubuntu-24.04\nVersion: 20260907.300.1\nIncluded Software: https://github.com/actions/runner-images/blob/ubuntu24/20260907.300/images/ubuntu/Ubuntu2404-Readme.md\nImage Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20260907.300\n##[endgroup]"
+        },
+        {
+          "source": null,
+          "text": "##[group]GITHUB_TOKEN Permissions\nContents: read\nMetadata: read\nPackages: read\n##[endgroup]"
+        },
+        {
+          "source": null,
+          "text": "Secret source: Actions\nCache mode: write\nPrepare workflow directory\nPrepare all required actions\nGetting action download info\nDownload action repository 'actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd' (SHA:93cb6efe18208431cddfb8368fd83d5badbf9bfd)\nComplete job name: build"
+        },
+        {
+          "source": null,
+          "text": "Syncing repository: example/project"
+        },
+        {
+          "source": null,
+          "text": "##[group]Getting Git version info\nWorking directory is '/home/runner/work/deployer/deployer'\n[command]/usr/bin/git version\ngit version 2.55.0\n##[endgroup]"
+        },
+        {
+          "source": null,
+          "text": "Temporarily overriding HOME='/home/runner/work/_temp/b603ebca-8f65-4936-99b5-28cab400923f' before making global git config changes\nAdding repository directory to the temporary git global config as a safe directory\n[command]/usr/bin/git config --global --add safe.directory /home/runner/work/deployer/deployer\nDeleting the contents of '/home/runner/work/deployer/deployer'"
+        },
+        {
+          "source": null,
+          "text": "##[group]Initializing the repository\n[command]/usr/bin/git init /home/runner/work/deployer/deployer\nhint: Using 'master' as the name for the initial branch. This default branch name\nhint: will change to \"main\" in Git 3.0. To configure the initial branch name\nhint: to use in all of your new repositories, which will suppress this warning,\nhint: call:\nhint:\nhint: \tgit config --global init.defaultBranch <name>\nhint:\nhint: Names commonly chosen instead of 'master' are 'main', 'trunk' and\nhint: 'development'. The just-created branch can be renamed via this command:\nhint:\nhint: \tgit branch -m <name>\nhint:\nhint: Disable this message with \"git config set advice.defaultBranchName false\"\nInitialized empty Git repository in /home/runner/work/deployer/deployer/.git/\n[command]/usr/bin/git remote add origin https://github.com/example/project\n##[endgroup]"
+        },
+        {
+          "source": null,
+          "text": "##[group]Disabling automatic garbage collection\n[command]/usr/bin/git config --local gc.auto 0\n##[endgroup]"
+        },
+        {
+          "source": null,
+          "text": "##[group]Setting up auth\n[command]/usr/bin/git config --local --name-only --get-regexp core\\.sshCommand\n[command]/usr/bin/git submodule foreach --recursive sh -c \"git config --local --name-only --get-regexp 'core\\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\"\n[command]/usr/bin/git config --local --name-only --get-regexp http\\.https\\:\\/\\/github\\.com\\/\\.extraheader\n[command]/usr/bin/git submodule foreach --recursive sh -c \"git config --local --name-only --get-regexp 'http\\.https\\:\\/\\/github\\.com\\/\\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :\"\n[command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\\.gitdir:\n[command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url\n[command]/usr/bin/git config --local http.https://github.com/.extraheader AUTHORIZATION: basic ***\n##[endgroup]"
+        },
+        {
+          "source": null,
+          "text": "##[group]Fetching the repository\n[command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +37242cc19934c1bffff50f2be5ce5d249c4dd987:refs/remotes/origin/polygon/run-2\nFrom https://github.com/example/project\n * [new ref]         37242cc19934c1bffff50f2be5ce5d249c4dd987 -> origin/polygon/run-2\n##[endgroup]"
+        },
+        {
+          "source": null,
+          "text": "##[group]Determining the checkout info\n##[endgroup]"
+        },
+        {
+          "source": null,
+          "text": "[command]/usr/bin/git sparse-checkout disable\n[command]/usr/bin/git config --local --unset-all extensions.worktreeConfig"
+        },
+        {
+          "source": null,
+          "text": "##[group]Checking out the ref\n[command]/usr/bin/git checkout --progress --force -B polygon/run-2 refs/remotes/origin/polygon/run-2\nSwitched to a new branch 'polygon/run-2'\nbranch 'polygon/run-2' set up to track 'origin/polygon/run-2'.\n##[endgroup]"
+        },
+        {
+          "source": null,
+          "text": "[command]/usr/bin/git log -1 --format=%H\n37242cc19934c1bffff50f2be5ce5d249c4dd987"
+        },
+        {
+          "source": null,
+          "text": "#0 building with \"default\" instance using docker driver\n\n#1 [internal] load build definition from Dockerfile\n#1 transferring dockerfile: 568B done\n#1 DONE 0.0s\n\n#2 [internal] load metadata for docker.io/library/python:3.12-slim\n#2 ...\n\n#3 [auth] library/python:pull token for registry-1.docker.io\n#3 DONE 0.0s\n\n#4 [internal] load metadata for ghcr.io/astral-sh/uv:0.5.11\n#4 DONE 0.8s\n\n#2 [internal] load metadata for docker.io/library/python:3.12-slim\n#2 DONE 0.8s\n\n#5 [internal] load .dockerignore\n#5 transferring context: 2B done\n#5 DONE 0.0s\n\n#6 [internal] load build context\n#6 transferring context: 584B done\n#6 DONE 0.0s\n\n#7 [stage-0 1/9] FROM docker.io/library/python:3.12-slim@sha256:2f17fc044b579bab302c2e8054d3a686e2cb9a83de48e70534b94cd8ebbe06a9\n#7 resolve docker.io/library/python:3.12-slim@sha256:2f17fc044b579bab302c2e8054d3a686e2cb9a83de48e70534b94cd8ebbe06a9 done\n#7 sha256:6b37362b3da78869050b894b799ad4df04f1f3b52774087db0d81151570244c8 0B / 29.83MB 0.1s\n#7 sha256:2f17fc044b579bab302c2e8054d3a686e2cb9a83de48e70534b94cd8ebbe06a9 10.37kB / 10.37kB done\n#7 sha256:44ff437bba879d4941b710a369a8f19266aea34b29002807f0c487fabc9eec9b 1.75kB / 1.75kB done\n#7 sha256:9e87977b867847e186d066f531ef783b006d582a985c341c269446088d90f2c4 5.65kB / 5.65kB done\n#7 sha256:6b37362b3da78869050b894b799ad4df04f1f3b52774087db0d81151570244c8 7.34MB / 29.83MB 0.2s\n#7 sha256:3764a9a7d1e8a98213ab2201a41dbf3da9c60240ea35a5ea96ab994555070a70 0B / 1.29MB 0.2s\n#7 sha256:6b37362b3da78869050b894b799ad4df04f1f3b52774087db0d81151570244c8 29.83MB / 29.83MB 0.3s done\n#7 sha256:b0dc7f87bef15c2536cb182d6c48b52f90a0522884ec9eb222f833fa97ffebf0 0B / 12.12MB 0.3s\n#7 extracting sha256:6b37362b3da78869050b894b799ad4df04f1f3b52774087db0d81151570244c8\n#7 sha256:3764a9a7d1e8a98213ab2201a41dbf3da9c60240ea35a5ea96ab994555070a70 1.29MB / 1.29MB 0.3s done\n#7 sha256:b0dc7f87bef15c2536cb182d6c48b52f90a0522884ec9eb222f833fa97ffebf0 12.12MB / 12.12MB 0.4s\n#7 sha256:06ad939ed42b51caafb25b14810875d14e0ee0c441d3e2e5e46475fb8c150bca 249B / 249B 0.4s done\n#7 sha256:b0dc7f87bef15c2536cb182d6c48b52f90a0522884ec9eb222f833fa97ffebf0 12.12MB / 12.12MB 0.4s done\n#7 extracting sha256:6b37362b3da78869050b894b799ad4df04f1f3b52774087db0d81151570244c8 1.1s done\n#7 extracting sha256:3764a9a7d1e8a98213ab2201a41dbf3da9c60240ea35a5ea96ab994555070a70\n#7 extracting sha256:3764a9a7d1e8a98213ab2201a41dbf3da9c60240ea35a5ea96ab994555070a70 0.4s done\n#7 extracting sha256:b0dc7f87bef15c2536cb182d6c48b52f90a0522884ec9eb222f833fa97ffebf0\n#7 ...\n\n#8 FROM ghcr.io/astral-sh/uv:0.5.11@sha256:0ac957607303916420297a4c9c213bb33fbd3c888f9cd7f4f7273596ebf42b85\n#8 resolve ghcr.io/astral-sh/uv:0.5.11@sha256:0ac957607303916420297a4c9c213bb33fbd3c888f9cd7f4f7273596ebf42b85 done\n#8 sha256:0ac957607303916420297a4c9c213bb33fbd3c888f9cd7f4f7273596ebf42b85 2.19kB / 2.19kB done\n#8 sha256:7e479fa39802632c25b4e5c14ddfab9c5f443cd7c89626a0408d31a0b7afc193 669B / 669B done\n#8 sha256:19979093e3da84cd28f7b6f852513b795e084427176ef9fbfac58642e69b461a 1.30kB / 1.30kB done\n#8 sha256:02952ea2db8844012cecc744babe0000d0784fc901ee9ea6fcd6157d64c0db30 14.91MB / 14.91MB 0.4s done\n#8 sha256:9309c81c6be946e5798e9ac53d13cbdbc17666b1c9b728ce18e27d482d928acc 94B / 94B 0.1s done\n#8 extracting sha256:02952ea2db8844012cecc744babe0000d0784fc901ee9ea6fcd6157d64c0db30 0.2s done\n#8 extracting sha256:9309c81c6be946e5798e9ac53d13cbdbc17666b1c9b728ce18e27d482d928acc done\n#8 DONE 3.2s\n\n#7 [stage-0 1/9] FROM docker.io/library/python:3.12-slim@sha256:2f17fc044b579bab302c2e8054d3a686e2cb9a83de48e70534b94cd8ebbe06a9\n#7 extracting sha256:b0dc7f87bef15c2536cb182d6c48b52f90a0522884ec9eb222f833fa97ffebf0 0.6s done\n#7 extracting sha256:06ad939ed42b51caafb25b14810875d14e0ee0c441d3e2e5e46475fb8c150bca\n#7 extracting sha256:06ad939ed42b51caafb25b14810875d14e0ee0c441d3e2e5e46475fb8c150bca done\n#7 DONE 3.9s\n\n#9 [stage-0 2/9] COPY --from=ghcr.io/astral-sh/uv:0.5.11 /uv /uvx /bin/\n#9 DONE 0.0s\n\n#10 [stage-0 3/9] WORKDIR /app\n#10 DONE 0.0s\n\n#11 [stage-0 4/9] RUN echo 'deb http://10.255.255.1/debian bookworm main' > /etc/apt/sources.list.d/mirror.list     && apt-get -o Acquire::http::Timeout=15 -o Acquire::Retries=0        -o APT::Update::Error-Mode=any update\n#11 0.180 Hit:1 http://deb.debian.org/debian trixie InRelease\n#11 0.180 Get:2 http://deb.debian.org/debian trixie-updates InRelease [47.3 kB]\n#11 0.182 Get:3 http://deb.debian.org/debian-security trixie-security InRelease [43.4 kB]\n#11 0.196 Get:4 http://deb.debian.org/debian trixie/main amd64 Packages [9678 kB]\n#11 0.246 Get:5 http://deb.debian.org/debian trixie-updates/main amd64 Packages [4412 B]\n#11 0.247 Get:6 http://deb.debian.org/debian-security trixie-security/main amd64 Packages [262 kB]\n#11 15.43 Err:7 http://10.255.255.1/debian bookworm InRelease\n#11 15.43   Could not connect to 10.255.255.1:80 (10.255.255.1), connection timed out\n#11 15.44 Fetched 10.0 MB in 15s (657 kB/s)\n#11 15.44 Reading package lists...\n#11 15.89 E: Failed to fetch http://10.255.255.1/debian/dists/bookworm/InRelease  Could not connect to 10.255.255.1:80 (10.255.255.1), connection timed out\n#11 15.89 E: Some index files failed to download. They have been ignored, or old ones used instead.\n#11 ERROR: process \"/bin/sh -c echo 'deb http://10.255.255.1/debian bookworm main' > /etc/apt/sources.list.d/mirror.list     && apt-get -o Acquire::http::Timeout=15 -o Acquire::Retries=0        -o APT::Update::Error-Mode=any update\" did not complete successfully: exit code: 100\n------\n > [stage-0 4/9] RUN echo 'deb http://10.255.255.1/debian bookworm main' > /etc/apt/sources.list.d/mirror.list     && apt-get -o Acquire::http::Timeout=15 -o Acquire::Retries=0        -o APT::Update::Error-Mode=any update:\n0.180 Get:2 http://deb.debian.org/debian trixie-updates InRelease [47.3 kB]\n0.182 Get:3 http://deb.debian.org/debian-security trixie-security InRelease [43.4 kB]\n0.196 Get:4 http://deb.debian.org/debian trixie/main amd64 Packages [9678 kB]\n0.246 Get:5 http://deb.debian.org/debian trixie-updates/main amd64 Packages [4412 B]\n0.247 Get:6 http://deb.debian.org/debian-security trixie-security/main amd64 Packages [262 kB]\n15.43 Err:7 http://10.255.255.1/debian bookworm InRelease\n15.43   Could not connect to 10.255.255.1:80 (10.255.255.1), connection timed out\n\n15.89 E: Failed to fetch http://10.255.255.1/debian/dists/bookworm/InRelease  Could not connect to 10.255.255.1:80 (10.255.255.1), connection timed out\n15.89 E: Some index files failed to download. They have been ignored, or old ones used instead.\n------\nDockerfile:7\n--------------------\n   6 |     \n   7 | >>> RUN echo 'deb http://10.255.255.1/debian bookworm main' > /etc/apt/sources.list.d/mirror.list \\\n   8 | >>>     && apt-get -o Acquire::http::Timeout=15 -o Acquire::Retries=0 \\\n   9 | >>>        -o APT::Update::Error-Mode=any update\n  10 |     \n--------------------\nERROR: failed to build: failed to solve: process \"/bin/sh -c echo 'deb http://10.255.255.1/debian bookworm main' > /etc/apt/sources.list.d/mirror.list     && apt-get -o Acquire::http::Timeout=15 -o Acquire::Retries=0        -o APT::Update::Error-Mode=any update\" did not complete successfully: exit code: 100\n##[error]Process completed with exit code 1.\nPost job cleanup.\n[command]/usr/bin/git version\ngit version 2.55.0\nTemporarily overriding HOME='/home/runner/work/_temp/f48c0140-66aa-4a14-b53b-c3d347d2c6ee' before making global git config changes\nAdding repository directory to the temporary git global config as a safe directory\n[command]/usr/bin/git config --global --add safe.directory /home/runner/work/deployer/deployer\n[command]/usr/bin/git config --local --name-only --get-regexp core\\.sshCommand\n[command]/usr/bin/git submodule foreach --recursive sh -c \"git config --local --name-only --get-regexp 'core\\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\"\n[command]/usr/bin/git config --local --name-only --get-regexp http\\.https\\:\\/\\/github\\.com\\/\\.extraheader\nhttp.https://github.com/.extraheader\n[command]/usr/bin/git config --local --unset-all http.https://github.com/.extraheader\n[command]/usr/bin/git submodule foreach --recursive sh -c \"git config --local --name-only --get-regexp 'http\\.https\\:\\/\\/github\\.com\\/\\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :\"\n[command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\\.gitdir:\n[command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url\nCleaning up orphan processes"
+        },
+        {
+          "source": {
+            "job_id": 106597707650,
+            "number": 2
+          },
+          "text": "##[group]Run actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd\nwith:\n  repository: example/project\n  token: ***\n  ssh-strict: true\n  ssh-user: git\n  persist-credentials: true\n  clean: true\n  sparse-checkout-cone-mode: true\n  fetch-depth: 1\n  fetch-tags: false\n  show-progress: true\n  lfs: false\n  submodules: false\n  set-safe-directory: true\n##[endgroup]"
+        },
+        {
+          "source": 106597707650,
+          "text": "failure: Process completed with exit code 1."
+        }
+      ]
+    }
+  ],
+  "completeness": {
+    "logs": "present",
+    "annotations": "present"
+  },
+  "snapshot_schema_version": "1.0"
+}
