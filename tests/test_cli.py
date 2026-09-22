@@ -61,16 +61,13 @@ def _minimal_run(
 
 
 def diagnosis(
-    outcome: Outcome,
-    *,
-    failures: list[FailureVerdict] | None = None,
-    causes: list[FailureKind] | None = None,
+    outcome: Outcome, *, failures: list[FailureVerdict] | None = None
 ) -> RunDiagnosis:
     return RunDiagnosis(
         run=_minimal_run(),
         failures=failures if failures is not None else [],
         outcome=outcome,
-        causes=causes if causes is not None else [],
+        causes=[],
         observations=[],
     )
 
@@ -1327,9 +1324,11 @@ def test_smoke_suite_without_a_target_file_is_an_error() -> None:
 # --- Task 11: `deployer diagnose` -----------------------------------------
 
 
+# The reading layer asserts no cause and never produces `CLASSIFIED`, so exit
+# 0 is not a row here: no path through `diagnose` reaches it.
 @pytest.mark.parametrize(
     "outcome,code",
-    [("CLASSIFIED", 0), ("UNCLASSIFIED", 3), ("EVIDENCE_UNAVAILABLE", 4)],
+    [("UNCLASSIFIED", 3), ("EVIDENCE_UNAVAILABLE", 4)],
 )
 def test_exit_code_per_outcome(outcome, code, monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(cli, "diagnose_run", lambda s: diagnosis(outcome))
@@ -1358,7 +1357,7 @@ def test_attempt_must_be_a_positive_int() -> None:
 def test_verdict_document_carries_its_own_schema_version(tmp_path) -> None:
     out = tmp_path / "v.json"
     cli.main(["diagnose", RUN_URL, "--output-file", str(out)])
-    assert json.loads(out.read_text())["verdict_schema_version"] == "1.0"
+    assert json.loads(out.read_text())["verdict_schema_version"] == "1.1"
 
 
 def _raise_gh_error(*args: object, **kwargs: object) -> FailedRun:
@@ -1393,9 +1392,9 @@ def test_url_attempt_matching_flag_attempt_is_fine(monkeypatch) -> None:
         return _minimal_run()
 
     monkeypatch.setattr(cli, "fetch_failed_run", spy)
-    monkeypatch.setattr(cli, "diagnose_run", lambda s: diagnosis("CLASSIFIED"))
+    monkeypatch.setattr(cli, "diagnose_run", lambda s: diagnosis("UNCLASSIFIED"))
     url = "https://github.com/o/r/actions/runs/1/attempts/3"
-    assert cli.main(["diagnose", url, "--attempt", "3"]) == 0
+    assert cli.main(["diagnose", url, "--attempt", "3"]) == 3
     assert captured["attempt"] == 3
 
 
@@ -1413,10 +1412,11 @@ def test_run_id_without_repo_is_invalid() -> None:
 
 
 def test_stdout_and_stderr_are_split(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(cli, "diagnose_run", lambda s: diagnosis("CLASSIFIED"))
+    monkeypatch.setattr(cli, "diagnose_run", lambda s: diagnosis("UNCLASSIFIED"))
     cli.main(["diagnose", RUN_URL])
     captured = capsys.readouterr()
-    assert "CLASSIFIED" in captured.out
+    assert "outcome: UNCLASSIFIED" in captured.out
+    assert "causes: none asserted" in captured.out
     assert "completeness:" in captured.err
 
 
@@ -1426,32 +1426,24 @@ def test_summary_lists_job_level_and_step_level_where(monkeypatch, capsys) -> No
     verdicts = [
         FailureVerdict(
             where=job_where,
-            outcome="CLASSIFIED",
-            kind=FailureKind.ENVIRONMENT,
+            outcome="UNCLASSIFIED",
             evidence=[],
-            observations=["disk full"],
+            observations=["disk full: write /var/lib/docker/tmp/x: no space left"],
         ),
         FailureVerdict(
             where=step_where,
-            outcome="CLASSIFIED",
-            kind=FailureKind.PROJECT,
+            outcome="UNCLASSIFIED",
             evidence=[],
-            observations=["AssertionError: boom"],
+            observations=["assertion error: AssertionError: boom"],
         ),
     ]
     monkeypatch.setattr(
-        cli,
-        "diagnose_run",
-        lambda s: diagnosis(
-            "CLASSIFIED",
-            failures=verdicts,
-            causes=[FailureKind.ENVIRONMENT, FailureKind.PROJECT],
-        ),
+        cli, "diagnose_run", lambda s: diagnosis("UNCLASSIFIED", failures=verdicts)
     )
     cli.main(["diagnose", RUN_URL])
     out = capsys.readouterr().out
-    assert "job 42" in out
-    assert "job 42 step 2" in out
+    assert "[job 42] UNCLASSIFIED: disk full: " in out
+    assert "[job 42 step 2] UNCLASSIFIED: assertion error: " in out
 
 
 def test_output_file_write_failure_exits_2_not_a_traceback(tmp_path, capsys) -> None:
@@ -1577,14 +1569,19 @@ def test_the_real_project_fixture_diagnoses_through_the_cli(
 ) -> None:
     """The seam the live runs proved, under regression: a real anonymised
     snapshot through the real `diagnose_run` and the real exit-code map.
-    Every other CLI diagnose test stubs one of the two."""
+    Every other CLI diagnose test stubs one of the two. A complete read
+    exits 3 with its observations and asserts no cause."""
     fixture = Path(__file__).parent / "fixtures" / "runs" / "project.json"
     snapshot = load_snapshot(fixture.read_text())
     monkeypatch.setattr(cli, "fetch_failed_run", lambda *a, **k: snapshot)
 
     out = tmp_path / "v.json"
-    assert cli.main(["diagnose", RUN_URL, "--output-file", str(out)]) == 0
+    assert cli.main(["diagnose", RUN_URL, "--output-file", str(out)]) == 3
 
     document = json.loads(out.read_text())
-    assert document["outcome"] == "CLASSIFIED"
-    assert document["causes"] == ["project"]
+    assert document["verdict_schema_version"] == "1.1"
+    assert document["outcome"] == "UNCLASSIFIED"
+    assert document["causes"] == []
+    (failure,) = document["failures"]
+    assert failure["kind"] is None
+    assert any(o.startswith("assertion error: ") for o in failure["observations"])
