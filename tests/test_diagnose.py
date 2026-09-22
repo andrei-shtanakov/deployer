@@ -3,12 +3,15 @@
 from deployer.diagnose import (
     RULES,
     FailureVerdict,
+    RunDiagnosis,
     classify_failure,
+    diagnose_run,
 )
 from deployer.forge import (
     Completeness,
     Evidence,
     FailedJob,
+    FailedRun,
     FailedStep,
     StepRef,
 )
@@ -241,3 +244,163 @@ def test_verdict_shape():
     v = classify_failure(job_with(evidence=[]), step=None, completeness=COMPLETE)
     assert isinstance(v, FailureVerdict)
     assert (v.where, v.outcome, v.kind) == (JOB_ID, "UNCLASSIFIED", FailureKind.UNKNOWN)
+
+
+# --- Task 10: diagnose_run ----------------------------------------------------
+
+
+def run_with(*jobs: FailedJob, completeness: Completeness = COMPLETE) -> FailedRun:
+    return FailedRun(
+        repo="acme/app",
+        run_id=4242,
+        attempt=1,
+        head_sha="deadbeef",
+        url="https://github.com/acme/app/actions/runs/4242",
+        jobs=list(jobs),
+        completeness=completeness,
+    )
+
+
+def job_project(job_id: int = JOB_ID) -> FailedJob:
+    return job_with(
+        text="FAILED tests/test_x.py::test_x - AssertionError: 1 != 2", job_id=job_id
+    )
+
+
+def job_environment(job_id: int = JOB_ID + 1) -> FailedJob:
+    return job_with(
+        text="E: Failed to fetch http://deb.debian.org/debian/x.deb", job_id=job_id
+    )
+
+
+def job_unclassified(job_id: int = JOB_ID + 2) -> FailedJob:
+    return job_with(text="Process completed with exit code 1.", job_id=job_id)
+
+
+def job_failed_no_steps() -> FailedJob:
+    return job_with(text="cannot connect to the docker daemon")
+
+
+def job_failed_with_steps() -> FailedJob:
+    return job_with(
+        text="cannot connect to the docker daemon",
+        steps=[failed_step(2), failed_step(4)],
+    )
+
+
+def test_two_independent_failures_are_not_a_conflict():
+    d = diagnose_run(run_with(job_project(), job_environment()))
+    assert d.outcome == "CLASSIFIED"
+    assert set(d.causes) == {FailureKind.PROJECT, FailureKind.ENVIRONMENT}
+
+
+def test_job_order_does_not_change_the_result():
+    a = diagnose_run(run_with(job_project(), job_unclassified()))
+    b = diagnose_run(run_with(job_unclassified(), job_project()))
+    assert a.outcome == b.outcome and set(a.causes) == set(b.causes)
+
+
+def test_precedence_evidence_unavailable_beats_unclassified():
+    d = diagnose_run(run_with(job_unclassified(), completeness=LOGS_UNAVAILABLE))
+    assert d.outcome == "EVIDENCE_UNAVAILABLE"
+
+
+def test_unclassified_summary_keeps_established_causes():
+    d = diagnose_run(run_with(job_project(), job_unclassified()))
+    assert FailureKind.PROJECT in d.causes
+
+
+def test_empty_diagnosable_set_is_never_classified():
+    """A failed run with no diagnosable failed job/step must not satisfy
+    "every element is classified" vacuously."""
+    d = diagnose_run(run_with())
+    assert d.outcome == "UNCLASSIFIED"
+    assert d.failures == [] and d.observations
+
+
+def test_empty_set_with_lost_data_is_evidence_unavailable():
+    d = diagnose_run(run_with(completeness=LOGS_ERROR))
+    assert d.outcome == "EVIDENCE_UNAVAILABLE"
+
+
+def test_empty_set_with_nothing_fetched_is_unclassified_not_lost():
+    """Forge's worst-of over zero kept jobs reads 'unavailable'/'absent' because
+    nothing was fetched; that is not lost data (amended R10-2)."""
+    nothing_fetched = Completeness(logs="unavailable", annotations="absent")
+    d = diagnose_run(run_with(completeness=nothing_fetched))
+    assert d.outcome == "UNCLASSIFIED"
+    assert d.observations == ["failed run exposes no failed job or step"]
+
+
+def test_empty_set_with_annotations_error_is_evidence_unavailable():
+    d = diagnose_run(run_with(completeness=ANNOTATIONS_ERROR))
+    assert d.outcome == "EVIDENCE_UNAVAILABLE"
+    assert d.observations == ["annotations fetch error"]
+
+
+def test_non_empty_set_with_logs_unavailable_is_still_incomplete():
+    d = diagnose_run(run_with(job_project(), completeness=LOGS_UNAVAILABLE))
+    assert d.outcome == "EVIDENCE_UNAVAILABLE"
+    assert d.observations == ["logs unavailable"]
+
+
+def test_failed_job_without_failed_steps_keeps_a_job_level_failure():
+    d = diagnose_run(run_with(job_failed_no_steps()))
+    assert [v.where for v in d.failures] == [JOB_ID]
+
+
+def test_itemised_steps_do_not_duplicate_the_job_level_error():
+    d = diagnose_run(run_with(job_failed_with_steps()))
+    assert all(isinstance(v.where, StepRef) for v in d.failures)
+
+
+def test_itemised_steps_each_get_a_verdict_in_order():
+    d = diagnose_run(run_with(job_failed_with_steps()))
+    assert [v.where for v in d.failures] == [StepRef(JOB_ID, 2), StepRef(JOB_ID, 4)]
+
+
+def test_causes_are_sorted_and_distinct_whatever_the_job_order():
+    forward = diagnose_run(run_with(job_project(), job_environment(), job_project(9)))
+    backward = diagnose_run(run_with(job_project(9), job_environment(), job_project()))
+    assert forward.causes == backward.causes
+    assert forward.causes == [FailureKind.ENVIRONMENT, FailureKind.PROJECT]
+
+
+def test_unclassified_summary_is_the_same_whatever_the_job_order():
+    a = diagnose_run(run_with(job_project(), job_unclassified()))
+    b = diagnose_run(run_with(job_unclassified(), job_project()))
+    assert a.outcome == b.outcome == "UNCLASSIFIED"
+    assert a.causes == b.causes == [FailureKind.PROJECT]
+
+
+def test_empty_set_observation_names_the_shape():
+    d = diagnose_run(run_with())
+    assert d.observations == ["failed run exposes no failed job or step"]
+    assert d.causes == []
+
+
+def test_empty_set_with_lost_data_names_what_is_missing():
+    d = diagnose_run(run_with(completeness=LOGS_ERROR))
+    assert d.failures == [] and d.causes == []
+    assert d.observations == ["logs fetch error"]
+
+
+def test_incomplete_run_keeps_the_established_causes_as_verdicts():
+    """Precedence changes the summary, not what each failure found."""
+    d = diagnose_run(run_with(job_project(), completeness=ANNOTATIONS_ERROR))
+    assert d.outcome == "EVIDENCE_UNAVAILABLE"
+    assert [v.outcome for v in d.failures] == ["EVIDENCE_UNAVAILABLE"]
+    assert d.causes == []
+    assert any("AssertionError" in o for o in d.failures[0].observations)
+
+
+def test_run_diagnosis_shape():
+    run = run_with(job_project())
+    d = diagnose_run(run)
+    assert isinstance(d, RunDiagnosis)
+    assert d.run is run
+    assert (d.outcome, d.causes, d.observations) == (
+        "CLASSIFIED",
+        [FailureKind.PROJECT],
+        [],
+    )

@@ -12,13 +12,21 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
-from deployer.forge import Completeness, Evidence, FailedJob, FailedStep, StepRef
+from deployer.forge import (
+    Completeness,
+    Evidence,
+    FailedJob,
+    FailedRun,
+    FailedStep,
+    StepRef,
+)
 from deployer.models import FailureKind
 
 Outcome = Literal["CLASSIFIED", "UNCLASSIFIED", "EVIDENCE_UNAVAILABLE"]
 
 _JOB_LEVEL_NOTE = "cited evidence is job-level (no step binding)"
 _NO_RULE_NOTE = "no rule matched"
+_EMPTY_SET_NOTE = "failed run exposes no failed job or step"
 
 # Python exception lines other than the assertion rule below: recorded as
 # observations, never as a class (spec §5: wrong dependencies or a wrong
@@ -109,6 +117,23 @@ class FailureVerdict:
 
 
 @dataclass(frozen=True)
+class RunDiagnosis:
+    """The run summary: every verdict, one outcome, the distinct causes.
+
+    ``causes`` lists the kinds established by ``CLASSIFIED`` verdicts, sorted
+    and deduplicated, and is kept whatever ``outcome`` says. ``observations``
+    are run-level: what is missing, or that the run exposed nothing to
+    diagnose.
+    """
+
+    run: FailedRun
+    failures: list[FailureVerdict]
+    outcome: Outcome
+    causes: list[FailureKind]
+    observations: list[str]
+
+
+@dataclass(frozen=True)
 class _Match:
     rule: Rule
     evidence: Evidence
@@ -116,6 +141,45 @@ class _Match:
 
     def describe(self) -> str:
         return f"{self.rule.name}: {self.line}"
+
+
+def diagnose_run(snapshot: FailedRun) -> RunDiagnosis:
+    """One verdict per failed step (job-level when none is itemised), summarised.
+
+    Precedence: evidence incomplete anywhere → ``EVIDENCE_UNAVAILABLE``; else
+    any unclassified failure, or nothing to diagnose at all → ``UNCLASSIFIED``;
+    else ``CLASSIFIED``. The empty set is never vacuously classified.
+
+    With zero kept jobs forge fetched nothing, so its worst-of reads
+    ``unavailable``/``absent`` without anything having been lost; there only
+    an ``error`` state counts as incompleteness.
+    """
+    failures = [
+        classify_failure(job, step, snapshot.completeness)
+        for job in snapshot.jobs
+        for step in (job.steps or [None])
+    ]
+    observations: list[str] = []
+    outcome: Outcome
+    lost = (
+        _lost(snapshot.completeness)
+        if not snapshot.jobs
+        else _incomplete(snapshot.completeness)
+    )
+    if lost or any(v.outcome == "EVIDENCE_UNAVAILABLE" for v in failures):
+        outcome = "EVIDENCE_UNAVAILABLE"
+        observations = _missing(snapshot.completeness)
+    elif not failures or any(v.outcome == "UNCLASSIFIED" for v in failures):
+        outcome = "UNCLASSIFIED"
+        if not failures:
+            observations = [_EMPTY_SET_NOTE]
+    else:
+        outcome = "CLASSIFIED"
+    causes = sorted(
+        {v.kind for v in failures if v.outcome == "CLASSIFIED" and v.kind},
+        key=lambda kind: kind.value,
+    )
+    return RunDiagnosis(snapshot, failures, outcome, causes, observations)
 
 
 def classify_failure(
@@ -207,6 +271,11 @@ def _incomplete(completeness: Completeness) -> bool:
     return completeness.logs in ("unavailable", "error") or (
         completeness.annotations == "error"
     )
+
+
+def _lost(completeness: Completeness) -> bool:
+    """A fetch failed; the stricter test for a snapshot that fetched nothing."""
+    return completeness.logs == "error" or completeness.annotations == "error"
 
 
 def _missing(completeness: Completeness) -> list[str]:
