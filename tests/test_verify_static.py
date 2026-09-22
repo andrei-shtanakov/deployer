@@ -1453,6 +1453,37 @@ def test_ci_both_on_keys_ambiguous_fails() -> None:
     assert checks["ci_parses"].status is CheckStatus.FAILED
 
 
+def test_default_mode_still_requires_push_and_pull_request() -> None:
+    from deployer.verify import _check_ci_triggers
+
+    problems = _check_ci_triggers({"on": {"push": None}}, trigger_mode="default")
+    assert "workflow must trigger on pull_request" in problems
+
+
+def test_manual_mode_requires_dispatch_and_forbids_push() -> None:
+    from deployer.verify import _check_ci_triggers
+
+    assert (
+        _check_ci_triggers({"on": {"workflow_dispatch": None}}, trigger_mode="manual")
+        == []
+    )
+    problems = _check_ci_triggers(
+        {"on": {"push": None, "workflow_dispatch": None}}, trigger_mode="manual"
+    )
+    assert "manual trigger_mode forbids push" in problems
+
+
+def test_manual_mode_keeps_every_other_constraint() -> None:
+    """pull_request_target stays forbidden in both modes."""
+    from deployer.verify import _check_ci_triggers
+
+    problems = _check_ci_triggers(
+        {"on": {"workflow_dispatch": None, "pull_request_target": None}},
+        trigger_mode="manual",
+    )
+    assert "pull_request_target is forbidden (security)" in problems
+
+
 @pytest.mark.parametrize(
     "mutate",
     [

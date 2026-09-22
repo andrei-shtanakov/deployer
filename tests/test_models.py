@@ -290,6 +290,20 @@ def test_ci_with_dependencies_rejected() -> None:
         )
 
 
+def test_empty_ci_spec_keeps_default_mode() -> None:
+    """{"ci": {}} must keep EXACTLY its current behaviour."""
+    from deployer.models import CISpec
+
+    assert CISpec().trigger_mode == "default"
+
+
+def test_unknown_trigger_mode_is_rejected() -> None:
+    from deployer.models import CISpec
+
+    with pytest.raises(ValidationError):
+        CISpec.model_validate({"trigger_mode": "cron"})
+
+
 def test_iteration_record_ci_defaults_none() -> None:
     from deployer.models import IterationRecord, VerificationReport
 

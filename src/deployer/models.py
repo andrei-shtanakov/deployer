@@ -112,13 +112,13 @@ class ServiceDependency(BaseModel):
 class CISpec(BaseModel):
     """Request for a build-image CI workflow. Presence is the request.
 
-    Deliberately empty: no kind/registry/triggers until a second
-    implemented workflow kind exists — a discriminator now would be
-    false extensibility. Unknown keys are rejected loudly: a silently
-    dropped "kind" would no-op instead of failing the config.
+    `trigger_mode` varies HOW the workflow is triggered, not what it builds:
+    `manual` is still the build-image workflow. Unknown keys stay rejected.
     """
 
     model_config = ConfigDict(extra="forbid")
+
+    trigger_mode: Literal["default", "manual"] = "default"
 
 
 class SmokeSpec(BaseModel):
