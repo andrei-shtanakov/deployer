@@ -296,7 +296,7 @@ def _evidence_pool(job: FailedJob, step: FailedStep | None) -> list[Evidence]:
 
 # One notion, two sources. apt prefixes a recovered problem with `W: ` and a
 # real one with `E: `, per line inside a log block; and `forge._build_job`
-# renders a job annotation as `<level>: <message>`, so a whole block reading
+# renders a job annotation as `<level>: <message>`, so a line reading
 # `warning: `/`notice: ` is GitHub saying it noticed something, while
 # `error: `/`failure: ` (and an unprefixed log line) are failure evidence.
 # Because in practice every step's evidence pool is the whole job log (all
@@ -308,21 +308,25 @@ def _evidence_pool(job: FailedJob, step: FailedStep | None) -> list[Evidence]:
 # kind may establish a class off such a match; every kind keeps it as an
 # observation. (Round 2 applied this to ENVIRONMENT rules only, which left
 # that annotation reading as AUTHORING and exiting 0 on a class nobody had
-# evidence for.) The first mitigation for
-# todo://deployer/diagnose-rule-catalogue-precision.
+# evidence for.) The judgement is made on the matched line itself, never on
+# where the whole evidence block happens to start: a multi-line log block
+# whose `warning: `/`notice: ` line sits mid-block is not warning-shaped at
+# its first line, and a block that DOES open with one of those levels must
+# not blanket-exclude a genuine marker on a later line (round 5, finding 1).
+# The first mitigation for todo://deployer/diagnose-rule-catalogue-precision.
 _APT_WARNING_RE = re.compile(rf"^{_LINE_PREFIX}W: ")
 _ANNOTATION_WARNING_RE = re.compile(r"^(?:warning|notice): ")
 
 WARNING_SHAPED_NOTE = "warning-shaped"
 
 
-def _is_warning_shaped(text: str, line: str) -> bool:
-    """Whether `line` of the evidence `text` reports a noticed, not fatal, problem.
+def _is_warning_shaped(line: str) -> bool:
+    """Whether the matched `line` reports a noticed, not fatal, problem.
 
-    Two shapes, because the two sources scope differently: apt's `W: ` marks
-    the one line it prefixes, an annotation level opens the whole block.
+    Two shapes, both judged on the same line: apt's `W: ` prefix, and a
+    `forge`-rendered annotation opening with `warning: `/`notice: `.
     """
-    return bool(_APT_WARNING_RE.match(line) or _ANNOTATION_WARNING_RE.match(text))
+    return bool(_APT_WARNING_RE.match(line) or _ANNOTATION_WARNING_RE.match(line))
 
 
 def _matches(item: Evidence) -> tuple[list[_Match], list[_Match]]:
@@ -338,7 +342,7 @@ def _matches(item: Evidence) -> tuple[list[_Match], list[_Match]]:
         skipped: _Match | None = None
         for hit in rule.pattern.finditer(item.text):
             line = _line_at(item.text, hit.start())
-            if _is_warning_shaped(item.text, line):
+            if _is_warning_shaped(line):
                 skipped = skipped or _Match(rule, item, line)
                 continue
             found.append(_Match(rule, item, line))

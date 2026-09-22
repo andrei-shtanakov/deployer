@@ -830,3 +830,57 @@ def test_a_warning_annotation_does_not_mask_a_real_log_line():
     )
     assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.ENVIRONMENT
     assert v.evidence == [target.evidence[0]]
+
+
+# --- PR #72 round 5, finding 1: warning-shaped is judged on the matched line --
+
+
+def test_a_warning_line_mid_block_does_not_mask_the_block():
+    """The review's probe. A single Evidence block mixes a plain line, a
+    `warning: ` line, and the step's own exit-code line; the `warning: `
+    line is not at the block's start. Judged on the matched line itself,
+    the timeout marker sits on the warning line and establishes nothing;
+    judged on the block's start (the old bug) it would not either, but for
+    the wrong reason -- the assertion below pins the intended reason via
+    the observation text naming that exact line."""
+    text = (
+        "Starting checks\n"
+        "warning: Connection timed out; retry succeeded\n"
+        "Process completed with exit code 1."
+    )
+    v = classify_failure(job_with(text=text), step=None, completeness=COMPLETE)
+    assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
+    assert v.evidence == []
+    assert v.observations == [
+        "warning-shaped: connection timed out: "
+        "warning: Connection timed out; retry succeeded"
+    ]
+
+
+def test_a_warning_shaped_first_line_does_not_mask_a_real_marker_later_in_the_block():
+    """The regression this fix must not introduce: a block that DOES start
+    with `warning: ` still lets a later, genuinely failing line establish a
+    class -- the exclusion is judged per matched line, never by whether the
+    block as a whole happens to open with a warning shape."""
+    text = (
+        "warning: something noticed; continuing\n"
+        "E: Failed to fetch http://deb.debian.org/debian/x.deb  "
+        "Connection timed out [IP: 1.2.3.4 80]"
+    )
+    v = classify_failure(job_with(text=text), step=None, completeness=COMPLETE)
+    assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.ENVIRONMENT
+
+
+def test_an_annotation_that_is_still_a_single_line_stays_unclassified():
+    """The existing annotation shape must keep working: a single-line
+    `warning: ` annotation is both the block and the matched line, so the
+    per-line judgement covers it exactly as the per-block judgement did."""
+    target = failed_step(1, "Process completed with exit code 1.")
+    annotation = Evidence(JOB_ID, "warning: Connection timed out; retry succeeded")
+    v = classify_failure(
+        job_with(evidence=[annotation], steps=[target]),
+        step=target,
+        completeness=COMPLETE,
+    )
+    assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
+    assert v.evidence == []
