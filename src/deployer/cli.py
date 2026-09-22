@@ -364,7 +364,9 @@ def _resolve_run_ref(args: argparse.Namespace) -> tuple[RunRef, int | None] | st
 
     Exactly one of ``run_url`` or (``--repo`` and ``--run-id``) is required.
     An attempt on the URL and an explicit ``--attempt`` must agree when both
-    are given. Returns an error message instead of raising.
+    are given. The run id and the attempt are range-checked whichever door
+    they came through: `/runs/0` would otherwise reach ``gh``. Returns an
+    error message instead of raising.
     """
     has_url = args.run_url is not None
     has_repo = args.repo is not None
@@ -390,7 +392,10 @@ def _resolve_run_ref(args: argparse.Namespace) -> tuple[RunRef, int | None] | st
         repo, run_id_text, url_attempt_text = match.groups()
         if not _REPO_SLUG_RE.match(repo):
             return f"not a repository owner/name: {repo}"
-        run_id = int(run_id_text)
+        run_id_parsed = _parse_positive_int(run_id_text, "run id in URL")
+        if isinstance(run_id_parsed, str):
+            return run_id_parsed
+        run_id = run_id_parsed
         url_attempt: int | None = None
         if url_attempt_text is not None:
             parsed_url_attempt = _parse_positive_int(

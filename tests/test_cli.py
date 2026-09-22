@@ -1520,6 +1520,28 @@ def test_a_url_attempt_of_zero_is_rejected_like_the_flag(capsys) -> None:
     assert "positive integer" in capsys.readouterr().err
 
 
+def test_a_url_run_id_of_zero_is_rejected_like_the_flag(capsys) -> None:
+    """`--run-id 0` already got a clean exit 2; the URL's run id was taken
+    with a bare `int()` and reached `gh`. Same check, same message, both
+    doors — the twin of the attempt test above."""
+    url = "https://github.com/o/r/actions/runs/0"
+    assert cli.main(["diagnose", url]) == 2
+    assert "positive integer" in capsys.readouterr().err
+
+
+def test_an_ordinary_url_run_id_still_passes(monkeypatch) -> None:
+    """The positive twin: a real run id is unaffected by the range check."""
+    seen: list[RunRef] = []
+
+    def spy(ref, *, attempt, **kwargs):
+        seen.append(ref)
+        return _minimal_run()
+
+    monkeypatch.setattr(cli, "fetch_failed_run", spy)
+    cli.main(["diagnose", "https://github.com/o/r/actions/runs/17"])
+    assert seen == [RunRef("o/r", 17)]
+
+
 def test_run_level_observations_are_printed_once(monkeypatch, capsys) -> None:
     """stdout carries the human summary, stderr the diagnostics (spec §7).
     The EVIDENCE_UNAVAILABLE branch used to repeat the observations on both."""
