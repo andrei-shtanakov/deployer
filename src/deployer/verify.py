@@ -1120,10 +1120,12 @@ def _copies_from_declared_stage(copy_args: str, stage_names: set[str]) -> bool:
 #: command.
 _ASSIGNMENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 
-#: Shell operators that end a command segment when `shlex` returns them as a
-#: token of their own. A separator `shlex` left INSIDE a token came from
-#: quotes and is text, not an operator.
-_SEGMENT_OPERATORS = frozenset({"&&", "||", ";", "|", "&"})
+#: `shlex`'s punctuation characters. Lexed with `punctuation_chars=True`, an
+#: UNQUOTED run of these comes back as a token of its own — `&&`, `;`, `|`,
+#: `<<` — and never mixes with a word, so a token made only of them is a
+#: shell operator, whatever it is glued to in the source. Quoted text is one
+#: word: `'x;'` lexes to `x;`, an operand.
+_SHELL_PUNCTUATION = frozenset("();<>|&")
 
 
 def _installs_project(run_args: str) -> bool:
@@ -1133,11 +1135,11 @@ def _installs_project(run_args: str) -> bool:
     `RUN echo about to run uv sync` installs nothing, and neither does `RUN
     echo 'prepare; uv sync'`, whose separator is quoted text. Exec form
     (`RUN ["uv", "sync"]`) is parsed as the JSON argv it is. Shell form has
-    RUN's own flags (`--mount=`, `--network=`, ...) stripped, is tokenised
-    with `shlex` so quoting is honoured, is cut into command segments at the
-    shell operators between those tokens (`_shell_segments`), and each
-    segment is matched at its LEADING tokens once `VAR=value` assignments and
-    a leading `env` are dropped.
+    RUN's own flags (`--mount=`, `--network=`, ...) stripped, is tokenised by
+    `_lex_shell`, which decides what is an operator and what is a word the
+    way the shell does, is cut into command segments at those operators
+    (`_shell_segments`), and each segment is matched at its LEADING tokens
+    once `VAR=value` assignments and a leading `env` are dropped.
 
     Recognised: `uv sync` (unless the segment also carries
     `--no-install-project`), `poetry install` (unless `--no-root`), and
@@ -1147,20 +1149,16 @@ def _installs_project(run_args: str) -> bool:
     sources.
 
     Two shell forms are unrecognised, both answering False — an honest
-    UNKNOWN downstream, never a wrong AUTHORING: a heredoc RUN (`<<` leading
-    the shell form), whose body is not on this instruction line, and a line
-    `shlex` cannot tokenise (unbalanced quotes), which this walker cannot
-    claim to have read.
+    UNKNOWN downstream, never a wrong AUTHORING: one the lexer rejects
+    (unbalanced quotes), which this walker cannot claim to have read, and one
+    opening with an operator — a heredoc RUN (`RUN <<EOF`) or a redirect —
+    whose real command is not on this instruction line.
     """
     argv = _exec_form_argv(run_args)
     if argv is not None:
         return _is_install_command(argv)
-    shell = _strip_run_flags(run_args)
-    if shell.startswith("<<"):
-        return False
-    try:
-        tokens = shlex.split(shell, posix=True)
-    except ValueError:
+    tokens = _lex_shell(_strip_run_flags(run_args))
+    if not tokens or _is_shell_operator(tokens[0]):
         return False
     return any(
         _is_install_command(_drop_env_prefix(segment))
@@ -1168,21 +1166,37 @@ def _installs_project(run_args: str) -> bool:
     )
 
 
-def _shell_segments(tokens: list[str]) -> list[list[str]]:
-    """`tokens` cut into the command segments the shell would run.
+def _lex_shell(shell: str) -> list[str]:
+    """`shell` as its words and operators, or `[]` when it cannot be lexed.
 
-    A segment ends at a standalone operator token (`_SEGMENT_OPERATORS`) and
-    at a token ENDING with `;` — `cd /app;` — whose `;` is dropped and whose
-    remainder closes the segment.
+    `punctuation_chars=True` is what makes the operators the shell's and not
+    a pattern's: the lexer emits an unquoted `&&`, `;`, `|`, `<<` as its own
+    token even glued to a word (`true&&uv sync`), and leaves a quoted one
+    inside the word it belongs to (`'x;'`). `commenters` is cleared because
+    `#` is an ordinary character in a Dockerfile RUN, and `whitespace_split`
+    keeps paths and `--flag=value` whole.
     """
+    lexer = shlex.shlex(shell, posix=True, punctuation_chars=True)
+    lexer.whitespace_split = True
+    lexer.commenters = ""
+    try:
+        return list(lexer)
+    except ValueError:
+        return []
+
+
+def _is_shell_operator(token: str) -> bool:
+    """True for a token the lexer built out of punctuation alone (`&&`, `;`)."""
+    return bool(token) and all(char in _SHELL_PUNCTUATION for char in token)
+
+
+def _shell_segments(tokens: list[str]) -> list[list[str]]:
+    """`tokens` cut into the command segments the shell would run: an operator
+    token ends the segment before it and is dropped."""
     segments: list[list[str]] = []
     current: list[str] = []
     for token in tokens:
-        if token in _SEGMENT_OPERATORS:
-            segments.append(current)
-            current = []
-        elif token.endswith(";"):
-            current.append(token[:-1])
+        if _is_shell_operator(token):
             segments.append(current)
             current = []
         else:

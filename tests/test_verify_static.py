@@ -2521,3 +2521,54 @@ def test_a_semicolon_on_a_bare_command_still_ends_the_segment() -> None:
         "COPY src ./src\n"
     )
     assert _install_precedes_source_copy(dockerfile) is True
+
+
+# --- PR #72 round 3, finding 1 again: the lexer must know its own operators --
+
+
+# The golden Dockerfile with an `echo` whose QUOTED word merely ends in `;`.
+# Segmenting on "a token that ends with `;`" read that word as a separator and
+# started a new command at `uv sync` — a false AUTHORING, the wrong direction.
+_QUOTED_SEMICOLON_WORD_DOCKERFILE = _CORRECT_ORDER_DOCKERFILE.replace(
+    "COPY src/uv_minimal ./src/uv_minimal\n",
+    "RUN echo 'x;' uv sync --frozen\nCOPY src/uv_minimal ./src/uv_minimal\n",
+)
+
+
+def test_a_quoted_word_ending_in_a_semicolon_is_not_a_separator() -> None:
+    """`echo 'x;' uv sync --frozen` runs one command. The `;` is inside the
+    quotes, so the shell passes `x;` to `echo` as a word."""
+    assert _install_precedes_source_copy(_QUOTED_SEMICOLON_WORD_DOCKERFILE) is False
+
+
+def test_the_quoted_semicolon_dockerfile_classifies_unknown_not_authoring() -> None:
+    """The verdict that reaches the report: correct copy order stays UNKNOWN."""
+    assert (
+        _classify_build(
+            _HATCHLING_MISSING_FILES_EXCERPT, _QUOTED_SEMICOLON_WORD_DOCKERFILE
+        )
+        is FailureKind.UNKNOWN
+    )
+
+
+def test_a_glued_chain_operator_still_starts_a_command() -> None:
+    """`true&&uv sync` has no spaces around the `&&`: the shell still reads an
+    operator there, and a word-level split did not."""
+    dockerfile = (
+        "FROM python:3.12-slim\n"
+        "COPY pyproject.toml uv.lock ./\n"
+        "RUN true&&uv sync --frozen\n"
+        "COPY src ./src\n"
+    )
+    assert _install_precedes_source_copy(dockerfile) is True
+
+
+def test_a_glued_semicolon_still_starts_a_command() -> None:
+    """The `;` twin of the glued operator."""
+    dockerfile = (
+        "FROM python:3.12-slim\n"
+        "COPY pyproject.toml uv.lock ./\n"
+        "RUN true;uv sync --frozen\n"
+        "COPY src ./src\n"
+    )
+    assert _install_precedes_source_copy(dockerfile) is True
