@@ -28,11 +28,14 @@ _JOB_LEVEL_NOTE = "cited evidence is job-level (no step binding)"
 _NO_RULE_NOTE = "no rule matched"
 _EMPTY_SET_NOTE = "failed run exposes no failed job or step"
 
-# Python exception lines other than the assertion rule below: recorded as
+# The shape of a Python exception line, optionally under pytest's ``E`` prefix.
+_EXCEPTION_NAME = r"[A-Za-z_]\w*(?:\.\w+)*(?:Error|Exception)"
+_EXCEPTION_LINE = rf"(?:E[ \t]+)?{_EXCEPTION_NAME}: "
+# Exception lines other than the assertion rules below: recorded as
 # observations, never as a class (spec §5: wrong dependencies or a wrong
 # invocation produce the same symptom as a project defect).
 _EXCEPTION_LINE_RE = re.compile(
-    r"^(?:E\s+)?((?!AssertionError\b)[A-Za-z_]\w*(?:Error|Exception): .+)$",
+    rf"^(?:E[ \t]+)?((?!AssertionError\b){_EXCEPTION_NAME}: .+)$",
     re.MULTILINE,
 )
 
@@ -64,7 +67,13 @@ RULES: tuple[Rule, ...] = (
         "copy/add source not found",
         r"failed to (?:solve|compute cache key)[^\n]*: not found",
     ),
-    _prose(FailureKind.AUTHORING, "no such file", r"no such file"),
+    # A Python ``FileNotFoundError`` line is an exception observation, not a
+    # Dockerfile/shell marker: the rule skips exception-shaped lines.
+    _prose(
+        FailureKind.AUTHORING,
+        "no such file",
+        rf"^(?!{_EXCEPTION_LINE})[^\n]*no such file",
+    ),
     _prose(FailureKind.AUTHORING, "executable not found", r"executable file not found"),
     _prose(FailureKind.AUTHORING, "exec format error", r"exec format error"),
     _prose(FailureKind.AUTHORING, "unresolvable action", r"unable to resolve action"),
@@ -94,13 +103,14 @@ RULES: tuple[Rule, ...] = (
         "runner shutdown",
         r"the runner has received a shutdown signal",
     ),
-    _exact(FailureKind.PROJECT, "assertion error", r"^(?:E\s+)?AssertionError: "),
+    _exact(FailureKind.PROJECT, "assertion error", r"^(?:E[ \t]+)?AssertionError: "),
     _exact(
         FailureKind.PROJECT,
         "pytest failed with assertion",
         r"^FAILED \S+ - AssertionError",
     ),
-    _exact(FailureKind.PROJECT, "pytest assert", r"^E\s+assert "),
+    _exact(FailureKind.PROJECT, "pytest bare assert", r"^FAILED \S+ - assert "),
+    _exact(FailureKind.PROJECT, "pytest assert", r"^E[ \t]+assert "),
 )
 """Every rule is evaluated against every piece of evidence; order is cosmetic."""
 
@@ -217,7 +227,9 @@ def classify_failure(
     if len(kinds) == 1:
         cited = list(dict.fromkeys(match.evidence for match in matches))
         observations = [match.describe() for match in matches] + exceptions
-        if any(not isinstance(item.source, StepRef) for item in cited):
+        if step is not None and any(
+            not isinstance(item.source, StepRef) for item in cited
+        ):
             observations.append(_JOB_LEVEL_NOTE)
         return FailureVerdict(where, "CLASSIFIED", kinds[0], cited, observations)
     return FailureVerdict(
@@ -259,10 +271,10 @@ def _line_at(text: str, index: int) -> str:
 
 
 def _ambiguity(matches: list[_Match], kinds: list[FailureKind]) -> str:
-    parts = [
-        f"{kind.value} [{'; '.join(m.describe() for m in matches if m.rule.kind is kind)}]"
-        for kind in kinds
-    ]
+    parts: list[str] = []
+    for kind in kinds:
+        markers = "; ".join(m.describe() for m in matches if m.rule.kind is kind)
+        parts.append(f"{kind.value} [{markers}]")
     return "ambiguous: " + " vs ".join(parts)
 
 

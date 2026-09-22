@@ -202,6 +202,109 @@ def test_step_verdict_cites_step_bound_evidence_without_the_job_level_note():
     assert "cited evidence is job-level (no step binding)" not in v.observations
 
 
+def test_python_file_not_found_is_an_observation_not_authoring():
+    """Review #1: a Python exception line is never an AUTHORING citation."""
+    v = classify_failure(
+        job_with(
+            text=(
+                "E   FileNotFoundError: [Errno 2] No such file or directory: "
+                "'tests/data/fixture.json'"
+            )
+        ),
+        step=None,
+        completeness=COMPLETE,
+    )
+    assert v.outcome == "UNCLASSIFIED" and v.kind is FailureKind.UNKNOWN
+    assert v.evidence == []
+    assert v.observations == [
+        "exception: FileNotFoundError: [Errno 2] No such file or directory: "
+        "'tests/data/fixture.json'"
+    ]
+
+
+def test_docker_copy_no_such_file_is_still_authoring():
+    text = (
+        "COPY failed: file not found in build context or excluded by "
+        ".dockerignore: stat app.py: no such file or directory"
+    )
+    v = classify_failure(job_with(text=text), step=None, completeness=COMPLETE)
+    assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.AUTHORING
+    assert v.evidence == [Evidence(None, text)]
+
+
+def test_exception_shaped_environment_line_is_still_environment():
+    """The exception-line exclusion is scoped to `no such file` only."""
+    v = classify_failure(
+        job_with(
+            text=(
+                "requests.exceptions.ConnectionError: HTTPConnectionPool: "
+                "Temporary failure in name resolution"
+            )
+        ),
+        step=None,
+        completeness=COMPLETE,
+    )
+    assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.ENVIRONMENT
+
+
+def test_dotted_exception_names_are_observed():
+    v = classify_failure(
+        job_with(text="requests.exceptions.ConnectionError: boom"),
+        step=None,
+        completeness=COMPLETE,
+    )
+    assert v.observations == ["exception: requests.exceptions.ConnectionError: boom"]
+
+
+def test_pytest_bare_assert_summary_is_project():
+    v = classify_failure(
+        job_with(text="FAILED tests/test_x.py::test_x - assert 1 == 2"),
+        step=None,
+        completeness=COMPLETE,
+    )
+    assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.PROJECT
+
+
+def test_exact_rules_do_not_match_across_a_newline():
+    """`E` on one line and `assert x` on the next is not a pytest assert line."""
+    v = classify_failure(job_with(text="E\nassert x"), step=None, completeness=COMPLETE)
+    assert v.kind is not FailureKind.PROJECT
+    assert v.observations == ["no rule matched"]
+
+
+def test_cited_line_is_the_marker_line_not_a_bare_prefix():
+    v = classify_failure(
+        job_with(text="E\nAssertionError: split"), step=None, completeness=COMPLETE
+    )
+    assert v.kind is FailureKind.PROJECT
+    assert v.observations == ["assertion error: AssertionError: split"]
+
+
+def test_step_verdict_cites_a_job_annotation_with_a_marker():
+    """Review #6: int-source (annotation) evidence is in the step pool and citable."""
+    target = failed_step(3)
+    annotation = Evidence(JOB_ID, "failure: Temporary failure in name resolution")
+    v = classify_failure(
+        job_with(evidence=[annotation], steps=[target]),
+        step=target,
+        completeness=COMPLETE,
+    )
+    assert v.outcome == "CLASSIFIED" and v.kind is FailureKind.ENVIRONMENT
+    assert v.evidence == [annotation]
+    assert "cited evidence is job-level (no step binding)" in v.observations
+
+
+def test_job_level_verdict_does_not_carry_the_job_level_note():
+    """Review #7: the note is only informative for a step verdict."""
+    v = classify_failure(
+        job_with(text="cannot connect to the docker daemon"),
+        step=None,
+        completeness=COMPLETE,
+    )
+    assert v.outcome == "CLASSIFIED"
+    assert "cited evidence is job-level (no step binding)" not in v.observations
+
+
 def test_job_level_verdict_is_addressed_by_job_id():
     v = classify_failure(job_with(text="x"), step=None, completeness=COMPLETE)
     assert v.where == JOB_ID
