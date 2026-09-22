@@ -2447,3 +2447,77 @@ def test_the_evidence_dockerfile_is_still_a_copy_order_defect() -> None:
         _classify_build(_HATCHLING_MISSING_FILES_EXCERPT, _COPY_ORDER_DEFECT_DOCKERFILE)
         is FailureKind.AUTHORING
     )
+
+
+# --- PR #72 round 3, finding 1: quoting, not just word order ------------------
+
+
+# The golden Dockerfile with one narrating `echo` whose QUOTED argument
+# carries a `;` and an install. Splitting the line on separators regardless of
+# quoting cut inside the quotes and handed the walker a segment that begins
+# `uv sync` — the same false AUTHORING the round-2 fix was supposed to end.
+_QUOTED_INSTALL_DOCKERFILE = _CORRECT_ORDER_DOCKERFILE.replace(
+    "COPY src/uv_minimal ./src/uv_minimal\n",
+    "RUN echo 'prepare; uv sync --frozen'\nCOPY src/uv_minimal ./src/uv_minimal\n",
+)
+
+
+def test_a_separator_inside_quotes_does_not_start_a_command() -> None:
+    """`echo 'prepare; uv sync --frozen'` runs one command: `echo`. The `;`
+    is text the shell never reads as an operator."""
+    assert _install_precedes_source_copy(_QUOTED_INSTALL_DOCKERFILE) is False
+
+
+def test_the_quoted_dockerfile_classifies_unknown_not_authoring() -> None:
+    """The verdict that reaches the report: correct copy order, so the
+    hatchling message stays UNKNOWN."""
+    assert (
+        _classify_build(_HATCHLING_MISSING_FILES_EXCERPT, _QUOTED_INSTALL_DOCKERFILE)
+        is FailureKind.UNKNOWN
+    )
+
+
+def test_a_quoted_chain_operator_does_not_start_a_command() -> None:
+    """The `&&` twin: double quotes hide the operator just as well."""
+    dockerfile = (
+        "FROM python:3.12-slim\n"
+        "COPY pyproject.toml uv.lock ./\n"
+        'RUN echo "uv sync && pip install ."\n'
+        "COPY src ./src\n"
+    )
+    assert _install_precedes_source_copy(dockerfile) is False
+
+
+def test_an_unbalanced_quote_is_unrecognised_not_an_install() -> None:
+    """A line `shlex` cannot tokenise is a line this walker cannot read: the
+    honest answer is False, an UNKNOWN downstream, never a wrong AUTHORING."""
+    dockerfile = (
+        "FROM python:3.12-slim\n"
+        "COPY pyproject.toml uv.lock ./\n"
+        "RUN echo 'oops && uv sync\n"
+        "COPY src ./src\n"
+    )
+    assert _install_precedes_source_copy(dockerfile) is False
+
+
+def test_a_semicolon_attached_to_a_token_still_ends_the_segment() -> None:
+    """`cd /app; uv sync` has no space before the `;`, so the separator
+    arrives glued to the previous token — it must still close the segment."""
+    dockerfile = (
+        "FROM python:3.12-slim\n"
+        "COPY pyproject.toml uv.lock ./\n"
+        "RUN cd /app; uv sync --frozen\n"
+        "COPY src ./src\n"
+    )
+    assert _install_precedes_source_copy(dockerfile) is True
+
+
+def test_a_semicolon_on_a_bare_command_still_ends_the_segment() -> None:
+    """The one-token case: the whole token is the command plus its `;`."""
+    dockerfile = (
+        "FROM python:3.12-slim\n"
+        "COPY pyproject.toml uv.lock ./\n"
+        "RUN true; uv sync --frozen\n"
+        "COPY src ./src\n"
+    )
+    assert _install_precedes_source_copy(dockerfile) is True

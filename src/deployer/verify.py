@@ -6,6 +6,7 @@ hadolint at a pinned version. L2 (docker half, Task 5): sandboxed build + run.
 
 import json
 import re
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -1065,9 +1066,10 @@ def _install_precedes_source_copy(dockerfile: str) -> bool:
     (`_copies_from_declared_stage` — it may carry the project out of that
     stage, unlike `--from=` on an external image), and a `RUN
     --mount=type=bind` on the installing RUN itself (the mounted context can
-    stand in for a COPY). Anything this walker does not recognise — shell
-    quoting, `ARG`-substituted paths, heredoc `RUN <<EOF` — is treated as
-    sources possibly already present, i.e. it does not trigger True: the
+    stand in for a COPY). Anything this walker does not recognise —
+    `ARG`-substituted paths, heredoc `RUN <<EOF`, a RUN line whose quoting
+    does not close — is treated as sources possibly already present, i.e. it
+    does not trigger True: the
     honest failure mode is UNKNOWN, never a wrong AUTHORING. A Dockerfile
     that never installs the project also returns False.
     """
@@ -1118,22 +1120,24 @@ def _copies_from_declared_stage(copy_args: str, stage_names: set[str]) -> bool:
 #: command.
 _ASSIGNMENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 
-#: Command segments of a shell-form RUN. A token-level split, not a shell
-#: parser: a separator inside quotes splits too, which can only cost a
-#: recognition (UNKNOWN), never invent one.
-_SEGMENT_RE = re.compile(r"&&|\|\||[;|]")
+#: Shell operators that end a command segment when `shlex` returns them as a
+#: token of their own. A separator `shlex` left INSIDE a token came from
+#: quotes and is text, not an operator.
+_SEGMENT_OPERATORS = frozenset({"&&", "||", ";", "|", "&"})
 
 
 def _installs_project(run_args: str) -> bool:
     """True when a command this RUN executes installs the project itself.
 
     What is executed is read, never a word sequence anywhere in the line —
-    `RUN echo about to run uv sync` installs nothing. Exec form (`RUN ["uv",
-    "sync"]`) is parsed as the JSON argv it is. Shell form has RUN's own
-    flags (`--mount=`, `--network=`, ...) stripped, is split into command
-    segments on `&&`, `||`, `;` and `|`, and each segment is matched at its
-    LEADING tokens once `VAR=value` assignments and a leading `env` are
-    dropped.
+    `RUN echo about to run uv sync` installs nothing, and neither does `RUN
+    echo 'prepare; uv sync'`, whose separator is quoted text. Exec form
+    (`RUN ["uv", "sync"]`) is parsed as the JSON argv it is. Shell form has
+    RUN's own flags (`--mount=`, `--network=`, ...) stripped, is tokenised
+    with `shlex` so quoting is honoured, is cut into command segments at the
+    shell operators between those tokens (`_shell_segments`), and each
+    segment is matched at its LEADING tokens once `VAR=value` assignments and
+    a leading `env` are dropped.
 
     Recognised: `uv sync` (unless the segment also carries
     `--no-install-project`), `poetry install` (unless `--no-root`), and
@@ -1142,9 +1146,11 @@ def _installs_project(run_args: str) -> bool:
     excluded, because they read a manifest without needing the package
     sources.
 
-    A heredoc RUN (`<<` leading the shell form) is unrecognised: its body is
-    not on this instruction line, so nothing may be read off it and the
-    answer is False — an honest UNKNOWN downstream, never a wrong AUTHORING.
+    Two shell forms are unrecognised, both answering False — an honest
+    UNKNOWN downstream, never a wrong AUTHORING: a heredoc RUN (`<<` leading
+    the shell form), whose body is not on this instruction line, and a line
+    `shlex` cannot tokenise (unbalanced quotes), which this walker cannot
+    claim to have read.
     """
     argv = _exec_form_argv(run_args)
     if argv is not None:
@@ -1152,10 +1158,37 @@ def _installs_project(run_args: str) -> bool:
     shell = _strip_run_flags(run_args)
     if shell.startswith("<<"):
         return False
+    try:
+        tokens = shlex.split(shell, posix=True)
+    except ValueError:
+        return False
     return any(
-        _is_install_command(_drop_env_prefix(segment.split()))
-        for segment in _SEGMENT_RE.split(shell)
+        _is_install_command(_drop_env_prefix(segment))
+        for segment in _shell_segments(tokens)
     )
+
+
+def _shell_segments(tokens: list[str]) -> list[list[str]]:
+    """`tokens` cut into the command segments the shell would run.
+
+    A segment ends at a standalone operator token (`_SEGMENT_OPERATORS`) and
+    at a token ENDING with `;` — `cd /app;` — whose `;` is dropped and whose
+    remainder closes the segment.
+    """
+    segments: list[list[str]] = []
+    current: list[str] = []
+    for token in tokens:
+        if token in _SEGMENT_OPERATORS:
+            segments.append(current)
+            current = []
+        elif token.endswith(";"):
+            current.append(token[:-1])
+            segments.append(current)
+            current = []
+        else:
+            current.append(token)
+    segments.append(current)
+    return segments
 
 
 def _exec_form_argv(run_args: str) -> list[str] | None:
