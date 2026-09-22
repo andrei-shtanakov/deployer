@@ -110,6 +110,41 @@ Every `author` run writes `.deployer/authoring-run.json` — iteration count,
 per-check outcomes, authoring-vs-environment failure taxonomy. That file is
 the research output.
 
+## Diagnose
+
+```sh
+uv run deployer diagnose <run-url>
+uv run deployer diagnose --repo owner/name --run-id N [--attempt N]
+# either form accepts --output-file verdict.json
+```
+
+Reads a failed GitHub Actions run and classifies each failure, citing the log
+line that established the cause. Exit codes:
+
+| code | meaning |
+|---|---|
+| `0` | `CLASSIFIED` — every failure has a cause with a citation |
+| `3` | `UNCLASSIFIED` — the evidence was complete and nothing established a cause |
+| `4` | `EVIDENCE_UNAVAILABLE` — the evidence could not be read; **not** a success |
+| `5` | adapter refusal — the run is not a finished, failed run |
+| `2` | bad argument, or the run metadata could not be fetched |
+
+stdout carries the human-readable summary, stderr the diagnostics.
+`--output-file` writes the verdict document, which carries its own
+`verdict_schema_version` (`"1.0"`, independent of the report `schema_version`
+above); the run snapshot nested in it carries `snapshot_schema_version`
+(`"1.0"` as well).
+
+Requires `gh` authenticated for the repository, and a `gh` new enough to
+support `gh api --allow-escape-sequences` (real build logs carry ANSI colour
+and `gh` refuses to print them without it; verified with `gh` 2.98.0). A `gh`
+that fails for its own reasons — unknown flag, timeout, missing binary —
+exits 2 rather than being reported as an unreadable log.
+
+The classifier itself is offline and pure: it is a function from the fetched
+snapshot to the verdict. Fixture input is a **test affordance, not a user
+contract** — there is no flag to feed a saved snapshot in.
+
 ## Bench
 
 The corpus (`corpus/synthetic/`) is a set of small target projects with

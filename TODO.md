@@ -60,6 +60,16 @@ paragraph.
   give the exact binding; it is a binary download, a different subprocess contract from the
   text endpoint, hence its own slice. Sibling: "nothing was fetched" should be a `Completeness`
   state of its own instead of being inferred from `jobs == []` in `diagnose_run`.
+  Second sibling: `Completeness` is run-global, so ONE job's unreadable log turns EVERY
+  verdict into EVIDENCE_UNAVAILABLE with `kind=None, evidence=[]` — a sibling job whose own
+  evidence was complete and unambiguous loses its established cause. The common shape is a
+  fail-fast matrix (job 1 fails readably, job 2 is cancelled and its log endpoint errors).
+  Pinned as current behaviour by
+  `tests/test_diagnose.py::test_sibling_job_log_error_currently_erases_an_established_cause`;
+  the fix is per-job `Completeness` on `FailedJob`, a type change across forge, diagnose,
+  the three fixtures and the verdict schema. Third: with two failed steps in one job and one
+  unbound error block, both verdicts cite that same block, so the operator reads the same
+  error twice — step binding removes the duplication at its root.
 - [ ] Rule-catalogue precision for `diagnose.py`: over-firing prose markers and missed shapes, driven by fixtures @owner:repo:deployer @id:diagnose-rule-catalogue-precision @epic:eco.dark-factory
   Known over-firers (acceptable in the first slice, recorded by review): `failed to fetch`
   (jest's `TypeError: Failed to fetch`), `connection timed out` / `503` printed by tests that
@@ -67,6 +77,14 @@ paragraph.
   wrong `--platform` is AUTHORING). Missed shape: `_RUN_URL_RE` accepts only `github.com`
   (GitHub Enterprise hosts exit 2). Every change enters with a fixture line from a real run,
   as the buildkit `#N t.ttt` framing and the hatchling copy-order marker did in the first slice.
+  Amplifier (why this matters more than "acceptable in the first slice" suggests): the unit of
+  diagnosis is a STEP, but the evidence pool is effectively the whole JOB log — the live runs
+  established that 100% of real diagnostic text is job-level (`source=None`), and the prose
+  rules are unanchored whole-text searches. So any over-firer flips clean verdicts to
+  ambiguous across every step of the job, an availability defect that fires often. First
+  mitigation shipped: ENVIRONMENT rules skip a match landing on an apt warning line (`W: `),
+  because a retried-and-recovered fetch is not a cause; apt's real failures keep their `E: `
+  prefix. The remaining over-firers still need the same treatment or a narrower pool.
 - [ ] Further artifact types: Helm, Terraform @id:further-artifact-types @epic:eco.dark-factory
   — deliberately last; wait until the extension contract is confirmed by a live consumer
 
@@ -190,7 +208,13 @@ them is the next thing to pick up.
   model put `uv sync --frozen` before `COPY src` and the build classifier had NO positive
   AUTHORING marker for hatchling's "Unable to determine which files to ship" — the old code
   repaired it by fallthrough, the new one honestly stopped. Marker added
-  (`BUILD_AUTHORING_MARKERS`, evidence-based). Baseline: see the golden note in the PR.
+  (`BUILD_AUTHORING_MARKERS`, evidence-based) and then tightened in final review: the
+  message has two causes, so it establishes AUTHORING only with Dockerfile evidence (the
+  project installed before its sources are copied in) and is UNKNOWN otherwise.
+  No promote from that run — promoting a baseline with uv-minimal red would make
+  `unknown_failure` the reference state for that case and hide future regressions there;
+  a second full paid run after the artifact-evidence rule, then promote, is the owner's
+  authorised next step.
 - [x] Failure classification channel: an exit code alone no longer establishes a cause @owner:repo:deployer @id:failure-classification-channel @epic:eco.research-bench
   Closed by the taxonomy work of `todo://deployer/ci-failure-diagnosis` (PR-1), which found the
   hole at THREE sites, not the two the design named:
