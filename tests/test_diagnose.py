@@ -1,11 +1,14 @@
 """diagnose.py: pure classification of a FailedRun snapshot."""
 
+import json
+
 from deployer.diagnose import (
     RULES,
     FailureVerdict,
     RunDiagnosis,
     classify_failure,
     diagnose_run,
+    render_verdict,
 )
 from deployer.forge import (
     Completeness,
@@ -507,3 +510,27 @@ def test_run_diagnosis_shape():
         [FailureKind.PROJECT],
         [],
     )
+
+
+# --- Task 11: render_verdict ---------------------------------------------
+
+
+def test_render_verdict_carries_its_own_schema_version_first():
+    # job_project() has no itemised steps (job-level `where`); the steps of
+    # job_failed_with_steps() give step-level `where` — both shapes at once.
+    d = diagnose_run(run_with(job_project(), job_failed_with_steps()))
+    document = json.loads(render_verdict(d))
+
+    assert next(iter(document)) == "verdict_schema_version"
+    assert document["verdict_schema_version"] == "1.0"
+    assert document["outcome"] == "CLASSIFIED"
+    assert document["causes"] == ["environment", "project"]
+    assert isinstance(document["failures"], list) and document["failures"]
+    wheres = [failure["where"] for failure in document["failures"]]
+    assert any(isinstance(where, int) for where in wheres)
+    assert any(isinstance(where, dict) for where in wheres)
+    for where in wheres:
+        if isinstance(where, dict):
+            assert set(where) == {"job_id", "number"}
+    # The nested run keeps its own, distinct schema version.
+    assert document["run"]["snapshot_schema_version"] == "1.0"

@@ -6,6 +6,16 @@ import pytest
 from deployer import cli
 from deployer.artifacts import render_artifact_response
 from deployer.cli import main
+from deployer.diagnose import FailureVerdict, Outcome, RunDiagnosis
+from deployer.forge import (
+    AdapterRefusal,
+    Completeness,
+    FailedJob,
+    FailedRun,
+    GhError,
+    RunRef,
+    StepRef,
+)
 from deployer.models import (
     CheckResult,
     CheckStatus,
@@ -24,6 +34,50 @@ def _no_hadolint(monkeypatch) -> None:
             False,
         ),
     )
+
+
+RUN_URL = "https://github.com/o/r/actions/runs/1"
+
+
+def _minimal_run(
+    *,
+    jobs: list[FailedJob] | None = None,
+    completeness: Completeness | None = None,
+) -> FailedRun:
+    return FailedRun(
+        repo="o/r",
+        run_id=1,
+        attempt=1,
+        head_sha="deadbeef",
+        url=RUN_URL,
+        jobs=jobs if jobs is not None else [],
+        completeness=(
+            completeness
+            if completeness is not None
+            else Completeness(logs="present", annotations="present")
+        ),
+    )
+
+
+def diagnosis(
+    outcome: Outcome,
+    *,
+    failures: list[FailureVerdict] | None = None,
+    causes: list[FailureKind] | None = None,
+) -> RunDiagnosis:
+    return RunDiagnosis(
+        run=_minimal_run(),
+        failures=failures if failures is not None else [],
+        outcome=outcome,
+        causes=causes if causes is not None else [],
+        observations=[],
+    )
+
+
+@pytest.fixture(autouse=True)
+def _stub_fetch_failed_run(monkeypatch) -> None:
+    """No `diagnose` test may reach `gh`: a network-free stub by default."""
+    monkeypatch.setattr(cli, "fetch_failed_run", lambda *a, **k: _minimal_run())
 
 
 def test_verify_command_passes_on_good_dockerfile(
@@ -1267,3 +1321,133 @@ def test_smoke_suite_without_a_target_file_is_an_error() -> None:
 
     with pytest.raises(ValueError, match="--target"):
         _resolve_smoke_suite(DeployTarget(run={}, smoke={"suite": "s.yaml"}), None)
+
+
+# --- Task 11: `deployer diagnose` -----------------------------------------
+
+
+@pytest.mark.parametrize(
+    "outcome,code",
+    [("CLASSIFIED", 0), ("UNCLASSIFIED", 3), ("EVIDENCE_UNAVAILABLE", 4)],
+)
+def test_exit_code_per_outcome(outcome, code, monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(cli, "diagnose_run", lambda s: diagnosis(outcome))
+    out = tmp_path / "v.json"
+    assert cli.main(["diagnose", RUN_URL, "--output-file", str(out)]) == code
+    assert json.loads(out.read_text())["outcome"] == outcome
+
+
+def test_adapter_refusal_has_its_own_code(monkeypatch) -> None:
+    monkeypatch.setattr(
+        cli,
+        "fetch_failed_run",
+        lambda *a, **k: AdapterRefusal("not_failed", "run succeeded"),
+    )
+    assert cli.main(["diagnose", RUN_URL]) == 5
+
+
+def test_url_and_repo_run_id_are_mutually_exclusive() -> None:
+    assert cli.main(["diagnose", RUN_URL, "--repo", "o/r", "--run-id", "1"]) == 2
+
+
+def test_attempt_must_be_a_positive_int() -> None:
+    assert cli.main(["diagnose", RUN_URL, "--attempt", "0"]) == 2
+
+
+def test_verdict_document_carries_its_own_schema_version(tmp_path) -> None:
+    out = tmp_path / "v.json"
+    cli.main(["diagnose", RUN_URL, "--output-file", str(out)])
+    assert json.loads(out.read_text())["verdict_schema_version"] == "1.0"
+
+
+def _raise_gh_error(*args: object, **kwargs: object) -> FailedRun:
+    raise GhError("gh api boom")
+
+
+def test_gh_error_exits_2_with_message_not_a_traceback(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(cli, "fetch_failed_run", _raise_gh_error)
+    assert cli.main(["diagnose", RUN_URL]) == 2
+    assert "gh api boom" in capsys.readouterr().err
+
+
+def test_url_attempt_is_forwarded_to_fetch(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def spy(ref, *, attempt, **kwargs):
+        captured["ref"] = ref
+        captured["attempt"] = attempt
+        return _minimal_run()
+
+    monkeypatch.setattr(cli, "fetch_failed_run", spy)
+    url = "https://github.com/o/r/actions/runs/1/attempts/3"
+    cli.main(["diagnose", url])
+    assert captured == {"ref": RunRef("o/r", 1), "attempt": 3}
+
+
+def test_url_attempt_matching_flag_attempt_is_fine(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def spy(ref, *, attempt, **kwargs):
+        captured["attempt"] = attempt
+        return _minimal_run()
+
+    monkeypatch.setattr(cli, "fetch_failed_run", spy)
+    monkeypatch.setattr(cli, "diagnose_run", lambda s: diagnosis("CLASSIFIED"))
+    url = "https://github.com/o/r/actions/runs/1/attempts/3"
+    assert cli.main(["diagnose", url, "--attempt", "3"]) == 0
+    assert captured["attempt"] == 3
+
+
+def test_url_attempt_conflicts_with_flag_attempt() -> None:
+    url = "https://github.com/o/r/actions/runs/1/attempts/3"
+    assert cli.main(["diagnose", url, "--attempt", "2"]) == 2
+
+
+def test_repo_without_run_id_is_invalid() -> None:
+    assert cli.main(["diagnose", "--repo", "o/r"]) == 2
+
+
+def test_run_id_without_repo_is_invalid() -> None:
+    assert cli.main(["diagnose", "--run-id", "1"]) == 2
+
+
+def test_stdout_and_stderr_are_split(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(cli, "diagnose_run", lambda s: diagnosis("CLASSIFIED"))
+    cli.main(["diagnose", RUN_URL])
+    captured = capsys.readouterr()
+    assert "CLASSIFIED" in captured.out
+    assert "completeness:" in captured.err
+
+
+def test_summary_lists_job_level_and_step_level_where(monkeypatch, capsys) -> None:
+    job_where = 42
+    step_where = StepRef(job_id=42, number=2)
+    verdicts = [
+        FailureVerdict(
+            where=job_where,
+            outcome="CLASSIFIED",
+            kind=FailureKind.ENVIRONMENT,
+            evidence=[],
+            observations=["disk full"],
+        ),
+        FailureVerdict(
+            where=step_where,
+            outcome="CLASSIFIED",
+            kind=FailureKind.PROJECT,
+            evidence=[],
+            observations=["AssertionError: boom"],
+        ),
+    ]
+    monkeypatch.setattr(
+        cli,
+        "diagnose_run",
+        lambda s: diagnosis(
+            "CLASSIFIED",
+            failures=verdicts,
+            causes=[FailureKind.ENVIRONMENT, FailureKind.PROJECT],
+        ),
+    )
+    cli.main(["diagnose", RUN_URL])
+    out = capsys.readouterr().out
+    assert "job 42" in out
+    assert "job 42 step 2" in out

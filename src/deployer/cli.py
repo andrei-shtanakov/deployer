@@ -20,7 +20,9 @@ from deployer.bench import (
     run_bench,
     verify_corpus,
 )
+from deployer.diagnose import RunDiagnosis, diagnose_run, render_verdict
 from deployer.facts import TargetConfigError, analyze_project
+from deployer.forge import AdapterRefusal, GhError, RunRef, StepRef, fetch_failed_run
 from deployer.llm import AnthropicAuthor
 from deployer.models import (
     BenchReport,
@@ -40,6 +42,16 @@ from deployer.verify import DEFAULT_BUILD_TIMEOUT, DEFAULT_HEALTH_TIMEOUT, verif
 _LABEL_RE = re.compile(r"[A-Za-z0-9._-]+")
 
 _DOTENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+_RUN_URL_RE = re.compile(
+    r"github\.com/([^/]+/[^/]+)/actions/runs/(\d+)(?:/attempts/(\d+))?"
+)
+
+_EXIT_BY_OUTCOME: dict[str, int] = {
+    "CLASSIFIED": 0,
+    "UNCLASSIFIED": 3,
+    "EVIDENCE_UNAVAILABLE": 4,
+}
 
 _STATUS_ICONS = {
     CheckStatus.PASSED: "ok",
@@ -324,6 +336,121 @@ def _cmd_author(args: argparse.Namespace) -> int:
     return 0 if run.stopped_reason in accepted else 1
 
 
+def _parse_positive_int(value: str, label: str) -> int | str:
+    """Parse a CLI integer argument; return an error message on failure.
+
+    Manual, not ``argparse type=``, so a bad value makes ``_cmd_diagnose``
+    return 2 instead of ``main`` raising ``SystemExit``.
+    """
+    try:
+        parsed = int(value)
+    except ValueError:
+        return f"{label} must be a positive integer"
+    if parsed < 1:
+        return f"{label} must be a positive integer"
+    return parsed
+
+
+def _resolve_run_ref(args: argparse.Namespace) -> tuple[RunRef, int | None] | str:
+    """Build a run reference and resolved attempt from `diagnose` args.
+
+    Exactly one of ``run_url`` or (``--repo`` and ``--run-id``) is required.
+    An attempt on the URL and an explicit ``--attempt`` must agree when both
+    are given. Returns an error message instead of raising.
+    """
+    has_url = args.run_url is not None
+    has_repo = args.repo is not None
+    has_run_id = args.run_id is not None
+    if has_url and (has_repo or has_run_id):
+        return "run_url and --repo/--run-id are mutually exclusive"
+    if not has_url and has_repo != has_run_id:
+        return "--repo and --run-id must be given together"
+    if not has_url and not has_repo:
+        return "either run_url or --repo and --run-id is required"
+
+    flag_attempt: int | None = None
+    if args.attempt is not None:
+        parsed = _parse_positive_int(args.attempt, "--attempt")
+        if isinstance(parsed, str):
+            return parsed
+        flag_attempt = parsed
+
+    if has_url:
+        match = _RUN_URL_RE.search(args.run_url)
+        if match is None:
+            return f"not a recognized GitHub Actions run URL: {args.run_url}"
+        repo, run_id_text, url_attempt_text = match.groups()
+        run_id = int(run_id_text)
+        url_attempt = int(url_attempt_text) if url_attempt_text is not None else None
+        if (
+            url_attempt is not None
+            and flag_attempt is not None
+            and url_attempt != flag_attempt
+        ):
+            return (
+                f"--attempt {flag_attempt} conflicts with the run URL's "
+                f"attempt {url_attempt}"
+            )
+        resolved_attempt = flag_attempt if flag_attempt is not None else url_attempt
+        return RunRef(repo, run_id), resolved_attempt
+
+    run_id_result = _parse_positive_int(args.run_id, "--run-id")
+    if isinstance(run_id_result, str):
+        return run_id_result
+    return RunRef(args.repo, run_id_result), flag_attempt
+
+
+def _format_where(where: StepRef | int) -> str:
+    if isinstance(where, int):
+        return f"job {where}"
+    return f"job {where.job_id} step {where.number}"
+
+
+def _print_diagnosis(diagnosis: RunDiagnosis) -> None:
+    """Human summary on stdout; diagnostics (completeness, gaps) on stderr."""
+    causes = ", ".join(kind.value for kind in diagnosis.causes) or "-"
+    print(f"outcome: {diagnosis.outcome}")
+    print(f"causes: {causes}")
+    for verdict in diagnosis.failures:
+        kind = verdict.kind.value if verdict.kind is not None else "-"
+        observation = verdict.observations[0] if verdict.observations else "-"
+        print(
+            f"[{_format_where(verdict.where)}] {verdict.outcome} {kind}: {observation}"
+        )
+    for observation in diagnosis.observations:
+        print(observation)
+    completeness = diagnosis.run.completeness
+    print(
+        f"completeness: logs={completeness.logs} "
+        f"annotations={completeness.annotations}",
+        file=sys.stderr,
+    )
+    if diagnosis.outcome == "EVIDENCE_UNAVAILABLE":
+        for observation in diagnosis.observations:
+            print(observation, file=sys.stderr)
+
+
+def _cmd_diagnose(args: argparse.Namespace) -> int:
+    resolved = _resolve_run_ref(args)
+    if isinstance(resolved, str):
+        print(f"error: {resolved}", file=sys.stderr)
+        return 2
+    ref, attempt = resolved
+    try:
+        result = fetch_failed_run(ref, attempt=attempt)
+    except GhError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    if isinstance(result, AdapterRefusal):
+        print(f"refused: {result.reason}: {result.detail}", file=sys.stderr)
+        return 5
+    diagnosis = diagnose_run(result)
+    _print_diagnosis(diagnosis)
+    if args.output_file is not None:
+        Path(args.output_file).write_text(render_verdict(diagnosis))
+    return _EXIT_BY_OUTCOME[diagnosis.outcome]
+
+
 def _cmd_bench_run(args: argparse.Namespace) -> int:
     corpus = Path(args.corpus)
     if not corpus.is_dir():
@@ -554,6 +681,18 @@ def main(argv: list[str] | None = None) -> int:
     _add_timeout_flags(p_author)
     _add_runtime_flags(p_author)
     p_author.set_defaults(func=_cmd_author)
+
+    p_diagnose = sub.add_parser("diagnose", help="diagnose a failed CI run")
+    p_diagnose.add_argument(
+        "run_url", nargs="?", default=None, help="GitHub Actions run URL"
+    )
+    p_diagnose.add_argument("--repo", default=None, help="owner/name")
+    p_diagnose.add_argument("--run-id", default=None)
+    p_diagnose.add_argument("--attempt", default=None)
+    p_diagnose.add_argument(
+        "--output-file", default=None, help="write the verdict document here"
+    )
+    p_diagnose.set_defaults(func=_cmd_diagnose)
 
     p_bench = sub.add_parser("bench", help="corpus bench operations")
     bench_sub = p_bench.add_subparsers(dest="bench_command", required=True)

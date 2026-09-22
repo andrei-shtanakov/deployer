@@ -8,9 +8,12 @@ Rules are data, every rule is evaluated against every piece of evidence, and a
 conflict between kinds is reported as ambiguity, never resolved by order.
 """
 
+import json
 import re
 from dataclasses import dataclass
 from typing import Literal
+
+from pydantic import TypeAdapter
 
 from deployer.forge import (
     Completeness,
@@ -23,6 +26,8 @@ from deployer.forge import (
 from deployer.models import FailureKind
 
 Outcome = Literal["CLASSIFIED", "UNCLASSIFIED", "EVIDENCE_UNAVAILABLE"]
+
+VERDICT_SCHEMA_VERSION = "1.0"
 
 _JOB_LEVEL_NOTE = "cited evidence is job-level (no step binding)"
 _NO_RULE_NOTE = "no rule matched"
@@ -299,3 +304,18 @@ def _missing(completeness: Completeness) -> list[str]:
     if completeness.annotations == "error":
         missing.append("annotations fetch error")
     return missing
+
+
+_diagnosis_adapter: TypeAdapter[RunDiagnosis] = TypeAdapter(RunDiagnosis)
+
+
+def render_verdict(diagnosis: RunDiagnosis) -> str:
+    """Serialize a verdict document as versioned JSON (``deployer diagnose``).
+
+    ``verdict_schema_version`` is the document's own schema version and is
+    inserted as the first key; the nested ``run`` keeps its own
+    ``snapshot_schema_version`` (``forge.py``) untouched.
+    """
+    payload = _diagnosis_adapter.dump_python(diagnosis, mode="json")
+    document = {"verdict_schema_version": VERDICT_SCHEMA_VERSION, **payload}
+    return json.dumps(document, indent=2)
