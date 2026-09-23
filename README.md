@@ -207,13 +207,20 @@ Each attempt's restored tree and every try's build output land under
 restored tree, shared across tries; `tries/<seq>/` each build's own context
 copy, manifest and stdout/stderr) — kept until the operator deletes them.
 There is no automatic TTL; cleanup covers only the image tag the reproduction
-build itself created.
+build itself created. Because `source/` is read-only, give the owner write
+permission back before deleting a reproduction:
+
+```bash
+chmod -R u+w .deployer-runs/<run-id>/reproduction
+rm -rf .deployer-runs/<run-id>/reproduction
+```
 
 The exit code is the reading layer's (3 unclassified, 4 evidence
 unavailable, 5 adapter refusal, 2 bad argument) in every case except two,
 both exit `2`: `--reproduce` given together with `--container-host`, and a
-try directory that cannot be created or whose stored `source.json` names a
-different `head_sha`. Every refusal (an unsupported shape, an unconfirmed
+try directory that cannot be created, prepared or written (copying the
+tree, changing its permissions, writing its files) or whose stored
+`source.json` names a different `head_sha`. Every refusal (an unsupported shape, an unconfirmed
 endpoint), an unreadable tree, a missing container runtime, and every
 CI-vs-local comparison state live in the verdict document's `reproduction`
 section instead of changing the exit code.

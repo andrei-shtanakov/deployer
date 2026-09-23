@@ -94,7 +94,10 @@ def reproduce_run(
         shutil.copytree(source_dir, context, symlinks=True)
     except OSError as exc:
         raise TryDirError(f"cannot prepare the try context: {exc}") from exc
-    _make_writable(context)
+    try:
+        _make_writable(context)
+    except OSError as exc:
+        raise TryDirError(f"cannot make context/ writable: {exc}") from exc
     rel_try = try_dir.relative_to(root).as_posix()
 
     df_path = context / found.build.dockerfile
@@ -328,7 +331,10 @@ def _source(
         meta.write_text(payload)
     except OSError as exc:
         raise TryDirError(f"cannot write {meta}: {exc}") from exc
-    _make_read_only(source_dir)
+    try:
+        _make_read_only(source_dir)
+    except OSError as exc:
+        raise TryDirError(f"cannot make source/ read-only: {exc}") from exc
     return source_dir, listing
 
 

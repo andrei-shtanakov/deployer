@@ -231,6 +231,50 @@ def test_write_failure_after_try_dir_exists_is_a_try_dir_error(
         _go(tmp_path, tree, fake_containers)
 
 
+def _chmod_failing_under(monkeypatch, part: str) -> None:
+    """Make ``os.chmod`` raise for any path containing ``part``."""
+    import os
+
+    original_chmod = os.chmod
+
+    def boom(path, mode, *args, **kwargs):
+        if part in Path(path).parts:
+            raise OSError("operation not permitted")
+        return original_chmod(path, mode, *args, **kwargs)
+
+    monkeypatch.setattr(os, "chmod", boom)
+
+
+def test_chmod_failure_making_source_read_only_is_a_try_dir_error(
+    tmp_path, tree, fake_containers, monkeypatch
+):
+    """A permission change that fails on the restored source/ exits 2 (§6),
+    not as an uncaught traceback."""
+    _chmod_failing_under(monkeypatch, "source")
+    fake_containers.responses[("build",)] = proc(1)
+    with pytest.raises(TryDirError, match="cannot make source/ read-only"):
+        _go(tmp_path, tree, fake_containers)
+
+
+def test_chmod_failure_making_context_writable_is_a_try_dir_error(
+    tmp_path, tree, fake_containers, monkeypatch
+):
+    """A permission change that fails on the try's context/ exits 2 (§6).
+
+    ``copytree`` itself chmods while copying (already a TryDirError), so the
+    failure is injected into the writable pass that runs after the copy.
+    """
+    from deployer.reproduce import run as run_mod
+
+    def boom(root: Path) -> None:
+        raise OSError("operation not permitted")
+
+    monkeypatch.setattr(run_mod, "_make_writable", boom)
+    fake_containers.responses[("build",)] = proc(1)
+    with pytest.raises(TryDirError, match="cannot make context/ writable"):
+        _go(tmp_path, tree, fake_containers)
+
+
 def test_precheck_refusal_creates_nothing(tmp_path, tree, fake_containers):
     section = reproduce_run(
         replace(_run(), event="pull_request"),
