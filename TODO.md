@@ -54,10 +54,10 @@ paragraph.
   findings-without-classes is a later task.
 - [ ] CI-failure reproduction: restore the artifact and its context at the run's actual checkout SHA, run deterministic checks and L2 on a supported build configuration, report findings with status and evidence — no causal class @owner:repo:deployer @id:ci-failure-reproduction @epic:eco.dark-factory
   Spec: `docs/superpowers/specs/2026-09-22-ci-failure-reproduction-design.md` on the docs
-  branch `docs/ci-failure-reproduction-spec` (rev 4, DRAFT revised after the external
-  review of rev 3 → external review by exact SHA → plan). Rev 4 narrows the slice: one
-  failed job whose failed step is its only, supported `docker build`; local backend only
-  (`--container-host` refused); the build IS the reproduction — no image run in this slice.
+  branch `docs/ci-failure-reproduction-spec` (rev 5, DRAFT revised after the external
+  review of rev 4 → targeted review of the rev 4→5 diff → plan). Rev 4/5 narrow the slice: one
+  failed job whose failed step is its only, supported `docker build .`; `push`/`workflow_dispatch`
+  only, workflow and checkout both at `head_sha`; a confirmed-local endpoint only; the build IS the reproduction — no image run in this slice.
   Fixed points: `exact` is a property of the restored TREE, earned from the checkout log's
   SHA, the checkout options, inert preceding steps and no transforming `.gitattributes`,
   else `approximation` with the unmet conditions named; the workflow's build line is
