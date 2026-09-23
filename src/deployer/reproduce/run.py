@@ -94,6 +94,7 @@ def reproduce_run(
         shutil.copytree(source_dir, context, symlinks=True)
     except OSError as exc:
         raise TryDirError(f"cannot prepare the try context: {exc}") from exc
+    _make_writable(context)
     rel_try = try_dir.relative_to(root).as_posix()
 
     df_path = context / found.build.dockerfile
@@ -178,15 +179,15 @@ def _build_and_compare(
     seq = try_dir.name
     tag = build_mod.repro_tag(run_id, seq)
     run = build_mod.run_build(rt, context, found.build, tag, build_timeout)
-    (try_dir / "build.stdout").write_text(run.stdout)
-    (try_dir / "build.stderr").write_text(run.stderr)
+    _write_text(try_dir / "build.stdout", run.stdout)
+    _write_text(try_dir / "build.stderr", run.stderr)
 
     syntax, lint, buildx, check_run = buildcheck.run_builder_check(
         rt, context, found.build.dockerfile, build_timeout
     )
     if check_run is not None:
-        (try_dir / "check.stdout").write_text(check_run.stdout)
-        (try_dir / "check.stderr").write_text(check_run.stderr)
+        _write_text(try_dir / "check.stdout", check_run.stdout)
+        _write_text(try_dir / "check.stderr", check_run.stderr)
     merged = buildcheck.merge_syntax(parser_checks, syntax, found.build.dockerfile)
     checks_out = merged + lint + [c for c in static if c not in parser_checks]
 
@@ -327,6 +328,7 @@ def _source(
         meta.write_text(payload)
     except OSError as exc:
         raise TryDirError(f"cannot write {meta}: {exc}") from exc
+    _make_read_only(source_dir)
     return source_dir, listing
 
 
@@ -344,8 +346,66 @@ def _new_try(attempt_dir: Path) -> Path:
 
 
 def _write(try_dir: Path, section: ReproductionSection) -> ReproductionSection:
-    (try_dir / "manifest.json").write_text(section.model_dump_json(indent=2))
+    _write_text(try_dir / "manifest.json", section.model_dump_json(indent=2))
     return section
+
+
+def _write_text(path: Path, text: str) -> None:
+    """``path.write_text(text)``, an ``OSError`` raised as a :class:`TryDirError`.
+
+    Every write here happens after the try directory already exists (the
+    manifest, ``build.std{out,err}``, ``check.std{out,err}``); a disk-full or
+    permission failure at that point must exit 2 like the other §6
+    try-directory failures, not surface as an uncaught traceback.
+    """
+    try:
+        path.write_text(text)
+    except OSError as exc:
+        raise TryDirError(f"cannot write {path}: {exc}") from exc
+
+
+def _make_read_only(root: Path) -> None:
+    """Strip write permission from every file and directory under ``root``.
+
+    Applied once to a freshly extracted ``source/`` (spec §1.5: "restored
+    tree, read-only after restoration, shared by tries"). Files first, then
+    directories bottom-up — a directory loses its own write bit only after
+    every entry inside it has already been chmod'd, and ``root`` itself is
+    covered as the last directory ``os.walk`` visits in that bottom-up pass.
+    Symlinks are skipped: ``os.chmod`` would follow a symlink to a file (or
+    fail outright on some platforms) rather than change the link itself.
+    """
+    for dirpath, _dirnames, filenames in os.walk(root):
+        base = Path(dirpath)
+        for name in filenames:
+            path = base / name
+            if not path.is_symlink():
+                os.chmod(path, path.stat().st_mode & ~0o222)
+    for dirpath, _dirnames, _filenames in os.walk(root, topdown=False):
+        path = Path(dirpath)
+        if not path.is_symlink():
+            os.chmod(path, path.stat().st_mode & ~0o222)
+
+
+def _make_writable(root: Path) -> None:
+    """Restore owner write on every file and directory under ``root``.
+
+    ``shutil.copytree`` copies ``source/``'s (now read-only) permission bits
+    onto ``context/`` along with everything else; the build receives
+    ``source/`` "as is" (spec §1.5) but still needs a writable copy, so write
+    permission is added back right after the copy. Symlinks are skipped, as
+    in :func:`_make_read_only`.
+    """
+    for dirpath, _dirnames, filenames in os.walk(root):
+        base = Path(dirpath)
+        for name in filenames:
+            path = base / name
+            if not path.is_symlink():
+                os.chmod(path, path.stat().st_mode | 0o200)
+    for dirpath, _dirnames, _filenames in os.walk(root, topdown=False):
+        path = Path(dirpath)
+        if not path.is_symlink():
+            os.chmod(path, path.stat().st_mode | 0o200)
 
 
 def _relative_argv(argv: list[str], try_dir: Path) -> list[str]:

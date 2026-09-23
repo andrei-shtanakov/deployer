@@ -114,6 +114,21 @@ def test_attempted_run_writes_source_try_and_manifest(tmp_path, tree, fake_conta
     assert not any(Path(token).is_absolute() for token in section.build.argv)
 
 
+def test_source_is_read_only_and_context_is_writable(tmp_path, tree, fake_containers):
+    """Spec §1.5: ``source/`` is read-only after restoration; ``context/`` —
+    the build receives ``source/`` "as is" — must still be writable."""
+    fake_containers.responses[("build",)] = proc(1)
+    section = _go(tmp_path, tree, fake_containers)
+    base = tmp_path / "work" / section.try_dir
+    source_dir = base.parent.parent / "source"
+    source_file = source_dir / "Dockerfile"
+    context_file = base / "context" / "Dockerfile"
+    assert source_file.is_file() and context_file.is_file()
+    assert not (source_file.stat().st_mode & 0o222)
+    assert not (source_dir.stat().st_mode & 0o222)
+    assert context_file.stat().st_mode & 0o200
+
+
 def test_docker_check_writes_raw_output_when_launched(tmp_path, tree, fake_containers):
     """Review Focus 1: check.stdout/check.stderr hold the launched process's
     raw streams, and only exist when the check actually ran."""
@@ -194,6 +209,25 @@ def test_copytree_failure_is_a_try_dir_error(
     monkeypatch.setattr(shutil, "copytree", boom)
     fake_containers.responses[("build",)] = proc(1)
     with pytest.raises(TryDirError, match="cannot prepare the try context"):
+        _go(tmp_path, tree, fake_containers)
+
+
+def test_write_failure_after_try_dir_exists_is_a_try_dir_error(
+    tmp_path, tree, fake_containers, monkeypatch
+):
+    """Review Focus: a disk-full/permission failure writing build.stdout (the
+    try directory already exists by then) must not crash with a traceback —
+    it is exit 2 (TryDirError), like the other §6 try-directory failures."""
+    fake_containers.responses[("build",)] = proc(1)
+    original_write_text = Path.write_text
+
+    def boom(self, *args, **kwargs):
+        if self.name == "build.stdout":
+            raise OSError("disk full")
+        return original_write_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", boom)
+    with pytest.raises(TryDirError, match="cannot write.*build.stdout"):
         _go(tmp_path, tree, fake_containers)
 
 
