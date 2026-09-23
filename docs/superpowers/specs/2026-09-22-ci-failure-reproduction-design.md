@@ -1,8 +1,10 @@
 # CI-failure reproduction — design (rev 3 of the diagnosis line)
 
 **Status:** DRAFT, revised after the owner's review of 2026-09-22
-(`_cowork_output/deployer-reproduction-draft-review-2026-09-22.md`); next: external
-review by exact SHA, then a plan. No code exists for this design.
+(`../../../../_cowork_output/deployer-reproduction-draft-review-2026-09-22.md` — a
+dev-only workspace file, absent from clones; every decision it made is restated in
+this document where it applies); next: external review by exact SHA, then a plan. No
+code exists for this design.
 **Relation to the 2026-09-21 spec:** supersedes its causal half (§3 outcomes, §5
 catalogue, §8.2 "three established classes"). Its reading layer — forge,
 completeness, observations, CLI — is this design's input, under the reduced contract
@@ -48,7 +50,7 @@ The reading layer supplies a `FailedRun` snapshot: repository, run id, attempt,
 **`head_sha` is not, by itself, the build context.** "Exact" is a statement about the
 **tree**, not about the environment, and it is earned, not assumed:
 
-| Restoration | Conditions (all must be established from the workflow file and the step list) | Recorded as |
+| Restoration | Conditions (all must be established — from the workflow file, the step list, the checkout step's log and the restored tree) | Recorded as |
 |---|---|---|
 | **exact** | the checkout step's *actual* SHA (from its log line `HEAD is now at …` / the `actions/checkout` output) equals `head_sha`; no `ref:`, `sparse-checkout`, `lfs: true`, `submodules` on the checkout step; the build runs in the repository root (no `working-directory`); no step between checkout and the build writes into the context; the build command's context is `.` and its `--file` is a path in the tree; the restored archive matches the checkout in the ways that matter to the builder — file modes and symlinks preserved, no `export-ignore` attributes in the tree (a `git archive`-style export drops those paths, a checkout does not) | `context: exact` |
 | **approximation** | any condition above is unknown or false: a generated file, an unknown transforming step, a non-`.` context, `ref:` set, `working-directory` set, sparse/LFS/submodules, `export-ignore` present, the checkout log missing | `context: approximation` with every unmet condition listed |
