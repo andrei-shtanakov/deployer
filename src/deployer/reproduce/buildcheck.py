@@ -65,7 +65,10 @@ def read_check_output(
         return BuilderSyntax("passed", None, None, None), lint
     if blocks and not leftover:
         return BuilderSyntax("passed", None, None, None), lint
-    return BuilderSyntax("skipped", None, None, "build check output not recognised"), []
+    return (
+        BuilderSyntax("skipped", None, output, "build check output not recognised"),
+        [],
+    )
 
 
 def detect_buildx(rt: ContainerRuntime) -> str | None:
@@ -152,9 +155,13 @@ def merge_syntax(
             )
         )
     if builder.state == "skipped":
+        evidence = [builder_ev] if builder.text is not None else []
         out.append(
             ReproductionCheck(
-                check_id="builder_check", status="skipped", reason=builder.reason
+                check_id="builder_check",
+                status="skipped",
+                reason=builder.reason,
+                evidence=evidence,
             )
         )
     return out

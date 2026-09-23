@@ -1,5 +1,6 @@
 """§2: two documented lint forms, an ordered table, the every-line rule."""
 
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -45,6 +46,7 @@ def test_unrecognised_and_mixed_output_is_row_5(name):
     syntax, _ = read_check_output(code, None, text)
     assert syntax.state == "skipped"
     assert syntax.reason == "build check output not recognised"
+    assert syntax.text == text
 
 
 def test_rows_1_and_3():
@@ -73,6 +75,19 @@ def test_old_buildx_is_skipped(fake_containers):
         ContainerRuntime(tool="docker"), Path("/c"), "Dockerfile", 60
     )
     assert (syntax.state, buildx) == ("skipped", "0.14.1")
+
+
+def test_build_check_timeout_is_skipped(fake_containers):
+    fake_containers.responses[("buildx", "version")] = proc(
+        stdout="github.com/docker/buildx v0.15.1 abc\n"
+    )
+    fake_containers.responses[("build", "--check")] = subprocess.TimeoutExpired(
+        cmd="docker build --check", timeout=60
+    )
+    syntax, _, buildx = run_builder_check(
+        ContainerRuntime(tool="docker"), Path("/c"), "Dockerfile", 60
+    )
+    assert (syntax.state, syntax.reason, buildx) == ("skipped", "timeout", "0.15.1")
 
 
 def _parser_finding(line: int) -> ReproductionCheck:
@@ -115,3 +130,19 @@ def test_merge_builder_skipped_keeps_the_parser_result_and_says_so():
     )
     assert [c.status for c in merged] == ["failed", "skipped"]
     assert merged[1].check_id == "builder_check"
+    assert merged[1].evidence == []
+
+
+def test_merge_builder_skipped_with_raw_output_attaches_it_as_evidence():
+    merged = merge_syntax(
+        [],
+        BuilderSyntax(
+            "skipped", None, "raw output here", "build check output not recognised"
+        ),
+        "Dockerfile",
+    )
+    skipped = [c for c in merged if c.check_id == "builder_check"][0]
+    assert skipped.status == "skipped"
+    assert skipped.evidence == [
+        ReproEvidence(kind="output_file", path="check.stdout", text="raw output here")
+    ]
