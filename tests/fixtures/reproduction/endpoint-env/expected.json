@@ -1,0 +1,14 @@
+{
+  "status": "refused",
+  "refusal": "endpoint set by DOCKER_HOST not confirmed local",
+  "restoration": {
+    "state": "exact",
+    "unmet": []
+  },
+  "failed_checks": [
+    [
+      "copy_sources",
+      "source docs/setup.md absent from the context"
+    ]
+  ]
+}

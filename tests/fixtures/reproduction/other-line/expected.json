@@ -1,0 +1,29 @@
+{
+  "status": "attempted",
+  "refusal": null,
+  "restoration": {
+    "state": "exact",
+    "unmet": []
+  },
+  "failed_checks": [],
+  "exit_code": 1,
+  "build_failed_instruction": {
+    "kind": "span",
+    "lines": [
+      12,
+      12
+    ],
+    "bound_by": "step_text"
+  },
+  "ci_instruction": {
+    "kind": "span",
+    "lines": [
+      15,
+      15
+    ],
+    "bound_by": "buildkit_error_block"
+  },
+  "comparison": "different_failure",
+  "comparison_reason": null,
+  "signature_match": null
+}

@@ -1,0 +1,48 @@
+{
+  "status": "attempted",
+  "refusal": null,
+  "restoration": {
+    "state": "approximation",
+    "unmet": [
+      "archive differs from tree listing: missing docs/notes.md"
+    ]
+  },
+  "unmet_count": 1,
+  "failed_checks": [
+    [
+      "copy_sources",
+      "source docs/setup.md absent from the context"
+    ]
+  ],
+  "checks": {
+    "builder_check": "skipped"
+  },
+  "exit_code": 125,
+  "launch_error": null,
+  "build_containers": "removed_by_builder",
+  "build_failed_instruction": {
+    "kind": "span",
+    "lines": [
+      11,
+      11
+    ],
+    "bound_by": "step_text"
+  },
+  "ci_instruction": {
+    "kind": "span",
+    "lines": [
+      11,
+      11
+    ],
+    "bound_by": "buildkit_error_block"
+  },
+  "signature_match": "not_compared",
+  "comparison": "reproduced_with_differences",
+  "comparison_reason": null,
+  "dimensions": {
+    "backend": "differs",
+    "host_arch": "unknown",
+    "ignore_file": "same",
+    "restoration": "unknown"
+  }
+}

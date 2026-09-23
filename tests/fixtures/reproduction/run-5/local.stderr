@@ -1,0 +1,2 @@
+Error: FROM requires either one argument, or three: FROM <source> [AS <name>]
+

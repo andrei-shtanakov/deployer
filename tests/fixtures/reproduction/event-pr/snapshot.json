@@ -1,0 +1,178 @@
+{
+  "repo": "example/project",
+  "run_id": 35680991093,
+  "attempt": 1,
+  "head_sha": "d6e330fd8d85f761962d8a134f0ffdd0e914bf9b",
+  "url": "https://github.com/example/project/actions/runs/35680991093",
+  "jobs": [
+    {
+      "job_id": 106597702099,
+      "name": "build",
+      "conclusion": "failure",
+      "steps": [
+        {
+          "ref": {
+            "job_id": 106597702099,
+            "number": 3
+          },
+          "name": "Run docker build --file ./Dockerfile .",
+          "conclusion": "failure",
+          "evidence": [
+            {
+              "source": {
+                "job_id": 106597702099,
+                "number": 3
+              },
+              "text": "##[group]Run docker build --file ./Dockerfile .\ndocker build --file ./Dockerfile .\nshell: /usr/bin/bash -e {0}\n##[endgroup]",
+              "level": null
+            }
+          ]
+        }
+      ],
+      "evidence": [
+        {
+          "source": null,
+          "text": "﻿2026-09-22T02:51:24.5272273Z Current runner version: '2.337.0'",
+          "level": null
+        },
+        {
+          "source": null,
+          "text": "##[group]Runner Image Provisioner\nHosted Compute Agent\nVersion: 20260828.587\nCommit: abac92662cab4cc7352de4f9f9d2e2419aad9c29\nBuild Date: 2026-08-28T16:44:25Z\nWorker ID: {f800dfbd-89cd-4cbc-9a11-21f8a6836b7b}\nAzure Region: westus3\n##[endgroup]",
+          "level": null
+        },
+        {
+          "source": null,
+          "text": "##[group]Operating System\nUbuntu\n24.04.5\nLTS\n##[endgroup]",
+          "level": null
+        },
+        {
+          "source": null,
+          "text": "##[group]Runner Image\nImage: ubuntu-24.04\nVersion: 20260907.300.1\nIncluded Software: https://github.com/actions/runner-images/blob/ubuntu24/20260907.300/images/ubuntu/Ubuntu2404-Readme.md\nImage Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20260907.300\n##[endgroup]",
+          "level": null
+        },
+        {
+          "source": null,
+          "text": "##[group]GITHUB_TOKEN Permissions\nContents: read\nMetadata: read\nPackages: read\n##[endgroup]",
+          "level": null
+        },
+        {
+          "source": null,
+          "text": "Secret source: Actions\nCache mode: write\nPrepare workflow directory\nPrepare all required actions\nGetting action download info\nDownload action repository 'actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd' (SHA:93cb6efe18208431cddfb8368fd83d5badbf9bfd)\nComplete job name: build",
+          "level": null
+        },
+        {
+          "source": null,
+          "text": "Syncing repository: example/project",
+          "level": null
+        },
+        {
+          "source": null,
+          "text": "##[group]Getting Git version info\nWorking directory is '/home/runner/work/project/project'\n[command]/usr/bin/git version\ngit version 2.55.0\n##[endgroup]",
+          "level": null
+        },
+        {
+          "source": null,
+          "text": "Temporarily overriding HOME='/home/runner/work/_temp/db42f18d-a8d4-4284-8a88-a803665efa3d' before making global git config changes\nAdding repository directory to the temporary git global config as a safe directory\n[command]/usr/bin/git config --global --add safe.directory /home/runner/work/project/project\nDeleting the contents of '/home/runner/work/project/project'",
+          "level": null
+        },
+        {
+          "source": null,
+          "text": "##[group]Initializing the repository\n[command]/usr/bin/git init /home/runner/work/project/project\nhint: Using 'master' as the name for the initial branch. This default branch name\nhint: will change to \"main\" in Git 3.0. To configure the initial branch name\nhint: to use in all of your new repositories, which will suppress this warning,\nhint: call:\nhint:\nhint: \tgit config --global init.defaultBranch <name>\nhint:\nhint: Names commonly chosen instead of 'master' are 'main', 'trunk' and\nhint: 'development'. The just-created branch can be renamed via this command:\nhint:\nhint: \tgit branch -m <name>\nhint:\nhint: Disable this message with \"git config set advice.defaultBranchName false\"\nInitialized empty Git repository in /home/runner/work/project/project/.git/\n[command]/usr/bin/git remote add origin https://github.com/example/project\n##[endgroup]",
+          "level": null
+        },
+        {
+          "source": null,
+          "text": "##[group]Disabling automatic garbage collection\n[command]/usr/bin/git config --local gc.auto 0\n##[endgroup]",
+          "level": null
+        },
+        {
+          "source": null,
+          "text": "##[group]Setting up auth\n[command]/usr/bin/git config --local --name-only --get-regexp core\\.sshCommand\n[command]/usr/bin/git submodule foreach --recursive sh -c \"git config --local --name-only --get-regexp 'core\\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\"\n[command]/usr/bin/git config --local --name-only --get-regexp http\\.https\\:\\/\\/github\\.com\\/\\.extraheader\n[command]/usr/bin/git submodule foreach --recursive sh -c \"git config --local --name-only --get-regexp 'http\\.https\\:\\/\\/github\\.com\\/\\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :\"\n[command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\\.gitdir:\n[command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url\n[command]/usr/bin/git config --local http.https://github.com/.extraheader AUTHORIZATION: basic ***\n##[endgroup]",
+          "level": null
+        },
+        {
+          "source": null,
+          "text": "##[group]Fetching the repository\n[command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +d6e330fd8d85f761962d8a134f0ffdd0e914bf9b:refs/remotes/origin/polygon/run-1\nFrom https://github.com/example/project\n * [new ref]         d6e330fd8d85f761962d8a134f0ffdd0e914bf9b -> origin/polygon/run-1\n##[endgroup]",
+          "level": null
+        },
+        {
+          "source": null,
+          "text": "##[group]Determining the checkout info\n##[endgroup]",
+          "level": null
+        },
+        {
+          "source": null,
+          "text": "[command]/usr/bin/git sparse-checkout disable\n[command]/usr/bin/git config --local --unset-all extensions.worktreeConfig",
+          "level": null
+        },
+        {
+          "source": null,
+          "text": "##[group]Checking out the ref\n[command]/usr/bin/git checkout --progress --force -B polygon/run-1 refs/remotes/origin/polygon/run-1\nSwitched to a new branch 'polygon/run-1'\nbranch 'polygon/run-1' set up to track 'origin/polygon/run-1'.\n##[endgroup]",
+          "level": null
+        },
+        {
+          "source": null,
+          "text": "[command]/usr/bin/git log -1 --format=%H\nd6e330fd8d85f761962d8a134f0ffdd0e914bf9b",
+          "level": null
+        },
+        {
+          "source": null,
+          "text": "#0 building with \"default\" instance using docker driver\n\n#1 [internal] load build definition from Dockerfile\n#1 transferring dockerfile: 388B done\n#1 DONE 0.0s\n\n#2 [internal] load metadata for ghcr.io/astral-sh/uv:0.5.11\n#2 ...\n\n#3 [auth] library/python:pull token for registry-1.docker.io\n#3 DONE 0.0s\n\n#4 [internal] load metadata for docker.io/library/python:3.12-slim\n#4 ...\n\n#2 [internal] load metadata for ghcr.io/astral-sh/uv:0.5.11\n#2 DONE 0.8s\n\n#4 [internal] load metadata for docker.io/library/python:3.12-slim\n#4 DONE 0.9s\n\n#5 [internal] load .dockerignore\n#5 transferring context: 2B done\n#5 DONE 0.1s\n\n#6 [internal] load build context\n#6 transferring context: 584B done\n#6 DONE 0.0s\n\n#7 [stage-0 6/9] COPY src/ci_build ./src/ci_build\n#7 CACHED\n\n#8 [stage-0 2/9] COPY --from=ghcr.io/astral-sh/uv:0.5.11 /uv /uvx /bin/\n#8 CACHED\n\n#9 [stage-0 5/9] RUN uv sync --frozen --no-install-project\n#9 CACHED\n\n#10 [stage-0 4/9] COPY pyproject.toml uv.lock ./\n#10 CACHED\n\n#11 [stage-0 3/9] WORKDIR /app\n#11 CACHED\n\n#12 [stage-0 7/9] COPY docs/setup.md ./setup.md\n#12 ERROR: failed to calculate checksum of ref a4efb8b6-20f9-46f4-b827-91ac0547be3a::t0jkpmm4mq76x0tyiprh1w5o7: \"/docs/setup.md\": not found\n\n#13 FROM ghcr.io/astral-sh/uv:0.5.11@sha256:0ac957607303916420297a4c9c213bb33fbd3c888f9cd7f4f7273596ebf42b85\n#13 resolve ghcr.io/astral-sh/uv:0.5.11@sha256:0ac957607303916420297a4c9c213bb33fbd3c888f9cd7f4f7273596ebf42b85 done\n#13 sha256:19979093e3da84cd28f7b6f852513b795e084427176ef9fbfac58642e69b461a 1.30kB / 1.30kB done\n#13 sha256:0ac957607303916420297a4c9c213bb33fbd3c888f9cd7f4f7273596ebf42b85 2.19kB / 2.19kB done\n#13 sha256:7e479fa39802632c25b4e5c14ddfab9c5f443cd7c89626a0408d31a0b7afc193 669B / 669B done\n#13 CANCELED\n\n#14 [stage-0 1/9] FROM docker.io/library/python:3.12-slim@sha256:2f17fc044b579bab302c2e8054d3a686e2cb9a83de48e70534b94cd8ebbe06a9\n#14 resolve docker.io/library/python:3.12-slim@sha256:2f17fc044b579bab302c2e8054d3a686e2cb9a83de48e70534b94cd8ebbe06a9 done\n#14 sha256:2f17fc044b579bab302c2e8054d3a686e2cb9a83de48e70534b94cd8ebbe06a9 10.37kB / 10.37kB done\n#14 sha256:44ff437bba879d4941b710a369a8f19266aea34b29002807f0c487fabc9eec9b 1.75kB / 1.75kB done\n#14 sha256:9e87977b867847e186d066f531ef783b006d582a985c341c269446088d90f2c4 5.65kB / 5.65kB done\n#14 CANCELED\n------\n > [stage-0 7/9] COPY docs/setup.md ./setup.md:\n------\nDockerfile:11\n--------------------\n   9 |     \n  10 |     COPY src/ci_build ./src/ci_build\n  11 | >>> COPY docs/setup.md ./setup.md\n  12 |     \n  13 |     RUN uv sync --frozen\n--------------------\nERROR: failed to build: failed to solve: failed to compute cache key: failed to calculate checksum of ref a4efb8b6-20f9-46f4-b827-91ac0547be3a::t0jkpmm4mq76x0tyiprh1w5o7: \"/docs/setup.md\": not found\n##[error]Process completed with exit code 1.\nPost job cleanup.\n[command]/usr/bin/git version\ngit version 2.55.0\nTemporarily overriding HOME='/home/runner/work/_temp/437f89b3-a25f-47c2-8a1b-02f1d3a9e47c' before making global git config changes\nAdding repository directory to the temporary git global config as a safe directory\n[command]/usr/bin/git config --global --add safe.directory /home/runner/work/project/project\n[command]/usr/bin/git config --local --name-only --get-regexp core\\.sshCommand\n[command]/usr/bin/git submodule foreach --recursive sh -c \"git config --local --name-only --get-regexp 'core\\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\"\n[command]/usr/bin/git config --local --name-only --get-regexp http\\.https\\:\\/\\/github\\.com\\/\\.extraheader\nhttp.https://github.com/.extraheader\n[command]/usr/bin/git config --local --unset-all http.https://github.com/.extraheader\n[command]/usr/bin/git submodule foreach --recursive sh -c \"git config --local --name-only --get-regexp 'http\\.https\\:\\/\\/github\\.com\\/\\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :\"\n[command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\\.gitdir:\n[command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url\nCleaning up orphan processes",
+          "level": null
+        },
+        {
+          "source": {
+            "job_id": 106597702099,
+            "number": 2
+          },
+          "text": "##[group]Run actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd\nwith:\n  repository: example/project\n  token: ***\n  ssh-strict: true\n  ssh-user: git\n  persist-credentials: true\n  clean: true\n  sparse-checkout-cone-mode: true\n  fetch-depth: 1\n  fetch-tags: false\n  show-progress: true\n  lfs: false\n  submodules: false\n  set-safe-directory: true\n##[endgroup]",
+          "level": null
+        },
+        {
+          "source": 106597702099,
+          "text": "Process completed with exit code 1.",
+          "level": "failure"
+        }
+      ],
+      "completeness": {
+        "logs": "present",
+        "annotations": "present"
+      },
+      "all_steps": [
+        {
+          "number": 1,
+          "name": "Set up job",
+          "conclusion": "success"
+        },
+        {
+          "number": 2,
+          "name": "Run actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd",
+          "conclusion": "success"
+        },
+        {
+          "number": 3,
+          "name": "Run docker build --file ./Dockerfile .",
+          "conclusion": "failure"
+        },
+        {
+          "number": 6,
+          "name": "Post Run actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd",
+          "conclusion": "success"
+        },
+        {
+          "number": 7,
+          "name": "Complete job",
+          "conclusion": "success"
+        }
+      ]
+    }
+  ],
+  "completeness": {
+    "logs": "present",
+    "annotations": "present"
+  },
+  "workflow_ref_path": ".github/workflows/diagnosis-polygon.yml",
+  "workflow_path": ".github/workflows/diagnosis-polygon.yml",
+  "event": "pull_request",
+  "snapshot_schema_version": "1.3"
+}
