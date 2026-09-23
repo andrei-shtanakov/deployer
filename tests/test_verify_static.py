@@ -19,6 +19,8 @@ from deployer.verify import (
     ATP_VERSION,
     HADOLINT_VERSION,
     _classify,
+    _classify_build,
+    _install_precedes_source_copy,
     _isolated_context,
     _run_healthcheck,
     _version_pin_matches,
@@ -620,6 +622,347 @@ def test_ordinary_build_error_is_unknown() -> None:
     """No marker matches an ordinary build error either — the exit code
     alone does not establish AUTHORING as the cause."""
     assert _classify("E: Unable to locate package libfoo") is FailureKind.UNKNOWN
+
+
+# The decisive excerpt of the real `uv-minimal` acceptance build log: the
+# project was installed before its sources were in the image, so hatchling
+# found no package directory to ship.
+_HATCHLING_MISSING_FILES_EXCERPT = """\
+  × Failed to build `uv-minimal @ file:///app`
+  ├─▶ The build backend returned an error
+  ╰─▶ Call to `hatchling.build.build_editable` failed (exit status: 1)
+      ValueError: Unable to determine which files to ship
+"""
+
+# The Dockerfile that produced that excerpt: `RUN uv sync --frozen` (no
+# `--no-install-project`) precedes `COPY src/uv_minimal`. A copy-order defect.
+_COPY_ORDER_DEFECT_DOCKERFILE = """\
+FROM python:3.12-slim
+COPY --from=ghcr.io/astral-sh/uv:0.5.11 /uv /bin/uv
+WORKDIR /app
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen
+COPY src/uv_minimal ./src/uv_minimal
+RUN useradd --create-home appuser
+USER appuser
+ENV PATH="/app/.venv/bin:$PATH"
+CMD ["python"]
+"""
+
+# The correct order: dependencies with `--no-install-project`, then sources,
+# then the project. The same hatchling message out of THIS Dockerfile is not
+# a copy-order defect — the sources were there and hatchling still could not
+# select them, which points at the project's own packaging config.
+_CORRECT_ORDER_DOCKERFILE = """\
+FROM python:3.12-slim
+COPY --from=ghcr.io/astral-sh/uv:0.5.11 /uv /uvx /bin/
+WORKDIR /app
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-install-project
+COPY src/uv_minimal ./src/uv_minimal
+RUN uv sync --frozen
+ENV PATH="/app/.venv/bin:$PATH"
+CMD ["python", "-m", "uv_minimal"]
+"""
+
+
+def test_hatchling_missing_files_needs_the_dockerfile_to_be_authoring() -> None:
+    """The message alone is not a class: it is what hatchling prints for a
+    copy-order defect AND for a project whose own `tool.hatch.build` table
+    selects nothing. Only the Dockerfile tells the two apart, so the marker
+    establishes AUTHORING only next to that evidence.
+    """
+    assert (
+        _classify_build(_HATCHLING_MISSING_FILES_EXCERPT, _COPY_ORDER_DEFECT_DOCKERFILE)
+        is FailureKind.AUTHORING
+    )
+
+
+def test_hatchling_missing_files_from_a_correct_dockerfile_is_unknown() -> None:
+    """The negative twin. Same output, sources copied before the project is
+    installed — the copy order cannot be the cause, and a packaging-config
+    defect is not something this check can assert, so UNKNOWN."""
+    assert (
+        _classify_build(_HATCHLING_MISSING_FILES_EXCERPT, _CORRECT_ORDER_DOCKERFILE)
+        is FailureKind.UNKNOWN
+    )
+
+
+def test_hatchling_missing_files_still_yields_to_environment_marker() -> None:
+    """Environment precedence is unchanged and is checked before the
+    Dockerfile is consulted at all."""
+    combined = _HATCHLING_MISSING_FILES_EXCERPT + "connection timed out\n"
+    assert (
+        _classify_build(combined, _COPY_ORDER_DEFECT_DOCKERFILE)
+        is FailureKind.ENVIRONMENT
+    )
+
+
+def test_classify_build_without_any_marker_is_unknown() -> None:
+    """A copy-order defect is not itself a cause: without an output marker
+    naming one, the build failure stays unexplained."""
+    assert (
+        _classify_build("exit status 1", _COPY_ORDER_DEFECT_DOCKERFILE)
+        is FailureKind.UNKNOWN
+    )
+
+
+def test_plain_classify_no_longer_reads_the_hatchling_marker_alone() -> None:
+    """`_classify` serves the run/compose sites, which have no Dockerfile to
+    weigh; there the marker establishes nothing."""
+    assert _classify(_HATCHLING_MISSING_FILES_EXCERPT) is FailureKind.UNKNOWN
+
+
+def test_install_precedes_source_copy_on_the_defective_dockerfile() -> None:
+    assert _install_precedes_source_copy(_COPY_ORDER_DEFECT_DOCKERFILE) is True
+
+
+def test_install_precedes_source_copy_on_the_correct_dockerfile() -> None:
+    assert _install_precedes_source_copy(_CORRECT_ORDER_DOCKERFILE) is False
+
+
+# --- PR #72 round 5, finding 2: an unrecognised COPY must fail closed -------
+#
+# The live incident: `COPY ["src/uv_minimal", "./src/uv_minimal"]` (JSON
+# exec form) read as `str.split()` gives one glued token, so the operand
+# list came back empty, `_copies_sources` said "no sources", and the
+# following `RUN uv sync --frozen` read as installing before its sources
+# arrived -- a false AUTHORING verdict on a Dockerfile that copied its
+# sources correctly, just in the form this walker could not read.
+
+
+def test_json_form_copy_of_sources_is_recognised_before_the_install() -> None:
+    """The incident, reproduced verbatim (no space after the comma, exactly
+    what `str.split()` glues into one token): JSON-form COPY of the real
+    package directory must be read as sources arriving, so the install
+    after it is no longer a copy-order defect and the hatchling marker
+    stays UNKNOWN."""
+    dockerfile = (
+        "FROM python:3.12-slim\n"
+        "WORKDIR /app\n"
+        'COPY ["src/uv_minimal","./src/uv_minimal"]\n'
+        "RUN uv sync --frozen\n"
+    )
+    assert _install_precedes_source_copy(dockerfile) is False
+    assert (
+        _classify_build(_HATCHLING_MISSING_FILES_EXCERPT, dockerfile)
+        is FailureKind.UNKNOWN
+    )
+
+
+def test_json_form_copy_of_manifests_only_still_counts_as_manifest_only() -> None:
+    """The positive twin: a JSON-form COPY naming only manifest files does
+    not excuse the sources -- the install after it is still a defect."""
+    dockerfile = (
+        "FROM python:3.12-slim\n"
+        'COPY ["pyproject.toml","uv.lock","./"]\n'
+        "RUN uv sync --frozen\n"
+    )
+    assert _install_precedes_source_copy(dockerfile) is True
+
+
+def test_an_unparseable_copy_line_counts_as_sources_arriving() -> None:
+    """Fail closed on the parser's own failure, not just the parsed content:
+    a COPY line `shlex` cannot tokenise must not be read as "no sources"."""
+    dockerfile = (
+        'FROM python:3.12-slim\nCOPY "unterminated src ./\nRUN uv sync --frozen\n'
+    )
+    assert _install_precedes_source_copy(dockerfile) is False
+
+
+def test_chown_flag_before_a_source_copy_does_not_hide_the_source() -> None:
+    """A leading `--chown=` (or `--chmod=`/`--link`) flag is dropped before
+    the operands are read, not left in the list to spoil `_is_manifest`."""
+    dockerfile = (
+        "FROM python:3.12-slim\n"
+        "COPY --chown=1000:1000 src ./src\n"
+        "RUN uv sync --frozen\n"
+    )
+    assert _install_precedes_source_copy(dockerfile) is False
+
+
+def test_chown_flag_before_manifest_only_copy_still_reads_as_manifest_only() -> None:
+    dockerfile = (
+        "FROM python:3.12-slim\n"
+        "COPY --chown=1000:1000 pyproject.toml uv.lock ./\n"
+        "RUN uv sync --frozen\n"
+    )
+    assert _install_precedes_source_copy(dockerfile) is True
+
+
+def test_copy_everything_before_the_install_is_not_a_copy_order_defect() -> None:
+    """`COPY . .` brings the sources in, whatever else it brings."""
+    dockerfile = "FROM python:3.12-slim\nWORKDIR /app\nCOPY . .\nRUN uv sync --frozen\n"
+    assert _install_precedes_source_copy(dockerfile) is False
+
+
+def test_dependency_only_sync_then_copy_then_project_sync_is_correct() -> None:
+    """The `--no-install-project` first pass installs no project, so the
+    source COPY still comes before the first project-installing RUN."""
+    dockerfile = (
+        "FROM python:3.12-slim\n"
+        "COPY pyproject.toml uv.lock ./\n"
+        "RUN uv sync --frozen --no-install-project\n"
+        "COPY src ./src\n"
+        "RUN uv sync --frozen\n"
+    )
+    assert _install_precedes_source_copy(dockerfile) is False
+
+
+def test_manifest_only_copies_do_not_count_as_source() -> None:
+    """Manifests are what the install reads; copying them is not copying the
+    package. README/LICENSE are manifest-adjacent and equally not sources."""
+    dockerfile = (
+        "FROM python:3.12-slim\n"
+        "COPY requirements-dev.txt README.md LICENSE ./\n"
+        "RUN pip install -e .\n"
+    )
+    assert _install_precedes_source_copy(dockerfile) is True
+
+
+def test_continuation_lines_are_parsed_as_one_run() -> None:
+    """A `\\`-continued RUN is one instruction; the install must be seen in
+    it, and a `--no-install-project` on a later physical line must count.
+    (No `&&` here: chained RUNs are unrecognised since round 4 — see
+    `test_a_chained_install_is_unrecognised` — so this fixture stays a
+    single command split only by continuation lines.)"""
+    defective = (
+        "FROM python:3.12-slim\n"
+        "COPY pyproject.toml ./\n"
+        "RUN uv sync \\\n"
+        "      --frozen\n"
+        "COPY src ./src\n"
+    )
+    correct = defective.replace(
+        "      --frozen\n", "      --frozen --no-install-project\n"
+    )
+    assert _install_precedes_source_copy(defective) is True
+    assert _install_precedes_source_copy(correct) is False
+
+
+def test_copy_from_another_stage_is_not_a_source_copy() -> None:
+    """`COPY --from=` brings in a built artifact from elsewhere, not this
+    build context's sources — the uv binary line in the real Dockerfile."""
+    dockerfile = (
+        "FROM python:3.12-slim\n"
+        "COPY --from=ghcr.io/astral-sh/uv:0.5.11 /uv /bin/uv\n"
+        "RUN uv sync --frozen\n"
+    )
+    assert _install_precedes_source_copy(dockerfile) is True
+
+
+def test_copy_from_an_external_image_still_reads_as_authoring() -> None:
+    """The evidence case: `COPY --from=` naming an image outside this
+    Dockerfile (not a declared stage) does not count as sources arriving,
+    even once a manifest-only COPY follows it — the project install still
+    precedes the actual source copy."""
+    dockerfile = (
+        "FROM python:3.12-slim\n"
+        "COPY --from=ghcr.io/astral-sh/uv:0.5.11 /uv /bin/uv\n"
+        "COPY pyproject.toml uv.lock ./\n"
+        "RUN uv sync --frozen\n"
+    )
+    assert _install_precedes_source_copy(dockerfile) is True
+
+
+def test_copy_from_a_declared_stage_counts_as_sources_arriving() -> None:
+    """`COPY --from=<name>` naming a stage THIS Dockerfile declares (`FROM
+    ... AS <name>`) may carry the project's sources out of that stage, so it
+    counts as sources arriving — unlike `--from=` on an external image."""
+    dockerfile = (
+        "FROM python:3.12-slim AS src\n"
+        "FROM python:3.12-slim\n"
+        "COPY --from=src /repo /app\n"
+        "RUN pip install .\n"
+    )
+    assert _install_precedes_source_copy(dockerfile) is False
+
+
+def test_copy_from_a_declared_stage_is_case_insensitive_on_as_and_name() -> None:
+    dockerfile = (
+        "FROM python:3.12-slim as Src\n"
+        "FROM python:3.12-slim\n"
+        "COPY --from=SRC /repo /app\n"
+        "RUN pip install .\n"
+    )
+    assert _install_precedes_source_copy(dockerfile) is False
+
+
+def test_copy_from_a_numeric_stage_index_counts_as_sources_arriving() -> None:
+    """`--from=<N>` addresses a stage by position; treated as declared since
+    resolving the index correctly would require tracking stage order."""
+    dockerfile = (
+        "FROM python:3.12-slim\n"
+        "FROM python:3.12-slim\n"
+        "COPY --from=0 /repo /app\n"
+        "RUN pip install .\n"
+    )
+    assert _install_precedes_source_copy(dockerfile) is False
+
+
+def test_bind_mount_install_is_not_a_copy_order_defect() -> None:
+    """`RUN --mount=type=bind` can make the build context present at the
+    mount target during the RUN, with no COPY at all — the pattern uv's own
+    Docker guide recommends. It must not read as install-before-sources."""
+    dockerfile = (
+        "FROM python:3.12-slim\n"
+        "RUN --mount=type=bind,source=.,target=/app uv sync --frozen\n"
+    )
+    assert _install_precedes_source_copy(dockerfile) is False
+
+
+def test_bind_mount_does_not_shadow_a_later_ordinary_defect() -> None:
+    """A bind-mounted install does not, by itself, make every later install
+    safe — only THAT install is excused."""
+    dockerfile = (
+        "FROM python:3.12-slim\n"
+        "RUN --mount=type=bind,source=.,target=/app uv sync --no-install-project\n"
+        "RUN uv sync --frozen\n"
+        "COPY src ./src\n"
+    )
+    assert _install_precedes_source_copy(dockerfile) is True
+
+
+def test_manifest_pattern_does_not_match_a_directory_named_like_one() -> None:
+    """`READMEs` is a real source directory, not the README manifest file —
+    the anchored pattern must not swallow it."""
+    dockerfile = "FROM python:3.12-slim\nCOPY READMEs ./READMEs\nRUN pip install .\n"
+    assert _install_precedes_source_copy(dockerfile) is False
+
+
+def test_manifest_pattern_still_matches_the_bare_files() -> None:
+    dockerfile = "FROM python:3.12-slim\nCOPY README.md LICENSE ./\nRUN pip install .\n"
+    assert _install_precedes_source_copy(dockerfile) is True
+
+
+def test_a_dockerfile_that_never_installs_the_project_is_not_a_copy_order_defect() -> (
+    None
+):
+    dockerfile = 'FROM python:3.12-slim\nCOPY . .\nCMD ["python", "main.py"]\n'
+    assert _install_precedes_source_copy(dockerfile) is False
+
+
+def test_poetry_no_root_then_sources_then_root_install_is_correct() -> None:
+    dockerfile = (
+        "FROM python:3.12-slim\n"
+        "COPY pyproject.toml poetry.lock ./\n"
+        "RUN poetry install --no-root\n"
+        "COPY app ./app\n"
+        "RUN poetry install\n"
+    )
+    assert _install_precedes_source_copy(dockerfile) is False
+
+
+def test_requirements_install_is_not_a_project_install() -> None:
+    """`pip install -r requirements.txt` installs dependencies, not the
+    project, so a source COPY after it is not late."""
+    dockerfile = (
+        "FROM python:3.12-slim\n"
+        "COPY requirements.txt ./\n"
+        "RUN pip install -r requirements.txt\n"
+        "COPY src ./src\n"
+    )
+    assert _install_precedes_source_copy(dockerfile) is False
 
 
 def test_isolated_context_excludes_secrets_and_junk(tmp_path: Path) -> None:
@@ -2045,3 +2388,298 @@ def test_atp_smoke_timeout_is_environment(tmp_path: Path, monkeypatch) -> None:
     assert result.status is CheckStatus.FAILED
     assert result.failure_kind is FailureKind.ENVIRONMENT
     assert available is True
+
+
+# --- PR #72 round 2, finding 2: the executed command, not its words ----------
+
+
+# The golden Dockerfile with one narrating `echo` added before the source
+# COPY. Nothing about the build changed: `uv sync` is an argument of `echo`.
+_ECHO_MENTIONS_INSTALL_DOCKERFILE = _CORRECT_ORDER_DOCKERFILE.replace(
+    "COPY src/uv_minimal ./src/uv_minimal\n",
+    "RUN echo about to run uv sync\nCOPY src/uv_minimal ./src/uv_minimal\n",
+)
+
+
+def test_an_echo_naming_the_install_is_not_an_install() -> None:
+    """A word sequence anywhere in a RUN used to count as the command. An
+    `echo` that names `uv sync` then turned the golden Dockerfile into a
+    copy-order defect — a false AUTHORING against a correct build."""
+    assert _install_precedes_source_copy(_ECHO_MENTIONS_INSTALL_DOCKERFILE) is False
+
+
+def test_the_echo_dockerfile_classifies_unknown_not_authoring() -> None:
+    """The verdict that reaches the report: same hatchling output, a
+    Dockerfile whose copy order is correct — UNKNOWN is the honest class."""
+    assert (
+        _classify_build(
+            _HATCHLING_MISSING_FILES_EXCERPT, _ECHO_MENTIONS_INSTALL_DOCKERFILE
+        )
+        is FailureKind.UNKNOWN
+    )
+
+
+def test_a_heredoc_run_is_unrecognised_not_an_install() -> None:
+    """The docstring promises heredoc `RUN <<EOF` is unrecognised: its body
+    is not on the instruction line, so nothing may be read off it."""
+    dockerfile = (
+        "FROM python:3.12-slim\n"
+        "COPY pyproject.toml uv.lock ./\n"
+        "RUN <<EOF\n"
+        "uv sync --frozen\n"
+        "EOF\n"
+        "COPY src ./src\n"
+    )
+    assert _install_precedes_source_copy(dockerfile) is False
+
+
+def test_exec_form_install_is_recognised() -> None:
+    """`RUN ["uv", "sync", "--frozen"]` is a JSON argv, not a shell string:
+    splitting it on whitespace left `["uv",` as the first token and the
+    install went unseen — a false negative on a real copy-order defect."""
+    dockerfile = (
+        "FROM python:3.12-slim\n"
+        "COPY pyproject.toml uv.lock ./\n"
+        'RUN ["uv", "sync", "--frozen"]\n'
+        "COPY src ./src\n"
+    )
+    assert _install_precedes_source_copy(dockerfile) is True
+
+
+def test_exec_form_dependency_only_sync_is_not_an_install() -> None:
+    """The exec-form twin of `--no-install-project`."""
+    dockerfile = (
+        "FROM python:3.12-slim\n"
+        "COPY pyproject.toml uv.lock ./\n"
+        'RUN ["uv", "sync", "--frozen", "--no-install-project"]\n'
+        "COPY src ./src\n"
+    )
+    assert _install_precedes_source_copy(dockerfile) is False
+
+
+def test_a_leading_env_assignment_does_not_hide_the_install() -> None:
+    """`VAR=value cmd` is a command with an environment prefix."""
+    dockerfile = (
+        "FROM python:3.12-slim\n"
+        "COPY pyproject.toml uv.lock ./\n"
+        "RUN VIRTUAL_ENV=/app/.venv uv sync --frozen\n"
+        "COPY src ./src\n"
+    )
+    assert _install_precedes_source_copy(dockerfile) is True
+
+
+def test_a_leading_env_command_does_not_hide_the_install() -> None:
+    dockerfile = (
+        "FROM python:3.12-slim\n"
+        "COPY pyproject.toml uv.lock ./\n"
+        "RUN env UV_CACHE_DIR=/tmp/uv uv sync --frozen\n"
+        "COPY src ./src\n"
+    )
+    assert _install_precedes_source_copy(dockerfile) is True
+
+
+def test_a_chained_install_is_unrecognised() -> None:
+    """A RUN with any operator token — `&&` included — is unrecognised, not
+    matched at a later segment: `shlex` cannot tell a real `&&` from a quoted
+    one (see the round-4 tests below), so the walker gives up on the whole
+    line rather than risk reading a quoted operator as a real chain."""
+    dockerfile = (
+        "FROM python:3.12-slim\n"
+        "COPY pyproject.toml uv.lock ./\n"
+        "RUN apt-get update && uv sync --frozen\n"
+        "COPY src ./src\n"
+    )
+    assert _install_precedes_source_copy(dockerfile) is False
+
+
+def test_python_m_pip_install_dot_is_an_install() -> None:
+    dockerfile = (
+        "FROM python:3.12-slim\n"
+        "COPY pyproject.toml ./\n"
+        "RUN python -m pip install .\n"
+        "COPY src ./src\n"
+    )
+    assert _install_precedes_source_copy(dockerfile) is True
+
+
+def test_a_pip_install_without_a_local_operand_is_dependency_only() -> None:
+    dockerfile = (
+        "FROM python:3.12-slim\n"
+        "COPY requirements.txt ./\n"
+        "RUN pip install -r requirements.txt\n"
+        "COPY src ./src\n"
+    )
+    assert _install_precedes_source_copy(dockerfile) is False
+
+
+def test_the_evidence_dockerfile_is_still_a_copy_order_defect() -> None:
+    """The regression guard for the live acceptance case: the real
+    Dockerfile must keep reading as AUTHORING through the rewrite."""
+    assert _install_precedes_source_copy(_COPY_ORDER_DEFECT_DOCKERFILE) is True
+    assert (
+        _classify_build(_HATCHLING_MISSING_FILES_EXCERPT, _COPY_ORDER_DEFECT_DOCKERFILE)
+        is FailureKind.AUTHORING
+    )
+
+
+# --- PR #72 round 3, finding 1: quoting, not just word order ------------------
+
+
+# The golden Dockerfile with one narrating `echo` whose QUOTED argument
+# carries a `;` and an install. Splitting the line on separators regardless of
+# quoting cut inside the quotes and handed the walker a segment that begins
+# `uv sync` — the same false AUTHORING the round-2 fix was supposed to end.
+_QUOTED_INSTALL_DOCKERFILE = _CORRECT_ORDER_DOCKERFILE.replace(
+    "COPY src/uv_minimal ./src/uv_minimal\n",
+    "RUN echo 'prepare; uv sync --frozen'\nCOPY src/uv_minimal ./src/uv_minimal\n",
+)
+
+
+def test_a_separator_inside_quotes_does_not_start_a_command() -> None:
+    """`echo 'prepare; uv sync --frozen'` runs one command: `echo`. The `;`
+    is text the shell never reads as an operator."""
+    assert _install_precedes_source_copy(_QUOTED_INSTALL_DOCKERFILE) is False
+
+
+def test_the_quoted_dockerfile_classifies_unknown_not_authoring() -> None:
+    """The verdict that reaches the report: correct copy order, so the
+    hatchling message stays UNKNOWN."""
+    assert (
+        _classify_build(_HATCHLING_MISSING_FILES_EXCERPT, _QUOTED_INSTALL_DOCKERFILE)
+        is FailureKind.UNKNOWN
+    )
+
+
+def test_a_quoted_chain_operator_does_not_start_a_command() -> None:
+    """The `&&` twin: double quotes hide the operator just as well."""
+    dockerfile = (
+        "FROM python:3.12-slim\n"
+        "COPY pyproject.toml uv.lock ./\n"
+        'RUN echo "uv sync && pip install ."\n'
+        "COPY src ./src\n"
+    )
+    assert _install_precedes_source_copy(dockerfile) is False
+
+
+def test_an_unbalanced_quote_is_unrecognised_not_an_install() -> None:
+    """A line `shlex` cannot tokenise is a line this walker cannot read: the
+    honest answer is False, an UNKNOWN downstream, never a wrong AUTHORING."""
+    dockerfile = (
+        "FROM python:3.12-slim\n"
+        "COPY pyproject.toml uv.lock ./\n"
+        "RUN echo 'oops && uv sync\n"
+        "COPY src ./src\n"
+    )
+    assert _install_precedes_source_copy(dockerfile) is False
+
+
+def test_a_semicolon_attached_to_a_token_is_unrecognised() -> None:
+    """`cd /app; uv sync` has no space before the `;`, so the separator
+    arrives glued to the previous token — `_lex_shell` still reads it as its
+    own operator token, and any operator token makes the RUN unrecognised."""
+    dockerfile = (
+        "FROM python:3.12-slim\n"
+        "COPY pyproject.toml uv.lock ./\n"
+        "RUN cd /app; uv sync --frozen\n"
+        "COPY src ./src\n"
+    )
+    assert _install_precedes_source_copy(dockerfile) is False
+
+
+def test_a_semicolon_on_a_bare_command_is_unrecognised() -> None:
+    """The one-token case: the whole token is the command plus its `;`."""
+    dockerfile = (
+        "FROM python:3.12-slim\n"
+        "COPY pyproject.toml uv.lock ./\n"
+        "RUN true; uv sync --frozen\n"
+        "COPY src ./src\n"
+    )
+    assert _install_precedes_source_copy(dockerfile) is False
+
+
+# --- PR #72 round 3, finding 1 again: the lexer must know its own operators --
+
+
+# The golden Dockerfile with an `echo` whose QUOTED word merely ends in `;`.
+# Segmenting on "a token that ends with `;`" read that word as a separator and
+# started a new command at `uv sync` — a false AUTHORING, the wrong direction.
+_QUOTED_SEMICOLON_WORD_DOCKERFILE = _CORRECT_ORDER_DOCKERFILE.replace(
+    "COPY src/uv_minimal ./src/uv_minimal\n",
+    "RUN echo 'x;' uv sync --frozen\nCOPY src/uv_minimal ./src/uv_minimal\n",
+)
+
+
+def test_a_quoted_word_ending_in_a_semicolon_is_not_a_separator() -> None:
+    """`echo 'x;' uv sync --frozen` runs one command. The `;` is inside the
+    quotes, so the shell passes `x;` to `echo` as a word."""
+    assert _install_precedes_source_copy(_QUOTED_SEMICOLON_WORD_DOCKERFILE) is False
+
+
+def test_the_quoted_semicolon_dockerfile_classifies_unknown_not_authoring() -> None:
+    """The verdict that reaches the report: correct copy order stays UNKNOWN."""
+    assert (
+        _classify_build(
+            _HATCHLING_MISSING_FILES_EXCERPT, _QUOTED_SEMICOLON_WORD_DOCKERFILE
+        )
+        is FailureKind.UNKNOWN
+    )
+
+
+def test_a_glued_chain_operator_is_unrecognised() -> None:
+    """`true&&uv sync` has no spaces around the `&&`: the shell still reads
+    an operator there, and any operator token — quoted or not, `_lex_shell`
+    cannot tell them apart — makes the RUN unrecognised rather than chained."""
+    dockerfile = (
+        "FROM python:3.12-slim\n"
+        "COPY pyproject.toml uv.lock ./\n"
+        "RUN true&&uv sync --frozen\n"
+        "COPY src ./src\n"
+    )
+    assert _install_precedes_source_copy(dockerfile) is False
+
+
+def test_a_glued_semicolon_is_unrecognised() -> None:
+    """The `;` twin of the glued operator."""
+    dockerfile = (
+        "FROM python:3.12-slim\n"
+        "COPY pyproject.toml uv.lock ./\n"
+        "RUN true;uv sync --frozen\n"
+        "COPY src ./src\n"
+    )
+    assert _install_precedes_source_copy(dockerfile) is False
+
+
+# --- PR #72 round 4: a quoted operator token is indistinguishable from a ----
+# --- real one, so ANY operator token makes the whole RUN unrecognised ------
+
+
+# The golden Dockerfile with an `echo` whose QUOTED argument is bare `;`.
+# `shlex`'s posix quote removal strips the quotes before the walker ever
+# sees the token, so `echo ';' uv sync --frozen` — one `echo` call, `;` and
+# `uv sync --frozen` both plain arguments — lexes to the same token list as
+# a real chain: `['echo', ';', 'uv', 'sync', '--frozen']`. The round-3 fix
+# only re-checked the FIRST token for an operator and still matched later
+# segments as commands, so this shape still read as a false AUTHORING.
+_BARE_SEMICOLON_ARG_DOCKERFILE = _CORRECT_ORDER_DOCKERFILE.replace(
+    "COPY src/uv_minimal ./src/uv_minimal\n",
+    "RUN echo ';' uv sync --frozen\nCOPY src/uv_minimal ./src/uv_minimal\n",
+)
+
+
+def test_a_quoted_bare_semicolon_argument_is_unrecognised() -> None:
+    """`echo ';' uv sync --frozen` runs one command: `echo`, with `;` as a
+    plain argument. `shlex` cannot tell that from a real `;` operator once
+    quotes are removed, so the walker must not read `uv sync` as a later
+    command — the honest answer is unrecognised, not a copy-order defect."""
+    assert _install_precedes_source_copy(_BARE_SEMICOLON_ARG_DOCKERFILE) is False
+
+
+def test_the_bare_semicolon_dockerfile_classifies_unknown_not_authoring() -> None:
+    """The verdict that reaches the report: correct copy order stays
+    UNKNOWN, never AUTHORING."""
+    assert (
+        _classify_build(
+            _HATCHLING_MISSING_FILES_EXCERPT, _BARE_SEMICOLON_ARG_DOCKERFILE
+        )
+        is FailureKind.UNKNOWN
+    )

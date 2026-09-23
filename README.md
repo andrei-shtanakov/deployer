@@ -110,6 +110,52 @@ Every `author` run writes `.deployer/authoring-run.json` — iteration count,
 per-check outcomes, authoring-vs-environment failure taxonomy. That file is
 the research output.
 
+## Diagnose
+
+```sh
+uv run deployer diagnose <run-url>
+uv run deployer diagnose --repo owner/name --run-id N [--attempt N]
+# either form accepts --output-file verdict.json
+```
+
+Reads a failed GitHub Actions run into a snapshot of facts and reports what
+the evidence shows: the lines that matched an observation shape (a parser's
+own sentence, a tool's own network framing, an assertion, a missing file,
+...), each cited from the block it was read from, and what could not be read.
+It asserts **no cause**: no class is attached to any failure, `causes` is
+always empty, and every verdict's `kind` is `null` — see the Addendum of
+`docs/superpowers/specs/2026-09-21-ci-failure-diagnosis-design.md`. Exit codes:
+
+| code | meaning |
+|---|---|
+| `0` | not produced by this layer (reserved for a future line; see the reproduction spec) |
+| `3` | `UNCLASSIFIED` — the evidence was read completely; observations reported, no cause asserted |
+| `4` | `EVIDENCE_UNAVAILABLE` — the evidence could not be read; **not** a success |
+| `5` | adapter refusal — the run is not a finished, failed run |
+| `2` | bad argument, or the run metadata could not be fetched |
+
+stdout carries the human-readable summary, stderr the diagnostics.
+`--output-file` writes the verdict document, which carries its own
+`verdict_schema_version` (`"1.1"`, independent of the report `schema_version`
+above); the run snapshot nested in it carries `snapshot_schema_version`
+(`"1.2"`). Verdict 1.1 is additive over 1.0: the keys are the same, `causes`
+is always `[]` and `kind` always `null`. Snapshot 1.1 added a per-job
+`completeness` — how that one job was read — beside the run-level worst-of;
+1.2 added `level` on each piece of evidence: a GitHub annotation's raw
+`annotation_level`, and `null` for log text, which has no level. Both are
+additive, so a stored 1.0 or 1.1 snapshot still loads — reading every job as
+completely read, and every piece of evidence as level-less.
+
+Requires `gh` authenticated for the repository, and a `gh` new enough to
+support `gh api --allow-escape-sequences` (real build logs carry ANSI colour
+and `gh` refuses to print them without it; verified with `gh` 2.98.0). A `gh`
+that fails for its own reasons — unknown flag, timeout, missing binary —
+exits 2 rather than being reported as an unreadable log.
+
+The reading layer itself is offline and pure: it is a function from the
+fetched snapshot to the verdict. Fixture input is a **test affordance, not a user
+contract** — there is no flag to feed a saved snapshot in.
+
 ## Bench
 
 The corpus (`corpus/synthetic/`) is a set of small target projects with

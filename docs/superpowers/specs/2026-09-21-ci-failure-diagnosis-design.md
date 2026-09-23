@@ -378,3 +378,65 @@ Refreshing the baseline does not by itself prove correctness.
   anything is built on it.
 
 [gh-dispatch]: https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow
+
+---
+
+## Addendum (2026-09-22) — the reduced contract of PR-3
+
+The causal half of this design did not survive acceptance. Eight review rounds of PR-3
+found, each time, another log phrase whose class was not established by the evidence:
+a phrase names a symptom, not a cause, and a catalogue of phrases cannot be made sound
+by adding exceptions. The owner stopped the catalogue on 2026-09-22. What PR-3
+*proposes* (it is not merged) is therefore **narrower than §3–§8 promised**, and its
+contract is this:
+
+1. **Facts** — `forge.py` reads a finished, failed run into a versioned `FailedRun`
+   snapshot: identity, attempt fixed once, per-job and run-level `Completeness`, log
+   blocks with the runner's `##[group]` binding where it exists and `source=None`
+   where it does not, annotations with their level as data. A `gh` failure without an
+   HTTP status propagates; a short jobs listing is an adapter error, never a partial
+   snapshot.
+2. **Evidence completeness** — `EVIDENCE_UNAVAILABLE` is distinct from
+   `UNCLASSIFIED`; a sibling job's unreadable log never erases another job's readable
+   evidence; every matched line is cited; observations survive every outcome.
+3. **Observations** — symptoms (`no such file`, `exec format error`, COPY-not-found,
+   `unknown instruction`, entrypoint not found, unresolvable action), exceptions,
+   warning-shaped lines and annotations are reported as observations, never as a
+   class.
+4. **CLI** — `deployer diagnose` with exit codes 3 / 4 / 5 / 2 and the verdict
+   document (`verdict_schema_version` 1.1, snapshot 1.2). Exit 0 is not produced.
+
+**There are no causal classes in this layer.** The owner's decision of 2026-09-22
+(option (b)): the reading layer keeps the facts, the evidence, the observations and
+the completeness of the read, and asserts no cause. Every shape the catalogue ever
+carried — the parser's and validator's own sentences, the tool-framed network
+lines, the assertion shapes, the container-runtime shapes, the COPY/ADD shapes,
+the bare `no such file` — is an *observation*: reported as `<name>: <matched line>`,
+every matched line once, cited from the block it was read from, and labelled
+`warning-shaped:` where a tool marked the line as noticed rather than fatal. A
+complete read is `UNCLASSIFIED` (exit 3); an incomplete one is
+`EVIDENCE_UNAVAILABLE` (exit 4) with what is missing named beside what was read.
+`CLASSIFIED` and exit 0 are not produced; `FailureVerdict.kind` is always `null`
+and `RunDiagnosis.causes` always `[]`, kept only so the document's shape is stable
+(verdict schema 1.1, additive over 1.0). The reasons the classes could not stand are
+preserved as the cause-twin notes in `tests/test_diagnose_matrix.py`: tool framing
+establishes the *source* of a message, not its cause (the live run-2, an apt source
+at a custom unroutable address in the project's own configuration, prints the same
+apt line as an unreachable mirror); a path inside the checkout establishes where an
+assertion *ran*, not whose it is; a COPY line cannot say which side moved.
+
+Live acceptance on the final head: run-1 (COPY of a missing path) → `UNCLASSIFIED`,
+observation `copy/add source not found`; run-2 → `UNCLASSIFIED`, `connection timed
+out` (and `fetch failure`); run-3 → `UNCLASSIFIED`, `assertion error`; the control
+→ refusal (exit 5). The three are told apart by their observations, each cited, and
+replayed offline by `tests/test_fixture_runs.py`. A fifth run with an injected
+`FROM` syntax error (2026-09-22, `polygon/run-5` @ `937d465`, run `35706782471`)
+reads `UNCLASSIFIED` with `dockerfile parse error`; its evidence (injection diff,
+verdict, log, anonymised snapshot) is still on the rescue branch
+`rescue/pr3-negchecks-tail` at `9e89daa`, **not** in this PR's tree, and no test in
+this PR replays it. The original promise — read a failed run and establish why it
+failed — is **open**, and is taken up by
+`docs/superpowers/specs/2026-09-22-ci-failure-reproduction-design.md` (a separate
+docs branch), which grounds the diagnosis in the artifact, its restored context and
+L2 reproduction rather than in log phrases; its first slice also returns findings
+without classes. This layer is that slice's input.

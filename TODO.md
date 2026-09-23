@@ -45,30 +45,26 @@ contract was wrong only after it has users. The order below is deliberate — ea
 tagged with what blocks it, so the sequencing survives without anyone re-reading this
 paragraph.
 
-- [ ] CI-failure diagnosis: read a real failed GitHub run of our own authored ci.yml, classify the cause, emit a verdict citing evidence @owner:repo:deployer @id:ci-failure-diagnosis @epic:eco.dark-factory
-  — the founding doc's "diagnose failed CI" half, and the next applied slice now that
-  the first seam (`todo://deployer/first-consumer-seam`, shipped — see `## Shipped`) is
-  proven. Scope decided with the owner 2026-09-21: this slice ends at the DIAGNOSIS;
-  authoring the fix is `todo://deployer/ci-fix-authoring`, so the original one-line
-  promise "read a failed run, author the fix" is NOT closed by this item alone.
-  Source of the failed run: a real GitHub Actions run of the `ci.yml` this repo
-  authored. That is what proves work against a real forge; reading a run from a
-  neighbour's repository stays unproven and is a later slice. Agreeing with a neighbour
-  is deliberately not a blocker here.
-  Regression: an anonymised fixture taken from that real run, replayed offline. The
-  existing synthetic case stays as an extra test. A live GH run is for integration
-  acceptance, not for every test run.
-  CI authoring is widened only as far as the scenario needs; growing the CI generator
-  is out of scope.
-  Closes here: both classification holes of
-  `todo://deployer/failure-classification-channel`.
-  Done when: the full acceptance of the design's §8 passes — offline regression on
-  fixtures, a MINIMUM OF FOUR live dispatches (three failures plus the PROJECT
-  control that must pass), and the paid benchmark whose golden diff is explained
-  before promote. Evidence kept: run URL, commit SHA, failing job/step, logs. The
-  verdict cites evidence from the run; "logs unavailable" is a distinct outcome from
-  "CI failure diagnosed"; insufficient evidence yields declared uncertainty, never an
-  invented cause. The preparatory bootstrap PR does NOT close this item.
+- [ ] CI-failure diagnosis: read a real failed GitHub run of our own authored ci.yml, establish why it failed, emit a verdict citing evidence @owner:repo:deployer @id:ci-failure-diagnosis @blocked_by:todo://deployer/ci-failure-reproduction @epic:eco.dark-factory
+  REOPENED 2026-09-22. PR #72 proposes only the reading layer
+  (`todo://deployer/ci-failure-reading-layer`); establishing the cause from log phrases did
+  not survive acceptance — a phrase names a symptom, not a cause, and eight review rounds
+  produced a new counter-example each. The reading layer asserts no cause at all
+  (owner's decision 2026-09-22). The promise now rests on reproduction; anything beyond
+  findings-without-classes is a later task.
+- [ ] CI-failure reproduction: restore the artifact and its context at the run's actual checkout SHA, run deterministic checks and L2 on a supported build configuration, report findings with status and evidence — no causal class @owner:repo:deployer @id:ci-failure-reproduction @epic:eco.dark-factory
+  Spec: `docs/superpowers/specs/2026-09-22-ci-failure-reproduction-design.md` on the docs
+  branch `docs/ci-failure-reproduction-spec` (rev 3 of the diagnosis line, DRAFT revised
+  after the owner's review → external review by exact SHA → plan). Fixed points: `exact` is
+  a property of the restored TREE, earned from the actual checkout SHA and the absence of
+  transforming steps, else `approximation` with the unmet conditions named; the command
+  from the log is never executed — only a parsed, supported build configuration through
+  L2, else refusal; a successful build does not license a run — only a declared test, run
+  intent or healthcheck, else "build ok; behaviour not verified"; this repo's parser, the
+  builder's `--check` (Buildx ≥ 0.15 / Dockerfile 1.8; Podman has none) and the actual
+  build are three separate things with detected availability; findings use a small
+  separate result type, not `CheckResult`; images may be fetched under an explicit
+  `--reproduce`, digests recorded, no offline promise; no ENVIRONMENT candidate.
 - [ ] Fix authoring from a diagnosis: artifact edit, L1/L2, confirm the diagnosed cause is gone @owner:repo:deployer @blocked_by:todo://deployer/ci-failure-diagnosis @id:ci-fix-authoring @epic:eco.dark-factory
   — the other half of the founding doc's "generate/fix ... diagnose failed CI", split
   out with the owner 2026-09-21 so the diagnosis slice can be accepted on its own.
@@ -76,6 +72,34 @@ paragraph.
   a guess. How a fix is confirmed is decided in its own design — L1/L2 alone are NOT
   enough to claim "the CI is fixed", because they verify the artifact this repo
   produced, not the run that failed.
+- [ ] Step-level log binding in forge: read the run-level log archive so a step's OUTPUT is bound to its StepRef, not only its `##[group]` header block @owner:repo:deployer @id:forge-step-level-log-binding @epic:eco.dark-factory
+  Today `actions/jobs/{id}/logs` gives no line→step binding beyond the runner's `##[group]Run
+  <name>` block, so the diagnostic text (test output, build errors) lands as honest job-level
+  evidence with `source=None` and every live verdict carries "cited evidence is job-level".
+  The per-attempt zip (`actions/runs/{id}/attempts/{n}/logs`) has one file per step and would
+  give the exact binding; it is a binary download, a different subprocess contract from the
+  text endpoint, hence its own slice. Sibling: "nothing was fetched" should be a `Completeness`
+  state of its own instead of being inferred from `jobs == []` in `diagnose_run`.
+  Second sibling: with two failed steps in one job and one unbound error block, both verdicts
+  cite that same block, so the operator reads the same error twice — step binding removes the
+  duplication at its root. (The third, per-job `Completeness` so ONE job's unreadable log no
+  longer erases a sibling's established cause, is DONE: `FailedJob.completeness`, snapshot
+  schema 1.1.)
+- [ ] Rule-catalogue precision for `diagnose.py`: over-firing prose markers and missed shapes, driven by fixtures @owner:repo:deployer @id:diagnose-rule-catalogue-precision @epic:eco.dark-factory
+  Known over-firers (acceptable in the first slice, recorded by review): `failed to fetch`
+  (jest's `TypeError: Failed to fetch`), `connection timed out` / `503` printed by tests that
+  exercise retry paths, `exec format error` (runner-arch mismatch is ENVIRONMENT as often as a
+  wrong `--platform` is AUTHORING). Missed shape: `_RUN_URL_RE` accepts only `github.com`
+  (GitHub Enterprise hosts exit 2). Every change enters with a fixture line from a real run,
+  as the buildkit `#N t.ttt` framing and the hatchling copy-order marker did in the first slice.
+  Amplifier (why this matters more than "acceptable in the first slice" suggests): the unit of
+  diagnosis is a STEP, but the evidence pool is effectively the whole JOB log — the live runs
+  established that 100% of real diagnostic text is job-level (`source=None`), and the prose
+  rules are unanchored whole-text searches. So any over-firer flips clean verdicts to
+  ambiguous across every step of the job, an availability defect that fires often. First
+  mitigation shipped: ENVIRONMENT rules skip a match landing on an apt warning line (`W: `),
+  because a retried-and-recovered fetch is not a cause; apt's real failures keep their `E: `
+  prefix. The remaining over-firers still need the same treatment or a narrower pool.
 - [ ] Further artifact types: Helm, Terraform @id:further-artifact-types @epic:eco.dark-factory
   — deliberately last; wait until the extension contract is confirmed by a live consumer
 
@@ -166,6 +190,23 @@ them is the next thing to pick up.
 
 ## Shipped
 
+- [x] CI-failure reading layer: a versioned snapshot of a failed run, evidence completeness, observations, `deployer diagnose` @owner:repo:deployer @id:ci-failure-reading-layer @epic:eco.dark-factory
+  Proposed by PR #72 (not merged at the time of writing; this checkbox follows the repo's
+  rhythm for a closing PR and asserts nothing about a merge). The part of
+  `todo://deployer/ci-failure-diagnosis` that survived acceptance — the Addendum of the
+  2026-09-21 spec: `forge.py` (single `gh api` chokepoint, attempt fixed once, per-job and
+  run-level completeness, no invented line→step binding, annotation level as data,
+  status-less `gh` failures propagate, short listings refuse), `diagnose.py` as a reading
+  layer (every shape an observation, every matched line reported and its block cited,
+  observations survive every outcome), the CLI with exit codes 3/4/5/2 and the verdict
+  document (schema 1.1). No causal classes: `CLASSIFIED`/exit 0 are not produced, `kind`
+  is always null and `causes` always empty (owner's decision 2026-09-22; the cause-twin
+  notes in `tests/test_diagnose_matrix.py` record why no class could stand). Live runs on
+  the final head all read UNCLASSIFIED with their observations: run-1 `copy/add source not
+  found`, run-2 `connection timed out`, run-3 `assertion error`, control → refusal. Run-5
+  (injected `FROM` syntax error, 2026-09-22, reads `dockerfile parse error`) is a saved
+  experiment on `rescue/pr3-negchecks-tail` @ 9e89daa, not a fixture of this tree. Paid
+  benchmark #2 promoted as golden 2.0 (12/12).
 - [x] Failure classification channel: an exit code alone no longer establishes a cause @owner:repo:deployer @id:failure-classification-channel @epic:eco.research-bench
   Closed by the taxonomy work of `todo://deployer/ci-failure-diagnosis` (PR-1), which found the
   hole at THREE sites, not the two the design named:

@@ -20,7 +20,9 @@ from deployer.bench import (
     run_bench,
     verify_corpus,
 )
+from deployer.diagnose import RunDiagnosis, diagnose_run, render_verdict
 from deployer.facts import TargetConfigError, analyze_project
+from deployer.forge import AdapterRefusal, GhError, RunRef, StepRef, fetch_failed_run
 from deployer.llm import AnthropicAuthor
 from deployer.models import (
     BenchReport,
@@ -40,6 +42,27 @@ from deployer.verify import DEFAULT_BUILD_TIMEOUT, DEFAULT_HEALTH_TIMEOUT, verif
 _LABEL_RE = re.compile(r"[A-Za-z0-9._-]+")
 
 _DOTENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+_RUN_URL_RE = re.compile(
+    r"github\.com/([^/]+/[^/]+)/actions/runs/(\d+)(?:/attempts/(\d+))?"
+)
+
+#: A GitHub repository slug. The value is interpolated straight into
+#: `repos/{repo}/...` (`forge.py`), so a run URL pasted from an issue or
+#: handed over by an agent could otherwise steer `gh api` at a path other
+#: than the one the URL appears to name. Neither segment may be made of dots
+#: only (`.`, `..`, `...`, ...) — no GitHub owner or repo name is, and
+#: `owner/..` or `../..` reads as path traversal against `repos/{repo}/...`.
+_REPO_SLUG_RE = re.compile(r"^(?!\.+/)[A-Za-z0-9._-]+/(?!\.+$)[A-Za-z0-9._-]+$")
+
+# `diagnose.py` asserts no cause and never produces `CLASSIFIED`; the key is
+# kept so the map covers the `Outcome` literal, and exit 0 is not reachable
+# through this command.
+_EXIT_BY_OUTCOME: dict[str, int] = {
+    "CLASSIFIED": 0,
+    "UNCLASSIFIED": 3,
+    "EVIDENCE_UNAVAILABLE": 4,
+}
 
 _STATUS_ICONS = {
     CheckStatus.PASSED: "ok",
@@ -324,6 +347,142 @@ def _cmd_author(args: argparse.Namespace) -> int:
     return 0 if run.stopped_reason in accepted else 1
 
 
+def _parse_positive_int(value: str, label: str) -> int | str:
+    """Parse a CLI integer argument; return an error message on failure.
+
+    Manual, not ``argparse type=``, so a bad value makes ``_cmd_diagnose``
+    return 2 instead of ``main`` raising ``SystemExit``.
+    """
+    try:
+        parsed = int(value)
+    except ValueError:
+        return f"{label} must be a positive integer"
+    if parsed < 1:
+        return f"{label} must be a positive integer"
+    return parsed
+
+
+def _resolve_run_ref(args: argparse.Namespace) -> tuple[RunRef, int | None] | str:
+    """Build a run reference and resolved attempt from `diagnose` args.
+
+    Exactly one of ``run_url`` or (``--repo`` and ``--run-id``) is required.
+    An attempt on the URL and an explicit ``--attempt`` must agree when both
+    are given. The run id and the attempt are range-checked whichever door
+    they came through: `/runs/0` would otherwise reach ``gh``. Returns an
+    error message instead of raising.
+    """
+    has_url = args.run_url is not None
+    has_repo = args.repo is not None
+    has_run_id = args.run_id is not None
+    if has_url and (has_repo or has_run_id):
+        return "run_url and --repo/--run-id are mutually exclusive"
+    if not has_url and has_repo != has_run_id:
+        return "--repo and --run-id must be given together"
+    if not has_url and not has_repo:
+        return "either run_url or --repo and --run-id is required"
+
+    flag_attempt: int | None = None
+    if args.attempt is not None:
+        parsed = _parse_positive_int(args.attempt, "--attempt")
+        if isinstance(parsed, str):
+            return parsed
+        flag_attempt = parsed
+
+    if has_url:
+        match = _RUN_URL_RE.search(args.run_url)
+        if match is None:
+            return f"not a recognized GitHub Actions run URL: {args.run_url}"
+        repo, run_id_text, url_attempt_text = match.groups()
+        if not _REPO_SLUG_RE.match(repo):
+            return f"not a repository owner/name: {repo}"
+        run_id_parsed = _parse_positive_int(run_id_text, "run id in URL")
+        if isinstance(run_id_parsed, str):
+            return run_id_parsed
+        run_id = run_id_parsed
+        url_attempt: int | None = None
+        if url_attempt_text is not None:
+            parsed_url_attempt = _parse_positive_int(
+                url_attempt_text, "the run URL's attempt"
+            )
+            if isinstance(parsed_url_attempt, str):
+                return parsed_url_attempt
+            url_attempt = parsed_url_attempt
+        if (
+            url_attempt is not None
+            and flag_attempt is not None
+            and url_attempt != flag_attempt
+        ):
+            return (
+                f"--attempt {flag_attempt} conflicts with the run URL's "
+                f"attempt {url_attempt}"
+            )
+        resolved_attempt = flag_attempt if flag_attempt is not None else url_attempt
+        return RunRef(repo, run_id), resolved_attempt
+
+    if not _REPO_SLUG_RE.match(args.repo):
+        return f"--repo must be a repository owner/name: {args.repo}"
+    run_id_result = _parse_positive_int(args.run_id, "--run-id")
+    if isinstance(run_id_result, str):
+        return run_id_result
+    return RunRef(args.repo, run_id_result), flag_attempt
+
+
+def _format_where(where: StepRef | int) -> str:
+    if isinstance(where, int):
+        return f"job {where}"
+    return f"job {where.job_id} step {where.number}"
+
+
+def _print_diagnosis(diagnosis: RunDiagnosis) -> None:
+    """Human summary on stdout; instrument diagnostics on stderr (spec §7).
+
+    Run-level observations — what was missing, or that there was nothing to
+    diagnose — belong to the summary and are printed once, on stdout. stderr
+    carries only what the operator needs to judge the read itself.
+    """
+    print(f"outcome: {diagnosis.outcome}")
+    print(f"causes: {', '.join(diagnosis.causes) or 'none asserted'}")
+    for verdict in diagnosis.failures:
+        observations = verdict.observations or ["-"]
+        where = _format_where(verdict.where)
+        print(f"[{where}] {verdict.outcome}: {observations[0]}")
+        for observation in observations[1:]:
+            print(f"    {observation}")
+    for observation in diagnosis.observations:
+        print(observation)
+    completeness = diagnosis.run.completeness
+    print(
+        f"completeness: logs={completeness.logs} "
+        f"annotations={completeness.annotations}",
+        file=sys.stderr,
+    )
+
+
+def _cmd_diagnose(args: argparse.Namespace) -> int:
+    resolved = _resolve_run_ref(args)
+    if isinstance(resolved, str):
+        print(f"error: {resolved}", file=sys.stderr)
+        return 2
+    ref, attempt = resolved
+    try:
+        result = fetch_failed_run(ref, attempt=attempt)
+    except GhError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    if isinstance(result, AdapterRefusal):
+        print(f"refused: {result.reason}: {result.detail}", file=sys.stderr)
+        return 5
+    diagnosis = diagnose_run(result)
+    _print_diagnosis(diagnosis)
+    if args.output_file is not None:
+        try:
+            Path(args.output_file).write_text(render_verdict(diagnosis))
+        except OSError as exc:
+            print(f"error: cannot write {args.output_file}: {exc}", file=sys.stderr)
+            return 2
+    return _EXIT_BY_OUTCOME[diagnosis.outcome]
+
+
 def _cmd_bench_run(args: argparse.Namespace) -> int:
     corpus = Path(args.corpus)
     if not corpus.is_dir():
@@ -554,6 +713,25 @@ def main(argv: list[str] | None = None) -> int:
     _add_timeout_flags(p_author)
     _add_runtime_flags(p_author)
     p_author.set_defaults(func=_cmd_author)
+
+    p_diagnose = sub.add_parser(
+        "diagnose",
+        help="read a failed CI run: facts, evidence, observations; no cause asserted",
+    )
+    p_diagnose.add_argument(
+        "run_url", nargs="?", default=None, help="GitHub Actions run URL"
+    )
+    p_diagnose.add_argument("--repo", default=None, help="owner/name")
+    p_diagnose.add_argument(
+        "--run-id", default=None, help="the run's numeric id (with --repo)"
+    )
+    p_diagnose.add_argument(
+        "--attempt", default=None, help="re-run attempt number (default: the latest)"
+    )
+    p_diagnose.add_argument(
+        "--output-file", default=None, help="write the verdict document here"
+    )
+    p_diagnose.set_defaults(func=_cmd_diagnose)
 
     p_bench = sub.add_parser("bench", help="corpus bench operations")
     bench_sub = p_bench.add_subparsers(dest="bench_command", required=True)

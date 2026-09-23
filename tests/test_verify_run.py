@@ -15,7 +15,12 @@ from deployer.models import (
     FailureKind,
     RunSpec,
 )
-from deployer.verify import _redact_oracle, _run_completes, verify
+from deployer.verify import (
+    _classify_exit,
+    _redact_oracle,
+    _run_completes,
+    verify,
+)
 
 RUNTIME = ContainerRuntime(tool="docker")
 MARKER = "hello from job"
@@ -89,7 +94,7 @@ def test_inert_cmd_exit_zero_missing_marker_is_authoring(
 def test_nonzero_exit_without_markers_is_unknown_with_output_tail(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A bare traceback cites no AUTHORING_MARKERS, so exit 1 alone does not
+    """A bare traceback carries no marker at all, so exit 1 alone does not
     establish a cause — the honest class is UNKNOWN, with the raw output
     still surfaced in the message."""
     _patch_container_run(
@@ -109,8 +114,8 @@ def test_app_connection_refused_is_unknown_not_environment(
     "connection refused" here is the app's own traceback text (its port
     refusing a connection), not container-runtime transport loss — and
     exit 1 is outside the 125/126 range `_classify_exit` trusts for a
-    transport marker. It carries no AUTHORING_MARKERS either, so UNKNOWN
-    is the honest answer, not an invented AUTHORING or ENVIRONMENT."""
+    transport marker. Nothing else on this path establishes a class
+    either, so UNKNOWN is the honest answer."""
     _patch_container_run(
         monkeypatch,
         _proc(1, stderr="ConnectionRefusedError: connection refused"),
@@ -164,13 +169,16 @@ def test_125_with_transport_marker_is_environment() -> None:
     assert result.failure_kind is FailureKind.ENVIRONMENT
 
 
-def test_125_with_other_positive_evidence_keeps_its_class() -> None:
-    """Positive twin B: other positive evidence still classifies. The rule
-    is "no OTHER positive evidence", not "no transport marker"."""
+def test_125_with_a_container_runtime_shape_is_unknown() -> None:
+    """Owner's rule (2026-09-22): a container-runtime shape alone does not
+    establish AUTHORING. `exec: … no such file` proves a missing executable,
+    not that its name came from the authored CMD/ENTRYPOINT — `container_run`
+    can be handed an overriding command. Nothing on this path binds the
+    message to the artifact, so the honest class is UNKNOWN."""
     result = _run_completes_result(
         returncode=125, output='exec: "/app/start": stat /app/start: no such file'
     )
-    assert result.failure_kind is FailureKind.AUTHORING
+    assert result.failure_kind is FailureKind.UNKNOWN
 
 
 def test_exit_1_without_markers_is_unknown() -> None:
@@ -180,12 +188,12 @@ def test_exit_1_without_markers_is_unknown() -> None:
     assert result.failure_kind is FailureKind.UNKNOWN
 
 
-def test_exit_1_with_authoring_marker_is_authoring() -> None:
-    """A positive AUTHORING_MARKERS hit still classifies outside 125/126."""
+def test_exit_1_with_a_container_runtime_shape_is_unknown() -> None:
+    """The same demotion outside 125/126: no general symptom classifies."""
     result = _run_completes_result(
         returncode=1, output='exec: "/app/start": stat /app/start: no such file'
     )
-    assert result.failure_kind is FailureKind.AUTHORING
+    assert result.failure_kind is FailureKind.UNKNOWN
 
 
 def test_exit_137_without_markers_is_unknown() -> None:
@@ -202,11 +210,47 @@ def test_exit_1_with_transport_marker_is_not_environment() -> None:
     test, so a transport-shaped string is more likely the app's own output
     (as in test_app_connection_refused_is_unknown_not_environment) than
     real transport loss. A transport marker on exit 1 is therefore UNKNOWN,
-    not ENVIRONMENT — it carries no AUTHORING_MARKERS hit either."""
+    not ENVIRONMENT — and no other branch of `_classify_exit` claims it."""
     result = _run_completes_result(
         returncode=1, output="cannot connect to the docker daemon"
     )
     assert result.failure_kind is FailureKind.UNKNOWN
+
+
+# --- `_classify_exit` directly: only the transport branch establishes a class -
+# The owner's rule of 2026-09-22, at the function it constrains. A general
+# symptom in the run output is not bound to the authored artifact on this path:
+# `_run_completes` runs the image's own default command, but nothing in the
+# OUTPUT says so — the identical line is printed when the command is overridden
+# — so the shape cannot be read back as a defect of the CMD/ENTRYPOINT.
+# `_classify_build` keeps its AUTHORING branch because it has that binding:
+# it weighs the Dockerfile it built alongside the message.
+
+
+def test_classify_exit_entrypoint_shape_is_unknown() -> None:
+    """The shape that used to read as AUTHORING on its own."""
+    assert (
+        _classify_exit(1, 'exec: "app": executable file not found in $PATH')
+        is FailureKind.UNKNOWN
+    )
+
+
+def test_classify_exit_no_such_file_is_unknown() -> None:
+    """A missing file names no owner: artifact, project, environment and
+    invocation all print it."""
+    assert _classify_exit(127, "no such file") is FailureKind.UNKNOWN
+
+
+def test_classify_exit_exec_format_error_is_unknown() -> None:
+    """An amd64 image on an arm64 runner is an environment mismatch as
+    readily as a wrong `--platform` in the Dockerfile."""
+    assert _classify_exit(126, "exec format error") is FailureKind.UNKNOWN
+
+
+def test_classify_exit_transport_marker_on_125_is_environment() -> None:
+    """The one branch that survives: the runtime CLI's own reserved codes
+    plus its own transport marker."""
+    assert _classify_exit(125, "error during connect") is FailureKind.ENVIRONMENT
 
 
 def test_timeout_is_authoring_and_names_command(

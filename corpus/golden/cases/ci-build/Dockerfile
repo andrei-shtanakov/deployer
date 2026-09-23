@@ -11,7 +11,7 @@ COPY src/ci_build ./src/ci_build
 
 RUN uv sync --frozen
 
-ENV PATH="/app/.venv/bin:$PATH"
-
 RUN useradd --create-home appuser
 USER appuser
+
+ENV PATH="/app/.venv/bin:$PATH"
