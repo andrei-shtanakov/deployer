@@ -22,8 +22,12 @@ from deployer.forge import (
     StepInfo,
     StepRef,
     SubprocessGh,
+    TreeEntry,
+    TreeListing,
     dump_snapshot,
+    fetch_archive,
     fetch_failed_run,
+    fetch_tree_listing,
     load_snapshot,
     normalise_workflow_path,
 )
@@ -891,3 +895,87 @@ def test_a_1_2_snapshot_loads_with_the_new_fields_absent():
     assert snapshot.snapshot_schema_version == "1.2"
     assert snapshot.workflow_path is None and snapshot.event is None
     assert snapshot.jobs[0].all_steps is None
+
+
+# --- binary archive and tree listing (spec §1.4) ------------------------------
+
+
+class BytesGh:
+    """A GhBytesRunner fake: serves one tarball and one listing."""
+
+    def __init__(self, blob: bytes, listing: dict[str, Any]) -> None:
+        self.blob = blob
+        self.listing = listing
+        self.calls: list[list[str]] = []
+
+    def api(self, argv: list[str], *, timeout: float) -> str:
+        self.calls.append(list(argv))
+        return json.dumps(self.listing)
+
+    def api_bytes(self, argv: list[str], *, timeout: float) -> bytes:
+        self.calls.append(list(argv))
+        return self.blob
+
+
+def test_fetch_archive_passes_bytes_unaltered():
+    blob = bytes(range(256)) * 4  # not valid UTF-8 anywhere
+    gh = BytesGh(blob, {})
+    assert fetch_archive("o/r", "abc", gh, max_bytes=10_000) == blob
+    assert gh.calls == [["repos/o/r/tarball/abc"]]
+
+
+def test_fetch_archive_refuses_over_the_cap():
+    gh = BytesGh(b"x" * 11, {})
+    with pytest.raises(GhError, match="archive exceeds 10 bytes") as info:
+        fetch_archive("o/r", "abc", gh, max_bytes=10)
+    assert info.value.status is None
+
+
+def test_fetch_tree_listing_keeps_path_mode_type_sha_and_truncation():
+    listing = {
+        "sha": "abc",
+        "truncated": False,
+        "tree": [
+            {"path": "src", "mode": "040000", "type": "tree", "sha": "t1"},
+            {"path": "src/a.py", "mode": "100644", "type": "blob", "sha": "b1"},
+            {"path": "run.sh", "mode": "100755", "type": "blob", "sha": "b2"},
+        ],
+    }
+    gh = BytesGh(b"", listing)
+    out = fetch_tree_listing("o/r", "abc", gh)
+    assert out == TreeListing(
+        sha="abc",
+        truncated=False,
+        entries=[
+            TreeEntry("src", "040000", "tree", "t1"),
+            TreeEntry("src/a.py", "100644", "blob", "b1"),
+            TreeEntry("run.sh", "100755", "blob", "b2"),
+        ],
+    )
+    assert gh.calls == [["repos/o/r/git/trees/abc?recursive=1"]]
+
+
+def test_subprocess_api_bytes_runs_gh_without_text_mode(monkeypatch):
+    seen: dict[str, Any] = {}
+
+    def fake_run(cmd, **kwargs):
+        seen["cmd"] = cmd
+        seen["kwargs"] = kwargs
+        return subprocess.CompletedProcess(cmd, 0, stdout=b"\x00\xff", stderr=b"")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    assert SubprocessGh().api_bytes(["repos/o/r/tarball/x"], timeout=5) == b"\x00\xff"
+    assert seen["cmd"] == ["gh", "api", "repos/o/r/tarball/x"]
+    assert "text" not in seen["kwargs"] and "errors" not in seen["kwargs"]
+
+
+def test_subprocess_api_bytes_maps_http_status(monkeypatch):
+    def fake_run(cmd, **kwargs):
+        return subprocess.CompletedProcess(
+            cmd, 1, stdout=b"", stderr=b"gh: Not Found (HTTP 404)"
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    with pytest.raises(GhError) as info:
+        SubprocessGh().api_bytes(["repos/o/r/tarball/x"], timeout=5)
+    assert info.value.status == 404

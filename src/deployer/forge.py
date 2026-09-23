@@ -19,6 +19,11 @@ from pydantic import TypeAdapter
 GH_TIMEOUT_S = 30.0
 """Wall-clock budget for one ``gh api`` invocation."""
 
+ARCHIVE_TIMEOUT_S = 120.0
+"""Wall-clock budget for downloading one source archive."""
+
+DEFAULT_MAX_ARCHIVE_MB = 200
+
 SNAPSHOT_SCHEMA_VERSION = "1.3"
 
 _PER_PAGE = 100
@@ -172,6 +177,25 @@ class AdapterRefusal:
     detail: str
 
 
+@dataclass(frozen=True)
+class TreeEntry:
+    """One entry of a recursive Git tree listing, as GitHub returns it."""
+
+    path: str
+    mode: str
+    type: str
+    sha: str
+
+
+@dataclass(frozen=True)
+class TreeListing:
+    """The Git tree at a commit; ``truncated`` is GitHub's own flag."""
+
+    sha: str
+    entries: list[TreeEntry]
+    truncated: bool
+
+
 class GhError(Exception):
     """A ``gh api`` call failed: nonzero exit, timeout or missing binary."""
 
@@ -188,6 +212,29 @@ class GhRunner(Protocol):
         ...
 
 
+class GhBytesRunner(GhRunner, Protocol):
+    """A runner that can also return raw bytes (the tarball endpoint)."""
+
+    def api_bytes(self, argv: list[str], *, timeout: float) -> bytes:
+        """Return stdout bytes; raise :class:`GhError` on failure."""
+        ...
+
+
+def _gh_failure(what: str, returncode: int, stderr: str) -> GhError:
+    """Map a nonzero ``gh api`` exit to a :class:`GhError`, HTTP status if any."""
+    stderr = stderr.strip()
+    match = _HTTP_STATUS_RE.search(stderr)
+    status = int(match.group(1)) if match else None
+    return GhError(
+        f"gh api {what} failed: {stderr or f'exit code {returncode}'}", status
+    )
+
+
+def _gh_env() -> dict[str, str]:
+    """The environment ``gh api`` runs under: prompts and update checks off."""
+    return {**os.environ, "GH_PROMPT_DISABLED": "1", "GH_NO_UPDATE_NOTIFIER": "1"}
+
+
 class SubprocessGh:
     """The real runner: ``gh api`` as an argument vector, never a shell."""
 
@@ -195,7 +242,6 @@ class SubprocessGh:
         """Run ``gh api *argv`` under ``timeout`` with prompts disabled."""
         cmd = ["gh", "api", *argv]
         what = " ".join(argv)
-        env = {**os.environ, "GH_PROMPT_DISABLED": "1", "GH_NO_UPDATE_NOTIFIER": "1"}
         try:
             proc = subprocess.run(
                 cmd,
@@ -205,18 +251,40 @@ class SubprocessGh:
                 timeout=timeout,
                 stdin=subprocess.DEVNULL,
                 check=False,
-                env=env,
+                env=_gh_env(),
             )
         except subprocess.TimeoutExpired as exc:
             raise GhError(f"gh api {what} timed out after {timeout}s") from exc
         except OSError as exc:
             raise GhError(f"gh api could not start: {exc}") from exc
         if proc.returncode != 0:
-            stderr = (proc.stderr or "").strip()
-            match = _HTTP_STATUS_RE.search(stderr)
-            status = int(match.group(1)) if match else None
-            detail = stderr or f"exit code {proc.returncode}"
-            raise GhError(f"gh api {what} failed: {detail}", status)
+            raise _gh_failure(what, proc.returncode, proc.stderr or "")
+        return proc.stdout
+
+    def api_bytes(self, argv: list[str], *, timeout: float) -> bytes:
+        """``gh api *argv`` returning raw stdout bytes (archives, not text).
+
+        ``gh``'s HTTP client follows the tarball endpoint's redirect. Same
+        timeout and status mapping as :meth:`api`.
+        """
+        cmd = ["gh", "api", *argv]
+        what = " ".join(argv)
+        try:
+            proc = subprocess.run(
+                cmd,
+                capture_output=True,
+                timeout=timeout,
+                stdin=subprocess.DEVNULL,
+                check=False,
+                env=_gh_env(),
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise GhError(f"gh api {what} timed out after {timeout}s") from exc
+        except OSError as exc:
+            raise GhError(f"gh api could not start: {exc}") from exc
+        if proc.returncode != 0:
+            stderr = (proc.stderr or b"").decode("utf-8", errors="replace")
+            raise _gh_failure(what, proc.returncode, stderr)
         return proc.stdout
 
 
@@ -303,6 +371,32 @@ def fetch_failed_run(
         workflow_path=normalise_workflow_path(ref_path) if ref_path else None,
         event=str(raw_event) if raw_event is not None else None,
     )
+
+
+def fetch_tree_listing(repo: str, sha: str, runner: GhRunner) -> TreeListing:
+    """The recursive Git tree at ``sha`` (spec §1.3 b, c)."""
+    body = json.loads(
+        runner.api([f"repos/{repo}/git/trees/{sha}?recursive=1"], timeout=GH_TIMEOUT_S)
+    )
+    entries = [
+        TreeEntry(str(e["path"]), str(e["mode"]), str(e["type"]), str(e["sha"]))
+        for e in body.get("tree", [])
+    ]
+    return TreeListing(str(body.get("sha", sha)), entries, bool(body.get("truncated")))
+
+
+def fetch_archive(
+    repo: str, sha: str, runner: GhBytesRunner, *, max_bytes: int
+) -> bytes:
+    """The source tarball of ``sha``; bytes pass through unaltered (spec §1.4).
+
+    Over ``max_bytes`` is refused as a status-less :class:`GhError`: the
+    download happened, but this layer will not unpack it.
+    """
+    blob = runner.api_bytes([f"repos/{repo}/tarball/{sha}"], timeout=ARCHIVE_TIMEOUT_S)
+    if len(blob) > max_bytes:
+        raise GhError(f"archive exceeds {max_bytes} bytes ({len(blob)})", None)
+    return blob
 
 
 def _run_path(run_id: int, attempt: int | None) -> str:
