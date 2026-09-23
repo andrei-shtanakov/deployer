@@ -219,9 +219,9 @@ them is the next thing to pick up.
   experiment on `rescue/pr3-negchecks-tail` @ 9e89daa, not a fixture of this tree. Paid
   benchmark #2 promoted as golden 2.0 (12/12).
 - [x] CI-failure reproduction: restore the artifact and its context at the run's actual checkout SHA, run deterministic checks and L2 on a supported build configuration, report findings with status and evidence — no causal class @owner:repo:deployer @id:ci-failure-reproduction @epic:eco.dark-factory
-  Proposed by the PR for branch `feat/ci-failure-reproduction` (not merged at the time of
-  writing; this checkbox follows the repo's rhythm for a closing PR and asserts nothing
-  about a merge). Spec: `docs/superpowers/specs/2026-09-22-ci-failure-reproduction-design.md`
+  Proposed by the PR for branch `feat/ci-failure-reproduction` (the PR is opened after
+  this commit; this checkbox follows the repo's rhythm for a closing PR and asserts
+  nothing about a merge). Spec: `docs/superpowers/specs/2026-09-22-ci-failure-reproduction-design.md`
   (rev 5). Ships snapshot schema 1.3 (workflow path, event, all steps), the §1.2
   supported-shape refusals, §1.3 restoration exactness (exact / approximation /
   unavailable), the binary tarball path through the forge (`api_bytes`), a

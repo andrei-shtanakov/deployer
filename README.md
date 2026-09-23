@@ -183,20 +183,22 @@ logged SHA must equal `head_sha` exactly once, and the checkout step must set
 none of `ref`/`repository`/`path`/`sparse-checkout`/`lfs`/`submodules`/
 `fetch-depth`; exactly one job failed, with no `strategy.matrix`, job-level
 `uses:`, or `container:`/`services:`; its steps bind one-to-one to the
-workflow job's own steps by name; the failed step is the job's only `run:`
-line and it parses as a plain `docker build [-f path] [--build-arg K=V]*
-[--platform p] [-t tag] .` — build context `.` only, no shell operators or
-substitution, none of `--secret`/`--ssh`/`--mount`/`--network`/`--pull`/
-`--no-cache`, and no `buildx build`; and neither the job nor the build step
-sets a working directory. The container endpoint is checked separately and
-must resolve to a confirmed-local socket (`unix://`, or `ssh://`/`tcp://` to
-`127.0.0.1`/`::1`/`localhost`): `--container-host` and every host-selecting
-environment variable (`DEPLOYER_CONTAINER_HOST`, `DOCKER_HOST`,
-`CONTAINER_HOST`, `CONTAINER_CONNECTION`, `DOCKER_CONTEXT`) refuse outright,
-because the restored build context skips `verify`'s `CONTEXT_IGNORE`
-stripping (CI's own builder saw any tracked `.env` too) and must never leave
-the machine — `--reproduce` combined with `--container-host` is refused
-before either runs.
+workflow job's own steps by name; exactly one step is a `run:` step that
+parses as a plain `docker build [-f path] [--build-arg K=V]* [--platform p]
+[-t tag] .` — build context `.` only, no shell operators or substitution,
+none of `--secret`/`--ssh`/`--mount`/`--network`/`--pull`/`--no-cache`, and
+no `buildx build` — and it is the failed step (other, non-build `run:` steps
+are allowed; before the build they only downgrade restoration to
+`approximation` unless they are on the exact inert list); and neither the
+job nor the build step sets a working directory. The container endpoint is
+checked separately and must resolve to a confirmed-local socket (`unix://`,
+or `ssh://`/`tcp://` to `127.0.0.1`/`::1`/`localhost`): `--container-host`
+and every host-selecting environment variable (`DEPLOYER_CONTAINER_HOST`,
+`DOCKER_HOST`, `CONTAINER_HOST`, `CONTAINER_CONNECTION`, `DOCKER_CONTEXT`)
+refuse outright, because the restored build context skips `verify`'s
+`CONTEXT_IGNORE` stripping (CI's own builder saw any tracked `.env` too) and
+must never leave the machine — `--reproduce` combined with `--container-host`
+is refused before either runs.
 
 Each attempt's restored tree and every try's build output land under
 `.deployer-runs/<run-id>/reproduction/attempt-<n>/` (`source/` the read-only
