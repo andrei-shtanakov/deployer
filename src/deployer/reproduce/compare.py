@@ -18,7 +18,7 @@ _MARKED_RE = re.compile(r"^\s*(\d+) \| >>>")
 _PARSE_RE = re.compile(r"dockerfile parse error on line (\d+):")
 _STEP_ERROR_RE = re.compile(r"^#(\d+) ERROR: ")
 _STEP_RE = re.compile(r"^(?:\[\d+/\d+\] )?STEP \d+/\d+: (.*)$")
-_BUILDING_AT_RE = re.compile(r'building at STEP "(.*)": ')
+_BUILDING_AT_RE = re.compile(r'building at STEP "(.*?)": ')
 _RESOLVE_RE = re.compile(r"resolve (\S+)@(sha256:[0-9a-f]{64})")
 _PODMAN_ERROR_RE = re.compile(r"^Error: (\S+) ")
 
@@ -35,8 +35,9 @@ class Side:
 def ci_instruction(job_text: str) -> InstructionRef | None:
     """BuildKit's parse error, else its single ``Dockerfile:N`` block (§7.1)."""
     parses = _PARSE_RE.findall(job_text)
-    if len(parses) == 1:
-        line = int(parses[0])
+    distinct = set(parses)
+    if len(distinct) == 1:
+        line = int(next(iter(distinct)))
         return InstructionRef(
             kind="parse", lines=(line, line), bound_by="buildkit_parse_error"
         )
@@ -70,14 +71,17 @@ def local_instruction(
     err = _clean(stderr)
     at = _BUILDING_AT_RE.findall(err)
     steps = [m.group(1) for ln in out if (m := _STEP_RE.match(ln.strip()))]
-    text = at[-1] if at else (steps[-1] if steps else None)
-    if text is not None:
+    candidates = [
+        text
+        for text in (at[-1] if at else None, steps[-1] if steps else None)
+        if text is not None
+    ]
+    for text in candidates:
         span = _match_instruction(text, parsed)
-        return (
-            None
-            if span is None
-            else InstructionRef(kind="span", lines=span, bound_by="step_text")
-        )
+        if span is not None:
+            return InstructionRef(kind="span", lines=span, bound_by="step_text")
+    if candidates:
+        return None
     return _parse_binding(err, parser_findings, parsed)
 
 

@@ -63,6 +63,17 @@ def test_two_error_blocks_leave_ci_unbound():
     assert ci_instruction(block + block) is None
 
 
+def test_parse_error_precedence_survives_a_duplicated_message():  # fix round 1, finding 2
+    text = "Dockerfile:1\n--------------------\n   1 | >>> FROM a extra\n"
+    text += "--------------------\nERROR: failed to build: failed to solve: "
+    text += "dockerfile parse error on line 1: FROM requires either one or three arguments\n"
+    text += "##[error]buildx failed with: ERROR: failed to solve: "
+    text += "dockerfile parse error on line 1: FROM requires either one or three arguments\n"
+    assert ci_instruction(text) == InstructionRef(
+        kind="parse", lines=(1, 1), bound_by="buildkit_parse_error"
+    )
+
+
 RUN3 = (
     "FROM python:3.12-slim\n\nCOPY --from=ghcr.io/astral-sh/uv:0.5.11 /uv /uvx /bin/\n\n"
     "WORKDIR /app\n\nCOPY pyproject.toml uv.lock ./\nRUN uv sync --frozen --no-install-project\n\n"
@@ -105,6 +116,25 @@ def test_podman_parse_error_binds_only_with_keyword_and_single_finding():
     )
     down = "Error: Cannot connect to Podman. Please verify your connection\n"
     assert local_instruction("", down, "podman", parsed, findings) is None
+
+
+def test_podman_copy_building_at_with_trailing_colons_binds_the_copy():  # fix round 1, finding 1
+    parsed = parse("FROM python:3.12-slim\n\nCOPY src/ ./src/\n")
+    err = (
+        'Error: building at STEP "COPY src/ ./src/": checking on sources under '
+        '"/var/tmp/buildah926185718": copier: stat: "/src": no such file or directory\n'
+    )
+    out = "STEP 2/2: COPY src/ ./src/\n"
+    ref = local_instruction(out, err, "podman", parsed, [])
+    assert ref == InstructionRef(kind="span", lines=(3, 3), bound_by="step_text")
+
+
+def test_local_instruction_falls_back_to_step_line_when_building_at_mismatches():
+    parsed = parse("FROM python:3.12-slim\n\nRUN true\n")
+    err = 'Error: building at STEP "something unmatched": oops\n'
+    out = "STEP 2/2: RUN true\n"
+    ref = local_instruction(out, err, "podman", parsed, [])
+    assert ref == InstructionRef(kind="span", lines=(3, 3), bound_by="step_text")
 
 
 def _side(lines, sig=None):
