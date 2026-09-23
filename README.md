@@ -136,15 +136,21 @@ always empty, and every verdict's `kind` is `null` — see the Addendum of
 
 stdout carries the human-readable summary, stderr the diagnostics.
 `--output-file` writes the verdict document, which carries its own
-`verdict_schema_version` (`"1.1"`, independent of the report `schema_version`
-above); the run snapshot nested in it carries `snapshot_schema_version`
-(`"1.2"`). Verdict 1.1 is additive over 1.0: the keys are the same, `causes`
-is always `[]` and `kind` always `null`. Snapshot 1.1 added a per-job
-`completeness` — how that one job was read — beside the run-level worst-of;
-1.2 added `level` on each piece of evidence: a GitHub annotation's raw
-`annotation_level`, and `null` for log text, which has no level. Both are
-additive, so a stored 1.0 or 1.1 snapshot still loads — reading every job as
-completely read, and every piece of evidence as level-less.
+`verdict_schema_version` (`"1.1"`, or `"1.2"` once `--reproduce` adds a
+`reproduction` section — see below; independent of the report
+`schema_version` above); the run snapshot nested in it carries
+`snapshot_schema_version` (`"1.3"`). Verdict 1.1 is additive over 1.0: the
+keys are the same, `causes` is always `[]` and `kind` always `null`; 1.2 adds
+only the `reproduction` key, so a document produced without `--reproduce`
+stays byte-identical to 1.1. Snapshot 1.1 added a per-job `completeness` — how
+that one job was read — beside the run-level worst-of; 1.2 added `level` on
+each piece of evidence: a GitHub annotation's raw `annotation_level`, and
+`null` for log text, which has no level; 1.3 added the run's workflow path,
+its event and every job step (not only the failed ones) — inputs `--reproduce`
+needs to restore and bind the failed step, unused otherwise. All three are
+additive, so a stored 1.0/1.1/1.2 snapshot still loads — reading every job as
+completely read, every piece of evidence as level-less, and every
+reproduction-only field as absent.
 
 Requires `gh` authenticated for the repository, and a `gh` new enough to
 support `gh api --allow-escape-sequences` (real build logs carry ANSI colour
@@ -155,6 +161,58 @@ exits 2 rather than being reported as an unreadable log.
 The reading layer itself is offline and pure: it is a function from the
 fetched snapshot to the verdict. Fixture input is a **test affordance, not a user
 contract** — there is no flag to feed a saved snapshot in.
+
+### `diagnose --reproduce`
+
+```sh
+uv run deployer diagnose <run-url> --reproduce [--build-timeout 900] \
+    [--output-file verdict.json]
+```
+
+On top of the reading layer above, restores the failed run's tree and
+workflow at its actual checkout SHA, rebuilds the run's one failed build step
+locally through its own adapter (never `verify`'s L2 build), and reports
+where that local build agrees or disagrees with CI. Like the reading layer it
+asserts **no cause** — no `FailureKind` is attached to a reproduction finding
+either; see `docs/superpowers/specs/2026-09-22-ci-failure-reproduction-design.md`.
+
+Only a narrow shape is supported; the first unmet condition below refuses
+reproduction (the plain diagnosis above still runs and is reported): the
+run's `event` must be `push` or `workflow_dispatch`; `actions/checkout`'s
+logged SHA must equal `head_sha` exactly once, and the checkout step must set
+none of `ref`/`repository`/`path`/`sparse-checkout`/`lfs`/`submodules`/
+`fetch-depth`; exactly one job failed, with no `strategy.matrix`, job-level
+`uses:`, or `container:`/`services:`; its steps bind one-to-one to the
+workflow job's own steps by name; the failed step is the job's only `run:`
+line and it parses as a plain `docker build [-f path] [--build-arg K=V]*
+[--platform p] [-t tag] .` — build context `.` only, no shell operators or
+substitution, none of `--secret`/`--ssh`/`--mount`/`--network`/`--pull`/
+`--no-cache`, and no `buildx build`; and neither the job nor the build step
+sets a working directory. The container endpoint is checked separately and
+must resolve to a confirmed-local socket (`unix://`, or `ssh://`/`tcp://` to
+`127.0.0.1`/`::1`/`localhost`): `--container-host` and every host-selecting
+environment variable (`DEPLOYER_CONTAINER_HOST`, `DOCKER_HOST`,
+`CONTAINER_HOST`, `CONTAINER_CONNECTION`, `DOCKER_CONTEXT`) refuse outright,
+because the restored build context skips `verify`'s `CONTEXT_IGNORE`
+stripping (CI's own builder saw any tracked `.env` too) and must never leave
+the machine — `--reproduce` combined with `--container-host` is refused
+before either runs.
+
+Each attempt's restored tree and every try's build output land under
+`.deployer-runs/<run-id>/reproduction/attempt-<n>/` (`source/` the read-only
+restored tree, shared across tries; `tries/<seq>/` each build's own context
+copy, manifest and stdout/stderr) — kept until the operator deletes them.
+There is no automatic TTL; cleanup covers only the image tag the reproduction
+build itself created.
+
+The exit code is the reading layer's (3 unclassified, 4 evidence
+unavailable, 5 adapter refusal, 2 bad argument) in every case except two,
+both exit `2`: `--reproduce` given together with `--container-host`, and a
+try directory that cannot be created or whose stored `source.json` names a
+different `head_sha`. Every refusal (an unsupported shape, an unconfirmed
+endpoint), an unreadable tree, a missing container runtime, and every
+CI-vs-local comparison state live in the verdict document's `reproduction`
+section instead of changing the exit code.
 
 ## Bench
 
