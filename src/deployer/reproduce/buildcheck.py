@@ -39,6 +39,23 @@ class BuilderSyntax:
     reason: str | None
 
 
+@dataclass(frozen=True)
+class CheckRun:
+    """Raw stdout/stderr of a launched ``docker build --check`` (spec §1.5).
+
+    Present iff the process actually ran to completion: ``None`` for every
+    skip decided before launch (wrong backend, no/old buildx) and for a
+    timeout, which never produced a complete capture. This is what
+    ``check.stdout``/``check.stderr`` on disk hold — kept apart from
+    ``BuilderSyntax.text``, which is a short verdict-shaped string
+    (a parse-error message, or the row-5 raw blob), not the launched
+    process's own two streams.
+    """
+
+    stdout: str
+    stderr: str
+
+
 def read_check_output(
     exit_code: int | None, launch_error: str | None, output: str
 ) -> tuple[BuilderSyntax, list[ReproductionCheck]]:
@@ -85,33 +102,37 @@ def detect_buildx(rt: ContainerRuntime) -> str | None:
 
 def run_builder_check(
     rt: ContainerRuntime, context: Path, dockerfile: str, timeout: int
-) -> tuple[BuilderSyntax, list[ReproductionCheck], str | None]:
-    """Run ``docker build --check`` when the backend has it; else skipped."""
+) -> tuple[BuilderSyntax, list[ReproductionCheck], str | None, CheckRun | None]:
+    """Run ``docker build --check`` when the backend has it; else skipped.
+
+    The fourth element is the launched process's raw stdout/stderr (see
+    :class:`CheckRun`), or ``None`` when nothing was launched.
+    """
     if rt.tool != "docker":
         return (
             BuilderSyntax("skipped", None, None, "backend has no build check"),
             [],
             None,
+            None,
         )
     version = detect_buildx(rt)
     if version is None:
-        return BuilderSyntax("skipped", None, None, "buildx not found"), [], None
+        return BuilderSyntax("skipped", None, None, "buildx not found"), [], None, None
     if tuple(int(p) for p in version.split(".")) < _MIN_BUILDX:
         reason = f"buildx {version} < 0.15"
-        return BuilderSyntax("skipped", None, None, reason), [], version
+        return BuilderSyntax("skipped", None, None, reason), [], version, None
     args = ["build", "--check", "--file", str(context / dockerfile), str(context)]
     try:
         proc = runtime.container_run(
             rt, args, capture_output=True, text=True, errors="replace", timeout=timeout
         )
     except subprocess.TimeoutExpired:
-        return BuilderSyntax("skipped", None, None, "timeout"), [], version
+        return BuilderSyntax("skipped", None, None, "timeout"), [], version, None
     except OSError as exc:
-        return BuilderSyntax("skipped", None, None, str(exc)), [], version
-    syntax, lint = read_check_output(
-        proc.returncode, None, (proc.stdout or "") + "\n" + (proc.stderr or "")
-    )
-    return syntax, lint, version
+        return BuilderSyntax("skipped", None, None, str(exc)), [], version, None
+    stdout, stderr = proc.stdout or "", proc.stderr or ""
+    syntax, lint = read_check_output(proc.returncode, None, stdout + "\n" + stderr)
+    return syntax, lint, version, CheckRun(stdout, stderr)
 
 
 def merge_syntax(

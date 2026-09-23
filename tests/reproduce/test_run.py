@@ -1,6 +1,7 @@
 """Orchestration: order of refusals, storage per try, the manifest."""
 
 import json
+import shutil
 from dataclasses import replace
 from pathlib import Path
 
@@ -14,6 +15,7 @@ from tests.reproduce.conftest import proc
 from tests.reproduce.test_shape import SHA, WORKFLOW, _run
 
 PODMAN = ContainerRuntime(tool="podman")
+DOCKER = ContainerRuntime(tool="docker")
 DOCKERFILE = "FROM python:3.12-slim\nCOPY docs/setup.md ./setup.md\n"
 CONNECTIONS = json.dumps([{"URI": "ssh://core@127.0.0.1:1/x", "Default": True}])
 
@@ -103,6 +105,46 @@ def test_attempted_run_writes_source_try_and_manifest(tmp_path, tree, fake_conta
     assert section.build.failed_instruction.lines == (2, 2)
     assert section.comparison is not None
     assert section.comparison.state in ("inconclusive", "reproduced_with_differences")
+    # Podman has no `--check`: nothing was launched, so neither file exists.
+    assert not (base / "check.stdout").exists()
+    assert not (base / "check.stderr").exists()
+    # Review Focus 3: recorded argv is try-dir-relative, never the host's
+    # absolute layout (spec §6's example: "context/Dockerfile").
+    assert "context/Dockerfile" in section.build.argv
+    assert not any(Path(token).is_absolute() for token in section.build.argv)
+
+
+def test_docker_check_writes_raw_output_when_launched(tmp_path, tree, fake_containers):
+    """Review Focus 1: check.stdout/check.stderr hold the launched process's
+    raw streams, and only exist when the check actually ran."""
+    fake_containers.responses[("context", "inspect")] = proc(
+        stdout="unix:///var/run/docker.sock"
+    )
+    fake_containers.responses[("version",)] = proc(
+        stdout=json.dumps({"Client": {"Version": "27.0.0"}})
+    )
+    fake_containers.responses[("image", "inspect")] = proc(1)
+    fake_containers.responses[("buildx", "version")] = proc(
+        stdout="github.com/docker/buildx v0.15.1 abc\n"
+    )
+    fake_containers.responses[("build", "--check")] = proc(
+        0, stdout="check out text", stderr="check err text"
+    )
+    fake_containers.responses[("build",)] = proc(0, stdout="built ok")
+    section = reproduce_run(
+        _run(),
+        gh=TreeGh(tree),
+        rt=DOCKER,
+        runtime_error=None,
+        env={},
+        root=tmp_path / "work",
+        build_timeout=60,
+    )
+    assert section.status == "attempted"
+    assert section.try_dir is not None
+    base = tmp_path / "work" / section.try_dir
+    assert (base / "check.stdout").read_text() == "check out text"
+    assert (base / "check.stderr").read_text() == "check err text"
 
 
 def test_second_try_is_002_and_reuses_source(tmp_path, tree, fake_containers):
@@ -126,6 +168,32 @@ def test_source_json_for_another_sha_is_a_try_dir_error(
     data = json.loads(source.read_text())
     source.write_text(json.dumps({**data, "head_sha": "0" * 40}))
     with pytest.raises(TryDirError):
+        _go(tmp_path, tree, fake_containers)
+
+
+def test_corrupt_source_json_is_a_try_dir_error(tmp_path, tree, fake_containers):
+    """Review Focus 2: a truncated/corrupt source.json must not crash with a
+    traceback — it is exit 2 (TryDirError) like the wrong-sha case."""
+    fake_containers.responses[("build",)] = proc(1)
+    section = _go(tmp_path, tree, fake_containers)
+    source = tmp_path / "work" / section.try_dir / ".." / ".." / "source.json"
+    source.write_text("{not valid json")
+    with pytest.raises(TryDirError):
+        _go(tmp_path, tree, fake_containers)
+
+
+def test_copytree_failure_is_a_try_dir_error(
+    tmp_path, tree, fake_containers, monkeypatch
+):
+    """Review Focus 2: an OSError preparing the try context must not crash
+    with a traceback."""
+
+    def boom(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(shutil, "copytree", boom)
+    fake_containers.responses[("build",)] = proc(1)
+    with pytest.raises(TryDirError, match="cannot prepare the try context"):
         _go(tmp_path, tree, fake_containers)
 
 

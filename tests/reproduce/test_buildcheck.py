@@ -8,6 +8,7 @@ import pytest
 from deployer.models import ContainerRuntime
 from deployer.reproduce.buildcheck import (
     BuilderSyntax,
+    CheckRun,
     merge_syntax,
     read_check_output,
     run_builder_check,
@@ -55,13 +56,14 @@ def test_rows_1_and_3():
 
 
 def test_podman_has_no_check(fake_containers):
-    syntax, lint, buildx = run_builder_check(
+    syntax, lint, buildx, check_run = run_builder_check(
         ContainerRuntime(tool="podman"), Path("/c"), "Dockerfile", 60
     )
-    assert (syntax.state, syntax.reason, lint, buildx) == (
+    assert (syntax.state, syntax.reason, lint, buildx, check_run) == (
         "skipped",
         "backend has no build check",
         [],
+        None,
         None,
     )
     assert fake_containers.calls == []
@@ -71,10 +73,10 @@ def test_old_buildx_is_skipped(fake_containers):
     fake_containers.responses[("buildx", "version")] = proc(
         stdout="github.com/docker/buildx v0.14.1 abc\n"
     )
-    syntax, _, buildx = run_builder_check(
+    syntax, _, buildx, check_run = run_builder_check(
         ContainerRuntime(tool="docker"), Path("/c"), "Dockerfile", 60
     )
-    assert (syntax.state, buildx) == ("skipped", "0.14.1")
+    assert (syntax.state, buildx, check_run) == ("skipped", "0.14.1", None)
 
 
 def test_build_check_timeout_is_skipped(fake_containers):
@@ -84,10 +86,29 @@ def test_build_check_timeout_is_skipped(fake_containers):
     fake_containers.responses[("build", "--check")] = subprocess.TimeoutExpired(
         cmd="docker build --check", timeout=60
     )
-    syntax, _, buildx = run_builder_check(
+    syntax, _, buildx, check_run = run_builder_check(
         ContainerRuntime(tool="docker"), Path("/c"), "Dockerfile", 60
     )
-    assert (syntax.state, syntax.reason, buildx) == ("skipped", "timeout", "0.15.1")
+    assert (syntax.state, syntax.reason, buildx, check_run) == (
+        "skipped",
+        "timeout",
+        "0.15.1",
+        None,
+    )
+
+
+def test_launched_check_returns_its_raw_stdout_and_stderr(fake_containers):
+    fake_containers.responses[("buildx", "version")] = proc(
+        stdout="github.com/docker/buildx v0.15.1 abc\n"
+    )
+    fake_containers.responses[("build", "--check")] = proc(
+        0, stdout="out text", stderr="err text"
+    )
+    syntax, _, _, check_run = run_builder_check(
+        ContainerRuntime(tool="docker"), Path("/c"), "Dockerfile", 60
+    )
+    assert syntax.state == "passed"
+    assert check_run == CheckRun("out text", "err text")
 
 
 def _parser_finding(line: int) -> ReproductionCheck:

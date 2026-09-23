@@ -7,6 +7,7 @@ keep the checks already made; a refusal before it creates nothing.
 """
 
 import json
+import os
 import platform
 import shutil
 from collections.abc import Mapping
@@ -89,7 +90,10 @@ def reproduce_run(
 
     try_dir = _new_try(attempt_dir)
     context = try_dir / "context"
-    shutil.copytree(source_dir, context, symlinks=True)
+    try:
+        shutil.copytree(source_dir, context, symlinks=True)
+    except OSError as exc:
+        raise TryDirError(f"cannot prepare the try context: {exc}") from exc
     rel_try = try_dir.relative_to(root).as_posix()
 
     df_path = context / found.build.dockerfile
@@ -177,11 +181,12 @@ def _build_and_compare(
     (try_dir / "build.stdout").write_text(run.stdout)
     (try_dir / "build.stderr").write_text(run.stderr)
 
-    syntax, lint, buildx = buildcheck.run_builder_check(
+    syntax, lint, buildx, check_run = buildcheck.run_builder_check(
         rt, context, found.build.dockerfile, build_timeout
     )
-    if syntax.text is not None:
-        (try_dir / "check.stdout").write_text(syntax.text)
+    if check_run is not None:
+        (try_dir / "check.stdout").write_text(check_run.stdout)
+        (try_dir / "check.stderr").write_text(check_run.stderr)
     merged = buildcheck.merge_syntax(parser_checks, syntax, found.build.dockerfile)
     checks_out = merged + lint + [c for c in static if c not in parser_checks]
 
@@ -241,7 +246,7 @@ def _build_and_compare(
         ),
         checks=checks_out,
         build=BuildResult(
-            argv=run.argv,
+            argv=_relative_argv(run.argv, try_dir),
             exit_code=run.exit_code,
             launch_error=run.launch_error,
             failed_instruction=local_ref,
@@ -264,18 +269,29 @@ def _source(
     source_dir = attempt_dir / "source"
     meta = attempt_dir / "source.json"
     if meta.is_file():
-        data = json.loads(meta.read_text())
-        if data.get("head_sha") != snapshot.head_sha:
-            raise TryDirError(
-                f"{meta} names {data.get('head_sha')}, the run is at "
-                f"{snapshot.head_sha}"
+        try:
+            data = json.loads(meta.read_text())
+            if data.get("head_sha") != snapshot.head_sha:
+                raise TryDirError(
+                    f"{meta} names {data.get('head_sha')}, the run is at "
+                    f"{snapshot.head_sha}"
+                )
+            stored = data["listing"]
+            return source_dir, TreeListing(
+                sha=stored["sha"],
+                entries=[TreeEntry(**e) for e in stored["entries"]],
+                truncated=stored["truncated"],
             )
-        stored = data["listing"]
-        return source_dir, TreeListing(
-            sha=stored["sha"],
-            entries=[TreeEntry(**e) for e in stored["entries"]],
-            truncated=stored["truncated"],
-        )
+        except TryDirError:
+            raise
+        except (
+            OSError,
+            UnicodeDecodeError,
+            json.JSONDecodeError,
+            KeyError,
+            TypeError,
+        ) as exc:
+            raise TryDirError(f"cannot read {meta}: {exc}") from exc
     try:
         listing = fetch_tree_listing(snapshot.repo, snapshot.head_sha, gh)
         archive = fetch_archive(
@@ -291,24 +307,26 @@ def _source(
     if reason is not None:
         shutil.rmtree(source_dir, ignore_errors=True)
         return reason
-    meta.write_text(
-        json.dumps(
-            {
-                "repo": snapshot.repo,
-                "run_id": snapshot.run_id,
-                "attempt": snapshot.attempt,
-                "head_sha": snapshot.head_sha,
-                "archive_bytes": len(archive),
-                "listing": {
-                    "sha": listing.sha,
-                    "truncated": listing.truncated,
-                    "entries": [e.__dict__ for e in listing.entries],
-                },
-                "tree": [e.path for e in listing.entries if e.type == "blob"],
+    payload = json.dumps(
+        {
+            "repo": snapshot.repo,
+            "run_id": snapshot.run_id,
+            "attempt": snapshot.attempt,
+            "head_sha": snapshot.head_sha,
+            "archive_bytes": len(archive),
+            "listing": {
+                "sha": listing.sha,
+                "truncated": listing.truncated,
+                "entries": [e.__dict__ for e in listing.entries],
             },
-            indent=2,
-        )
+            "tree": [e.path for e in listing.entries if e.type == "blob"],
+        },
+        indent=2,
     )
+    try:
+        meta.write_text(payload)
+    except OSError as exc:
+        raise TryDirError(f"cannot write {meta}: {exc}") from exc
     return source_dir, listing
 
 
@@ -328,6 +346,20 @@ def _new_try(attempt_dir: Path) -> Path:
 def _write(try_dir: Path, section: ReproductionSection) -> ReproductionSection:
     (try_dir / "manifest.json").write_text(section.model_dump_json(indent=2))
     return section
+
+
+def _relative_argv(argv: list[str], try_dir: Path) -> list[str]:
+    """The recorded argv with any path under ``try_dir`` made relative to it.
+
+    The build still runs with the absolute paths in ``argv``; only the copy
+    stored in the manifest changes (spec §6: artifact-naming fields such as
+    ``build.argv``'s paths are try-dir-relative, e.g. ``context/Dockerfile``,
+    never the host's absolute layout).
+    """
+    prefix = str(try_dir) + os.sep
+    return [
+        token[len(prefix) :] if token.startswith(prefix) else token for token in argv
+    ]
 
 
 def _last_error(text: str) -> str | None:
