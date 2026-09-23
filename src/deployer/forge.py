@@ -23,6 +23,7 @@ ARCHIVE_TIMEOUT_S = 120.0
 """Wall-clock budget for downloading one source archive."""
 
 DEFAULT_MAX_ARCHIVE_MB = 200
+"""Default ``--max-archive-mb`` cap (spec §1.4) on a fetched source archive."""
 
 SNAPSHOT_SCHEMA_VERSION = "1.3"
 
@@ -391,7 +392,11 @@ def fetch_archive(
     """The source tarball of ``sha``; bytes pass through unaltered (spec §1.4).
 
     Over ``max_bytes`` is refused as a status-less :class:`GhError`: the
-    download happened, but this layer will not unpack it.
+    download happened, but this layer will not unpack it. The cap is
+    enforced only after ``api_bytes`` returns — the whole archive is
+    downloaded and buffered in memory first, whatever its size, and only
+    then measured against ``max_bytes``; this does not stream or abort the
+    download early.
     """
     blob = runner.api_bytes([f"repos/{repo}/tarball/{sha}"], timeout=ARCHIVE_TIMEOUT_S)
     if len(blob) > max_bytes:

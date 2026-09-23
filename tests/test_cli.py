@@ -1617,6 +1617,46 @@ def test_the_real_project_fixture_diagnoses_through_the_cli(
 # --- Task 13: `deployer diagnose --reproduce` -----------------------------
 
 
+def test_diagnose_rejects_nonpositive_build_timeout(capsys) -> None:
+    assert cli.main(["diagnose", RUN_URL, "--build-timeout", "0"]) == 2
+    assert "--build-timeout" in capsys.readouterr().err
+
+
+def test_diagnose_rejects_nonpositive_max_archive_mb(capsys) -> None:
+    assert cli.main(["diagnose", RUN_URL, "--max-archive-mb", "0"]) == 2
+    assert "--max-archive-mb" in capsys.readouterr().err
+
+
+def test_max_archive_mb_reaches_reproduce_run(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "diagnose_run", lambda s: diagnosis("UNCLASSIFIED"))
+    monkeypatch.setattr(cli, "resolve_runtime", lambda *a, **k: None)
+    captured: dict[str, object] = {}
+
+    def fake_reproduce_run(*args, **kwargs):
+        captured.update(kwargs)
+        return ReproductionSection(status="refused", refusal="x")
+
+    monkeypatch.setattr(cli, "reproduce_run", fake_reproduce_run)
+    assert cli.main(["diagnose", RUN_URL, "--reproduce", "--max-archive-mb", "7"]) == 3
+    assert captured["max_archive_mb"] == 7
+
+
+def test_max_archive_mb_defaults_to_the_forge_default(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "diagnose_run", lambda s: diagnosis("UNCLASSIFIED"))
+    monkeypatch.setattr(cli, "resolve_runtime", lambda *a, **k: None)
+    captured: dict[str, object] = {}
+
+    def fake_reproduce_run(*args, **kwargs):
+        captured.update(kwargs)
+        return ReproductionSection(status="refused", refusal="x")
+
+    monkeypatch.setattr(cli, "reproduce_run", fake_reproduce_run)
+    cli.main(["diagnose", RUN_URL, "--reproduce"])
+    assert captured["max_archive_mb"] == cli.DEFAULT_MAX_ARCHIVE_MB
+
+
 def test_reproduce_with_container_host_is_exit_2(capsys) -> None:
     code = cli.main(
         ["diagnose", RUN_URL, "--reproduce", "--container-host", "ssh://u@h"]

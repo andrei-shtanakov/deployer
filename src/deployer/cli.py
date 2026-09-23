@@ -23,6 +23,7 @@ from deployer.bench import (
 from deployer.diagnose import RunDiagnosis, diagnose_run, render_verdict
 from deployer.facts import TargetConfigError, analyze_project
 from deployer.forge import (
+    DEFAULT_MAX_ARCHIVE_MB,
     AdapterRefusal,
     GhError,
     RunRef,
@@ -159,6 +160,15 @@ def _timeout_error(args: argparse.Namespace) -> str | None:
         return "--build-timeout must be >= 1"
     if args.health_timeout < 1:
         return "--health-timeout must be >= 1"
+    return None
+
+
+def _diagnose_flag_error(args: argparse.Namespace) -> str | None:
+    """``diagnose`` has no ``--health-timeout``; its own flags checked here."""
+    if args.build_timeout < 1:
+        return "--build-timeout must be >= 1"
+    if args.max_archive_mb < 1:
+        return "--max-archive-mb must be >= 1"
     return None
 
 
@@ -487,6 +497,10 @@ def _print_reproduction(section: ReproductionSection) -> None:
 
 
 def _cmd_diagnose(args: argparse.Namespace) -> int:
+    error = _diagnose_flag_error(args)
+    if error:
+        print(f"error: {error}", file=sys.stderr)
+        return 2
     resolved = _resolve_run_ref(args)
     if isinstance(resolved, str):
         print(f"error: {resolved}", file=sys.stderr)
@@ -524,6 +538,7 @@ def _cmd_diagnose(args: argparse.Namespace) -> int:
                 env=os.environ,
                 root=Path.cwd(),
                 build_timeout=args.build_timeout,
+                max_archive_mb=args.max_archive_mb,
             )
         except TryDirError as exc:
             print(f"error: {exc}", file=sys.stderr)
@@ -796,6 +811,12 @@ def main(argv: list[str] | None = None) -> int:
         type=int,
         default=DEFAULT_BUILD_TIMEOUT,
         help="seconds allowed for the reproduction build",
+    )
+    p_diagnose.add_argument(
+        "--max-archive-mb",
+        type=int,
+        default=DEFAULT_MAX_ARCHIVE_MB,
+        help="cap on the fetched source archive; only meaningful with --reproduce",
     )
     _add_runtime_flags(p_diagnose)
     p_diagnose.set_defaults(func=_cmd_diagnose)
