@@ -147,13 +147,16 @@ def syntax_checks(parsed: ParsedDockerfile, dockerfile: str) -> list[Reproductio
             )
             for check_id in _CHECK_IDS
         ]
-    findings: dict[str, list[tuple[tuple[int, int], str]]] = {c: [] for c in _CHECK_IDS}
+    findings: dict[str, list[tuple[tuple[int, int], str, str]]] = {
+        c: [] for c in _CHECK_IDS
+    }
     instructions = parsed.instructions
     head = next((i for i in instructions if i.keyword != "ARG"), None)
     if head is None or head.keyword != "FROM":
         span = (head.first_line, head.last_line) if head else (1, 1)
+        text = head.text if head is not None else "empty Dockerfile"
         findings["syntax_first_from"].append(
-            (span, "the first instruction is not FROM")
+            (span, "the first instruction is not FROM", text)
         )
     for inst in instructions:
         if inst.keyword == "FROM" and not _from_args_ok(inst.args):
@@ -161,6 +164,7 @@ def syntax_checks(parsed: ParsedDockerfile, dockerfile: str) -> list[Reproductio
                 (
                     (inst.first_line, inst.last_line),
                     "FROM takes one or three arguments",
+                    inst.text,
                 )
             )
         if inst.keyword not in KEYWORDS:
@@ -168,12 +172,17 @@ def syntax_checks(parsed: ParsedDockerfile, dockerfile: str) -> list[Reproductio
                 (
                     (inst.first_line, inst.last_line),
                     f"unknown instruction {inst.keyword}",
+                    inst.text,
                 )
             )
     if parsed.dangling_continuation and instructions:
         last = instructions[-1]
         findings["syntax_continuation"].append(
-            ((last.last_line, last.last_line), "line continuation ends the file")
+            (
+                (last.last_line, last.last_line),
+                "line continuation ends the file",
+                last.text,
+            )
         )
     status = "observation" if parsed.syntax_directive else "failed"
     checks: list[ReproductionCheck] = []
@@ -181,14 +190,14 @@ def syntax_checks(parsed: ParsedDockerfile, dockerfile: str) -> list[Reproductio
         if not findings[check_id]:
             checks.append(ReproductionCheck(check_id=check_id, status="passed"))
             continue
-        for span, message in findings[check_id]:
+        for span, message, text in findings[check_id]:
             checks.append(
                 ReproductionCheck(
                     check_id=check_id,
                     status=status,
                     finding=f"syntax error at line {span[0]}: {message}",
                     location=Location(file=dockerfile, lines=span),
-                    evidence=[ReproEvidence(kind="log_excerpt", text="parser")],
+                    evidence=[ReproEvidence(kind="log_excerpt", text=text)],
                 )
             )
     return checks

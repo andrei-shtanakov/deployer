@@ -25,6 +25,7 @@ from deployer.models import (
     VerificationReport,
 )
 from deployer.reproduce import ReproductionSection, TryDirError
+from deployer.reproduce.model import Location, ReproductionCheck, ReproEvidence
 
 
 @pytest.fixture(autouse=True)
@@ -1615,6 +1616,40 @@ def test_the_real_project_fixture_diagnoses_through_the_cli(
 
 
 # --- Task 13: `deployer diagnose --reproduce` -----------------------------
+
+
+def test_print_reproduction_reports_no_syntax_finding(capsys) -> None:
+    section = ReproductionSection(
+        status="refused",
+        refusal="no container runtime: none found",
+        checks=[
+            ReproductionCheck(check_id="syntax_first_from", status="passed"),
+            ReproductionCheck(check_id="syntax_from_args", status="passed"),
+            ReproductionCheck(check_id="syntax_keyword", status="passed"),
+            ReproductionCheck(check_id="syntax_continuation", status="passed"),
+        ],
+    )
+    cli._print_reproduction(section)
+    assert "syntax: no finding among checks 1–4" in capsys.readouterr().out
+
+
+def test_print_reproduction_says_nothing_when_a_syntax_check_failed(capsys) -> None:
+    section = ReproductionSection(
+        status="refused",
+        refusal="no container runtime: none found",
+        checks=[
+            ReproductionCheck(check_id="syntax_first_from", status="passed"),
+            ReproductionCheck(
+                check_id="syntax_keyword",
+                status="failed",
+                finding="syntax error at line 2: unknown instruction RUNN",
+                location=Location(file="Dockerfile", lines=(2, 2)),
+                evidence=[ReproEvidence(kind="log_excerpt", text="RUNN x")],
+            ),
+        ],
+    )
+    cli._print_reproduction(section)
+    assert "no finding among checks" not in capsys.readouterr().out
 
 
 def test_diagnose_rejects_nonpositive_build_timeout(capsys) -> None:

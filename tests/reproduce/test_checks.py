@@ -110,6 +110,19 @@ def test_from_refs_are_observations():
     assert external_images(parse(text)) == ["python:3.12", "ghcr.io/x/y:1"]
 
 
+def test_dotdot_source_is_clamped_to_the_context_root(tmp_path):
+    """BuildKit clamps a COPY source to the context root; ``../../x`` must
+    read as the context-relative ``x``, never resolved against the host
+    filesystem outside the context."""
+    ctx = _tree(tmp_path)
+    checks = copy_source_checks(
+        parse("FROM a\nCOPY ../../x /y\n"), ctx, "Dockerfile", load_rules(ctx, None)
+    )
+    assert [c.finding for c in checks if c.status == "failed"] == [
+        "source x absent from the context"
+    ]
+
+
 def test_context_conditions_git_and_mount(tmp_path):
     rules = load_rules(tmp_path, None)
     assert context_conditions(parse("FROM a\nCOPY . /app\n"), rules) == [

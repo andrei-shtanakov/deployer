@@ -57,7 +57,9 @@ REPRODUCTION_VERDICT_SCHEMA_VERSION = "1.2"
 
 Additive over 1.1: no key of the 1.1 document is renamed or removed: without
 a reproduction section (``render_verdict`` called with none, i.e. no
-``--reproduce``), the document is byte-identical to 1.1's.
+``--reproduce``), the verdict's own keys are unchanged from 1.1 — the nested
+``run`` snapshot is schema 1.3 either way, so the document is not
+byte-identical to a 1.1 one.
 """
 
 _JOB_LEVEL_NOTE = "cited evidence is job-level (no step binding)"
@@ -465,8 +467,9 @@ def render_verdict(
     inserted as the first key; the nested ``run`` keeps its own
     ``snapshot_schema_version`` (``forge.py``) untouched. With
     ``reproduction`` given, the document gains a ``reproduction`` key and
-    reads schema 1.2 (additive); without it, the document is byte-identical
-    to 1.1's.
+    reads schema 1.2 (additive); without it, the verdict's own keys are
+    unchanged from 1.1 — the nested ``run`` snapshot is schema 1.3 either
+    way, so the document as a whole is not byte-identical to a 1.1 one.
     """
     payload = _diagnosis_adapter.dump_python(diagnosis, mode="json")
     if reproduction is None:

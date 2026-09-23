@@ -1,6 +1,7 @@
 """§3.1: line spans and exactly four syntax checks."""
 
 from deployer.reproduce.dockerfile import normalise, parse, syntax_checks
+from deployer.reproduce.model import ReproEvidence
 
 RUN5 = "FROM python:3.12-slim extra\n\nRUN true\n"
 
@@ -38,6 +39,9 @@ def test_run5_from_with_extra_argument_is_the_only_finding():
     assert (
         finding.finding == "syntax error at line 1: FROM takes one or three arguments"
     )
+    assert finding.evidence == [
+        ReproEvidence(kind="log_excerpt", text="FROM python:3.12-slim extra")
+    ]
 
 
 def test_from_forms_that_are_valid():
@@ -47,9 +51,10 @@ def test_from_forms_that_are_valid():
 
 def test_first_instruction_must_be_from_after_args():
     assert _failed(syntax_checks(parse("ARG V=1\nFROM a\n"), "D")) == []
-    assert _failed(syntax_checks(parse("RUN x\nFROM a\n"), "D")) == [
-        ("syntax_first_from", (1, 1))
-    ]
+    checks = syntax_checks(parse("RUN x\nFROM a\n"), "D")
+    assert _failed(checks) == [("syntax_first_from", (1, 1))]
+    finding = next(c for c in checks if c.status == "failed")
+    assert finding.evidence == [ReproEvidence(kind="log_excerpt", text="RUN x")]
 
 
 def test_unknown_keyword_and_dangling_continuation():
@@ -58,6 +63,8 @@ def test_unknown_keyword_and_dangling_continuation():
         ("syntax_continuation", (3, 3)),
         ("syntax_keyword", (2, 2)),
     ]
+    evidence = {c.check_id: c.evidence[0].text for c in checks if c.status == "failed"}
+    assert evidence == {"syntax_keyword": "RUNN x", "syntax_continuation": "RUN y"}
 
 
 def test_parser_directives_and_heredoc_body():
@@ -87,7 +94,12 @@ def test_non_backslash_escape_skips_all_four():
 
 
 def test_empty_dockerfile_fails_first_from():
-    assert _failed(syntax_checks(parse(""), "D")) == [("syntax_first_from", (1, 1))]
+    checks = syntax_checks(parse(""), "D")
+    assert _failed(checks) == [("syntax_first_from", (1, 1))]
+    finding = next(c for c in checks if c.status == "failed")
+    assert finding.evidence == [
+        ReproEvidence(kind="log_excerpt", text="empty Dockerfile")
+    ]
 
 
 def test_normalise():

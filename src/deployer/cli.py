@@ -489,6 +489,9 @@ def _print_reproduction(section: ReproductionSection) -> None:
     for check in section.checks:
         if check.status in ("failed", "inconclusive"):
             print(f"  {check.status}: {check.finding or check.reason}")
+    syntax_checks = [c for c in section.checks if c.check_id.startswith("syntax_")]
+    if syntax_checks and all(c.status == "passed" for c in syntax_checks):
+        print("  syntax: no finding among checks 1–4")
     if section.comparison is not None:
         extra = f" ({section.comparison.reason})" if section.comparison.reason else ""
         print(f"  comparison: {section.comparison.state}{extra}")

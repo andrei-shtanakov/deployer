@@ -2,6 +2,7 @@
 
 import json
 import os
+import posixpath
 import shlex
 from pathlib import Path
 
@@ -137,8 +138,16 @@ def _sources(inst: Instruction) -> tuple[list[str], str | None]:
 
 
 def _norm(source: str) -> str:
-    """Context-relative form of a local source; ``.`` for the root."""
-    return os.path.normpath(source).lstrip("/") or "."
+    """Context-relative form of a local source; ``.`` for the root.
+
+    BuildKit clamps a COPY/ADD source to the context root, the way a leading
+    ``..`` in a URL path is clamped to the site root: prefixing a leading
+    ``/`` before calling ``posixpath.normpath`` makes any ``..`` collapse
+    against that synthetic root instead of resolving relative to the host's
+    real filesystem, which is what ``os.path.normpath`` would do for a
+    source such as ``../../x``.
+    """
+    return posixpath.normpath("/" + source).lstrip("/") or "."
 
 
 def _has_unmodelled_chars(source: str) -> bool:

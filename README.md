@@ -141,8 +141,10 @@ stdout carries the human-readable summary, stderr the diagnostics.
 `schema_version` above); the run snapshot nested in it carries
 `snapshot_schema_version` (`"1.3"`). Verdict 1.1 is additive over 1.0: the
 keys are the same, `causes` is always `[]` and `kind` always `null`; 1.2 adds
-only the `reproduction` key, so a document produced without `--reproduce`
-stays byte-identical to 1.1. Snapshot 1.1 added a per-job `completeness` — how
+only the `reproduction` key, so a document produced without `--reproduce` has
+the verdict's own keys unchanged from 1.1 — the nested `run` snapshot is
+schema 1.3 either way, so the document as a whole is not byte-identical to a
+1.1 one. Snapshot 1.1 added a per-job `completeness` — how
 that one job was read — beside the run-level worst-of; 1.2 added `level` on
 each piece of evidence: a GitHub annotation's raw `annotation_level`, and
 `null` for log text, which has no level; 1.3 added the run's workflow path,
