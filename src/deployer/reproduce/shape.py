@@ -59,7 +59,7 @@ def job_text(job: FailedJob) -> str:
 
 
 def precheck(run: FailedRun) -> FailedJob | Refusal:
-    """§1.1 fields, then §1.2 #1 event, #2 checkout SHA, #3 one failed job."""
+    """§1.1 fields, then §1.2 #1 event, #2 checkout SHA per job, #3 one job."""
     missing = [
         name
         for name, value in (
@@ -80,11 +80,12 @@ def precheck(run: FailedRun) -> FailedJob | Refusal:
         return Refusal(f"workflow path not understood: {run.workflow_ref_path}")
     if run.event not in _EVENTS:
         return Refusal(f"event {run.event} not supported")
-    shas = _checkout_shas("\n".join(job_text(j) for j in run.jobs))
-    if len(shas) != 1:
-        return Refusal("checkout SHA not established")
-    if shas[0] != run.head_sha:
-        return Refusal(f"checkout at {shas[0]}, run at {run.head_sha}")
+    for kept_job in run.jobs:
+        shas = _checkout_shas(job_text(kept_job))
+        if len(shas) != 1:
+            return Refusal("checkout SHA not established")
+        if shas[0] != run.head_sha:
+            return Refusal(f"checkout at {shas[0]}, run at {run.head_sha}")
     if len(run.jobs) != 1:
         return Refusal("several failed jobs")
     return run.jobs[0]
@@ -141,11 +142,27 @@ def _check_steps(
     job: FailedJob,
     key: str,
 ) -> Shape | Refusal:
+    failed_numbers = {
+        s.ref.number for s in job.steps if s.conclusion in ("failure", "timed_out")
+    }
     checkouts = [
         i
         for i, (s, _) in enumerate(bound)
         if _CHECKOUT_RE.match(str(s.get("uses", "")))
     ]
+
+    # §1.2 #6 runs before #7: the checkout position is pinned to the failed
+    # step (whether or not it turns out to be a supported build), so a
+    # forbidden checkout input refuses before any build-line diagnosis.
+    build_position = _find_build_position(bound, failed_numbers)
+    before = [i for i in checkouts if i < build_position]
+    if len(before) != 1:
+        return Refusal("exactly one checkout step before the build is required")
+    with_block = bound[before[0]][0].get("with") or {}
+    for name in _CHECKOUT_FORBIDDEN:
+        if name in with_block:
+            return Refusal(f"checkout input {name} not supported")
+
     builds = [
         (i, parse_build_line(_single_line(s)))
         for i, (s, _) in enumerate(bound)
@@ -162,22 +179,13 @@ def _check_steps(
         return Refusal("unsupported build configuration: multi-line run")
     if len(builds) > 1:
         return Refusal("several build steps")
-    failed_numbers = {
-        s.ref.number for s in job.steps if s.conclusion in ("failure", "timed_out")
-    }
     if not builds or bound[builds[0][0]][1].number not in failed_numbers:
         return Refusal("failed step is not a supported build")
     build_index, parsed = builds[0]
     if isinstance(parsed, Unsupported):
         return Refusal(f"unsupported build configuration: {parsed.what}")
     assert parsed is not None
-    before = [i for i in checkouts if i < build_index]
-    if len(before) != 1:
-        return Refusal("exactly one checkout step before the build is required")
-    with_block = bound[before[0]][0].get("with") or {}
-    for name in _CHECKOUT_FORBIDDEN:
-        if name in with_block:
-            return Refusal(f"checkout input {name} not supported")
+
     build_step = bound[build_index][0]
     if (
         "working-directory" in build_step
@@ -197,6 +205,32 @@ def _check_steps(
         build=parsed,
         preceding_unmet=unmet,
     )
+
+
+def _candidate_line(step: dict[str, Any]) -> str:
+    """The line a build-line parse is attempted against: the first line."""
+    value = str(step.get("run", "")).strip()
+    return value.splitlines()[0].strip() if value else ""
+
+
+def _find_build_position(
+    bound: list[tuple[dict[str, Any], StepInfo]], failed_numbers: set[int]
+) -> int:
+    """Where the build is, for #6's purposes: the failed step, located before
+
+    #7 has judged whether it is actually a supported build. Prefers the
+    failed step whose ``run:`` parses as a build line (single- or
+    multi-line); falls back to the first failed step, or past the end of
+    ``bound`` when no bound step is failed.
+    """
+    failed_indices = [
+        i for i, (_, info) in enumerate(bound) if info.number in failed_numbers
+    ]
+    for i in failed_indices:
+        step, _ = bound[i]
+        if "run" in step and parse_build_line(_candidate_line(step)) is not None:
+            return i
+    return failed_indices[0] if failed_indices else len(bound)
 
 
 def _checkout_shas(text: str) -> list[str]:

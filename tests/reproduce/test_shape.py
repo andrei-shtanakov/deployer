@@ -102,11 +102,21 @@ def test_polygon_shape_passes():
             },
             f"checkout at {'a' * 40}, run at {SHA}",
         ),
-        ({"jobs": [_job(), _job(job_id=8, evidence=[])]}, "several failed jobs"),
+        # §1.2 #2 is per kept job: the second job here has no checkout pair
+        # of its own, so it refuses there, before #3 is ever reached.
+        (
+            {"jobs": [_job(), _job(job_id=8, evidence=[])]},
+            "checkout SHA not established",
+        ),
     ],
 )
 def test_precheck_refusals(run_kw, reason):
     assert precheck(_run(**run_kw)) == Refusal(reason)
+
+
+def test_several_failed_jobs_each_with_its_own_valid_checkout_pair():
+    run = _run(jobs=[_job(), _job(job_id=8)])
+    assert precheck(run) == Refusal("several failed jobs")
 
 
 def test_all_steps_missing_is_a_field_refusal():
@@ -143,6 +153,10 @@ def test_all_steps_missing_is_a_field_refusal():
             ),
             "working-directory not supported",
         ),
+        (
+            WORKFLOW.replace("    runs-on", "    container: node:20\n    runs-on"),
+            "job build: container not supported",
+        ),
     ],
 )
 def test_workflow_refusals(workflow, reason):
@@ -168,6 +182,66 @@ def test_shell_chain_with_consistent_step_name_refuses_with_the_parser_reason():
     assert check_workflow(run, job, wf) == Refusal(
         "unsupported build configuration: shell chain"
     )
+
+
+def test_checkout_refusal_precedes_build_refusal():
+    """§1.2 #6 (checkout) runs before #7 (build): both broken, #6 names first."""
+    wf = WORKFLOW.replace(
+        "@93cb6efe18208431cddfb8368fd83d5badbf9bfd\n",
+        "@93cb6efe18208431cddfb8368fd83d5badbf9bfd\n        with:\n          ref: main\n",
+    ).replace("./Dockerfile .", "./Dockerfile . --secret id=x,src=foo")
+    name = "Run docker build --file ./Dockerfile . --secret id=x,src=foo"
+    job = _job(
+        steps=[FailedStep(StepRef(7, 3), name, "failure", [])],
+        all_steps=[
+            StepInfo(1, "Set up job", "success"),
+            StepInfo(2, CHECKOUT, "success"),
+            StepInfo(3, name, "failure"),
+            StepInfo(6, "Complete job", "success"),
+        ],
+    )
+    run = _run(jobs=[job])
+    assert check_workflow(run, job, wf) == Refusal("checkout input ref not supported")
+
+
+def test_no_checkout_before_the_build_refuses_named():
+    wf = WORKFLOW.replace(
+        "      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd\n",
+        "",
+    )
+    job = _job(
+        steps=[FailedStep(StepRef(7, 2), BUILD, "failure", [])],
+        all_steps=[
+            StepInfo(1, "Set up job", "success"),
+            StepInfo(2, BUILD, "failure"),
+            StepInfo(6, "Complete job", "success"),
+        ],
+    )
+    run = _run(jobs=[job])
+    assert check_workflow(run, job, wf) == Refusal(
+        "exactly one checkout step before the build is required"
+    )
+
+
+def test_two_build_steps_refuses_several_build_steps():
+    wf = WORKFLOW.replace(
+        "      - run: docker build --file ./Dockerfile .\n",
+        "      - run: docker build --file ./Dockerfile .\n"
+        "      - run: docker build --file ./other.Dockerfile .\n",
+    )
+    name2 = "Run docker build --file ./other.Dockerfile ."
+    job = _job(
+        steps=[FailedStep(StepRef(7, 4), name2, "failure", [])],
+        all_steps=[
+            StepInfo(1, "Set up job", "success"),
+            StepInfo(2, CHECKOUT, "success"),
+            StepInfo(3, BUILD, "success"),
+            StepInfo(4, name2, "failure"),
+            StepInfo(6, "Complete job", "success"),
+        ],
+    )
+    run = _run(jobs=[job])
+    assert check_workflow(run, job, wf) == Refusal("several build steps")
 
 
 def test_block_scalar_single_line_is_still_one_line():  # Review Focus 2
