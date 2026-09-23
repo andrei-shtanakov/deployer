@@ -25,14 +25,29 @@ def git_blob_sha(data: bytes) -> str:
 
 
 def extract(archive: bytes, dest: Path) -> str | None:
-    """Unpack into ``dest``; the reason it could not, or ``None``."""
+    """Unpack into ``dest``; the reason it could not, or ``None``.
+
+    The archive shape is validated *before* any prefix is stripped: an
+    unstripped member name that is absolute or has a ``..`` component is
+    refused outright, since stripping first would let ``/etc/evil`` or
+    ``../evil`` slip past as an apparent (dangerous) top-level token and
+    neutralise the ``data`` filter that runs afterwards as a second line of
+    defence.
+    """
     try:
         with tarfile.open(fileobj=io.BytesIO(archive), mode="r:*") as tar:
             members = tar.getmembers()
+            for member in members:
+                if member.name.startswith("/") or ".." in member.name.split("/"):
+                    return f"archive member refused: {member.name}"
             tops = {m.name.split("/", 1)[0] for m in members}
             if len(tops) != 1:
                 return f"archive has {len(tops)} top-level entries"
-            prefix = tops.pop() + "/"
+            top = tops.pop()
+            prefix = top + "/"
+            has_children = any(m.name.startswith(prefix) for m in members)
+            if not top or top in {".", ".."} or not has_children:
+                return "archive has no top-level directory"
             renamed = [_strip(m, prefix) for m in members if m.name.startswith(prefix)]
             dest.mkdir(parents=True, exist_ok=True)
             tar.extractall(dest, members=renamed, filter="data")

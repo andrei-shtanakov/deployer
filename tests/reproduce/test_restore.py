@@ -104,3 +104,24 @@ def test_unsafe_or_malformed_archives_are_unavailable(tmp_path):
         extract(_raw_tar([("p/../../evil", b"")]), tmp_path / "2") or ""
     )
     assert extract(b"not a tarball", tmp_path / "3") == "archive unreadable: ReadError"
+
+
+def test_absolute_member_is_refused_before_stripping(tmp_path):  # Review Focus 1
+    dest = tmp_path / "out"
+    result = extract(_raw_tar([("/etc/evil", b"")]), dest)
+    assert result == "archive member refused: /etc/evil"
+    assert not dest.exists() or not any(dest.iterdir())
+
+
+def test_dotdot_member_is_refused_before_stripping(tmp_path):  # Review Focus 1
+    dest = tmp_path / "out"
+    result = extract(_raw_tar([("../evil", b"")]), dest)
+    assert result is not None and "refused" in result
+    assert not dest.exists() or not any(dest.iterdir())
+
+
+def test_flat_top_level_file_has_no_top_level_directory(tmp_path):  # Review Focus 1
+    dest = tmp_path / "out"
+    assert extract(_raw_tar([("evil", b"")]), dest) == (
+        "archive has no top-level directory"
+    )
