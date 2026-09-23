@@ -7,9 +7,11 @@ the external review of rev 3 at `ce19753`
 owner's review of 2026-09-22
 (`../../../../_cowork_output/deployer-reproduction-draft-review-2026-09-22.md`). All
 three are dev-only workspace files, absent from clones; every decision they made is
-restated in this document where it applies. Next (owner, 2026-09-23): a **targeted**
-review of the rev 4 → rev 5 diff against the ten findings of the rev-4 review — no
-third full pass; if it passes, a plan. No code exists for this design.
+restated in this document where it applies. The owner-ordered **targeted** review of
+the rev 4 → rev 5 diff (2026-09-23,
+`../../../../_cowork_output/deployer-reproduction-spec-rev5-targeted-review-2026-09-23.md`)
+passed subject to four minor fixes, applied in this text, with no further review
+required. Next: a plan. No code exists for this design.
 **Base:** the reading layer as merged on `master` at `770066d` (PR #72): `forge.py`,
 `diagnose.py`, `deployer diagnose`; **snapshot schema 1.2** (`forge.py:22`, which
 added `Evidence.level`), verdict schema 1.1 (`diagnose.py:50`).
@@ -373,9 +375,14 @@ own slice, with its own input contract.
 
 `deployer diagnose <run> --reproduce` adds a `reproduction` section to the verdict
 document (verdict schema 1.1 → 1.2, additive; without `--reproduce` the document is
-unchanged). Each try's `manifest.json` holds the same section. **Every relative path
-in it is relative to the try directory** (`…/attempt-<n>/tries/<seq>/`); the verdict
-copy carries that directory as `try_dir`.
+unchanged). Each try's `manifest.json` holds the same section. Relative paths have
+**two bases, fixed by field**: paths that name the project — `binding.dockerfile`,
+`binding.context`, `location.file`, `path_absent.path`, `ignore_file.path` — are
+relative to the build context (`context/`, identical to `source/`); paths that name an
+artifact of the try — `build.stdout`, `build.stderr`, `path_absent.listing` and any
+`output_file` — are relative to the try directory (`…/attempt-<n>/tries/<seq>/`).
+`try_dir` itself is relative to the working directory the command ran in, and the
+verdict copy carries it so both bases resolve from the verdict alone.
 
 ```json
 {
@@ -425,7 +432,8 @@ copy carries that directory as `try_dir`.
 a probe Dockerfile with a missing COPY source.)
 
 **Invariants.** `status` ∈ `attempted | refused | unavailable | not_requested`;
-`refused`/`unavailable` have `refusal` set and no `build`/`comparison`. Check status ∈
+`refused`/`unavailable` have `refusal` set and no `build`/`comparison` — §7 applies
+only to `status: attempted`. Check status ∈
 `passed | failed | skipped | observation | inconclusive` — the one set used everywhere.
 A `failed` check has a `finding` and at least one `evidence` entry; `skipped` and
 `inconclusive` have a `reason`. Evidence entries are typed (`path_absent`,
@@ -488,8 +496,11 @@ across them. With the same backend the builder's error line is the signature.
 
 ### 7.3 The states — evaluated in this order; the first that applies wins
 
-1. `not_attempted` — reproduction refused, restoration unavailable, or the build
-   could not start (`launch_error` other than `timeout`). Reason recorded.
+§7 is evaluated only for `status: attempted`; a refusal or an unavailable tree ends
+earlier with `refusal` set and no `comparison` (§6).
+
+1. `not_attempted` — the build could not start (`launch_error` other than
+   `timeout`). Reason recorded.
 2. `inconclusive` (`build did not finish`) — `launch_error: timeout`.
 3. `not_reproduced` — the local build exited 0. Checked **before** any binding: a
    successful build has no failed instruction to bind.
@@ -546,8 +557,11 @@ builder, no network). Each case is a **bundle** in `tests/fixtures/reproduction/
 | `run-5` | `937d465` (`polygon/run-5`), evidence `9e89daa` | exact; syntax check 2 failed, line 1; `builder_check` skipped; local `Error: FROM requires …`, exit 125, bound `parser_finding_keyword` line 1; `not_compared`; `reproduced_with_differences` |
 
 **Negative cases** — each derived from one base case; the **Changes** column lists
-every file of the bundle that differs from the base, so the bundle stays internally
-consistent:
+every *input* file of the bundle that differs from the base, so the bundle stays
+internally consistent. In every negative case `PROVENANCE.md` records the base case and
+each change, and `expected.json` is written for the case; a change to a file under
+`tree/` (the workflow included, which lives at `tree/.github/workflows/…`) is mirrored
+in `tree-listing.json`:
 
 | Case | Base | Changes | Expected |
 |---|---|---|---|
@@ -562,11 +576,11 @@ consistent:
 | `context-subdir` | run-1 | workflow and snapshot as above with `… app` | refused `unsupported build configuration: context app` |
 | `endpoint-env` | run-1 | `endpoint.json`: `DOCKER_HOST` set | refused `endpoint set by DOCKER_HOST not confirmed local` |
 | `endpoint-remote` | run-1 | `endpoint.json`: default connection `ssh://core@10.0.0.5/…` | refused naming the endpoint |
-| `generating-step` | run-1 | workflow: a step `run: make gen` between checkout and build; snapshot: `all_steps` gains it (renumbered), job text gains its group block | approximation naming the step; checks as run-1 |
+| `generating-step` | run-1 | workflow: a step `run: make gen` between checkout and build; snapshot: `all_steps` gains it and every later step is renumbered, together with the existing `steps[].ref.number` and every step-scoped `evidence.source.number` (the build moves from 3 to 4); job text gains its `##[group]Run make gen` block | approximation naming the step; checks as run-1; `reproduced_with_differences` |
 | `gitattributes` | run-1 | `tree/` and `tree-listing.json` gain `.gitattributes` (`* export-subst`) | approximation `.gitattributes present` |
 | `archive-mismatch` | run-1 | `tree-listing.json` lists a file `tree/` lacks | approximation `archive differs from tree listing` |
 | `copy-git` | run-1 | `tree/Dockerfile` gains `COPY .git/HEAD /head`; `tree-listing.json` updated; no `.dockerignore` | approximation `.git reachable` |
-| `run-mount` | run-3 | `tree/Dockerfile` line 15 becomes `RUN --mount=type=bind,target=/src …`; listing updated | approximation `RUN --mount` |
+| `run-mount` | run-3 | `tree/Dockerfile` line 15 becomes `RUN --mount=type=bind,target=/src uv run --frozen python -m unittest discover -s tests`; the snapshot's CI error block (`>>>` line 15, the `#16 [stage-0 …] RUN …` header) and `local.stdout`'s `STEP` line carry the same instruction text | approximation `RUN --mount`; both sides bound 15; signature `equal`; `reproduced_with_differences` |
 | `containerignore` | run-1 | `tree/` and listing gain `.dockerignore` (`tests`) and `.containerignore` (empty) | `ignore_file: differs` (CI `.dockerignore`, local `.containerignore`); checks and comparison otherwise as run-1 — still `reproduced_with_differences`, now with two differing dimensions |
 | `local-success` | run-2 | `local.*`: the recorded output of a successful build, exit 0 | `not_reproduced` (state 3, before binding) |
 | `timeout` | run-3 | fake runtime raises timeout | `inconclusive`, `build did not finish`; `exit_code null`, `build_containers: not_checked` |
@@ -632,4 +646,4 @@ the ten rev-4 findings), not a third full pass.
 | 7 | Comparison order, parse binding, reachability | §7.1–7.3 | exit 0 checked before binding; `signature unavailable`; parse binding needs keyword + single parser finding; `reproduced` stated unreachable and asserted; cases `local-success`, `backend-down`, `signature-missing`, `timeout` |
 | 8 | Binary tarball | §1.4 | `api_bytes`; redirect; size cap; `data` filter; single top-level; failures → unavailable; §8.B contracts |
 | 9 | Acceptance consistency, `other-output` | §8.A | every negative lists all changed bundle files; `other-output` derived from run-3 (a `RUN` with a signature); walk of each case through §1–§7 in the Expected column |
-| 10 | Result/evidence/exit/cleanup | §6, §4.4 | one status set; typed evidence; paths relative to `try_dir`; `launch_error`; `restoration` dimension in the example; "in every case except two"; `build_containers` recorded, killed-build leftovers `not_checked` |
+| 10 | Result/evidence/exit/cleanup | §6, §4.4 | one status set; typed evidence; two path bases fixed by field (context / try dir); `launch_error`; `restoration` dimension in the example; "in every case except two"; `build_containers` recorded, killed-build leftovers `not_checked` |

@@ -59,13 +59,14 @@ paragraph.
   failed job whose failed step is its only, supported `docker build .`; `push`/`workflow_dispatch`
   only, workflow and checkout both at `head_sha`; a confirmed-local endpoint only; the build IS the reproduction — no image run in this slice.
   Fixed points: `exact` is a property of the restored TREE, earned from the checkout log's
-  SHA, the checkout options, inert preceding steps and no transforming `.gitattributes`,
+  SHA, the checkout options, inert preceding steps (exact strings) and no `.gitattributes` at all,
   else `approximation` with the unmet conditions named; the workflow's build line is
   parsed, never executed, and built through a new adapter over `container_run`, not
   `verify._build`; the parser runs a closed list of syntax checks, the builder's `--check`
   runs only under `--reproduce`; CI vs local is one state from a fixed order, identity =
-  Dockerfile line span; `--reproduce` never changes the exit code; acceptance = committed
-  offline cases (run-1/2/3/5 trees vendored + one-change negatives), uv-minimal dropped;
+  Dockerfile line span; `--reproduce` keeps the reading layer's exit code except two exit-2 cases (with
+  `--container-host`; an uncreatable try dir or a `source.json` naming another `head_sha`); acceptance = committed
+  offline cases (run-1/2/3/5 trees vendored + derived negative bundles listing every changed file), uv-minimal dropped;
   no causal class, no ENVIRONMENT candidate.
 - [ ] Fix authoring from a diagnosis: artifact edit, L1/L2, confirm the diagnosed cause is gone @owner:repo:deployer @blocked_by:todo://deployer/ci-failure-diagnosis @id:ci-fix-authoring @epic:eco.dark-factory
   — the other half of the founding doc's "generate/fix ... diagnose failed CI", split
