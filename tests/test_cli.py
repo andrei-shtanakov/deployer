@@ -24,6 +24,7 @@ from deployer.models import (
     FailureKind,
     VerificationReport,
 )
+from deployer.reproduce import ReproductionSection, TryDirError
 
 
 @pytest.fixture(autouse=True)
@@ -1611,3 +1612,54 @@ def test_the_real_project_fixture_diagnoses_through_the_cli(
     (failure,) = document["failures"]
     assert failure["kind"] is None
     assert any(o.startswith("assertion error: ") for o in failure["observations"])
+
+
+# --- Task 13: `deployer diagnose --reproduce` -----------------------------
+
+
+def test_reproduce_with_container_host_is_exit_2(capsys) -> None:
+    code = cli.main(
+        ["diagnose", RUN_URL, "--reproduce", "--container-host", "ssh://u@h"]
+    )
+    assert code == 2
+    assert "--reproduce" in capsys.readouterr().err
+
+
+def test_reproduce_keeps_the_reading_exit_code(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "diagnose_run", lambda s: diagnosis("UNCLASSIFIED"))
+    monkeypatch.setattr(cli, "resolve_runtime", lambda *a, **k: None)
+    section = ReproductionSection(status="refused", refusal="event x not supported")
+    monkeypatch.setattr(cli, "reproduce_run", lambda *a, **k: section)
+    out = tmp_path / "v.json"
+    assert (
+        cli.main(["diagnose", RUN_URL, "--reproduce", "--output-file", str(out)]) == 3
+    )
+    document = json.loads(out.read_text())
+    assert document["verdict_schema_version"] == "1.2"
+    assert document["reproduction"]["status"] == "refused"
+
+
+def test_try_dir_error_is_exit_2(monkeypatch, tmp_path, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "diagnose_run", lambda s: diagnosis("UNCLASSIFIED"))
+    monkeypatch.setattr(cli, "resolve_runtime", lambda *a, **k: None)
+
+    def boom(*a, **k):
+        raise TryDirError("source.json names another head_sha")
+
+    monkeypatch.setattr(cli, "reproduce_run", boom)
+    assert cli.main(["diagnose", RUN_URL, "--reproduce"]) == 2
+    assert "another head_sha" in capsys.readouterr().err
+
+
+def test_without_reproduce_nothing_is_called(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "diagnose_run", lambda s: diagnosis("UNCLASSIFIED"))
+
+    def forbidden(*a, **k):
+        raise AssertionError("reproduce_run must not run without --reproduce")
+
+    monkeypatch.setattr(cli, "reproduce_run", forbidden)
+    assert cli.main(["diagnose", RUN_URL]) == 3
+    assert not (tmp_path / ".deployer-runs").exists()

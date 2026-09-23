@@ -22,7 +22,14 @@ from deployer.bench import (
 )
 from deployer.diagnose import RunDiagnosis, diagnose_run, render_verdict
 from deployer.facts import TargetConfigError, analyze_project
-from deployer.forge import AdapterRefusal, GhError, RunRef, StepRef, fetch_failed_run
+from deployer.forge import (
+    AdapterRefusal,
+    GhError,
+    RunRef,
+    StepRef,
+    SubprocessGh,
+    fetch_failed_run,
+)
 from deployer.llm import AnthropicAuthor
 from deployer.models import (
     BenchReport,
@@ -32,6 +39,7 @@ from deployer.models import (
     VerificationReport,
     satisfies_declared_smoke,
 )
+from deployer.reproduce import ReproductionSection, TryDirError, reproduce_run
 from deployer.runtime import (
     RuntimeConfigError,
     probe_runtime_versions,
@@ -458,10 +466,36 @@ def _print_diagnosis(diagnosis: RunDiagnosis) -> None:
     )
 
 
+def _print_reproduction(section: ReproductionSection) -> None:
+    """Headline findings, one per line (§6)."""
+    print(f"reproduction: {section.status}")
+    if section.refusal:
+        label = "refused" if section.status == "refused" else "unavailable"
+        print(f"  {label}: {section.refusal}")
+    if section.restoration is not None:
+        unmet = "; ".join(section.restoration.unmet)
+        line = f"  restoration: {section.restoration.state}"
+        print(f"{line} ({unmet})" if unmet else line)
+    for check in section.checks:
+        if check.status in ("failed", "inconclusive"):
+            print(f"  {check.status}: {check.finding or check.reason}")
+    if section.comparison is not None:
+        extra = f" ({section.comparison.reason})" if section.comparison.reason else ""
+        print(f"  comparison: {section.comparison.state}{extra}")
+    if section.try_dir:
+        print(f"  try: {section.try_dir}")
+
+
 def _cmd_diagnose(args: argparse.Namespace) -> int:
     resolved = _resolve_run_ref(args)
     if isinstance(resolved, str):
         print(f"error: {resolved}", file=sys.stderr)
+        return 2
+    if args.reproduce and args.container_host:
+        print(
+            "error: --reproduce builds locally only; drop --container-host",
+            file=sys.stderr,
+        )
         return 2
     ref, attempt = resolved
     try:
@@ -474,9 +508,30 @@ def _cmd_diagnose(args: argparse.Namespace) -> int:
         return 5
     diagnosis = diagnose_run(result)
     _print_diagnosis(diagnosis)
+    section: ReproductionSection | None = None
+    if args.reproduce:
+        try:
+            rt = resolve_runtime(args.container_tool, None)
+            runtime_error = None if rt is not None else "no container tool found"
+        except RuntimeConfigError as exc:
+            rt, runtime_error = None, str(exc)
+        try:
+            section = reproduce_run(
+                result,
+                gh=SubprocessGh(),
+                rt=rt,
+                runtime_error=runtime_error,
+                env=os.environ,
+                root=Path.cwd(),
+                build_timeout=args.build_timeout,
+            )
+        except TryDirError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        _print_reproduction(section)
     if args.output_file is not None:
         try:
-            Path(args.output_file).write_text(render_verdict(diagnosis))
+            Path(args.output_file).write_text(render_verdict(diagnosis, section))
         except OSError as exc:
             print(f"error: cannot write {args.output_file}: {exc}", file=sys.stderr)
             return 2
@@ -731,6 +786,18 @@ def main(argv: list[str] | None = None) -> int:
     p_diagnose.add_argument(
         "--output-file", default=None, help="write the verdict document here"
     )
+    p_diagnose.add_argument(
+        "--reproduce",
+        action="store_true",
+        help="restore the tree at head_sha and rebuild the failed step locally",
+    )
+    p_diagnose.add_argument(
+        "--build-timeout",
+        type=int,
+        default=DEFAULT_BUILD_TIMEOUT,
+        help="seconds allowed for the reproduction build",
+    )
+    _add_runtime_flags(p_diagnose)
     p_diagnose.set_defaults(func=_cmd_diagnose)
 
     p_bench = sub.add_parser("bench", help="corpus bench operations")
