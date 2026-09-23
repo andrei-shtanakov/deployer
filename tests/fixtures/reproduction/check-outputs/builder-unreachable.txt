@@ -1,0 +1,2 @@
+# exit=1
+ERROR: Cannot connect to the Docker daemon at tcp://127.0.0.1:1. Is the docker daemon running?
