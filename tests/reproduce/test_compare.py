@@ -5,6 +5,7 @@ from pathlib import Path
 from deployer.forge import load_snapshot
 from deployer.reproduce.compare import (
     Side,
+    _normalise_builder_error,
     ci_digests,
     ci_instruction,
     ci_signature,
@@ -208,6 +209,81 @@ def test_copy_across_backends_is_not_compared():
         "reproduced_with_differences",
         "not_compared",
     )
+
+
+RUN1_ERROR_A = (
+    "ERROR: failed to build: failed to solve: failed to compute cache key: "
+    "failed to calculate checksum of ref a4efb8b6-20f9-46f4-b827-91ac0547be3a::"
+    't0jkpmm4mq76x0tyiprh1w5o7: "/docs/setup.md": not found'
+)
+RUN1_ERROR_B = (  # same failure, a different (random) BuildKit session ref
+    "ERROR: failed to build: failed to solve: failed to compute cache key: "
+    "failed to calculate checksum of ref 11111111-2222-3333-4444-555555555555::"
+    'zzzzzzzzzzzzzzzzzzzzzzzz: "/docs/setup.md": not found'
+)
+RUN5_ERROR_OLD_BUILDX = (
+    "ERROR: failed to build: failed to solve: dockerfile parse error on line 1: "
+    "FROM requires either one or three arguments"
+)
+RUN5_ERROR_NEW_BUILDX = (
+    "ERROR: failed to solve: dockerfile parse error on line 1: "
+    "FROM requires either one or three arguments"
+)
+
+
+def test_normalise_builder_error_ignores_the_volatile_session_ref():
+    assert _normalise_builder_error(RUN1_ERROR_A) == _normalise_builder_error(
+        RUN1_ERROR_B
+    )
+
+
+def test_normalise_builder_error_ignores_the_buildx_prefix_difference():
+    assert _normalise_builder_error(RUN5_ERROR_OLD_BUILDX) == _normalise_builder_error(
+        RUN5_ERROR_NEW_BUILDX
+    )
+
+
+def test_normalise_builder_error_keeps_genuinely_different_messages_apart():
+    a = 'ERROR: failed to solve: process "/bin/sh -c false" did not complete: exit 1'
+    b = 'ERROR: failed to solve: process "/bin/sh -c true" did not complete: exit 1'
+    assert _normalise_builder_error(a) != _normalise_builder_error(b)
+
+
+def _copy_side(lines, builder_error):
+    return Side(
+        InstructionRef(kind="span", lines=lines, bound_by="buildkit_error_block"),
+        None,
+        builder_error,
+    )
+
+
+def test_copy_failures_that_differ_only_by_ref_reproduce_with_differences():
+    parsed = parse("FROM python:3.12-slim\n\nCOPY docs/setup.md ./setup.md\n")
+    result = compare(
+        exit_code=1,
+        launch_error=None,
+        ci=_copy_side((3, 3), RUN1_ERROR_A),
+        local=_copy_side((3, 3), RUN1_ERROR_B),
+        parsed=parsed,
+        dimensions={"backend": "same", "host_arch": "unknown"},
+        values={"backend": ("docker", "docker")},
+    )
+    assert result.signature_match == "equal"
+    assert result.state == "reproduced_with_differences"
+
+
+def test_parse_failures_with_different_buildx_prefixes_are_equal():
+    parsed = parse("FROM python:3.12-slim extra\n")
+    result = compare(
+        exit_code=1,
+        launch_error=None,
+        ci=_copy_side((1, 1), RUN5_ERROR_OLD_BUILDX),
+        local=_copy_side((1, 1), RUN5_ERROR_NEW_BUILDX),
+        parsed=parsed,
+        dimensions={"backend": "same"},
+        values={"backend": ("docker", "docker")},
+    )
+    assert result.signature_match == "equal"
 
 
 def test_digest_dimension_never_claims_differs():

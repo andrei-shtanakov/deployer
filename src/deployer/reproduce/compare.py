@@ -21,6 +21,8 @@ _STEP_RE = re.compile(r"^(?:\[\d+/\d+\] )?STEP \d+/\d+: (.*)$")
 _BUILDING_AT_RE = re.compile(r'building at STEP "(.*?)": ')
 _RESOLVE_RE = re.compile(r"resolve (\S+)@(sha256:[0-9a-f]{64})")
 _PODMAN_ERROR_RE = re.compile(r"^Error: (\S+) ")
+_FAILED_TO_SOLVE = "failed to solve:"
+_REF_TOKEN_RE = re.compile(r"ref [^\s:]+::[^\s:]+:")
 
 
 @dataclass(frozen=True)
@@ -198,7 +200,30 @@ def _signature_match(
         return "not_compared"
     if ci.builder_error is None or local.builder_error is None:
         return "unavailable"
-    return "equal" if ci.builder_error == local.builder_error else "unequal"
+    return (
+        "equal"
+        if _normalise_builder_error(ci.builder_error)
+        == _normalise_builder_error(local.builder_error)
+        else "unequal"
+    )
+
+
+def _normalise_builder_error(line: str) -> str:
+    """Strip cross-run/cross-version noise from a builder error line.
+
+    Two things vary between otherwise-identical failures of the same
+    instruction and would otherwise read as ``unequal``: Buildx wraps
+    ``failed to solve:`` in an outer ``failed to build:`` on some versions
+    and not others, so everything before ``failed to solve:`` is dropped
+    when that marker is present; and a COPY/checksum error carries a
+    BuildKit session reference shaped ``ref <session>::<digest>:`` that is
+    random per build, so any such token is replaced with a fixed
+    placeholder.
+    """
+    idx = line.find(_FAILED_TO_SOLVE)
+    if idx != -1:
+        line = line[idx:]
+    return _REF_TOKEN_RE.sub("ref <ref>:", line)
 
 
 def _error_blocks(lines: list[str]) -> list[tuple[int, int]]:
