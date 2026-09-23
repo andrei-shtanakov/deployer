@@ -5,3 +5,4 @@ Base: `run-1` — see `../run-1/PROVENANCE.md` for how every unchanged file was 
 Changes from the base (every input file that differs):
 
 - `tree/.github/workflows/diagnosis-polygon.yml`: `strategy.matrix` (`os: [ubuntu-24.04]`) on job `build`; `tree-listing.json` entry sha recomputed. The snapshot's job name stays `build`.
+- `local.stderr`: host paths anonymised to `/Users/example`.

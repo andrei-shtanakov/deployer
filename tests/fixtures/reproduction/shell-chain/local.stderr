@@ -1,2 +1,2 @@
-Error: building at STEP "COPY docs/setup.md ./setup.md": checking on sources under "/Users/Andrei_Shtanakov/labs/all_ai_orchestrators/deployer/tests/fixtures/reproduction/run-1/tree": copier: stat: "/docs/setup.md": no such file or directory
+Error: building at STEP "COPY docs/setup.md ./setup.md": checking on sources under "/Users/example/labs/all_ai_orchestrators/deployer/tests/fixtures/reproduction/run-1/tree": copier: stat: "/docs/setup.md": no such file or directory
 

@@ -19,4 +19,5 @@
   wrapped as `{"tool": "podman", "connections": <that JSON>, "env": {}}`; the
   `Identity` paths' home directory is replaced by `/Users/example`.
 - `expected.json`: Spec §8.A: exact; copy_sources failed docs/setup.md line 11; local exit 125 bound step_text 11; not_compared; reproduced_with_differences. The recording matches.
-- Changes: no change.
+- Changes: `local.stderr`: host paths anonymised to `/Users/example` (a leftover
+  home-directory path from the original recording, not caught with the rest).

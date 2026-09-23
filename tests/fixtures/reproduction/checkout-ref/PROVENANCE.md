@@ -5,3 +5,4 @@ Base: `run-1` — see `../run-1/PROVENANCE.md` for how every unchanged file was 
 Changes from the base (every input file that differs):
 
 - `tree/.github/workflows/diagnosis-polygon.yml`: `with: {ref: main}` on the checkout step; `tree-listing.json` entry sha recomputed.
+- `local.stderr`: host paths anonymised to `/Users/example`.

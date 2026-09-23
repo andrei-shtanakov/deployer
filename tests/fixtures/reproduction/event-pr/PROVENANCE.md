@@ -5,3 +5,4 @@ Base: `run-1` — see `../run-1/PROVENANCE.md` for how every unchanged file was 
 Changes from the base (every input file that differs):
 
 - `snapshot.json`: `event` `workflow_dispatch` → `pull_request`.
+- `local.stderr`: host paths anonymised to `/Users/example`.

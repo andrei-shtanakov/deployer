@@ -6,3 +6,4 @@ Changes from the base (every input file that differs):
 
 - `tree/.dockerignore` (`tests\n`) and `tree/.containerignore` (empty) added; `tree-listing.json` gains both blob entries.
 - `local.*` unchanged: the recorded build fails at line 11, which neither ignore file affects.
+- `local.stderr`: host paths anonymised to `/Users/example`.

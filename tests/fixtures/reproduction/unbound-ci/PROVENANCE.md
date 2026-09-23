@@ -5,3 +5,4 @@ Base: `run-1` — see `../run-1/PROVENANCE.md` for how every unchanged file was 
 Changes from the base (every input file that differs):
 
 - `snapshot.json`: the BuildKit error block `Dockerfile:11` … `--------------------` (8 lines, incl. the `>>>` line) removed from the job text.
+- `local.stderr`: host paths anonymised to `/Users/example`.
