@@ -40,8 +40,12 @@ def copy_source_checks(
             if inst.keyword == "ADD" and raw.startswith(_REMOTE_PREFIXES):
                 skipped.append(_skip(inst, f"remote ADD source {raw}"))
                 continue
+            source = _norm(raw)
+            if _has_unmodelled_chars(source):
+                skipped.append(_skip(inst, f"source pattern not modelled: {source}"))
+                continue
             findings.extend(
-                _check_source(inst, _norm(raw), files, context, dockerfile, rules)
+                _check_source(inst, source, files, context, dockerfile, rules)
             )
     if not findings:
         findings = [ReproductionCheck(check_id="copy_sources", status="passed")]
@@ -88,7 +92,11 @@ def context_conditions(parsed: ParsedDockerfile, rules: IgnoreRules) -> list[str
         if inst.keyword in ("COPY", "ADD") and not _from_flags(inst):
             sources, _ = _sources(inst)
             for source in (_norm(s) for s in sources):
-                root_glob = "/" not in source and any(ch in source for ch in "*?")
+                root_glob = (
+                    not _has_unmodelled_chars(source)
+                    and "/" not in source
+                    and any(ch in source for ch in "*?")
+                )
                 if (source == "." or root_glob or source.startswith(".git")) and (
                     not git_excluded
                 ):
@@ -131,6 +139,11 @@ def _sources(inst: Instruction) -> tuple[list[str], str | None]:
 def _norm(source: str) -> str:
     """Context-relative form of a local source; ``.`` for the root."""
     return os.path.normpath(source).lstrip("/") or "."
+
+
+def _has_unmodelled_chars(source: str) -> bool:
+    """Character classes and escapes are a source form this slice doesn't model."""
+    return "[" in source or "\\" in source
 
 
 def _check_source(

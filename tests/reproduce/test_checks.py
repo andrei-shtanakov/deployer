@@ -72,6 +72,24 @@ def test_empty_glob_and_remote_add(tmp_path):
     assert any(c.status == "skipped" and "remote" in (c.reason or "") for c in checks)
 
 
+def test_bracket_glob_source_is_skipped_not_absent(tmp_path):
+    ctx = _tree(tmp_path)
+    (ctx / "file5.txt").write_text("x")
+    text = "FROM a\nCOPY file[0-9].txt /dst/\n"
+    checks = copy_source_checks(parse(text), ctx, "Dockerfile", load_rules(ctx, None))
+    assert [c.finding for c in checks if c.status == "failed"] == []
+    assert any(
+        c.status == "skipped"
+        and c.reason == "COPY at line 2: source pattern not modelled: file[0-9].txt"
+        for c in checks
+    )
+
+
+def test_bracket_source_is_not_a_root_glob_for_git_reachability(tmp_path):
+    rules = load_rules(tmp_path, None)
+    assert context_conditions(parse("FROM a\nCOPY file[0-9].txt /dst/\n"), rules) == []
+
+
 def test_unmodelled_ignore_pattern_skips_the_check(tmp_path):
     ctx = _tree(tmp_path)
     (ctx / ".dockerignore").write_text("a[bc]\n")
