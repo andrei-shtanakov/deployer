@@ -119,8 +119,7 @@ def _git_conditions(inst: Instruction) -> list[str]:
             return []  # inline content: nothing is read from the context
         return [f".git exclusion not proven: {where} ({why})"]
     return [
-        f".git exclusion not proven: {inst.keyword} {source} "
-        f"at line {inst.first_line}"
+        f".git exclusion not proven: {inst.keyword} {source} at line {inst.first_line}"
         for source in (_norm(s) for s in sources)
         if _may_reach_git(source)
     ]
