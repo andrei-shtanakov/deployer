@@ -11,6 +11,7 @@ from deployer.reproduce.dockerfile import (
     Instruction,
     ParsedDockerfile,
     opens_heredoc,
+    unread_reason,
 )
 from deployer.reproduce.ignore import IgnoreRules, excluded_by, glob_to_regex
 from deployer.reproduce.model import Location, ReproductionCheck, ReproEvidence
@@ -27,6 +28,15 @@ def copy_source_checks(
     parsed: ParsedDockerfile, context: Path, dockerfile: str, rules: IgnoreRules
 ) -> list[ReproductionCheck]:
     """Every local COPY/ADD source against ``context`` minus ignored paths."""
+    unread = unread_reason(parsed)
+    if unread is not None:
+        return [
+            ReproductionCheck(
+                check_id="copy_sources",
+                status="skipped",
+                reason=f"Dockerfile not fully read ({unread})",
+            )
+        ]
     if rules.unsupported is not None:
         return [
             ReproductionCheck(
@@ -107,6 +117,9 @@ def context_conditions(parsed: ParsedDockerfile) -> list[str]:
     path segment that can match ``.git``, or a form this slice cannot read)
     is an unmet condition, so the restoration is an approximation.
     """
+    unread = unread_reason(parsed)
+    if unread is not None:
+        return [f".git exclusion not proven: Dockerfile not fully read ({unread})"]
     unmet: list[str] = []
     for inst in parsed.instructions:
         if inst.keyword in ("COPY", "ADD") and not _from_flags(inst):

@@ -272,3 +272,19 @@ def test_an_unmodelled_source_is_skipped_not_checked(tmp_path, args, source):
     assert [(c.status, c.reason) for c in checks] == [
         ("skipped", f"COPY at line 2: source pattern not modelled: {source}")
     ]
+
+
+def test_an_unread_document_proves_nothing(tmp_path):
+    """A non-default escape directive: the parse is not trusted (ninth review of #77)."""
+    (tmp_path / "safe").write_text("x")
+    parsed = parse("# escape=`\nFROM a\nCOPY safe `\n.git /dst/\n")
+    reason = "escape directive not modelled: `"
+    assert context_conditions(parsed) == [
+        f".git exclusion not proven: Dockerfile not fully read ({reason})"
+    ]
+    checks = copy_source_checks(
+        parsed, tmp_path, "Dockerfile", load_rules(tmp_path, None)
+    )
+    assert [(c.check_id, c.status, c.reason) for c in checks] == [
+        ("copy_sources", "skipped", f"Dockerfile not fully read ({reason})")
+    ]
