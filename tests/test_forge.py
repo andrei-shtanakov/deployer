@@ -979,3 +979,24 @@ def test_subprocess_api_bytes_maps_http_status(monkeypatch):
     with pytest.raises(GhError) as info:
         SubprocessGh().api_bytes(["repos/o/r/tarball/x"], timeout=5)
     assert info.value.status == 404
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {},
+        {"sha": "abc", "tree": []},
+        {"sha": "abc", "tree": [], "truncated": None},
+        {"sha": "abc", "truncated": False},
+        {"sha": "abc", "tree": {}, "truncated": False},
+        {"tree": [], "truncated": False},
+        {"sha": "abc", "tree": [{"path": "a", "mode": "100644"}], "truncated": False},
+        {"sha": "abc", "tree": ["not-an-object"], "truncated": False},
+        [],
+    ],
+)
+def test_fetch_tree_listing_refuses_an_incomplete_response(body):
+    """Unknown completeness must never read as ``truncated=False`` (spec §1.3)."""
+    with pytest.raises(GhError, match="tree listing malformed") as info:
+        fetch_tree_listing("o/r", "abc", BytesGh(b"", body))
+    assert info.value.status is None
