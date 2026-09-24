@@ -167,3 +167,11 @@ def test_merge_builder_skipped_with_raw_output_attaches_it_as_evidence():
     assert skipped.evidence == [
         ReproEvidence(kind="output_file", path="check.stdout", text="raw output here")
     ]
+
+
+def test_lint_observations_point_at_the_checked_dockerfile():
+    code, text = _recorded("docs-lint.txt")
+    _, lint = read_check_output(code, None, text, "docker/Dockerfile.release")
+    assert [c.location.file for c in lint if c.location] == [
+        "docker/Dockerfile.release"
+    ]

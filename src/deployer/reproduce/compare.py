@@ -307,14 +307,20 @@ def _parse_binding(
 
 
 def _ci_digest_for(image: str, ci: dict[str, str]) -> str | None:
-    for key, digest in ci.items():
-        if (
-            key == image
-            or key.endswith("/" + image)
-            or key.endswith("/library/" + image)
-        ):
-            return digest
-    return None
+    """The CI digest of ``image``: an exact key first, else ONE suffix match.
+
+    ``docker.io/library/python:3.12-slim`` is the BuildKit spelling of
+    ``python:3.12-slim``; a second candidate (``vendor/python:3.12-slim``)
+    makes the mapping ambiguous, and an ambiguous mapping proves nothing.
+    """
+    if image in ci:
+        return ci[image]
+    candidates = [
+        digest
+        for key, digest in ci.items()
+        if key.endswith("/" + image) or key.endswith("/library/" + image)
+    ]
+    return candidates[0] if len(candidates) == 1 else None
 
 
 def _clean(text: str) -> str:
