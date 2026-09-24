@@ -130,7 +130,7 @@ only that the **bytes the builder received** equal the restored tree:
 
 | Restoration | Conditions | Recorded as |
 |---|---|---|
-| **exact** | all of: (a) every step between checkout and build is on the inert list below; (b) the Git tree at `head_sha` contains no `.gitattributes` file at any depth; (c) the extracted archive equals the Git tree listing — same paths, file modes (`100644`/`100755`/`120000`) and symlink targets — and the listing is not truncated; (d) no `COPY`/`ADD` source is `.`, a glob in the context root, or a path starting with `.git`, unless the applicable ignore file (§3.2) excludes `.git`; (e) no `RUN --mount` of any type | `restoration: exact` |
+| **exact** | all of: (a) every step between checkout and build is on the inert list below; (b) the Git tree at `head_sha` contains no `.gitattributes` file at any depth; (c) the extracted archive equals the Git tree listing — same paths, file modes (`100644`/`100755`/`120000`) and symlink targets — and the listing is not truncated; (d) no local `COPY`/`ADD` source may reach `.git` — none is `.`, none has a first path segment that can match `.git` (literally or as a glob), and none is a form this slice cannot read, including a source outside the closed alphabet of §3.2; the ignore file is **not** consulted for this condition (see the note below); (e) no `RUN --mount` of any type | `restoration: exact` |
 | **approximation** | any condition false or unknown | `restoration: approximation` with every unmet condition listed |
 | **unavailable** | the archive or the tree listing cannot be fetched or read (§1.4) | `restoration: unavailable` — reproduction stops; the reading layer's outcome stands |
 
@@ -146,6 +146,16 @@ archive (GitHub builds archives with `git archive`), and the tree listing still 
 them. Any `.gitattributes` makes the tree an approximation, whatever it contains —
 filters, `export-subst`, `eol` and the rest are never evaluated and never executed.
 Condition (c) is what catches everything else the archive may have changed.
+
+**Condition (d) is narrowed on purpose (owner, 2026-09-24).** An earlier text let
+the applicable ignore file prove that `.git` stays out of the context. Four review
+rounds of the implementation (#77) each produced a new counter-example to that proof
+— an unmodelled pattern, a re-including negation such as `!.git/HEAD`, an unmodelled
+`COPY` flag, a glob like `*/HEAD`, `COPY .git` with `!.git/config` — the same pattern
+that stopped the causal catalogue. The slice therefore never claims the proof: any
+source that may reach `.git` is recorded as `.git exclusion not proven: …` and the
+restoration is an approximation. A `COPY --from` source and a heredoc source read
+nothing from the context and do not count.
 
 ### 1.4 Fetching the tree — a binary path through the forge
 
@@ -267,6 +277,22 @@ Docker's rule: `<Dockerfile-name>.dockerignore` next to the Dockerfile, else the
 Supported patterns: literal paths, `*`, `?`, `**`, leading `!`, Docker's last-match-
 wins order. Anything else (character classes, escapes) → `skipped: ignore pattern not
 modelled: <pattern>`.
+
+**The source alphabet is closed (owner, 2026-09-24).** A `COPY`/`ADD` source this
+slice reads is a literal path or a glob of `*`, `?`, `**`, `[...]` over letters,
+digits and `. _ - / + = , @ ~`. Anything else — an escape, an `ARG` substitution
+(`$X`, `${X}`), whitespace, a control character — is not read: the source check
+records it `skipped: source pattern not modelled`, and §1.3 (d) records `.git
+exclusion not proven`, so the restoration is an approximation. One gate decides both,
+so the two checks can never disagree about what was read; review rounds of #77 kept
+finding places where two separate heuristics did.
+The alphabet applies to the source **as written**: the shell form is split on
+whitespace with no unquoting or unescaping (a quote, a backslash or a `$` reaches the
+alphabet and is refused), and a JSON form containing any backslash is unread as a
+whole, because the JSON decoder would resolve the escape before any check sees it.
+A Dockerfile whose `# escape=` directive is not `\` is not read at all: the split
+into instructions depends on it, so the syntax checks, the source check and §1.3 (d)
+all report `Dockerfile not fully read` instead of trusting that split.
 
 Every local source of every `COPY`/`ADD` is resolved against `context/` minus the
 ignored paths. Findings: `source <path> absent from the context`, `source <path>
@@ -579,7 +605,7 @@ in `tree-listing.json`:
 | `generating-step` | run-1 | workflow: a step `run: make gen` between checkout and build; snapshot: `all_steps` gains it and every later step is renumbered, together with the existing `steps[].ref.number` and every step-scoped `evidence.source.number` (the build moves from 3 to 4); job text gains its `##[group]Run make gen` block | approximation naming the step; checks as run-1; `reproduced_with_differences` |
 | `gitattributes` | run-1 | `tree/` and `tree-listing.json` gain `.gitattributes` (`* export-subst`) | approximation `.gitattributes present` |
 | `archive-mismatch` | run-1 | `tree-listing.json` lists a file `tree/` lacks | approximation `archive differs from tree listing` |
-| `copy-git` | run-1 | `tree/Dockerfile` gains `COPY .git/HEAD /head`; `tree-listing.json` updated; no `.dockerignore` | approximation `.git reachable` |
+| `copy-git` | run-1 | `tree/Dockerfile` gains `COPY .git/HEAD /head`; `tree-listing.json` updated; no `.dockerignore` | approximation `.git exclusion not proven` |
 | `run-mount` | run-3 | `tree/Dockerfile` line 15 becomes `RUN --mount=type=bind,target=/src uv run --frozen python -m unittest discover -s tests`; the snapshot's CI error block (`>>>` line 15, the `#16 [stage-0 …] RUN …` header) and `local.stdout`'s `STEP` line carry the same instruction text | approximation `RUN --mount`; both sides bound 15; signature `equal`; `reproduced_with_differences` |
 | `containerignore` | run-1 | `tree/` and listing gain `.dockerignore` (`tests`) and `.containerignore` (empty) | `ignore_file: differs` (CI `.dockerignore`, local `.containerignore`); checks and comparison otherwise as run-1 — still `reproduced_with_differences`, now with two differing dimensions |
 | `local-success` | run-2 | `local.*`: the recorded output of a successful build, exit 0 | `not_reproduced` (state 3, before binding) |
