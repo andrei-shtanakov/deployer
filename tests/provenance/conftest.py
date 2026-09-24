@@ -48,3 +48,10 @@ def make_repo_with_origin(root: Path, url: str = "git@github.com:o/r.git") -> Pa
 @pytest.fixture()
 def repo(tmp_path: Path) -> Path:
     return make_repo(tmp_path)
+
+
+@pytest.fixture()
+def repo_with_origin(tmp_path: Path) -> Path:
+    root = tmp_path / "origin"
+    root.mkdir()
+    return make_repo_with_origin(root)
