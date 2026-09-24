@@ -5,6 +5,7 @@ import binascii
 from collections.abc import Mapping
 from pathlib import Path
 
+from deployer.provenance import sshsig
 from deployer.provenance.model import NAMESPACE, PRINCIPAL
 
 ALLOWED_FILE = "allowed_signers"
@@ -40,14 +41,21 @@ def _key_body(public_line: str) -> str:
 def validate_public_line(public_line: str) -> None:
     """Reject anything that is not a well-formed SSH public-key line.
 
-    Pure Python, no subprocess. A valid line has at least a ``type`` and a
-    ``base64`` token; the base64 must decode strictly
+    Two layers. First, pure Python, cheap and specific: at least a ``type``
+    and a ``base64`` token; the base64 must decode strictly
     (``base64.b64decode(..., validate=True)``); and the decoded blob's own
     length-prefixed name — the SSH wire format for a public key, a uint32
     big-endian length followed by exactly that many bytes — must equal the
-    ``type`` token. This catches a truncated file (one token, or base64 cut
-    short mid-key), garbage that merely looks like base64, and a type token
-    that lies about the key type actually encoded in the blob.
+    ``type`` token. ssh-keygen itself does not check that the type token on
+    the line matches what the blob actually encodes (it goes by the blob),
+    so this stays even though the second layer also parses the blob.
+
+    Second, ssh-keygen is the authority on whether the blob is an actually
+    complete, well-formed key of its type: ``sshsig.fingerprint_of`` must
+    resolve to a fingerprint. This catches what the first layer cannot — a
+    structurally-plausible-looking blob (right header, valid base64) that is
+    truncated mid-key or otherwise the wrong length for its declared type,
+    such as a bare header with no key material at all.
     """
     tokens = public_line.split()
     if len(tokens) < 2:
@@ -67,6 +75,11 @@ def validate_public_line(public_line: str) -> None:
         raise TrustError(
             f"not a public key: type token {type_token!r} does not match "
             "the key type encoded in the blob"
+        )
+    if sshsig.fingerprint_of(public_line) is None:
+        raise TrustError(
+            "not a public key: ssh-keygen does not recognize it as a "
+            f"complete {type_token} key"
         )
 
 

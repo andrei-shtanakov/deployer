@@ -6,15 +6,44 @@ from pathlib import Path
 import pytest
 
 from deployer.provenance import trust
-from tests.provenance.conftest import make_key, synthetic_key_line
+from tests.provenance.conftest import make_key
 
-_TYPE_MISMATCH = "ssh-ed25519 " + synthetic_key_line("ssh-rsa").split()[1] + " c"
-
-_BAD_LINES = {
+# Static shapes ssh-keygen never needs to see: rejected by the pure-Python
+# layer of `validate_public_line` alone (wrong token count / bad base64).
+_STATIC_BAD_LINES = {
     "truncated": "ssh-ed25519",
     "garbage_base64": "ssh-ed25519 not-valid-base64!!! c",
-    "type_mismatch": _TYPE_MISMATCH,
+    "header_only": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5",
 }
+
+_BAD_LABELS = [*_STATIC_BAD_LINES, "cut_short", "type_mismatch"]
+
+
+def _cut_short_line(real_pub: str, length: int = 60) -> str:
+    """A real key's base64 truncated mid-key: valid base64, wrong length.
+
+    Passes the pure-Python layer (decodes, wire name still matches — the
+    header survives a cut this shallow) but ssh-keygen rejects the result as
+    an incomplete key.
+    """
+    type_token, b64 = real_pub.split()[:2]
+    return f"{type_token} {b64[:length]} c"
+
+
+def _type_mismatch_line(real_pub: str) -> str:
+    """A real key's blob relabeled under a type it does not encode."""
+    _, b64 = real_pub.split()[:2]
+    return f"ssh-rsa {b64} c"
+
+
+def _bad_line(label: str, real_pub: str) -> str:
+    """One of the five malformed shapes; ``real_pub`` only matters for the
+    two built from real key material."""
+    if label == "cut_short":
+        return _cut_short_line(real_pub)
+    if label == "type_mismatch":
+        return _type_mismatch_line(real_pub)
+    return _STATIC_BAD_LINES[label]
 
 
 def test_trust_dir_default_and_override(tmp_path: Path) -> None:
@@ -57,37 +86,42 @@ def test_revoke_is_idempotent(tmp_path: Path, keypair: tuple[Path, str]) -> None
     assert lines.count(body) == 1
 
 
-def test_add_does_not_skip_a_key_whose_base64_is_a_prefix_of_a_stored_one(
-    tmp_path: Path,
+def test_file_has_key_does_not_match_a_substring_of_a_stored_body(
+    tmp_path: Path, keypair: tuple[Path, str]
 ) -> None:
-    short = synthetic_key_line("ssh-ed25519")
-    long = synthetic_key_line("ssh-ed25519", payload=b"x" * 32)
-    # sanity: this is the exact bug shape — one key's base64 is a literal
-    # string prefix of the other's.
-    assert long.split()[1].startswith(short.split()[1])
-    trust.add(tmp_path, long)
-    trust.add(tmp_path, short)
-    lines = (tmp_path / trust.ALLOWED_FILE).read_text().splitlines()
-    assert len(lines) == 2
-    assert lines[0].endswith(long.split()[1])
-    assert lines[1].endswith(short.split()[1])
+    """The regression this guards: dedup must compare a whole stored key
+    body, not test whether it merely *contains* the candidate as text — a
+    strict prefix of a real, already-stored body must not read as present.
+    """
+    _, pub = keypair
+    trust.add(tmp_path, pub)
+    body = " ".join(pub.split()[:2])
+    allowed = tmp_path / trust.ALLOWED_FILE
+    assert trust._file_has_key(allowed, body)
+    assert not trust._file_has_key(allowed, body[:30])
 
 
-@pytest.mark.parametrize("label", sorted(_BAD_LINES))
-def test_add_refuses_a_malformed_key(tmp_path: Path, label: str) -> None:
+@pytest.mark.parametrize("label", _BAD_LABELS)
+def test_add_refuses_a_malformed_key(
+    tmp_path: Path, keypair: tuple[Path, str], label: str
+) -> None:
+    _, real_pub = keypair
     with pytest.raises(trust.TrustError):
-        trust.add(tmp_path, _BAD_LINES[label])
+        trust.add(tmp_path, _bad_line(label, real_pub))
     assert not (tmp_path / trust.ALLOWED_FILE).exists()
 
 
-@pytest.mark.parametrize("label", sorted(_BAD_LINES))
-def test_revoke_refuses_a_malformed_key(tmp_path: Path, label: str) -> None:
+@pytest.mark.parametrize("label", _BAD_LABELS)
+def test_revoke_refuses_a_malformed_key(
+    tmp_path: Path, keypair: tuple[Path, str], label: str
+) -> None:
+    _, real_pub = keypair
     with pytest.raises(trust.TrustError):
-        trust.revoke(tmp_path, _BAD_LINES[label])
+        trust.revoke(tmp_path, _bad_line(label, real_pub))
     assert not (tmp_path / trust.REVOKED_FILE).exists()
 
 
-@pytest.mark.parametrize("label", sorted(_BAD_LINES))
+@pytest.mark.parametrize("label", _BAD_LABELS)
 def test_replace_refuses_a_malformed_new_key_and_leaves_the_old_key_allowed(
     tmp_path: Path, keypair: tuple[Path, str], label: str
 ) -> None:
@@ -95,16 +129,17 @@ def test_replace_refuses_a_malformed_new_key_and_leaves_the_old_key_allowed(
     trust.add(tmp_path, old_pub)
     allowed_before = (tmp_path / trust.ALLOWED_FILE).read_bytes()
     with pytest.raises(trust.TrustError):
-        trust.replace(tmp_path, old_pub, _BAD_LINES[label])
+        trust.replace(tmp_path, old_pub, _bad_line(label, old_pub))
     assert (tmp_path / trust.ALLOWED_FILE).read_bytes() == allowed_before
     assert not (tmp_path / trust.REVOKED_FILE).exists()
 
 
-@pytest.mark.parametrize("label", sorted(_BAD_LINES))
+@pytest.mark.parametrize("label", _BAD_LABELS)
 def test_replace_refuses_a_malformed_old_key_and_touches_nothing(
-    tmp_path: Path, label: str
+    tmp_path: Path, keypair: tuple[Path, str], label: str
 ) -> None:
+    _, new_pub = keypair
     with pytest.raises(trust.TrustError):
-        trust.replace(tmp_path, _BAD_LINES[label], synthetic_key_line("ssh-ed25519"))
+        trust.replace(tmp_path, _bad_line(label, new_pub), new_pub)
     assert not (tmp_path / trust.ALLOWED_FILE).exists()
     assert not (tmp_path / trust.REVOKED_FILE).exists()

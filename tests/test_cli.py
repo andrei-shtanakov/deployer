@@ -1847,3 +1847,38 @@ def test_trust_replace_rejects_a_malformed_new_key_without_mutating_the_store(
     assert "not a public key" in capsys.readouterr().err
     assert (trust_dir / "allowed_signers").read_bytes() == allowed_before
     assert not revoked_path.exists()
+
+
+def test_trust_add_rejects_a_header_only_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A header with no key data: valid base64, valid wire name, but not a
+    complete key — ssh-keygen must be the one to catch this, not pure
+    Python."""
+    monkeypatch.setenv("DEPLOYER_TRUST_DIR", str(tmp_path / "trust"))
+    bad = tmp_path / "bad.pub"
+    bad.write_text("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5\n")
+    assert cli.main(["trust", "add", str(bad)]) == 2
+    assert "not a public key" in capsys.readouterr().err
+
+
+def test_trust_replace_rejects_a_header_only_new_key_leaving_files_byte_identical(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("DEPLOYER_TRUST_DIR", str(tmp_path / "trust"))
+    make_key(tmp_path, "old")
+    old_path = tmp_path / "old.pub"
+    assert cli.main(["trust", "add", str(old_path)]) == 0
+    trust_dir = tmp_path / "trust"
+    allowed_before = (trust_dir / "allowed_signers").read_bytes()
+    revoked_path = trust_dir / "revoked_keys"
+    revoked_before = revoked_path.read_bytes() if revoked_path.is_file() else None
+    bad_new = tmp_path / "bad_new.pub"
+    bad_new.write_text("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5\n")
+    assert cli.main(["trust", "replace", str(old_path), str(bad_new)]) == 2
+    assert "not a public key" in capsys.readouterr().err
+    assert (trust_dir / "allowed_signers").read_bytes() == allowed_before
+    if revoked_before is None:
+        assert not revoked_path.exists()
+    else:
+        assert revoked_path.read_bytes() == revoked_before

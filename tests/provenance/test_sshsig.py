@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+import pytest
+
 from deployer.provenance import sshsig
 from deployer.provenance.model import NAMESPACE, PRINCIPAL
 from tests.provenance.conftest import make_key
@@ -82,3 +84,29 @@ def test_missing_ssh_keygen_is_a_named_failure(monkeypatch, tmp_path, keypair):
         assert "ssh-keygen" in str(exc)
     else:
         raise AssertionError("sign must fail without ssh-keygen")
+
+
+def test_fingerprint_of_a_real_key(keypair: tuple[Path, str]) -> None:
+    _, pub = keypair
+    fingerprint = sshsig.fingerprint_of(pub)
+    assert fingerprint is not None and fingerprint.startswith("SHA256:")
+
+
+def test_fingerprint_of_returns_none_for_a_header_only_line() -> None:
+    assert sshsig.fingerprint_of("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5") is None
+
+
+def test_fingerprint_of_returns_none_for_a_key_cut_short_mid_key(
+    keypair: tuple[Path, str],
+) -> None:
+    _, pub = keypair
+    type_token, b64 = pub.split()[:2]
+    assert sshsig.fingerprint_of(f"{type_token} {b64[:60]}") is None
+
+
+def test_fingerprint_of_never_raises_when_ssh_keygen_is_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, keypair: tuple[Path, str]
+) -> None:
+    _, pub = keypair
+    monkeypatch.setenv("PATH", str(tmp_path / "empty"))
+    assert sshsig.fingerprint_of(pub) is None

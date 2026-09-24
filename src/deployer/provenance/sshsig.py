@@ -10,6 +10,7 @@ from deployer.provenance.model import NAMESPACE, PRINCIPAL
 
 _TIMEOUT_S = 30
 _FINGERPRINT_RE = re.compile(r"key (SHA256:\S+)")
+_KEYGEN_L_FINGERPRINT_RE = re.compile(r"(SHA256:\S+)")
 
 
 class SshSigError(Exception):
@@ -56,6 +57,32 @@ def public_key(key: Path) -> str:
         detail = proc.stderr.decode(errors="replace").strip()
         raise SshSigError(f"ssh-keygen -y failed: {detail}")
     return proc.stdout.decode().strip()
+
+
+def fingerprint_of(public_line: str) -> str | None:
+    """The key's fingerprint via ``ssh-keygen -l``, or ``None`` if it is not
+    a real key ssh-keygen recognizes; never raises.
+
+    ssh-keygen is the authority on what is actually a well-formed public
+    key of its declared type (correct key-material length, valid point
+    encoding where it checks one, and so on) — a per-algorithm parser in
+    pure Python would only ever re-implement a subset of that and drift
+    from it over time. A structurally plausible but truncated or
+    otherwise-invalid line (right token count, valid base64, matching wire
+    name, wrong key-material length) makes ``ssh-keygen -l`` exit nonzero
+    with no fingerprint, exactly as it does for garbage.
+    """
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            key_file = Path(tmp) / "key.pub"
+            key_file.write_text(public_line.strip() + "\n")
+            proc = _run(["-l", "-f", str(key_file)], b"")
+    except (OSError, subprocess.TimeoutExpired, SshSigError):
+        return None
+    if proc.returncode != 0:
+        return None
+    match = _KEYGEN_L_FINGERPRINT_RE.search(proc.stdout.decode(errors="replace"))
+    return match.group(1) if match is not None else None
 
 
 def verify(
