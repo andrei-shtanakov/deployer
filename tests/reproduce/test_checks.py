@@ -221,14 +221,34 @@ def test_json_form_after_flags_checks_the_real_sources(tmp_path):
 # The closed source alphabet (owner, 2026-09-24): a literal path or a glob of
 # `*`, `?`, `**`, `[...]` over letters, digits and `. _ - / + = , @ ~`.
 UNMODELLED_SOURCES = [
-    ('["\\\\.git", "/saved"]', "\\.git"),  # escape (JSON-decoded backslash)
+    ("s\\rc /dst", "s\\rc"),  # a shell-form escape is kept, not unescaped
+    ('"src" /dst', '"src"'),  # quotes are not processed: the token is unread
     ("$SRC /x", "$SRC"),  # ARG substitution may name .git
     ("$SRC/../safe /x", "$SRC/../safe"),  # normalisation must not erase it
     ("${SRC}/.. /x", "${SRC}/.."),
     ("${SRC} /x", "${SRC}"),
     ('["a b", "/x"]', "a b"),  # whitespace inside a JSON source
-    ('["a\\u0007b", "/x"]', "a\ab"),  # a control character
 ]
+
+# A backslash anywhere in a JSON form: the decoded text cannot be trusted
+# ("s\u0072c" decodes to "src"), so the whole instruction is unread.
+JSON_ESCAPES = ['["\\\\.git", "/saved"]', '["s\\u0072c", "/x"]', '["a\\u0007b", "/x"]']
+
+
+@pytest.mark.parametrize("args", JSON_ESCAPES)
+def test_a_json_form_with_an_escape_is_unread(tmp_path, args):
+    """Escapes are resolved by the JSON decoder before any check could see them."""
+    (tmp_path / "src").write_text("x")
+    parsed = parse(f"FROM a\nCOPY {args}\n")
+    assert context_conditions(parsed) == [
+        ".git exclusion not proven: COPY at line 2 (escape in JSON form not modelled)"
+    ]
+    checks = copy_source_checks(
+        parsed, tmp_path, "Dockerfile", load_rules(tmp_path, None)
+    )
+    assert [(c.status, c.reason) for c in checks] == [
+        ("skipped", "COPY at line 2: escape in JSON form not modelled")
+    ]
 
 
 @pytest.mark.parametrize(("args", "source"), UNMODELLED_SOURCES)
