@@ -205,7 +205,7 @@ def test_copy_across_backends_is_not_compared():
         local=local,
         parsed=parsed,
         dimensions={"backend": "differs"},
-        values={},
+        values={"backend": ("docker", "podman")},
     )
     assert (result.state, result.signature_match) == (
         "reproduced_with_differences",
@@ -361,3 +361,33 @@ def test_only_the_canonical_name_of_the_image_matches(ci_key, same):
         {ci_key: d}, {"python:3.12-slim": [d]}, ["python:3.12-slim"]
     )
     assert result == ("same" if same else "unknown")
+
+
+@pytest.mark.parametrize("values", [{}, {"backend": (None, "podman")}])
+def test_an_unknown_backend_relation_is_inconclusive_for_builder_messages(values):
+    """not_compared needs an established difference (fourth review of #78)."""
+    parsed = parse("FROM alpine\n\nCOPY a /a\n")
+    ci = Side(
+        InstructionRef(kind="span", lines=(3, 3), bound_by="buildkit_error_block"),
+        None,
+        "ERROR: x",
+    )
+    local = Side(
+        InstructionRef(kind="span", lines=(3, 3), bound_by="step_text"),
+        None,
+        "Error: y",
+    )
+    result = compare(
+        exit_code=1,
+        launch_error=None,
+        ci=ci,
+        local=local,
+        parsed=parsed,
+        dimensions={},
+        values=values,
+    )
+    assert (result.state, result.reason, result.signature_match) == (
+        "inconclusive",
+        "signature unavailable",
+        "unavailable",
+    )
