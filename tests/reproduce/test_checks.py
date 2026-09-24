@@ -223,6 +223,8 @@ def test_json_form_after_flags_checks_the_real_sources(tmp_path):
 UNMODELLED_SOURCES = [
     ('["\\\\.git", "/saved"]', "\\.git"),  # escape (JSON-decoded backslash)
     ("$SRC /x", "$SRC"),  # ARG substitution may name .git
+    ("$SRC/../safe /x", "$SRC/../safe"),  # normalisation must not erase it
+    ("${SRC}/.. /x", "${SRC}/.."),
     ("${SRC} /x", "${SRC}"),
     ('["a b", "/x"]', "a b"),  # whitespace inside a JSON source
     ('["a\\u0007b", "/x"]', "a\ab"),  # a control character

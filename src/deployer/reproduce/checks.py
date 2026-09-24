@@ -51,10 +51,12 @@ def copy_source_checks(
             if inst.keyword == "ADD" and raw.startswith(_REMOTE_PREFIXES):
                 skipped.append(_skip(inst, f"remote ADD source {raw}"))
                 continue
-            source = _norm(raw)
-            if _has_unmodelled_chars(source):
-                skipped.append(_skip(inst, f"source pattern not modelled: {source}"))
+            # The alphabet is checked on the source AS WRITTEN: normalising
+            # first would let `$SRC/../x` collapse to `x` and pass.
+            if _has_unmodelled_chars(raw):
+                skipped.append(_skip(inst, f"source pattern not modelled: {raw}"))
                 continue
+            source = _norm(raw)
             checked += 1
             findings.extend(
                 _check_source(inst, source, files, context, dockerfile, rules)
@@ -126,12 +128,17 @@ def _git_conditions(inst: Instruction) -> list[str]:
             return []  # inline content: nothing is read from the context
         return [f".git exclusion not proven: {where} ({why})"]
     unmet: list[str] = []
-    for source in (_norm(s) for s in sources):
-        prefix = f".git exclusion not proven: {inst.keyword} {source} at line {inst.first_line}"
-        if not _is_modelled_source(source):
-            unmet.append(f"{prefix} (source pattern not modelled)")
-        elif _may_reach_git(source):
-            unmet.append(prefix)
+    for raw in sources:
+        at = f"at line {inst.first_line}"
+        if not _is_modelled_source(raw):  # as written, before normalising
+            unmet.append(
+                f".git exclusion not proven: {inst.keyword} {raw} {at} "
+                "(source pattern not modelled)"
+            )
+            continue
+        source = _norm(raw)
+        if _may_reach_git(source):
+            unmet.append(f".git exclusion not proven: {inst.keyword} {source} {at}")
     return unmet
 
 
