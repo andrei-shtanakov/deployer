@@ -307,20 +307,28 @@ def _parse_binding(
 
 
 def _ci_digest_for(image: str, ci: dict[str, str]) -> str | None:
-    """The CI digest of ``image``: an exact key first, else ONE suffix match.
+    """The CI digest of ``image``, matched by canonical reference only.
 
-    ``docker.io/library/python:3.12-slim`` is the BuildKit spelling of
-    ``python:3.12-slim``; a second candidate (``vendor/python:3.12-slim``)
-    makes the mapping ambiguous, and an ambiguous mapping proves nothing.
+    Docker's rules: a first component without ``.`` or ``:`` and other than
+    ``localhost`` is not a registry, so ``docker.io/`` is implied, and a name
+    without a namespace lives under ``library/``. ``python:3.12-slim`` thus
+    equals ``docker.io/library/python:3.12-slim`` and nothing else — never
+    ``vendor/python:3.12-slim``. Two keys with the same canonical form but
+    different digests make it unknown.
     """
-    if image in ci:
-        return ci[image]
-    candidates = [
-        digest
-        for key, digest in ci.items()
-        if key.endswith("/" + image) or key.endswith("/library/" + image)
-    ]
-    return candidates[0] if len(candidates) == 1 else None
+    wanted = _canonical_image(image)
+    digests = {d for key, d in ci.items() if _canonical_image(key) == wanted}
+    return digests.pop() if len(digests) == 1 else None
+
+
+def _canonical_image(reference: str) -> str:
+    """``[registry/][namespace/]name[:tag]`` with Docker's implied defaults."""
+    first, sep, rest = reference.partition("/")
+    has_registry = bool(sep) and ("." in first or ":" in first or first == "localhost")
+    if has_registry:
+        return reference
+    path = reference if sep else f"library/{reference}"
+    return f"docker.io/{path}"
 
 
 def _clean(text: str) -> str:

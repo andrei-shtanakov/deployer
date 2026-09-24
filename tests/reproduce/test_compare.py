@@ -335,5 +335,29 @@ def test_an_exact_digest_key_wins_and_ambiguity_proves_nothing():
     exact = {"vendor/python:3.12-slim": a, "python:3.12-slim": b}
     assert digest_dimension(exact, {"python:3.12-slim": [a]}, images) == "unknown"
     assert digest_dimension(exact, {"python:3.12-slim": [b]}, images) == "same"
-    two = {"vendor/python:3.12-slim": a, "docker.io/library/python:3.12-slim": a}
-    assert digest_dimension(two, {"python:3.12-slim": [a]}, images) == "unknown"
+    # vendor/… is another image, not a second candidate: only the canonical
+    # docker.io/library/… key counts.
+    two = {"vendor/python:3.12-slim": b, "docker.io/library/python:3.12-slim": a}
+    assert digest_dimension(two, {"python:3.12-slim": [a]}, images) == "same"
+    clash = {"python:3.12-slim": a, "docker.io/library/python:3.12-slim": b}
+    assert digest_dimension(clash, {"python:3.12-slim": [a]}, images) == "unknown"
+
+
+@pytest.mark.parametrize(
+    ("ci_key", "same"),
+    [
+        ("python:3.12-slim", True),
+        ("docker.io/library/python:3.12-slim", True),
+        ("library/python:3.12-slim", True),
+        ("vendor/python:3.12-slim", False),  # another namespace
+        ("ghcr.io/x/python:3.12-slim", False),  # another registry
+        ("docker.io/vendor/python:3.12-slim", False),
+    ],
+)
+def test_only_the_canonical_name_of_the_image_matches(ci_key, same):
+    """Docker's reference rules, not a suffix match (third review of #78)."""
+    d = "sha256:" + "d" * 64
+    result = digest_dimension(
+        {ci_key: d}, {"python:3.12-slim": [d]}, ["python:3.12-slim"]
+    )
+    assert result == ("same" if same else "unknown")
