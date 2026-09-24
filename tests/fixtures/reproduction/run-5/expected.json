@@ -1,0 +1,46 @@
+{
+  "status": "attempted",
+  "refusal": null,
+  "restoration": {
+    "state": "exact",
+    "unmet": []
+  },
+  "unmet_count": 0,
+  "failed_checks": [
+    [
+      "syntax_from_args",
+      "syntax error at line 1: FROM takes one or three arguments"
+    ]
+  ],
+  "checks": {
+    "builder_check": "skipped"
+  },
+  "exit_code": 125,
+  "launch_error": null,
+  "build_containers": "removed_by_builder",
+  "build_failed_instruction": {
+    "kind": "parse",
+    "lines": [
+      1,
+      1
+    ],
+    "bound_by": "parser_finding_keyword"
+  },
+  "ci_instruction": {
+    "kind": "parse",
+    "lines": [
+      1,
+      1
+    ],
+    "bound_by": "buildkit_parse_error"
+  },
+  "signature_match": "not_compared",
+  "comparison": "reproduced_with_differences",
+  "comparison_reason": null,
+  "dimensions": {
+    "backend": "differs",
+    "host_arch": "unknown",
+    "ignore_file": "same",
+    "restoration": "same"
+  }
+}

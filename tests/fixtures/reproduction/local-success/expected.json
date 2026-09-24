@@ -1,0 +1,15 @@
+{
+  "status": "attempted",
+  "refusal": null,
+  "restoration": {
+    "state": "exact",
+    "unmet": []
+  },
+  "unmet_count": 0,
+  "exit_code": 0,
+  "launch_error": null,
+  "build_failed_instruction": null,
+  "comparison": "not_reproduced",
+  "comparison_reason": null,
+  "signature_match": null
+}
