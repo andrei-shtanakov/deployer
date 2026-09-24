@@ -7,13 +7,10 @@ immutable, signed, excluded set, then atomically repoints
 ``Dockerfile.current`` at it. ``withdraw`` removes a published set.
 """
 
-import contextlib
 import fcntl
 import os
 import shutil
-import sys
 import tempfile
-from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -272,17 +269,15 @@ def _prune_other_sets(project: Path, rec_sha: str) -> None:
             shutil.rmtree(child)
 
 
-@contextlib.contextmanager
-def _publication_lock(project: Path) -> Iterator[None]:
-    """Hold an exclusive advisory lock over this repository's authoring
-    publish/withdraw sequence for the duration of the block, so a
-    concurrent ``issue()``/``withdraw()`` for the same repository cannot
-    interleave its existence/reuse check, set write, pointer swap and
-    prune with this one.
+def _acquire_publication_lock(project: Path) -> int:
+    """Take this repository's exclusive advisory publication lock; its fd.
 
-    The lock file lives at ``.git/deployer-authoring.lock`` (resolved via
-    ``gitrepo.git_path``), so it never appears in the work tree or in
-    ``dirty_paths``.
+    Serializes the publish/withdraw sequence (existence/reuse check, set
+    write, pointer swap, prune) across concurrent ``issue()``/``withdraw()``
+    calls for the same repository. The lock file lives at
+    ``.git/deployer-authoring.lock`` (via ``gitrepo.git_path``), so it never
+    appears in the work tree or in ``dirty_paths``. Raises ``GitError`` or
+    ``OSError`` when the lock cannot be taken.
 
     POSIX-only (``fcntl.flock``); this project targets macOS and Linux,
     not Windows, so no Windows locking path is provided.
@@ -291,9 +286,17 @@ def _publication_lock(project: Path) -> Iterator[None]:
     fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX)
-        yield
-    finally:
+    except OSError:
+        os.close(fd)
+        raise
+    return fd
+
+
+def _release_publication_lock(fd: int) -> None:
+    """Release and close a lock taken by ``_acquire_publication_lock``."""
+    try:
         fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
         os.close(fd)
 
 
@@ -308,15 +311,14 @@ def _publish(
     """Write or reuse the set directory, then atomically move the pointer.
 
     The whole sequence — existence/reuse check, write-or-reuse, pointer
-    swap and prune — runs under ``_publication_lock``, so a concurrent
+    swap and prune — runs under the publication lock, so a concurrent
     ``issue()`` for the same repository cannot interleave with this one.
     A failure to acquire the lock itself becomes ``Issued(False, reason,
     None)``; a failure once the lock is held propagates as before.
     """
     target = project / SET_ROOT / set_dir_name(rec_sha)
-    lock = _publication_lock(project)
     try:
-        lock.__enter__()
+        fd = _acquire_publication_lock(project)
     except (GitError, OSError) as exc:
         return Issued(False, f"could not acquire the publication lock: {exc}", None)
     try:
@@ -330,7 +332,7 @@ def _publish(
         _prune_other_sets(project, rec_sha)
         return Issued(True, None, set_dir_name(rec_sha))
     finally:
-        lock.__exit__(*sys.exc_info())
+        _release_publication_lock(fd)
 
 
 def issue(pre: Preflight, signing_key: Path, deployer_version: str) -> Issued:
@@ -357,7 +359,7 @@ def withdraw(project: Path) -> bool:
     """Remove ``Dockerfile.current`` first, then every set directory under
     ``SET_ROOT/Dockerfile/``; return whether anything was removed.
 
-    Runs under ``_publication_lock`` like ``_publish``, so it cannot
+    Runs under the publication lock like ``_publish``, so it cannot
     interleave with a concurrent ``issue()``/``withdraw()`` on the same
     repository. Kept total: if the lock cannot be acquired, this returns
     ``False`` without touching anything, rather than raising.
@@ -365,9 +367,8 @@ def withdraw(project: Path) -> bool:
     Like ``_prune_other_sets``, this leaves non-directory entries and any
     live ``.tmp-*`` staging directory alone.
     """
-    lock = _publication_lock(project)
     try:
-        lock.__enter__()
+        fd = _acquire_publication_lock(project)
     except (GitError, OSError):
         return False
     try:
@@ -385,4 +386,4 @@ def withdraw(project: Path) -> bool:
                 removed = True
         return removed
     finally:
-        lock.__exit__(*sys.exc_info())
+        _release_publication_lock(fd)
