@@ -200,7 +200,6 @@ def _signature_match(
     parsed: ParsedDockerfile,
     backends: tuple[str | None, str | None] | None,
 ) -> SignatureMatch:
-    same_backend = backends is not None and backends[0] == backends[1]
     assert ci.instruction is not None
     first = ci.instruction.lines[0]
     keyword = next(
@@ -210,7 +209,11 @@ def _signature_match(
         if ci.signature is None or local.signature is None:
             return "unavailable"
         return "equal" if ci.signature == local.signature else "unequal"
-    if not same_backend:
+    # A builder message is compared only across a KNOWN backend relation:
+    # different backends → not compared; unknown → nothing can be said.
+    if backends is None or None in backends:
+        return "unavailable"
+    if backends[0] != backends[1]:
         return "not_compared"
     if ci.builder_error is None or local.builder_error is None:
         return "unavailable"
