@@ -281,3 +281,19 @@ def test_reuse_refuses_a_signature_from_a_different_key(
     assert first.published
     other_key, _ = make_key(tmp_path, "other")
     assert not issue.issue(pre, other_key, "0.1").published
+
+
+def test_reuse_refuses_when_the_key_becomes_unusable(
+    repo_with_origin: Path, keypair: tuple[Path, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    key, _ = keypair
+    pre = issue.preflight(repo_with_origin, key)
+    assert isinstance(pre, issue.Preflight)
+    _author(repo_with_origin)
+    assert issue.issue(pre, key, "0.1").published
+
+    def broken(_key: Path) -> str:
+        raise sshsig.SshSigError("ssh-keygen -y failed: gone")
+
+    monkeypatch.setattr(sshsig, "public_key", broken)
+    assert not issue.issue(pre, key, "0.1").published

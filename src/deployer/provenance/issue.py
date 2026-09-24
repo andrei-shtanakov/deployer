@@ -200,7 +200,7 @@ def _check_reuse(
             existing_sig = (target / SIGNATURE_FILE).read_bytes()
             pub = sshsig.public_key(signing_key)
             matches = sshsig.verify_with_public_key(rec_bytes, existing_sig, pub).ok
-    except OSError:
+    except (OSError, SshSigError):
         matches = False
     return None if matches else reason
 
