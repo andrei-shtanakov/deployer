@@ -4,7 +4,7 @@
   "restoration": {
     "state": "approximation",
     "unmet": [
-      ".git reachable: COPY .git/HEAD at line 21"
+      ".git exclusion not proven: COPY .git/HEAD at line 21"
     ]
   },
   "unmet_count": 1,
