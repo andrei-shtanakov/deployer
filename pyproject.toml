@@ -46,3 +46,6 @@ project-excludes = [
     "tests/fixtures/**",
     "corpus/**",
 ]
+# Lets tests import shared fakes as `tests.<pkg>.conftest` (e.g.
+# tests/reproduce/conftest.py), matching how pytest resolves them.
+search-path = ["."]
