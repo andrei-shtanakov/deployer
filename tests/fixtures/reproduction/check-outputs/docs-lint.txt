@@ -1,0 +1,17 @@
+[+] Building 1.5s (5/5) FINISHED
+=> [internal] connecting to local controller
+=> [internal] load build definition from Dockerfile
+=> => transferring dockerfile: 253B
+=> [internal] load metadata for docker.io/library/node:22
+=> [auth] library/node:pull token for registry-1.docker.io
+=> [internal] load .dockerignore
+=> => transferring context: 50B
+JSONArgsRecommended - https://docs.docker.com/go/dockerfile/rule/json-args-recommended/
+JSON arguments recommended for ENTRYPOINT/CMD to prevent unintended behavior related to OS signals
+Dockerfile:7
+--------------------
+5 |
+6 |     COPY index.js .
+7 | >>> CMD node index.js
+8 |
+--------------------

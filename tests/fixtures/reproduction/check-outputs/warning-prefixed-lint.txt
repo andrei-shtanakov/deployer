@@ -1,0 +1,6 @@
+WARNING: InvalidBaseImagePlatform
+Base image wrong platform
+Dockerfile:1
+--------------------
+   1 | >>> FROM --platform=linux/arm64 alpine
+--------------------

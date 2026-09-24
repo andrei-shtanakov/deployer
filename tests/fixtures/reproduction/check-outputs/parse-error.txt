@@ -1,0 +1,14 @@
+# exit=1
+#0 building with "default" instance using docker driver
+
+#1 [internal] load build definition from Dockerfile
+#1 transferring dockerfile:
+#1 transferring dockerfile: 364B done
+#1 DONE 0.1s
+Dockerfile:1
+--------------------
+   1 | >>> FROM python:3.12-slim extra
+   2 |
+   3 |     COPY --from=ghcr.io/astral-sh/uv:0.5.11 /uv /uvx /bin/
+--------------------
+ERROR: failed to build: failed to solve: dockerfile parse error on line 1: FROM requires either one or three arguments
