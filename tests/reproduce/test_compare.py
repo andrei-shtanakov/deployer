@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+import pytest
+
 from deployer.forge import load_snapshot
 from deployer.reproduce.compare import (
     Side,
@@ -301,3 +303,26 @@ def test_digest_dimension_never_claims_differs():
         == "unknown"
     )
     assert digest_dimension({}, {"python:3.12-slim": ["sha256:a"]}, images) == "unknown"
+
+
+@pytest.mark.parametrize("given", [{}, {"backend": "same"}])
+def test_missing_dimensions_are_unknown_never_reproduced(given):
+    """Every §7.4 dimension must be observed `same` (review of #78)."""
+    ref = InstructionRef(kind="span", lines=(15, 15), bound_by="step_text")
+    result = compare(
+        exit_code=1,
+        launch_error=None,
+        ci=Side(ref, "FAILED (failures=1)", None),
+        local=Side(ref, "FAILED (failures=1)", None),
+        parsed=parse(RUN3),
+        dimensions=given,
+        values={},
+    )
+    assert result.state == "reproduced_with_differences"
+    assert set(result.dimensions) == {
+        "backend",
+        "host_arch",
+        "base_image_digests",
+        "ignore_file",
+        "restoration",
+    }
