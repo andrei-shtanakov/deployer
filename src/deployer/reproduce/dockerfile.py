@@ -1,0 +1,210 @@
+"""A Dockerfile reader with line spans and a closed list of syntax checks (§3.1).
+
+Not a frontend: it checks exactly four things and says so. "No finding" means
+"no finding among checks 1-4", never "valid syntax".
+"""
+
+import re
+from dataclasses import dataclass
+
+from deployer.reproduce.model import Location, ReproductionCheck, ReproEvidence
+
+KEYWORDS = frozenset(
+    {
+        "ADD",
+        "ARG",
+        "CMD",
+        "COPY",
+        "ENTRYPOINT",
+        "ENV",
+        "EXPOSE",
+        "FROM",
+        "HEALTHCHECK",
+        "LABEL",
+        "MAINTAINER",
+        "ONBUILD",
+        "RUN",
+        "SHELL",
+        "STOPSIGNAL",
+        "USER",
+        "VOLUME",
+        "WORKDIR",
+    }
+)
+_DIRECTIVE_RE = re.compile(r"^#\s*(syntax|escape|check)\s*=\s*(\S+)\s*$", re.IGNORECASE)
+_HEREDOC_RE = re.compile(r"<<(-?)([\"']?)([A-Za-z_][A-Za-z0-9_]*)\2")
+_WS_RE = re.compile(r"\s+")
+_CHECK_IDS = (
+    "syntax_first_from",
+    "syntax_from_args",
+    "syntax_keyword",
+    "syntax_continuation",
+)
+
+
+@dataclass(frozen=True)
+class Instruction:
+    """One instruction and the 1-based source lines it spans."""
+
+    keyword: str
+    args: str
+    first_line: int
+    last_line: int
+
+    @property
+    def text(self) -> str:
+        """``KEYWORD args`` with whitespace collapsed, for matching."""
+        return normalise(f"{self.keyword} {self.args}")
+
+
+@dataclass(frozen=True)
+class ParsedDockerfile:
+    """Instructions with spans, the directives read, and a dangling ``\\``."""
+
+    instructions: list[Instruction]
+    syntax_directive: str | None
+    escape_directive: str | None
+    dangling_continuation: bool
+
+
+def normalise(text: str) -> str:
+    """Drop backslash-newline continuations and collapse whitespace."""
+    return _WS_RE.sub(" ", text.replace("\\\r\n", " ").replace("\\\n", " ")).strip()
+
+
+def parse(text: str) -> ParsedDockerfile:
+    """Split into instructions with spans; CRLF reads exactly like LF."""
+    lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    directives: dict[str, str] = {}
+    instructions: list[Instruction] = []
+    in_directives = True
+    buffer: list[str] = []
+    first = 0
+    heredoc: tuple[str, bool] | None = None
+    heredoc_owner_index: int | None = None
+    last_content = 0
+    for number, raw in enumerate(lines, start=1):
+        stripped = raw.strip()
+        if heredoc is not None and heredoc_owner_index is not None:
+            delimiter, dash = heredoc
+            body = raw.lstrip("\t") if dash else raw
+            owner = instructions[heredoc_owner_index]
+            instructions[heredoc_owner_index] = Instruction(
+                owner.keyword, owner.args, owner.first_line, number
+            )
+            if body == delimiter:
+                heredoc, heredoc_owner_index = None, None
+            continue
+        if in_directives:
+            match = _DIRECTIVE_RE.match(stripped)
+            if match and not buffer:
+                directives.setdefault(match.group(1).lower(), match.group(2))
+                continue
+            in_directives = False
+        if not buffer and (not stripped or stripped.startswith("#")):
+            continue
+        if buffer and (not stripped or stripped.startswith("#")):
+            continue  # blank line or comment inside a continuation
+        if not buffer:
+            first = number
+        last_content = number
+        if stripped.endswith("\\"):
+            buffer.append(stripped[:-1])
+            continue
+        buffer.append(stripped)
+        logical = " ".join(part.strip() for part in buffer if part.strip())
+        buffer = []
+        keyword, _, rest = logical.partition(" ")
+        instruction = Instruction(keyword.upper(), rest.strip(), first, number)
+        instructions.append(instruction)
+        heredoc_match = _HEREDOC_RE.search(rest)
+        if heredoc_match:
+            heredoc = (heredoc_match.group(3), heredoc_match.group(1) == "-")
+            heredoc_owner_index = len(instructions) - 1
+    dangling = bool(buffer)
+    if buffer:
+        logical = " ".join(part.strip() for part in buffer if part.strip())
+        keyword, _, rest = logical.partition(" ")
+        instructions.append(
+            Instruction(keyword.upper(), rest.strip(), first, last_content)
+        )
+    return ParsedDockerfile(
+        instructions=instructions,
+        syntax_directive=directives.get("syntax"),
+        escape_directive=directives.get("escape"),
+        dangling_continuation=dangling,
+    )
+
+
+def syntax_checks(parsed: ParsedDockerfile, dockerfile: str) -> list[ReproductionCheck]:
+    """The four checks of §3.1; one passed check per clean rule."""
+    if parsed.escape_directive not in (None, "\\"):
+        return [
+            ReproductionCheck(
+                check_id=check_id,
+                status="skipped",
+                reason=f"escape directive not modelled: {parsed.escape_directive}",
+            )
+            for check_id in _CHECK_IDS
+        ]
+    findings: dict[str, list[tuple[tuple[int, int], str, str]]] = {
+        c: [] for c in _CHECK_IDS
+    }
+    instructions = parsed.instructions
+    head = next((i for i in instructions if i.keyword != "ARG"), None)
+    if head is None or head.keyword != "FROM":
+        span = (head.first_line, head.last_line) if head else (1, 1)
+        text = head.text if head is not None else "empty Dockerfile"
+        findings["syntax_first_from"].append(
+            (span, "the first instruction is not FROM", text)
+        )
+    for inst in instructions:
+        if inst.keyword == "FROM" and not _from_args_ok(inst.args):
+            findings["syntax_from_args"].append(
+                (
+                    (inst.first_line, inst.last_line),
+                    "FROM takes one or three arguments",
+                    inst.text,
+                )
+            )
+        if inst.keyword not in KEYWORDS:
+            findings["syntax_keyword"].append(
+                (
+                    (inst.first_line, inst.last_line),
+                    f"unknown instruction {inst.keyword}",
+                    inst.text,
+                )
+            )
+    if parsed.dangling_continuation and instructions:
+        last = instructions[-1]
+        findings["syntax_continuation"].append(
+            (
+                (last.last_line, last.last_line),
+                "line continuation ends the file",
+                last.text,
+            )
+        )
+    status = "observation" if parsed.syntax_directive else "failed"
+    checks: list[ReproductionCheck] = []
+    for check_id in _CHECK_IDS:
+        if not findings[check_id]:
+            checks.append(ReproductionCheck(check_id=check_id, status="passed"))
+            continue
+        for span, message, text in findings[check_id]:
+            checks.append(
+                ReproductionCheck(
+                    check_id=check_id,
+                    status=status,
+                    finding=f"syntax error at line {span[0]}: {message}",
+                    location=Location(file=dockerfile, lines=span),
+                    evidence=[ReproEvidence(kind="log_excerpt", text=text)],
+                )
+            )
+    return checks
+
+
+def _from_args_ok(args: str) -> bool:
+    tokens = args.split()
+    if tokens and tokens[0].startswith("--platform="):
+        tokens = tokens[1:]
+    return len(tokens) == 1 or (len(tokens) == 3 and tokens[1].upper() == "AS")
