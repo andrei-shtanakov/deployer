@@ -52,22 +52,30 @@ paragraph.
   produced a new counter-example each. The reading layer asserts no cause at all
   (owner's decision 2026-09-22). The promise now rests on reproduction; anything beyond
   findings-without-classes is a later task.
-- [ ] CI-failure reproduction: restore the artifact and its context at the run's actual checkout SHA, run deterministic checks and L2 on a supported build configuration, report findings with status and evidence — no causal class @owner:repo:deployer @id:ci-failure-reproduction @epic:eco.dark-factory
-  Spec: `docs/superpowers/specs/2026-09-22-ci-failure-reproduction-design.md` on the docs
-  branch `docs/ci-failure-reproduction-spec` (rev 5, DRAFT revised after the external
-  review of rev 4 → targeted review of the rev 4→5 diff → plan). Rev 4/5 narrow the slice: one
-  failed job whose failed step is its only, supported `docker build .`; `push`/`workflow_dispatch`
-  only, workflow and checkout both at `head_sha`; a confirmed-local endpoint only; the build IS the reproduction — no image run in this slice.
-  Fixed points: `exact` is a property of the restored TREE, earned from the checkout log's
-  SHA, the checkout options, inert preceding steps (exact strings) and no `.gitattributes` at all,
-  else `approximation` with the unmet conditions named; the workflow's build line is
-  parsed, never executed, and built through a new adapter over `container_run`, not
-  `verify._build`; the parser runs a closed list of syntax checks, the builder's `--check`
-  runs only under `--reproduce`; CI vs local is one state from a fixed order, identity =
-  Dockerfile line span; `--reproduce` keeps the reading layer's exit code except two exit-2 cases (with
-  `--container-host`; an uncreatable try dir or a `source.json` naming another `head_sha`); acceptance = committed
-  offline cases (run-1/2/3/5 trees vendored + derived negative bundles listing every changed file), uv-minimal dropped;
-  no causal class, no ENVIRONMENT candidate.
+  Open question for the owner (2026-09-24): `ci-failure-reproduction` (below) shipped —
+  findings with status and evidence, no causal class, same as the reading layer. Does that
+  satisfy this item's "establish why it failed" promise as written, or does the promise
+  itself need rewording now that both the reading layer and reproduction assert no cause?
+  Left as a question rather than a `@blocked_by` change: that call is the owner's.
+- [ ] Real `docker build --check` recordings for the two synthetic reader fixtures @owner:repo:deployer @id:repro-check-output-real-recordings @epic:eco.dark-factory
+  `tests/fixtures/reproduction/check-outputs/builder-unreachable.txt` and
+  `lint-then-error.txt` are synthetic — no Docker host was reachable when the bundle was
+  written (`check-outputs/PROVENANCE.md` records the exact commands still needed and why
+  each file is a stand-in). Replace both with real `docker build --check` recordings from
+  a Docker ≥ Buildx 0.15 host, and record the real Docker/Buildx versions, host and date.
+- [ ] Run the built image after a successful reproduction — the §5 later slice @owner:repo:deployer @id:repro-run-built-image @epic:eco.dark-factory
+  Deliberately out of `ci-failure-reproduction`'s scope (design §5): in the shipped slice
+  the build IS the reproduction, and running the image answers a question the build-only
+  CI workflow never asked. Needs its own input contract before it can be scoped — a
+  `deploy_target` (service vs. run vs. smoke intent) and, for a smoke target, an ATP suite
+  — neither of which a CI-run snapshot carries today.
+- [ ] Runner-architecture fact for CI jobs — makes the `reproduced` comparison state reachable @owner:repo:deployer @id:repro-runner-arch-fact @epic:eco.dark-factory
+  Shipped §7.4 records CI's `host_arch` as always `unknown` (no runner line in the
+  committed logs states it, and an `amd64` printed by apt is program output, not a runner
+  fact), so `reproduced` (§7.3 state 8, every dimension `same`) is unreachable by design
+  and every successful reproduction reads `reproduced_with_differences` instead. Needs a
+  source for the runner's actual architecture — a GitHub Actions runner-context field, an
+  added probe step, or similar — before that dimension can ever read `same`.
 - [ ] Fix authoring from a diagnosis: artifact edit, L1/L2, confirm the diagnosed cause is gone @owner:repo:deployer @blocked_by:todo://deployer/ci-failure-diagnosis @id:ci-fix-authoring @epic:eco.dark-factory
   — the other half of the founding doc's "generate/fix ... diagnose failed CI", split
   out with the owner 2026-09-21 so the diagnosis slice can be accepted on its own.
@@ -210,6 +218,25 @@ them is the next thing to pick up.
   (injected `FROM` syntax error, 2026-09-22, reads `dockerfile parse error`) is a saved
   experiment on `rescue/pr3-negchecks-tail` @ 9e89daa, not a fixture of this tree. Paid
   benchmark #2 promoted as golden 2.0 (12/12).
+- [x] CI-failure reproduction: restore the artifact and its context at the run's actual checkout SHA, run deterministic checks and L2 on a supported build configuration, report findings with status and evidence — no causal class @owner:repo:deployer @id:ci-failure-reproduction @epic:eco.dark-factory
+  Shipped by the stack #76 (forge), #77 (offline core), #78 (runtime core), #79
+  (orchestration + CLI), #81 (bundles, owner review) and the PR that lands this entry (replay; this entry lands
+  with it; this checkbox follows the repo's rhythm for a closing PR and asserts
+  nothing about a merge). Spec: `docs/superpowers/specs/2026-09-22-ci-failure-reproduction-design.md`
+  (rev 5). Ships snapshot schema 1.3 (workflow path, event, all steps), the §1.2
+  supported-shape refusals, §1.3 restoration exactness (exact / approximation /
+  unavailable), the binary tarball path through the forge (`api_bytes`), a
+  confirmed-local-endpoint-only build adapter over `runtime.container_run` (never
+  `verify._build`), the closed §3 offline checks, and the §7 CI-vs-local comparison —
+  `reproduced` stays unreachable this slice (see `repro-runner-arch-fact` above), so every
+  reproduction reads `reproduced_with_differences`. `--reproduce` keeps the reading
+  layer's exit code except the two exit-2 cases (`--container-host` together with it; an
+  uncreatable try dir or a `source.json` naming another `head_sha`). Acceptance: 28
+  committed offline bundles (base cases run-1/2/3/5 plus derived negatives, replayed with
+  `uv run pytest`, no network) whose base cases' local build output is a real Podman
+  recording of run-1/2/3/5 rebuilt on this machine; uv-minimal dropped (its failing
+  Dockerfile was never preserved). No causal class anywhere; running the built image
+  stays a later slice (`repro-run-built-image` above).
 - [x] Failure classification channel: an exit code alone no longer establishes a cause @owner:repo:deployer @id:failure-classification-channel @epic:eco.research-bench
   Closed by the taxonomy work of `todo://deployer/ci-failure-diagnosis` (PR-1), which found the
   hole at THREE sites, not the two the design named:

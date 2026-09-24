@@ -320,3 +320,30 @@ def test_endpoint_refusal_keeps_checks(tmp_path, tree, fake_containers):
     section = _go(tmp_path, tree, fake_containers, env={"DOCKER_HOST": "tcp://x:1"})
     assert section.refusal == "endpoint set by DOCKER_HOST not confirmed local"
     assert section.build is None and section.checks
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "null",
+        "[]",
+        '"text"',
+        json.dumps(
+            {
+                "head_sha": SHA,
+                "listing": {"sha": "x", "entries": [1], "truncated": False},
+            }
+        ),
+        json.dumps({"head_sha": SHA, "listing": None}),
+    ],
+)
+def test_a_well_formed_but_wrong_source_json_is_a_try_dir_error(
+    tmp_path, tree, fake_containers, content
+):
+    """Valid JSON of the wrong shape is corruption too: exit 2 (review of #79)."""
+    fake_containers.responses[("build",)] = proc(1)
+    section = _go(tmp_path, tree, fake_containers)
+    source = tmp_path / "work" / section.try_dir / ".." / ".." / "source.json"
+    source.write_text(content)
+    with pytest.raises(TryDirError, match="cannot read"):
+        _go(tmp_path, tree, fake_containers)
