@@ -141,3 +141,12 @@ def test_context_conditions_git_and_mount(tmp_path):
         )
         == []
     )
+
+
+def test_unmodelled_ignore_pattern_leaves_git_exclusion_unproven(tmp_path):
+    """A pattern we cannot evaluate may re-include .git: not exact (review of #77)."""
+    (tmp_path / ".dockerignore").write_text(".git\n![.]git\n")
+    rules = load_rules(tmp_path, ".dockerignore")
+    assert context_conditions(parse("FROM a\nCOPY . /app\n"), rules) == [
+        ".git reachable: COPY . at line 2 (ignore pattern not modelled: [.]git)"
+    ]

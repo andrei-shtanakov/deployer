@@ -33,6 +33,10 @@ KEYWORDS = frozenset(
 )
 _DIRECTIVE_RE = re.compile(r"^#\s*(syntax|escape|check)\s*=\s*(\S+)\s*$", re.IGNORECASE)
 _HEREDOC_RE = re.compile(r"<<(-?)([\"']?)([A-Za-z_][A-Za-z0-9_]*)\2")
+# Heredocs exist only on these instructions, and only outside quotes: a `<<`
+# inside a LABEL value or a quoted RUN argument opens nothing.
+_HEREDOC_KEYWORDS = frozenset({"RUN", "COPY", "ADD"})
+_QUOTED_RE = re.compile(r"\"(?:[^\"\\]|\\.)*\"|'[^']*'")
 _WS_RE = re.compile(r"\s+")
 _CHECK_IDS = (
     "syntax_first_from",
@@ -117,7 +121,11 @@ def parse(text: str) -> ParsedDockerfile:
         keyword, _, rest = logical.partition(" ")
         instruction = Instruction(keyword.upper(), rest.strip(), first, number)
         instructions.append(instruction)
-        heredoc_match = _HEREDOC_RE.search(rest)
+        heredoc_match = (
+            _HEREDOC_RE.search(_QUOTED_RE.sub("", rest))
+            if keyword.upper() in _HEREDOC_KEYWORDS
+            else None
+        )
         if heredoc_match:
             heredoc = (heredoc_match.group(3), heredoc_match.group(1) == "-")
             heredoc_owner_index = len(instructions) - 1
