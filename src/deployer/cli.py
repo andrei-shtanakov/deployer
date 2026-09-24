@@ -1,6 +1,7 @@
 """Thin argparse CLI over the deployer library."""
 
 import argparse
+import importlib.metadata
 import os
 import re
 import subprocess
@@ -40,7 +41,7 @@ from deployer.models import (
     VerificationReport,
     satisfies_declared_smoke,
 )
-from deployer.provenance import trust
+from deployer.provenance import issue, trust
 from deployer.reproduce import ReproductionSection, TryDirError, reproduce_run
 from deployer.runtime import (
     RuntimeConfigError,
@@ -302,6 +303,47 @@ def _is_parse_failure(report: VerificationReport) -> bool:
     )
 
 
+def deployer_version() -> str:
+    """The installed `deployer` package version, for a provenance record.
+
+    Unlike `author._deployer_version`, this never falls back to `None`:
+    it runs under an installed `deployer` (the package `uv run` provides),
+    and a provenance record needs a version string, not an optional one.
+    """
+    return importlib.metadata.version("deployer")
+
+
+def _apply_provenance(
+    project: Path,
+    pre: issue.Preflight | str,
+    signing_key: Path | None,
+    dockerfile_written: bool,
+) -> None:
+    """Issue or withdraw the authoring provenance set for this run.
+
+    A `Preflight` plus a written Dockerfile issues a new set; anything else
+    (preflight refused, or no Dockerfile written) withdraws whatever set an
+    earlier authoring run may have left behind, so no stale confirmation
+    survives an authoring that did not just reissue it.
+    """
+    if (
+        dockerfile_written
+        and isinstance(pre, issue.Preflight)
+        and signing_key is not None
+    ):
+        out = issue.issue(pre, signing_key, deployer_version())
+        if not out.published:
+            print(
+                f"warning: ownership will not be confirmable: {out.reason}",
+                file=sys.stderr,
+            )
+            if issue.withdraw(project):
+                print("warning: previous authoring set removed", file=sys.stderr)
+        return
+    if issue.withdraw(project):
+        print("warning: previous authoring set removed", file=sys.stderr)
+
+
 def _cmd_author(args: argparse.Namespace) -> int:
     project = Path(args.path)
     if not project.is_dir():
@@ -330,6 +372,10 @@ def _cmd_author(args: argparse.Namespace) -> int:
             print(f"error: {runtime}", file=sys.stderr)
             return 2
     _load_dotenv()
+    signing_key = Path(args.signing_key) if args.signing_key else None
+    pre = issue.preflight(project, signing_key)
+    if isinstance(pre, str):
+        print(f"warning: ownership will not be confirmable: {pre}", file=sys.stderr)
     try:
         run = author_dockerfile(
             project,
@@ -340,13 +386,16 @@ def _cmd_author(args: argparse.Namespace) -> int:
             build_timeout=args.build_timeout,
             health_timeout=args.health_timeout,
             smoke_suite=smoke_suite,
+            facts=pre.facts if isinstance(pre, issue.Preflight) else None,
         )
     except TargetConfigError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
+    dockerfile_written = False
     if run.iterations:
         last = run.iterations[-1]
         if not _is_parse_failure(last.report):
+            dockerfile_written = True
             (project / "Dockerfile").write_text(last.dockerfile + "\n")
             if last.compose is not None:
                 (project / "compose.yaml").write_text(last.compose + "\n")
@@ -355,6 +404,7 @@ def _cmd_author(args: argparse.Namespace) -> int:
                 wf_dir.mkdir(parents=True, exist_ok=True)
                 (wf_dir / "ci.yml").write_text(last.ci + "\n")
         _print_report(last.report)
+    _apply_provenance(project, pre, signing_key, dockerfile_written)
     report_path = _write_report(
         project, "authoring-run.json", run.model_dump_json(indent=2)
     )
@@ -830,6 +880,14 @@ def main(argv: list[str] | None = None) -> int:
     p_author.add_argument("--max-iterations", type=int, default=3)
     p_author.add_argument(
         "--no-docker", action="store_true", help="static-only verification"
+    )
+    p_author.add_argument(
+        "--signing-key",
+        default=os.environ.get("DEPLOYER_SIGNING_KEY"),
+        help=(
+            "ed25519 private key that signs the authoring provenance set "
+            "(default: DEPLOYER_SIGNING_KEY)"
+        ),
     )
     _add_timeout_flags(p_author)
     _add_runtime_flags(p_author)

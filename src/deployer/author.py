@@ -97,6 +97,7 @@ def author_dockerfile(
     build_timeout: int = DEFAULT_BUILD_TIMEOUT,
     health_timeout: int = DEFAULT_HEALTH_TIMEOUT,
     smoke_suite: Path | None = None,
+    facts: ProjectFacts | None = None,
 ) -> AuthoringRun:
     """Generate -> verify -> repair until success, budget, or no progress.
 
@@ -111,8 +112,12 @@ def author_dockerfile(
     so a caller can never silently downgrade to static-only by omission.
     `smoke_suite` is the resolved ATP suite path for a `smoke`-intent target;
     it is forwarded unchanged to every `verify` call across the loop.
+    `facts`, when given, is used instead of scanning `project_path` again —
+    a caller that already has facts proven to match a committed source (a
+    provenance preflight) passes them through so the two never drift apart.
     """
-    facts = analyze_project(project_path)
+    if facts is None:
+        facts = analyze_project(project_path)
     validate_target_against_facts(target, facts)
     hints = collect_hints(facts, target.extras)
 
