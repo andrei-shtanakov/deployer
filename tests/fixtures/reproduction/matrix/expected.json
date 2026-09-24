@@ -1,0 +1,5 @@
+{
+  "status": "refused",
+  "refusal": "job build: strategy.matrix not supported",
+  "restoration": null
+}
