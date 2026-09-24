@@ -1,0 +1,15 @@
+{
+  "status": "attempted",
+  "refusal": null,
+  "restoration": {
+    "state": "exact",
+    "unmet": []
+  },
+  "exit_code": null,
+  "launch_error": "timeout",
+  "build_containers": "not_checked",
+  "build_failed_instruction": null,
+  "comparison": "inconclusive",
+  "comparison_reason": "build did not finish",
+  "signature_match": null
+}

@@ -1,0 +1,42 @@
+{
+  "status": "attempted",
+  "refusal": null,
+  "restoration": {
+    "state": "exact",
+    "unmet": []
+  },
+  "unmet_count": 0,
+  "failed_checks": [],
+  "checks": {
+    "builder_check": "skipped",
+    "copy_sources": "passed"
+  },
+  "exit_code": 1,
+  "launch_error": null,
+  "build_containers": "removed_by_builder",
+  "build_failed_instruction": {
+    "kind": "span",
+    "lines": [
+      15,
+      15
+    ],
+    "bound_by": "step_text"
+  },
+  "ci_instruction": {
+    "kind": "span",
+    "lines": [
+      15,
+      15
+    ],
+    "bound_by": "buildkit_error_block"
+  },
+  "signature_match": "equal",
+  "comparison": "reproduced_with_differences",
+  "comparison_reason": null,
+  "dimensions": {
+    "backend": "differs",
+    "host_arch": "unknown",
+    "ignore_file": "same",
+    "restoration": "same"
+  }
+}

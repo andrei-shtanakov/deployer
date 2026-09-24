@@ -1,0 +1,28 @@
+{
+  "status": "attempted",
+  "refusal": null,
+  "restoration": {
+    "state": "exact",
+    "unmet": []
+  },
+  "failed_checks": [
+    [
+      "syntax_from_args",
+      "syntax error at line 1: FROM takes one or three arguments"
+    ]
+  ],
+  "exit_code": 125,
+  "launch_error": null,
+  "build_failed_instruction": null,
+  "ci_instruction": {
+    "kind": "parse",
+    "lines": [
+      1,
+      1
+    ],
+    "bound_by": "buildkit_parse_error"
+  },
+  "comparison": "inconclusive",
+  "comparison_reason": "local failure unbound",
+  "signature_match": null
+}

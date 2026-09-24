@@ -1,0 +1,5 @@
+{
+  "status": "refused",
+  "refusal": "snapshot lacks reproduction fields: workflow_ref_path, workflow_path, event, all_steps",
+  "restoration": null
+}

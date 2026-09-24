@@ -4,6 +4,10 @@ import pytest
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
+# Reproduction bundles vendor a project's tree, its own tests included; those
+# are data for the replay and integrity tests, never collected.
+collect_ignore_glob = ["fixtures/reproduction/*/tree"]
+
 
 @pytest.fixture()
 def hello_service() -> Path:

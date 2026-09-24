@@ -1,0 +1,14 @@
+{
+  "status": "refused",
+  "refusal": "endpoint ssh://core@10.0.0.5/run/user/501/podman/podman.sock not confirmed local",
+  "restoration": {
+    "state": "exact",
+    "unmet": []
+  },
+  "failed_checks": [
+    [
+      "copy_sources",
+      "source docs/setup.md absent from the context"
+    ]
+  ]
+}

@@ -33,6 +33,9 @@ addopts = "-m 'not docker and not llm'"
 
 [tool.ruff]
 line-length = 88
+# Vendored project trees of the reproduction bundles: their bytes are pinned
+# by tree-listing.json, so no formatter may touch them.
+extend-exclude = ["tests/fixtures/reproduction/*/tree"]
 
 [tool.ruff.lint]
 extend-select = ["I"]

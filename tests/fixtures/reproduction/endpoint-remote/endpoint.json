@@ -1,0 +1,22 @@
+{
+  "tool": "podman",
+  "connections": [
+    {
+      "Name": "podman-machine-default",
+      "URI": "ssh://core@10.0.0.5/run/user/501/podman/podman.sock",
+      "Identity": "/Users/example/.local/share/containers/podman/machine/machine",
+      "IsMachine": true,
+      "Default": true,
+      "ReadWrite": true
+    },
+    {
+      "Name": "podman-machine-default-root",
+      "URI": "ssh://root@10.0.0.5/run/podman/podman.sock",
+      "Identity": "/Users/example/.local/share/containers/podman/machine/machine",
+      "IsMachine": true,
+      "Default": false,
+      "ReadWrite": true
+    }
+  ],
+  "env": {}
+}
