@@ -326,3 +326,14 @@ def test_missing_dimensions_are_unknown_never_reproduced(given):
         "ignore_file",
         "restoration",
     }
+
+
+def test_an_exact_digest_key_wins_and_ambiguity_proves_nothing():
+    """A suffix match must not stand in for another image (review of #78)."""
+    a, b = "sha256:" + "a" * 64, "sha256:" + "b" * 64
+    images = ["python:3.12-slim"]
+    exact = {"vendor/python:3.12-slim": a, "python:3.12-slim": b}
+    assert digest_dimension(exact, {"python:3.12-slim": [a]}, images) == "unknown"
+    assert digest_dimension(exact, {"python:3.12-slim": [b]}, images) == "same"
+    two = {"vendor/python:3.12-slim": a, "docker.io/library/python:3.12-slim": a}
+    assert digest_dimension(two, {"python:3.12-slim": [a]}, images) == "unknown"
