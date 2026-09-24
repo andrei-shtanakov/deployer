@@ -57,6 +57,11 @@ paragraph.
   satisfy this item's "establish why it failed" promise as written, or does the promise
   itself need rewording now that both the reading layer and reproduction assert no cause?
   Left as a question rather than a `@blocked_by` change: that call is the owner's.
+  Answer in progress (owner, 2026-09-24): the item closes with an **admission** verdict —
+  "a defect of a deployer-authored artifact is proven" (signed authoring record + closed defect
+  catalogue + recording-backed link), everything else `insufficient_grounds`. Spec:
+  `docs/superpowers/specs/2026-09-24-ci-failure-admission-design.md` on the docs branch
+  `docs/ci-failure-admission-spec` (DRAFT → targeted review → plan).
 - [ ] Real `docker build --check` recordings for the two synthetic reader fixtures @owner:repo:deployer @id:repro-check-output-real-recordings @epic:eco.dark-factory
   `tests/fixtures/reproduction/check-outputs/builder-unreachable.txt` and
   `lint-then-error.txt` are synthetic — no Docker host was reachable when the bundle was
