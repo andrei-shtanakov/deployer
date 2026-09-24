@@ -19,6 +19,7 @@ from deployer.reproduce.model import Location, ReproductionCheck, ReproEvidence
 LISTING_REF = "../../source.json#tree"
 _REMOTE_PREFIXES = ("http://", "https://", "git@", "git://")
 _HEREDOC_REASON = "heredoc source not modelled"
+_SOURCE_ALPHABET_RE = re.compile(r"[A-Za-z0-9._\-/+=,@~*?\[\]]+")
 _LEADING_FLAGS_RE = re.compile(r"((?:--\S+\s+)*)")
 _UNMODELLED_FLAGS = ("--parents", "--exclude")
 
@@ -124,11 +125,14 @@ def _git_conditions(inst: Instruction) -> list[str]:
         if why == _HEREDOC_REASON:
             return []  # inline content: nothing is read from the context
         return [f".git exclusion not proven: {where} ({why})"]
-    return [
-        f".git exclusion not proven: {inst.keyword} {source} at line {inst.first_line}"
-        for source in (_norm(s) for s in sources)
-        if _may_reach_git(source)
-    ]
+    unmet: list[str] = []
+    for source in (_norm(s) for s in sources):
+        prefix = f".git exclusion not proven: {inst.keyword} {source} at line {inst.first_line}"
+        if not _is_modelled_source(source):
+            unmet.append(f"{prefix} (source pattern not modelled)")
+        elif _may_reach_git(source):
+            unmet.append(prefix)
+    return unmet
 
 
 def _may_reach_git(source: str) -> bool:
@@ -191,9 +195,21 @@ def _norm(source: str) -> str:
     return posixpath.normpath("/" + source).lstrip("/") or "."
 
 
+def _is_modelled_source(source: str) -> bool:
+    """Whether a source is inside the closed alphabet (spec §3.2).
+
+    A literal path or a glob of ``*``, ``?``, ``**``, ``[...]`` over letters,
+    digits and ``. _ - / + = , @ ~``. Anything else — an escape, an ARG
+    substitution (``$X``, ``${X}``), whitespace, a control character — is a
+    form this slice does not read: skipped by the source check and never
+    exact under §1.3 (d). Both checks use this one gate.
+    """
+    return _SOURCE_ALPHABET_RE.fullmatch(source) is not None
+
+
 def _has_unmodelled_chars(source: str) -> bool:
-    """Character classes and escapes are a source form this slice doesn't model."""
-    return "[" in source or "\\" in source
+    """Outside the alphabet, or a ``[...]`` class the glob expansion can't read."""
+    return not _is_modelled_source(source) or "[" in source
 
 
 def _check_source(
