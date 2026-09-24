@@ -1,5 +1,6 @@
 """Offline source checks over the restored context (spec §3.2, §3.3, §1.3 d-e)."""
 
+import fnmatch
 import json
 import os
 import posixpath
@@ -31,6 +32,7 @@ def copy_source_checks(
     files = _context_paths(context)
     findings: list[ReproductionCheck] = []
     skipped: list[ReproductionCheck] = []
+    checked = 0  # a pass needs at least one source actually checked
     for inst in parsed.instructions:
         if inst.keyword not in ("COPY", "ADD"):
             continue
@@ -46,10 +48,11 @@ def copy_source_checks(
             if _has_unmodelled_chars(source):
                 skipped.append(_skip(inst, f"source pattern not modelled: {source}"))
                 continue
+            checked += 1
             findings.extend(
                 _check_source(inst, source, files, context, dockerfile, rules)
             )
-    if not findings:
+    if not findings and checked:
         findings = [ReproductionCheck(check_id="copy_sources", status="passed")]
     return findings + skipped
 
@@ -117,12 +120,7 @@ def _git_conditions(inst: Instruction, rules: IgnoreRules) -> list[str]:
         ]
     unmet: list[str] = []
     for source in (_norm(s) for s in sources):
-        root_glob = (
-            not _has_unmodelled_chars(source)
-            and "/" not in source
-            and any(ch in source for ch in "*?")
-        )
-        if not (source == "." or root_glob or source.startswith(".git")):
+        if not _may_reach_git(source):
             continue
         reached = f".git reachable: {inst.keyword} {source} at line {inst.first_line}"
         if rules.unsupported is not None:
@@ -139,6 +137,17 @@ def _git_conditions(inst: Instruction, rules: IgnoreRules) -> list[str]:
             if reinclusion is not None:
                 unmet.append(f"{reached} (re-included by !{reinclusion})")
     return unmet
+
+
+def _may_reach_git(source: str) -> bool:
+    """Whether a COPY/ADD source can name ``.git`` or a path under it.
+
+    True for the context root, and for any source whose first path segment
+    can match ``.git`` — literally or as a glob (``*``, ``**``, ``?``,
+    ``[...]``; ``fnmatch`` lets ``*`` match a leading dot, as BuildKit does).
+    """
+    first = source.split("/", 1)[0]
+    return source == "." or fnmatch.fnmatchcase(".git", first)
 
 
 def _git_reinclusion(rules: IgnoreRules) -> str | None:
