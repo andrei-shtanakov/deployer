@@ -26,6 +26,7 @@ from deployer.models import (
 )
 from deployer.reproduce import ReproductionSection, TryDirError
 from deployer.reproduce.model import Location, ReproductionCheck, ReproEvidence
+from tests.provenance.conftest import make_key
 
 
 @pytest.fixture(autouse=True)
@@ -1738,3 +1739,146 @@ def test_without_reproduce_nothing_is_called(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(cli, "reproduce_run", forbidden)
     assert cli.main(["diagnose", RUN_URL]) == 3
     assert not (tmp_path / ".deployer-runs").exists()
+
+
+def test_trust_add_writes_the_allowed_signers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("DEPLOYER_TRUST_DIR", str(tmp_path / "trust"))
+    _, pub = make_key(tmp_path)
+    assert cli.main(["trust", "add", str(tmp_path / "k.pub")]) == 0
+    body = pub.split()[1]
+    assert body in (tmp_path / "trust" / "allowed_signers").read_text()
+    assert cli.main(["trust", "add", str(tmp_path / "missing.pub")]) == 2
+
+
+def test_trust_revoke_removes_from_allowed_and_lists_revoked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("DEPLOYER_TRUST_DIR", str(tmp_path / "trust"))
+    _, pub = make_key(tmp_path)
+    pub_path = tmp_path / "k.pub"
+    assert cli.main(["trust", "add", str(pub_path)]) == 0
+    assert cli.main(["trust", "revoke", str(pub_path)]) == 0
+    trust_dir = tmp_path / "trust"
+    body = pub.split()[1]
+    assert body not in (trust_dir / "allowed_signers").read_text()
+    assert body in (trust_dir / "revoked_keys").read_text()
+    assert cli.main(["trust", "revoke", str(tmp_path / "missing.pub")]) == 2
+
+
+def test_trust_replace_adds_new_and_revokes_old(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("DEPLOYER_TRUST_DIR", str(tmp_path / "trust"))
+    _, old_pub = make_key(tmp_path, "old")
+    _, new_pub = make_key(tmp_path, "new")
+    old_path = tmp_path / "old.pub"
+    new_path = tmp_path / "new.pub"
+    assert cli.main(["trust", "add", str(old_path)]) == 0
+    assert cli.main(["trust", "replace", str(old_path), str(new_path)]) == 0
+    trust_dir = tmp_path / "trust"
+    allowed = (trust_dir / "allowed_signers").read_text()
+    old_body, new_body = old_pub.split()[1], new_pub.split()[1]
+    assert new_body in allowed and old_body not in allowed
+    assert old_body in (trust_dir / "revoked_keys").read_text()
+    assert (
+        cli.main(["trust", "replace", str(tmp_path / "missing.pub"), str(new_path)])
+        == 2
+    )
+    assert (
+        cli.main(["trust", "replace", str(new_path), str(tmp_path / "missing.pub")])
+        == 2
+    )
+
+
+def test_trust_add_rejects_an_empty_pubkey_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("DEPLOYER_TRUST_DIR", str(tmp_path / "trust"))
+    empty = tmp_path / "empty.pub"
+    empty.write_text("")
+    assert cli.main(["trust", "add", str(empty)]) == 2
+
+
+def test_trust_add_prints_the_trust_dir_used(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    trust_dir = tmp_path / "trust"
+    monkeypatch.setenv("DEPLOYER_TRUST_DIR", str(trust_dir))
+    make_key(tmp_path)
+    assert cli.main(["trust", "add", str(tmp_path / "k.pub")]) == 0
+    assert str(trust_dir) in capsys.readouterr().out
+
+
+def test_trust_add_rejects_a_non_utf8_pubkey_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("DEPLOYER_TRUST_DIR", str(tmp_path / "trust"))
+    bad = tmp_path / "bad.pub"
+    bad.write_bytes(b"\xff\xfe")
+    assert cli.main(["trust", "add", str(bad)]) == 2
+
+
+def test_trust_add_rejects_a_malformed_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("DEPLOYER_TRUST_DIR", str(tmp_path / "trust"))
+    bad = tmp_path / "bad.pub"
+    bad.write_text("ssh-ed25519\n")
+    assert cli.main(["trust", "add", str(bad)]) == 2
+    assert "not a public key" in capsys.readouterr().err
+
+
+def test_trust_replace_rejects_a_malformed_new_key_without_mutating_the_store(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("DEPLOYER_TRUST_DIR", str(tmp_path / "trust"))
+    make_key(tmp_path, "old")
+    old_path = tmp_path / "old.pub"
+    assert cli.main(["trust", "add", str(old_path)]) == 0
+    trust_dir = tmp_path / "trust"
+    allowed_before = (trust_dir / "allowed_signers").read_bytes()
+    revoked_path = trust_dir / "revoked_keys"
+    assert not revoked_path.exists()
+    bad_new = tmp_path / "bad_new.pub"
+    bad_new.write_text("ssh-ed25519\n")
+    assert cli.main(["trust", "replace", str(old_path), str(bad_new)]) == 2
+    assert "not a public key" in capsys.readouterr().err
+    assert (trust_dir / "allowed_signers").read_bytes() == allowed_before
+    assert not revoked_path.exists()
+
+
+def test_trust_add_rejects_a_header_only_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A header with no key data: valid base64, valid wire name, but not a
+    complete key — ssh-keygen must be the one to catch this, not pure
+    Python."""
+    monkeypatch.setenv("DEPLOYER_TRUST_DIR", str(tmp_path / "trust"))
+    bad = tmp_path / "bad.pub"
+    bad.write_text("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5\n")
+    assert cli.main(["trust", "add", str(bad)]) == 2
+    assert "not a public key" in capsys.readouterr().err
+
+
+def test_trust_replace_rejects_a_header_only_new_key_leaving_files_byte_identical(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("DEPLOYER_TRUST_DIR", str(tmp_path / "trust"))
+    make_key(tmp_path, "old")
+    old_path = tmp_path / "old.pub"
+    assert cli.main(["trust", "add", str(old_path)]) == 0
+    trust_dir = tmp_path / "trust"
+    allowed_before = (trust_dir / "allowed_signers").read_bytes()
+    revoked_path = trust_dir / "revoked_keys"
+    revoked_before = revoked_path.read_bytes() if revoked_path.is_file() else None
+    bad_new = tmp_path / "bad_new.pub"
+    bad_new.write_text("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5\n")
+    assert cli.main(["trust", "replace", str(old_path), str(bad_new)]) == 2
+    assert "not a public key" in capsys.readouterr().err
+    assert (trust_dir / "allowed_signers").read_bytes() == allowed_before
+    if revoked_before is None:
+        assert not revoked_path.exists()
+    else:
+        assert revoked_path.read_bytes() == revoked_before

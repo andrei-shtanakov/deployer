@@ -40,6 +40,7 @@ from deployer.models import (
     VerificationReport,
     satisfies_declared_smoke,
 )
+from deployer.provenance import trust
 from deployer.reproduce import ReproductionSection, TryDirError, reproduce_run
 from deployer.runtime import (
     RuntimeConfigError,
@@ -764,6 +765,53 @@ def _cmd_bench_compare(args: argparse.Namespace) -> int:
     return 1 if blocking else 0
 
 
+def _read_pubkey_line(path: str) -> str | None:
+    """Read a public-key file's first non-blank line; ``None`` on a bad file."""
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+    line = text.strip()
+    return line or None
+
+
+def _read_and_validate_pubkey(path: str) -> str | int:
+    """Read and validate a public-key file: the line, or an exit code already
+    reported on stderr."""
+    line = _read_pubkey_line(path)
+    if line is None:
+        print(f"error: cannot read {path}", file=sys.stderr)
+        return 2
+    try:
+        trust.validate_public_line(line)
+    except trust.TrustError:
+        print(f"error: {path}: not a public key", file=sys.stderr)
+        return 2
+    return line
+
+
+def _cmd_trust(args: argparse.Namespace) -> int:
+    trust_directory = trust.trust_dir(os.environ)
+    if args.trust_command == "replace":
+        old_line = _read_and_validate_pubkey(args.old_pubkey)
+        if isinstance(old_line, int):
+            return old_line
+        new_line = _read_and_validate_pubkey(args.new_pubkey)
+        if isinstance(new_line, int):
+            return new_line
+        trust.replace(trust_directory, old_line, new_line)
+    else:
+        line = _read_and_validate_pubkey(args.pubkey)
+        if isinstance(line, int):
+            return line
+        if args.trust_command == "add":
+            trust.add(trust_directory, line)
+        else:
+            trust.revoke(trust_directory, line)
+    print(f"trust directory: {trust_directory}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """Entry point for the `deployer` CLI."""
     parser = argparse.ArgumentParser(prog="deployer")
@@ -893,6 +941,24 @@ def main(argv: list[str] | None = None) -> int:
         "--iteration-threshold", type=int, default=0, metavar="N"
     )
     p_bench_compare.set_defaults(func=_cmd_bench_compare)
+
+    p_trust = sub.add_parser("trust", help="manage the out-of-repo trust store")
+    trust_sub = p_trust.add_subparsers(dest="trust_command", required=True)
+
+    p_trust_add = trust_sub.add_parser("add", help="allow a signing key")
+    p_trust_add.add_argument("pubkey", help="path to a public-key file")
+    p_trust_add.set_defaults(func=_cmd_trust)
+
+    p_trust_revoke = trust_sub.add_parser("revoke", help="revoke a signing key")
+    p_trust_revoke.add_argument("pubkey", help="path to a public-key file")
+    p_trust_revoke.set_defaults(func=_cmd_trust)
+
+    p_trust_replace = trust_sub.add_parser(
+        "replace", help="allow a new key and revoke the old one"
+    )
+    p_trust_replace.add_argument("old_pubkey", help="path to the old public-key file")
+    p_trust_replace.add_argument("new_pubkey", help="path to the new public-key file")
+    p_trust_replace.set_defaults(func=_cmd_trust)
 
     args = parser.parse_args(argv)
     return args.func(args)
