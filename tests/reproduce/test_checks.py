@@ -87,11 +87,6 @@ def test_bracket_glob_source_is_skipped_not_absent(tmp_path):
     )
 
 
-def test_bracket_source_is_not_a_root_glob_for_git_reachability(tmp_path):
-    rules = load_rules(tmp_path, None)
-    assert context_conditions(parse("FROM a\nCOPY file[0-9].txt /dst/\n"), rules) == []
-
-
 def test_unmodelled_ignore_pattern_skips_the_check(tmp_path):
     ctx = _tree(tmp_path)
     (ctx / ".dockerignore").write_text("a[bc]\n")
@@ -125,81 +120,6 @@ def test_dotdot_source_is_clamped_to_the_context_root(tmp_path):
     ]
 
 
-def test_context_conditions_git_and_mount(tmp_path):
-    rules = load_rules(tmp_path, None)
-    assert context_conditions(parse("FROM a\nCOPY . /app\n"), rules) == [
-        ".git reachable: COPY . at line 2"
-    ]
-    assert context_conditions(parse("FROM a\nCOPY .git/HEAD /h\n"), rules) == [
-        ".git reachable: COPY .git/HEAD at line 2"
-    ]
-    assert context_conditions(
-        parse("FROM a\nRUN --mount=type=cache,target=/c x\n"), rules
-    ) == ["RUN --mount at line 2"]
-    (tmp_path / ".dockerignore").write_text(".git\n")
-    assert (
-        context_conditions(
-            parse("FROM a\nCOPY . /app\n"), load_rules(tmp_path, ".dockerignore")
-        )
-        == []
-    )
-
-
-def test_unmodelled_ignore_pattern_leaves_git_exclusion_unproven(tmp_path):
-    """A pattern we cannot evaluate may re-include .git: not exact (review of #77)."""
-    (tmp_path / ".dockerignore").write_text(".git\n![.]git\n")
-    rules = load_rules(tmp_path, ".dockerignore")
-    assert context_conditions(parse("FROM a\nCOPY . /app\n"), rules) == [
-        ".git reachable: COPY . at line 2 (ignore pattern not modelled: [.]git)"
-    ]
-
-
-@pytest.mark.parametrize(
-    ("dockerignore", "dockerfile", "expected"),
-    [
-        # an unmodelled COPY form cannot prove .git stays out
-        (
-            None,
-            "FROM a\nCOPY --parents . /app\n",
-            [
-                ".git reachability not established: COPY at line 2 "
-                "(flag not modelled: --parents)"
-            ],
-        ),
-        # a supported negation re-includes a file under .git
-        (
-            ".git\n!.git/HEAD\n",
-            "FROM a\nCOPY .git/HEAD /h\n",
-            [".git reachable: COPY .git/HEAD at line 2"],
-        ),
-        (
-            ".git\n!.git/config\n",
-            "FROM a\nCOPY . /app\n",
-            [".git reachable: COPY . at line 2 (re-included by !.git/config)"],
-        ),
-        # a negation that cannot reach .git keeps the exclusion proven
-        (".git\n!README.md\n", "FROM a\nCOPY . /app\n", []),
-        # a heredoc COPY carries its own content; it reads nothing from context
-        (None, "FROM a\nCOPY <<EOF /x\nhello\nEOF\n", []),
-    ],
-)
-def test_git_reachability_needs_proof(tmp_path, dockerignore, dockerfile, expected):
-    """Exactness (d) holds only when .git exclusion is proven (review of #77)."""
-    if dockerignore is not None:
-        (tmp_path / ".dockerignore").write_text(dockerignore)
-    rules = load_rules(tmp_path, ".dockerignore" if dockerignore else None)
-    assert context_conditions(parse(dockerfile), rules) == expected
-
-
-@pytest.mark.parametrize("source", ["*/HEAD", "**/config", ".g?t/HEAD", "*"])
-def test_any_glob_source_needs_git_exclusion_proof(tmp_path, source):
-    """A glob anywhere may match under .git (third review of #77)."""
-    unmet = context_conditions(
-        parse(f"FROM a\nCOPY {source} /h\n"), load_rules(tmp_path, None)
-    )
-    assert unmet == [f".git reachable: COPY {source} at line 2"]
-
-
 def test_all_sources_skipped_gives_no_passed(tmp_path):
     """Nothing checked is not a pass (third review of #77)."""
     checks = copy_source_checks(
@@ -209,3 +129,60 @@ def test_all_sources_skipped_gives_no_passed(tmp_path):
         load_rules(tmp_path, None),
     )
     assert [c.status for c in checks] == ["skipped"]
+
+
+@pytest.mark.parametrize(
+    ("dockerfile", "expected"),
+    [
+        ("FROM a\nCOPY . /app\n", [".git exclusion not proven: COPY . at line 2"]),
+        (
+            "FROM a\nCOPY .git/HEAD /h\n",
+            [".git exclusion not proven: COPY .git/HEAD at line 2"],
+        ),
+        (
+            "FROM a\nCOPY .git /saved\n",
+            [".git exclusion not proven: COPY .git at line 2"],
+        ),
+        (
+            "FROM a\nCOPY */HEAD /h\n",
+            [".git exclusion not proven: COPY */HEAD at line 2"],
+        ),
+        (
+            "FROM a\nCOPY **/config /c\n",
+            [".git exclusion not proven: COPY **/config at line 2"],
+        ),
+        (
+            "FROM a\nCOPY .g?t/HEAD /h\n",
+            [".git exclusion not proven: COPY .g?t/HEAD at line 2"],
+        ),
+        ("FROM a\nCOPY * /x/\n", [".git exclusion not proven: COPY * at line 2"]),
+        (
+            "FROM a\nCOPY --parents . /app\n",
+            [
+                ".git exclusion not proven: COPY at line 2 "
+                "(flag not modelled: --parents)"
+            ],
+        ),
+        # cannot reach .git: a named path, a bracket glob with a literal prefix
+        ("FROM a\nCOPY src ./src\n", []),
+        ("FROM a\nCOPY file[0-9].txt /dst/\n", []),
+        # inline content reads nothing from the context
+        ("FROM a\nCOPY <<EOF /x\nhello\nEOF\n", []),
+        # a --from source is checked in its stage or image
+        ("FROM a AS b\nFROM b\nCOPY --from=b . /x\n", []),
+        ("FROM a\nRUN --mount=type=cache,target=/c x\n", ["RUN --mount at line 2"]),
+    ],
+)
+def test_git_exclusion_is_never_proven_from_ignore_rules(dockerfile, expected):
+    """§1.3 (d), narrowed (owner, 2026-09-24): any source that may reach .git
+    is an approximation, whatever the ignore file says."""
+    assert context_conditions(parse(dockerfile)) == expected
+
+
+def test_ignore_rules_do_not_make_git_reachability_exact(tmp_path):
+    """Even '.git' in .dockerignore does not prove the exclusion (narrowed rule)."""
+    (tmp_path / ".dockerignore").write_text(".git\n")
+    assert load_rules(tmp_path, ".dockerignore").patterns  # the rule is there
+    assert context_conditions(parse("FROM a\nCOPY . /app\n")) == [
+        ".git exclusion not proven: COPY . at line 2"
+    ]

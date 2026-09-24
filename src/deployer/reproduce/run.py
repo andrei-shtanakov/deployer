@@ -116,7 +116,7 @@ def reproduce_run(
     unmet = (
         found.preceding_unmet
         + restore.listing_conditions(source_dir, listing)
-        + checks.context_conditions(parsed, ci_rules)
+        + checks.context_conditions(parsed)
     )
     restoration = Restoration(
         state="approximation" if unmet else "exact", sha=snapshot.head_sha, unmet=unmet
