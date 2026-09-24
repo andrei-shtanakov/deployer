@@ -189,3 +189,23 @@ def test_git_reachability_needs_proof(tmp_path, dockerignore, dockerfile, expect
         (tmp_path / ".dockerignore").write_text(dockerignore)
     rules = load_rules(tmp_path, ".dockerignore" if dockerignore else None)
     assert context_conditions(parse(dockerfile), rules) == expected
+
+
+@pytest.mark.parametrize("source", ["*/HEAD", "**/config", ".g?t/HEAD", "*"])
+def test_any_glob_source_needs_git_exclusion_proof(tmp_path, source):
+    """A glob anywhere may match under .git (third review of #77)."""
+    unmet = context_conditions(
+        parse(f"FROM a\nCOPY {source} /h\n"), load_rules(tmp_path, None)
+    )
+    assert unmet == [f".git reachable: COPY {source} at line 2"]
+
+
+def test_all_sources_skipped_gives_no_passed(tmp_path):
+    """Nothing checked is not a pass (third review of #77)."""
+    checks = copy_source_checks(
+        parse("FROM a\nCOPY file[0-9].txt /dst/\n"),
+        tmp_path,
+        "Dockerfile",
+        load_rules(tmp_path, None),
+    )
+    assert [c.status for c in checks] == ["skipped"]
