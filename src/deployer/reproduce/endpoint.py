@@ -72,11 +72,18 @@ def _detect(rt: ContainerRuntime) -> Endpoint | Refusal:
         detail = (proc.stderr or proc.stdout or "").strip()
         return Refusal(f"endpoint detection failed: {detail}")
     if rt.tool == "docker":
-        return Endpoint(proc.stdout.strip(), "docker_active_context")
+        uri = (proc.stdout or "").strip()
+        if not uri:
+            return Refusal("endpoint detection failed: empty context endpoint")
+        return Endpoint(uri, "docker_active_context")
+    # Only an actual JSON list is an answer: empty output, an object or a
+    # scalar says nothing about where the builder is.
     try:
-        connections = json.loads(proc.stdout or "[]")
+        connections = json.loads(proc.stdout or "")
     except json.JSONDecodeError:
         return Refusal("endpoint detection failed: connection list not JSON")
+    if not isinstance(connections, list):
+        return Refusal("endpoint detection failed: connection list is not a list")
     defaults = [c for c in connections if isinstance(c, dict) and c.get("Default")]
     if not connections:
         return Endpoint("unix://", "podman_local_socket")
