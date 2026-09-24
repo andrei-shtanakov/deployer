@@ -1,5 +1,7 @@
 """§3.2-3.3 source checks and the exactness conditions (d) and (e)."""
 
+import pytest
+
 from deployer.reproduce.checks import (
     context_conditions,
     copy_source_checks,
@@ -150,3 +152,40 @@ def test_unmodelled_ignore_pattern_leaves_git_exclusion_unproven(tmp_path):
     assert context_conditions(parse("FROM a\nCOPY . /app\n"), rules) == [
         ".git reachable: COPY . at line 2 (ignore pattern not modelled: [.]git)"
     ]
+
+
+@pytest.mark.parametrize(
+    ("dockerignore", "dockerfile", "expected"),
+    [
+        # an unmodelled COPY form cannot prove .git stays out
+        (
+            None,
+            "FROM a\nCOPY --parents . /app\n",
+            [
+                ".git reachability not established: COPY at line 2 "
+                "(flag not modelled: --parents)"
+            ],
+        ),
+        # a supported negation re-includes a file under .git
+        (
+            ".git\n!.git/HEAD\n",
+            "FROM a\nCOPY .git/HEAD /h\n",
+            [".git reachable: COPY .git/HEAD at line 2"],
+        ),
+        (
+            ".git\n!.git/config\n",
+            "FROM a\nCOPY . /app\n",
+            [".git reachable: COPY . at line 2 (re-included by !.git/config)"],
+        ),
+        # a negation that cannot reach .git keeps the exclusion proven
+        (".git\n!README.md\n", "FROM a\nCOPY . /app\n", []),
+        # a heredoc COPY carries its own content; it reads nothing from context
+        (None, "FROM a\nCOPY <<EOF /x\nhello\nEOF\n", []),
+    ],
+)
+def test_git_reachability_needs_proof(tmp_path, dockerignore, dockerfile, expected):
+    """Exactness (d) holds only when .git exclusion is proven (review of #77)."""
+    if dockerignore is not None:
+        (tmp_path / ".dockerignore").write_text(dockerignore)
+    rules = load_rules(tmp_path, ".dockerignore" if dockerignore else None)
+    assert context_conditions(parse(dockerfile), rules) == expected
