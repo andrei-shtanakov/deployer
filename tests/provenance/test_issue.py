@@ -4,6 +4,7 @@ reuse, withdraw."""
 import os
 import shutil
 import subprocess
+import threading
 from pathlib import Path
 
 import pytest
@@ -305,3 +306,117 @@ def test_reuse_refuses_when_the_key_becomes_unusable(
 
     monkeypatch.setattr(sshsig, "public_key", broken)
     assert not issue.issue(pre, key, "0.1").published
+
+
+def test_concurrent_issue_calls_serialize_and_leave_one_consistent_set(
+    repo_with_origin: Path,
+    keypair: tuple[Path, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two `author` processes racing to publish must not interleave: the
+    reuse-versus-write decision, the pointer swap and the prune all run
+    under one lock per repository. Reproduced deterministically by
+    hooking `_replace_pointer` in the first call to prove a second,
+    concurrent `issue()` for the same repo blocks until the first
+    releases the lock (Review Focus, PR #85)."""
+    key, _ = keypair
+    pre = issue.preflight(repo_with_origin, key)
+    assert isinstance(pre, issue.Preflight)
+    _author(repo_with_origin)
+    real_replace_pointer = issue._replace_pointer
+    second_result: list[issue.Issued] = []
+    second_thread: list[threading.Thread] = []
+    triggered = False
+
+    def hook(project: Path, rec_sha: str) -> None:
+        nonlocal triggered
+        if triggered:
+            # the second call's own pointer swap: no more hooking
+            real_replace_pointer(project, rec_sha)
+            return
+        triggered = True
+        _author(repo_with_origin, DOCKERFILE + 'CMD ["python"]\n')
+
+        def run_second() -> None:
+            second_result.append(issue.issue(pre, key, "0.2"))
+
+        thread = threading.Thread(target=run_second)
+        second_thread.append(thread)
+        thread.start()
+        # the first call still holds the lock at this point, so the
+        # second must still be blocked trying to acquire it
+        thread.join(timeout=0.2)
+        assert thread.is_alive()
+        real_replace_pointer(project, rec_sha)
+
+    monkeypatch.setattr(issue, "_replace_pointer", hook)
+    first = issue.issue(pre, key, "0.1")
+    thread = second_thread[0]
+    thread.join(timeout=5)
+    assert not thread.is_alive()
+    assert first.published
+    assert second_result and second_result[0].published
+
+    pointer = _pointer(repo_with_origin)
+    set_dir = repo_with_origin / SET_ROOT / pointer
+    assert set_dir.is_dir()
+    for name in ("record.json", "snapshot.json", "record.json.sig"):
+        assert (set_dir / name).is_file()
+    rec_bytes = (set_dir / "record.json").read_bytes()
+    assert set_dir.name == sha256_hex(rec_bytes)
+    rec = Record.model_validate_json(rec_bytes)
+    assert rec.artifact_sha256 == sha256_hex(
+        (repo_with_origin / "Dockerfile").read_bytes()
+    )
+    remaining = list((repo_with_origin / SET_ROOT / "Dockerfile").iterdir())
+    assert len(remaining) == 1
+
+
+def test_lock_file_is_not_dirty_after_issuing(
+    repo_with_origin: Path, keypair: tuple[Path, str]
+) -> None:
+    key, _ = keypair
+    pre = issue.preflight(repo_with_origin, key)
+    assert isinstance(pre, issue.Preflight)
+    _author(repo_with_origin)
+    out = issue.issue(pre, key, "0.1")
+    assert out.published
+    lock_path = gitrepo.git_path(repo_with_origin, issue._LOCK_FILE_NAME)
+    assert lock_path.is_file()
+    dirty = gitrepo.dirty_paths(repo_with_origin)
+    assert not any(issue._LOCK_FILE_NAME in p for p in dirty)
+
+
+def test_issue_refuses_when_the_lock_cannot_be_acquired(
+    repo_with_origin: Path, keypair: tuple[Path, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    key, _ = keypair
+    pre = issue.preflight(repo_with_origin, key)
+    assert isinstance(pre, issue.Preflight)
+    _author(repo_with_origin)
+
+    def boom(path: Path, name: str) -> Path:
+        raise gitrepo.GitError("no .git here")
+
+    monkeypatch.setattr(issue.gitrepo, "git_path", boom)
+    out = issue.issue(pre, key, "0.1")
+    assert not out.published
+    assert out.reason is not None and "lock" in out.reason
+
+
+def test_withdraw_returns_false_when_the_lock_cannot_be_acquired(
+    repo_with_origin: Path, keypair: tuple[Path, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    key, _ = keypair
+    pre = issue.preflight(repo_with_origin, key)
+    assert isinstance(pre, issue.Preflight)
+    _author(repo_with_origin)
+    assert issue.issue(pre, key, "0.1").published
+
+    def boom(path: Path, name: str) -> Path:
+        raise gitrepo.GitError("no .git here")
+
+    monkeypatch.setattr(issue.gitrepo, "git_path", boom)
+    assert issue.withdraw(repo_with_origin) is False
+    # untouched: the pointer and set dir are both still there
+    assert (repo_with_origin / SET_ROOT / POINTER).exists()

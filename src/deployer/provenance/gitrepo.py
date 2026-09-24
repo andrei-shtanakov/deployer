@@ -50,6 +50,14 @@ def toplevel(path: Path) -> Path:
     return Path(_git(path, "rev-parse", "--show-toplevel").decode().strip())
 
 
+def git_path(path: Path, name: str) -> Path:
+    """The filesystem path git associates with the internal name ``name``
+    (see ``git rev-parse --git-path``) — e.g. a file inside ``.git`` for a
+    normal checkout. A relative result is resolved against ``path``."""
+    raw = Path(_git(path, "rev-parse", "--git-path", name).decode().strip())
+    return raw if raw.is_absolute() else path / raw
+
+
 def origin_slug(path: Path) -> str | None:
     """``owner/name`` from the ``origin`` remote, or ``None`` if absent/unparseable."""
     try:

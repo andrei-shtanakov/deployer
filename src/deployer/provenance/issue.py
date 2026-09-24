@@ -7,9 +7,13 @@ immutable, signed, excluded set, then atomically repoints
 ``Dockerfile.current`` at it. ``withdraw`` removes a published set.
 """
 
+import contextlib
+import fcntl
 import os
 import shutil
+import sys
 import tempfile
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -36,6 +40,7 @@ from deployer.provenance.sshsig import SshSigError
 from deployer.reproduce import ignore
 
 _ARTIFACT_PATH = "Dockerfile"
+_LOCK_FILE_NAME = "deployer-authoring.lock"
 
 
 @dataclass(frozen=True)
@@ -267,6 +272,31 @@ def _prune_other_sets(project: Path, rec_sha: str) -> None:
             shutil.rmtree(child)
 
 
+@contextlib.contextmanager
+def _publication_lock(project: Path) -> Iterator[None]:
+    """Hold an exclusive advisory lock over this repository's authoring
+    publish/withdraw sequence for the duration of the block, so a
+    concurrent ``issue()``/``withdraw()`` for the same repository cannot
+    interleave its existence/reuse check, set write, pointer swap and
+    prune with this one.
+
+    The lock file lives at ``.git/deployer-authoring.lock`` (resolved via
+    ``gitrepo.git_path``), so it never appears in the work tree or in
+    ``dirty_paths``.
+
+    POSIX-only (``fcntl.flock``); this project targets macOS and Linux,
+    not Windows, so no Windows locking path is provided.
+    """
+    lock_path = gitrepo.git_path(project, _LOCK_FILE_NAME)
+    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+
+
 def _publish(
     project: Path,
     rec_sha: str,
@@ -275,17 +305,32 @@ def _publish(
     sig: bytes,
     signing_key: Path,
 ) -> Issued:
-    """Write or reuse the set directory, then atomically move the pointer."""
+    """Write or reuse the set directory, then atomically move the pointer.
+
+    The whole sequence — existence/reuse check, write-or-reuse, pointer
+    swap and prune — runs under ``_publication_lock``, so a concurrent
+    ``issue()`` for the same repository cannot interleave with this one.
+    A failure to acquire the lock itself becomes ``Issued(False, reason,
+    None)``; a failure once the lock is held propagates as before.
+    """
     target = project / SET_ROOT / set_dir_name(rec_sha)
-    if target.exists():
-        reason = _check_reuse(target, rec_bytes, snap_bytes, signing_key)
-        if reason is not None:
-            return Issued(False, reason, None)
-    else:
-        _write_set(target, rec_bytes, snap_bytes, sig)
-    _replace_pointer(project, rec_sha)
-    _prune_other_sets(project, rec_sha)
-    return Issued(True, None, set_dir_name(rec_sha))
+    lock = _publication_lock(project)
+    try:
+        lock.__enter__()
+    except (GitError, OSError) as exc:
+        return Issued(False, f"could not acquire the publication lock: {exc}", None)
+    try:
+        if target.exists():
+            reason = _check_reuse(target, rec_bytes, snap_bytes, signing_key)
+            if reason is not None:
+                return Issued(False, reason, None)
+        else:
+            _write_set(target, rec_bytes, snap_bytes, sig)
+        _replace_pointer(project, rec_sha)
+        _prune_other_sets(project, rec_sha)
+        return Issued(True, None, set_dir_name(rec_sha))
+    finally:
+        lock.__exit__(*sys.exc_info())
 
 
 def issue(pre: Preflight, signing_key: Path, deployer_version: str) -> Issued:
@@ -312,19 +357,32 @@ def withdraw(project: Path) -> bool:
     """Remove ``Dockerfile.current`` first, then every set directory under
     ``SET_ROOT/Dockerfile/``; return whether anything was removed.
 
+    Runs under ``_publication_lock`` like ``_publish``, so it cannot
+    interleave with a concurrent ``issue()``/``withdraw()`` on the same
+    repository. Kept total: if the lock cannot be acquired, this returns
+    ``False`` without touching anything, rather than raising.
+
     Like ``_prune_other_sets``, this leaves non-directory entries and any
     live ``.tmp-*`` staging directory alone.
     """
-    removed = False
-    pointer = project / SET_ROOT / POINTER
-    if pointer.exists():
-        pointer.unlink()
-        removed = True
-    parent = project / SET_ROOT / SET_PARENT
-    if parent.is_dir():
-        for child in parent.iterdir():
-            if not _is_prunable_set_dir(child, rec_sha=""):
-                continue
-            shutil.rmtree(child)
+    lock = _publication_lock(project)
+    try:
+        lock.__enter__()
+    except (GitError, OSError):
+        return False
+    try:
+        removed = False
+        pointer = project / SET_ROOT / POINTER
+        if pointer.exists():
+            pointer.unlink()
             removed = True
-    return removed
+        parent = project / SET_ROOT / SET_PARENT
+        if parent.is_dir():
+            for child in parent.iterdir():
+                if not _is_prunable_set_dir(child, rec_sha=""):
+                    continue
+                shutil.rmtree(child)
+                removed = True
+        return removed
+    finally:
+        lock.__exit__(*sys.exc_info())

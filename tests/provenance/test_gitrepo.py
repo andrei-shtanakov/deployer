@@ -42,6 +42,16 @@ def test_toplevel_raises_outside_a_checkout(tmp_path: Path) -> None:
         gitrepo.toplevel(tmp_path / "nope")
 
 
+def test_git_path_resolves_inside_dot_git(repo: Path) -> None:
+    result = gitrepo.git_path(repo, "deployer-authoring.lock")
+    assert result == repo / ".git" / "deployer-authoring.lock"
+
+
+def test_git_path_raises_outside_a_checkout(tmp_path: Path) -> None:
+    with pytest.raises(gitrepo.GitError):
+        gitrepo.git_path(tmp_path / "nope", "deployer-authoring.lock")
+
+
 def test_dirty_paths_cover_staged_unstaged_untracked(repo: Path) -> None:
     assert gitrepo.dirty_paths(repo) == []
     (repo / "src" / "m.py").write_text("x = 2\n")
