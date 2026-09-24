@@ -4,7 +4,7 @@
 
 **Goal:** A signed authoring record lets `deployer diagnose --reproduce` decide, from existing evidence only, whether a failed run is a *proven defect of a deployer-authored Dockerfile* (`admitted`) or not (`insufficient_grounds`), and gives `ci-fix-authoring` one refusing-by-default entry point.
 
-**Architecture:** Two new packages. `deployer.provenance` is the authoring side: record/snapshot models, `ssh-keygen -Y` signing, an out-of-repo trust store, local-git helpers, and issuing an immutable set under `.deployer/authoring/` behind an atomically replaced pointer. `deployer.admission` is the diagnosis side: a preparation layer (I/O: set verification, CI text to `ci.log`, ignore-file hashes) produces verified facts; a pure `decide()` turns them into the `admission` section (verdict schema 1.3); `accept_for_fix()` is the consumer gate. Neither touches `author_dockerfile` or `reproduce_run`.
+**Architecture:** Two new packages. `deployer.provenance` is the authoring side: record/snapshot models, `ssh-keygen -Y` signing, an out-of-repo trust store, local-git helpers, and issuing an immutable set under `.deployer/authoring/` behind an atomically replaced pointer. `deployer.admission` is the diagnosis side: a preparation layer (I/O: set verification, CI text to `ci.log`, ignore-file hashes) produces verified facts; a pure `decide()` turns them into the `admission` section (verdict schema 1.3); `accept_for_fix()` is the consumer gate. `reproduce_run` is untouched; `author_dockerfile` gains one optional `facts=` parameter so the author uses exactly the signed facts (Task 6).
 
 **Tech Stack:** Python 3.12, `uv`, pydantic 2, OpenSSH `ssh-keygen -Y sign|verify` (present on the dev machine and GitHub runners), `git` CLI, pytest, ruff, pyrefly.
 
@@ -825,9 +825,8 @@ def test_a_fact_from_an_untracked_ignored_file_blocks_the_set(repo_with_origin, 
     subprocess.run(["git", "-C", str(repo_with_origin), "add", "-A"], check=True)
     subprocess.run(["git", "-C", str(repo_with_origin), "commit", "-qm", "ig"], check=True)
     (repo_with_origin / ".python-version").write_text("3.11\n")  # ignored, read by facts
-    pre = issue.preflight(repo_with_origin, key)
-    _author(repo_with_origin)
-    assert not issue.issue(pre, key, "0.1").published
+    reason = issue.preflight(repo_with_origin, key)
+    assert isinstance(reason, str) and "facts" in reason
 
 
 def test_interrupted_before_the_pointer_keeps_the_old_set(repo_with_origin, keypair, monkeypatch):  # Review Focus 3
@@ -908,7 +907,7 @@ Fixtures to add to `tests/provenance/conftest.py`: `repo` (as in Task 4) and `re
 
 **Behaviour:** add `--signing-key` (default `os.environ.get("DEPLOYER_SIGNING_KEY")`). In `_cmd_author`, before `author_dockerfile`: `pre = issue.preflight(project, key)`; if `str`, print `warning: ownership will not be confirmable: <reason>` to stderr. Call `author_dockerfile(..., facts=pre.facts if isinstance(pre, Preflight) else None)`. After authoring:
 - a `Preflight` and a Dockerfile written → `out = issue.issue(pre, Path(key), deployer_version())`; not published → warning with `out.reason`, then `issue.withdraw(project)`;
-- **preflight refused** (a `str`) and a Dockerfile written → `issue.withdraw(project)` — the new bytes can never match an old set, and a stale confirmation must not remain;
+- **preflight refused** (a `str`) and a Dockerfile written → `issue.withdraw(project)` — no new set is issued for this authoring, so no earlier confirmation may remain;
 - no Dockerfile written → `issue.withdraw(project)`.
 Whenever `withdraw` returns `True`, print `warning: previous authoring set removed`. Exit codes unchanged. `deployer_version()` from `importlib.metadata.version("deployer")`.
 
