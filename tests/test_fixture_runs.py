@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 
 from deployer.diagnose import Outcome, diagnose_run
-from deployer.forge import SNAPSHOT_SCHEMA_VERSION, load_snapshot
+from deployer.forge import load_snapshot
 
 FIXTURES = Path(__file__).parent / "fixtures" / "runs"
 
@@ -57,7 +57,8 @@ def test_live_run_replays_to_its_reading(
 @pytest.mark.parametrize("name", [c[0] for c in CASES])
 def test_fixture_is_complete_and_anonymised(name: str) -> None:
     snapshot = _load(name)
-    assert snapshot.snapshot_schema_version == SNAPSHOT_SCHEMA_VERSION
+    # The committed fixtures are 1.2 documents: historic, loaded as such.
+    assert snapshot.snapshot_schema_version == "1.2"
     assert snapshot.completeness.logs == "present"
     assert snapshot.repo == "example/project"
     raw = (FIXTURES / f"{name}.json").read_text()
