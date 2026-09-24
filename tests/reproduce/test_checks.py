@@ -216,3 +216,37 @@ def test_json_form_after_flags_checks_the_real_sources(tmp_path):
     assert [c.finding for c in missing if c.status == "failed"] == [
         "source c absent from the context"
     ]
+
+
+# The closed source alphabet (owner, 2026-09-24): a literal path or a glob of
+# `*`, `?`, `**`, `[...]` over letters, digits and `. _ - / + = , @ ~`.
+UNMODELLED_SOURCES = [
+    ('["\\\\.git", "/saved"]', "\\.git"),  # escape (JSON-decoded backslash)
+    ("$SRC /x", "$SRC"),  # ARG substitution may name .git
+    ("${SRC} /x", "${SRC}"),
+    ('["a b", "/x"]', "a b"),  # whitespace inside a JSON source
+    ('["a\\u0007b", "/x"]', "a\ab"),  # a control character
+]
+
+
+@pytest.mark.parametrize(("args", "source"), UNMODELLED_SOURCES)
+def test_an_unmodelled_source_is_never_exact(args, source):
+    """Outside the alphabet: (d) cannot hold (fifth review of #77, class fix)."""
+    assert context_conditions(parse(f"FROM a\nCOPY {args}\n")) == [
+        f".git exclusion not proven: COPY {source} at line 2 "
+        "(source pattern not modelled)"
+    ]
+
+
+@pytest.mark.parametrize(("args", "source"), UNMODELLED_SOURCES)
+def test_an_unmodelled_source_is_skipped_not_checked(tmp_path, args, source):
+    """The same alphabet decides the source check: skipped, never absent."""
+    checks = copy_source_checks(
+        parse(f"FROM a\nCOPY {args}\n"),
+        tmp_path,
+        "Dockerfile",
+        load_rules(tmp_path, None),
+    )
+    assert [(c.status, c.reason) for c in checks] == [
+        ("skipped", f"COPY at line 2: source pattern not modelled: {source}")
+    ]

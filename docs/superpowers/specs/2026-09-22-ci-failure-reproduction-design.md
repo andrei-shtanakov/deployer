@@ -130,7 +130,7 @@ only that the **bytes the builder received** equal the restored tree:
 
 | Restoration | Conditions | Recorded as |
 |---|---|---|
-| **exact** | all of: (a) every step between checkout and build is on the inert list below; (b) the Git tree at `head_sha` contains no `.gitattributes` file at any depth; (c) the extracted archive equals the Git tree listing — same paths, file modes (`100644`/`100755`/`120000`) and symlink targets — and the listing is not truncated; (d) no local `COPY`/`ADD` source may reach `.git` — none is `.`, none has a first path segment that can match `.git` (literally or as a glob), and none is a form this slice cannot read; the ignore file is **not** consulted for this condition (see the note below); (e) no `RUN --mount` of any type | `restoration: exact` |
+| **exact** | all of: (a) every step between checkout and build is on the inert list below; (b) the Git tree at `head_sha` contains no `.gitattributes` file at any depth; (c) the extracted archive equals the Git tree listing — same paths, file modes (`100644`/`100755`/`120000`) and symlink targets — and the listing is not truncated; (d) no local `COPY`/`ADD` source may reach `.git` — none is `.`, none has a first path segment that can match `.git` (literally or as a glob), and none is a form this slice cannot read, including a source outside the closed alphabet of §3.2; the ignore file is **not** consulted for this condition (see the note below); (e) no `RUN --mount` of any type | `restoration: exact` |
 | **approximation** | any condition false or unknown | `restoration: approximation` with every unmet condition listed |
 | **unavailable** | the archive or the tree listing cannot be fetched or read (§1.4) | `restoration: unavailable` — reproduction stops; the reading layer's outcome stands |
 
@@ -277,6 +277,15 @@ Docker's rule: `<Dockerfile-name>.dockerignore` next to the Dockerfile, else the
 Supported patterns: literal paths, `*`, `?`, `**`, leading `!`, Docker's last-match-
 wins order. Anything else (character classes, escapes) → `skipped: ignore pattern not
 modelled: <pattern>`.
+
+**The source alphabet is closed (owner, 2026-09-24).** A `COPY`/`ADD` source this
+slice reads is a literal path or a glob of `*`, `?`, `**`, `[...]` over letters,
+digits and `. _ - / + = , @ ~`. Anything else — an escape, an `ARG` substitution
+(`$X`, `${X}`), whitespace, a control character — is not read: the source check
+records it `skipped: source pattern not modelled`, and §1.3 (d) records `.git
+exclusion not proven`, so the restoration is an approximation. One gate decides both,
+so the two checks can never disagree about what was read; review rounds of #77 kept
+finding places where two separate heuristics did.
 
 Every local source of every `COPY`/`ADD` is resolved against `context/` minus the
 ignored paths. Findings: `source <path> absent from the context`, `source <path>
