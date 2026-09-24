@@ -275,6 +275,8 @@ def _source(
     if meta.is_file():
         try:
             data = json.loads(meta.read_text())
+            if not isinstance(data, dict):
+                raise TryDirError(f"cannot read {meta}: not a JSON object")
             if data.get("head_sha") != snapshot.head_sha:
                 raise TryDirError(
                     f"{meta} names {data.get('head_sha')}, the run is at "
@@ -294,6 +296,7 @@ def _source(
             json.JSONDecodeError,
             KeyError,
             TypeError,
+            AttributeError,
         ) as exc:
             raise TryDirError(f"cannot read {meta}: {exc}") from exc
     try:
