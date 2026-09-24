@@ -1,5 +1,7 @@
 """§3.1: line spans and exactly four syntax checks."""
 
+import pytest
+
 from deployer.reproduce.dockerfile import normalise, parse, syntax_checks
 from deployer.reproduce.model import ReproEvidence
 
@@ -104,3 +106,21 @@ def test_empty_dockerfile_fails_first_from():
 
 def test_normalise():
     assert normalise("RUN  a \\\n   b") == "RUN a b"
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        'LABEL marker="<<EOF"',
+        "ENV X='<<EOF'",
+        'RUN echo "<<EOF"',
+    ],
+)
+def test_a_quoted_or_non_run_heredoc_marker_hides_nothing(line):
+    """Only an unquoted `<<` on RUN/COPY/ADD opens a heredoc (review of #77)."""
+    checks = syntax_checks(parse(f"FROM a\n{line}\nRUNN x\n"), "Dockerfile")
+    assert [
+        (c.check_id, c.location.lines if c.location else None)
+        for c in checks
+        if c.status == "failed"
+    ] == [("syntax_keyword", (3, 3))]

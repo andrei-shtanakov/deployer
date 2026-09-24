@@ -98,13 +98,18 @@ def context_conditions(parsed: ParsedDockerfile, rules: IgnoreRules) -> list[str
                     and "/" not in source
                     and any(ch in source for ch in "*?")
                 )
-                if (source == "." or root_glob or source.startswith(".git")) and (
-                    not git_excluded
-                ):
+                if not (source == "." or root_glob or source.startswith(".git")):
+                    continue
+                reached = (
+                    f".git reachable: {inst.keyword} {source} at line {inst.first_line}"
+                )
+                if rules.unsupported is not None:
+                    # An unmodelled pattern may re-include .git: unproven.
                     unmet.append(
-                        f".git reachable: {inst.keyword} {source} "
-                        f"at line {inst.first_line}"
+                        f"{reached} (ignore pattern not modelled: {rules.unsupported})"
                     )
+                elif not git_excluded:
+                    unmet.append(reached)
         if inst.keyword == "RUN" and any(
             t.startswith("--mount") for t in inst.args.split()
         ):
