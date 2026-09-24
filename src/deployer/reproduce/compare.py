@@ -12,6 +12,15 @@ from deployer.reproduce.model import (
     SignatureMatch,
 )
 
+REQUIRED_DIMENSIONS = (
+    "backend",
+    "host_arch",
+    "base_image_digests",
+    "ignore_file",
+    "restoration",
+)
+"""The §7.4 dimensions; ``reproduced`` needs every one observed ``same``."""
+
 _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 _BLOCK_HEAD_RE = re.compile(r"^[^\s:]+:(\d+)$")
 _MARKED_RE = re.compile(r"^\s*(\d+) \| >>>")
@@ -136,9 +145,14 @@ def compare(
     values: dict[str, tuple[str | None, str | None]],
 ) -> Comparison:
     """The first state of §7.3 that applies."""
+    # Every §7.4 dimension is reported; one not supplied is unknown, so an
+    # incomplete set can never add up to "reproduced".
+    complete: dict[str, Dimension] = {
+        name: dimensions.get(name, "unknown") for name in REQUIRED_DIMENSIONS
+    } | dimensions
     base = {
         "ci_instruction": ci.instruction,
-        "dimensions": dimensions,
+        "dimensions": complete,
         "values": values,
     }
     if launch_error is not None and launch_error != "timeout":
@@ -174,7 +188,7 @@ def compare(
         )
     state = (
         "reproduced"
-        if all(d == "same" for d in dimensions.values())
+        if all(d == "same" for d in complete.values())
         else "reproduced_with_differences"
     )
     return Comparison(state=state, signature_match=match, **base)

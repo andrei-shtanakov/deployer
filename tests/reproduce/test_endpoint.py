@@ -91,3 +91,19 @@ def test_runtime_with_a_host_refuses(fake_containers):
 )
 def test_is_local(uri, local):
     assert is_local(uri) is local
+
+
+@pytest.mark.parametrize("stdout", ["", "   \n", "{}", '"x"', "null"])
+def test_podman_detection_without_a_list_refuses(stdout, fake_containers):
+    """No list, no confirmation (review of #78)."""
+    fake_containers.responses[("system", "connection", "list")] = proc(stdout=stdout)
+    result = confirm_local(PODMAN, {})
+    assert isinstance(result, Refusal)
+    assert result.reason.startswith("endpoint detection failed")
+
+
+def test_docker_detection_with_empty_output_refuses(fake_containers):
+    fake_containers.responses[("context", "inspect")] = proc(stdout="\n")
+    assert confirm_local(DOCKER, {}) == Refusal(
+        "endpoint detection failed: empty context endpoint"
+    )
