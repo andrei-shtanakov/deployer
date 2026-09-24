@@ -1,6 +1,6 @@
 # CI-failure admission — design ("proven deployer artifact defect")
 
-**Status:** DRAFT rev 2. Designed with the owner on 2026-09-24 (four sections, each
+**Status:** DRAFT rev 2.1. Designed with the owner on 2026-09-24 (four sections, each
 approved with refinements); revised after the targeted consistency review of rev 1 at
 `51b6507` (`../../../../_cowork_output/deployer-admission-spec-targeted-review-2026-09-24.md`,
 a dev-only workspace file; every point it raised is resolved in this text). Next: the
@@ -259,8 +259,10 @@ warns "ownership will not be confirmable":
    - if `Dockerfile/<record_sha256>/` does not exist, write the three files into a
      temporary sibling directory and rename it into place;
    - if it already exists (the same record issued again), it is **never written to**:
-     its three files are verified (§2.4 steps 2–6 against the new bytes) and reused;
-     if they do not verify, no set is published, with the reason;
+     it is reused only if its `record.json` and `snapshot.json` are byte-identical to
+     the ones just built and its `record.json.sig` verifies against the **public half
+     of the signing key in use** (authoring does not read the diagnosis trust set,
+     §2.3); otherwise no set is published, with the reason;
    - then replace `Dockerfile.current` in **one** atomic rename, and only then remove
      other `Dockerfile/<…>/` directories.
 
