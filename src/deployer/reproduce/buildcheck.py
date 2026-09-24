@@ -7,7 +7,7 @@ recognised" — never to a finding.
 
 import re
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal
 
@@ -37,6 +37,8 @@ class BuilderSyntax:
     line: int | None
     text: str | None
     reason: str | None
+    source: str = "check.stdout"
+    """The try-dir file whose text holds the diagnostic (§6 evidence)."""
 
 
 @dataclass(frozen=True)
@@ -141,6 +143,8 @@ def run_builder_check(
     syntax, lint = read_check_output(
         proc.returncode, None, stdout + "\n" + stderr, dockerfile
     )
+    if syntax.text is not None and syntax.text not in stdout and syntax.text in stderr:
+        syntax = replace(syntax, source="check.stderr")
     return syntax, lint, version, CheckRun(stdout, stderr)
 
 
@@ -149,7 +153,7 @@ def merge_syntax(
 ) -> list[ReproductionCheck]:
     """Parser vs builder, syntax only (§2)."""
     builder_ev = ReproEvidence(
-        kind="output_file", path="check.stdout", text=builder.text
+        kind="output_file", path=builder.source, text=builder.text
     )
     out: list[ReproductionCheck] = []
     matched = False
