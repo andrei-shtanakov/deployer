@@ -23,6 +23,7 @@ REQUIRED_DIMENSIONS = (
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 _BLOCK_HEAD_RE = re.compile(r"^[^\s:]+:(\d+)$")
+_FENCE_RE = re.compile(r"^-{3,}$")
 _MARKED_RE = re.compile(r"^\s*(\d+) \| >>>")
 _PARSE_RE = re.compile(r"dockerfile parse error on line (\d+):")
 _STEP_ERROR_RE = re.compile(r"^#(\d+) ERROR: ")
@@ -109,7 +110,7 @@ def local_signature(stdout: str, stderr: str, backend: str) -> str | None:
     body = [
         ln.strip()
         for ln in lines[last_step + 1 :]
-        if ln.strip() and not ln.startswith("--> ")
+        if ln.strip() and not ln.strip().startswith("--> ")
     ]
     return body[-1] if body else None
 
@@ -247,6 +248,10 @@ def _error_blocks(lines: list[str]) -> list[tuple[int, int]]:
     spans: list[tuple[int, int]] = []
     for i, line in enumerate(lines):
         if not _BLOCK_HEAD_RE.match(line.strip()):
+            continue
+        # BuildKit's block is `<file>:<N>` then a `---` fence; a bare `12:34`
+        # line followed by anything else is not one.
+        if i + 1 >= len(lines) or not _FENCE_RE.match(lines[i + 1].strip()):
             continue
         marked: list[int] = []
         for follow in lines[i + 2 :]:

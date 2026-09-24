@@ -391,3 +391,13 @@ def test_an_unknown_backend_relation_is_inconclusive_for_builder_messages(values
         "signature unavailable",
         "unavailable",
     )
+
+
+def test_a_head_line_without_a_fence_is_not_an_error_block():
+    """`12:34` then a marked line is not BuildKit's block (known minor, closed)."""
+    assert ci_instruction("12:34\nfoo\n   3 | >>> RUN x\n") is None
+
+
+def test_an_indented_layer_line_is_not_a_signature():
+    out = "STEP 2/2: RUN false\nreal output\n  --> abc123\n"
+    assert local_signature(out, "Error: x", "podman") == "real output"
