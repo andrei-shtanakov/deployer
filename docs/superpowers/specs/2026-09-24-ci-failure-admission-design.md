@@ -255,17 +255,29 @@ warns "ownership will not be confirmable":
    an unmodelled pattern, a re-including negation) → no set, with the reason.
 4. Build the record from the bytes authoring wrote and the snapshot it built, sign it.
    Authoring signs only its own result; there is no "sign this record" entry point.
-5. Publish: write `snapshot.json`, `record.json` and `record.json.sig` into
-   `Dockerfile/<record_sha256>/`, then replace `Dockerfile.current` in **one** atomic
-   rename. Only then remove other `Dockerfile/<…>/` directories. An interruption before
-   the rename leaves the previous pointer (and its complete set) in force; after it, the
-   new set. A half-written directory is never named by the pointer.
+5. Publish. **Set directories are immutable once written:**
+   - if `Dockerfile/<record_sha256>/` does not exist, write the three files into a
+     temporary sibling directory and rename it into place;
+   - if it already exists (the same record issued again), it is **never written to**:
+     its three files are verified (§2.4 steps 2–6 against the new bytes) and reused;
+     if they do not verify, no set is published, with the reason;
+   - then replace `Dockerfile.current` in **one** atomic rename, and only then remove
+     other `Dockerfile/<…>/` directories.
+
+   This guarantees the pointer never names a partially written directory. It does
+   **not** guarantee that the Dockerfile is confirmed after an interruption: step 2 has
+   already rewritten the Dockerfile, so an interruption before the pointer rename leaves
+   an intact previous set whose signature and internal hashes still verify, but whose
+   `artifact_sha256` no longer matches the new bytes — ownership of the current version
+   is then **not confirmed** (§2.4 step 4), which is the honest answer.
 
 ### 5.3 Re-authoring
 
-A new authoring run never leaves an old confirmation behind: if it does not issue a new
-set for the Dockerfile, it removes `Dockerfile.current` first, then the set
-directories, with a warning.
+On normal completion, a new authoring run never leaves an old confirmation behind: if
+it does not issue a new set for the Dockerfile, it removes `Dockerfile.current` first,
+then the set directories, with a warning. After an abnormal interruption this removal
+is not guaranteed; a stale pointer can then remain, and §2.4 step 4 still refuses to
+confirm a Dockerfile whose bytes changed.
 
 ## 6. Diagnosis integration
 
@@ -387,9 +399,18 @@ Tested as authoring behaviour (warning, no new set, old set removed), not as a v
 not a Git checkout; no `origin` remote; dirty tree (staged / unstaged / untracked,
 including a hand-edited Dockerfile); a fact from an uncommitted file; no signing key;
 exclusion not provable; re-authoring without a new set removes the old one (pointer
-first). **Interrupted publication:** a previous set exists, the new directory is written
-but the pointer not yet renamed → the previous set still verifies; the pointer renamed
-but old directories not yet removed → the new set verifies. The diagnosis of the
+first). **Interrupted publication:**
+- a previous set exists, the Dockerfile has been rewritten and the new directory
+  written, but the pointer not yet renamed → the previous set's signature and internal
+  hashes still verify, and ownership is **not confirmed** by `artifact_sha256`
+  mismatch (§2.4 step 4);
+- the pointer renamed but old directories not yet removed → the new set verifies and
+  ownership is confirmed.
+
+**Re-issuing the same record:** a second authoring run producing byte-identical output
+(same `record_sha256`) finds the published directory, verifies and reuses it without
+writing into it, and leaves the pointer unchanged; if that existing directory has been
+tampered with, no set is published and the reason is reported. The diagnosis of the
 resulting trees is checked separately (§8.3).
 
 ### 8.5 Consumer
