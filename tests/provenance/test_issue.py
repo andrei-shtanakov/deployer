@@ -62,6 +62,14 @@ def test_preflight_refusals(
     assert isinstance(reason, str) and "dirty" in reason
 
 
+def test_preflight_refuses_outside_the_repository_root(
+    repo_with_origin: Path, keypair: tuple[Path, str]
+) -> None:
+    key, _ = keypair
+    reason = issue.preflight(repo_with_origin / "src", key)
+    assert isinstance(reason, str) and "repository root" in reason
+
+
 def test_preflight_reports_an_unreadable_signing_key(
     repo_with_origin: Path, tmp_path: Path
 ) -> None:

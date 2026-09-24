@@ -1,4 +1,5 @@
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -26,6 +27,7 @@ from deployer.models import (
     IterationRecord,
     VerificationReport,
 )
+from deployer.provenance.model import SET_PARENT, SET_ROOT
 from deployer.reproduce import ReproductionSection, TryDirError
 from deployer.reproduce.model import Location, ReproductionCheck, ReproEvidence
 from tests.provenance.conftest import make_key, make_repo_with_origin
@@ -669,6 +671,11 @@ def _fake_author_dockerfile(dockerfile_text: str):
     return fake
 
 
+def _git(repo: Path, *args: str) -> None:
+    """Run a git command against ``repo``, raising on failure."""
+    subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True)
+
+
 def test_author_with_signing_key_issues_provenance_set(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -713,13 +720,21 @@ def test_author_dirty_tree_warns_and_withdraws_previous_set(
         "deployer.cli.author_dockerfile", _fake_author_dockerfile(_SIGNED_DOCKERFILE)
     )
     monkeypatch.setattr("deployer.cli.AnthropicAuthor", lambda: object())
-    pointer = repo / ".deployer" / "authoring" / "Dockerfile.current"
+    pointer = repo / SET_ROOT / "Dockerfile.current"
+    set_parent_dir = repo / SET_ROOT / SET_PARENT
 
-    # A prior, clean run issues a set.
+    # A prior, clean run issues a set; commit everything it wrote (the
+    # Dockerfile, .dockerignore, the run report, the set itself) so the
+    # tree is genuinely clean again before the dirtiness under test is
+    # introduced — otherwise the first run's own untracked/modified files
+    # would already fail preflight's dirty check, and this test would pass
+    # for the wrong reason.
     assert (
         cli.main(["author", str(repo), "--no-docker", "--signing-key", str(key)]) == 0
     )
     assert pointer.is_file()
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "authoring set")
 
     (repo / "untracked.txt").write_text("dirt\n")
     capsys.readouterr()  # discard the first run's output
@@ -731,8 +746,41 @@ def test_author_dirty_tree_warns_and_withdraws_previous_set(
     assert exit_code == 0
     captured = capsys.readouterr()
     assert "warning: ownership will not be confirmable" in captured.err
+    assert "untracked.txt" in captured.err
     assert "warning: previous authoring set removed" in captured.err
     assert not pointer.exists()
+    assert not any(set_parent_dir.iterdir())
+
+
+def test_author_version_lookup_failure_does_not_crash(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """A `PackageNotFoundError` from the version lookup must not turn a
+    clean, signed authoring run into an unhandled traceback: `author.
+    deployer_version`'s existing `None` fallback applies, and the CLI
+    treats that like any other "cannot confirm ownership" outcome."""
+    import importlib.metadata
+
+    repo = make_repo_with_origin(tmp_path)
+    key, _pub = make_key(tmp_path)
+    monkeypatch.setattr(
+        "deployer.cli.author_dockerfile", _fake_author_dockerfile(_SIGNED_DOCKERFILE)
+    )
+    monkeypatch.setattr("deployer.cli.AnthropicAuthor", lambda: object())
+
+    def boom(name: str) -> str:
+        raise importlib.metadata.PackageNotFoundError(name)
+
+    monkeypatch.setattr("deployer.author.importlib.metadata.version", boom)
+
+    exit_code = cli.main(
+        ["author", str(repo), "--no-docker", "--signing-key", str(key)]
+    )
+
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    assert "warning: ownership will not be confirmable" in captured.err
+    assert not (repo / SET_ROOT / "Dockerfile.current").exists()
 
 
 def _make_corpus(tmp_path, name="case-one", requires_l2=False):

@@ -1,7 +1,6 @@
 """Thin argparse CLI over the deployer library."""
 
 import argparse
-import importlib.metadata
 import os
 import re
 import subprocess
@@ -10,7 +9,7 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from deployer.author import author_dockerfile
+from deployer.author import author_dockerfile, deployer_version
 from deployer.bench import (
     CloneError,
     FixtureAuthor,
@@ -303,16 +302,6 @@ def _is_parse_failure(report: VerificationReport) -> bool:
     )
 
 
-def deployer_version() -> str:
-    """The installed `deployer` package version, for a provenance record.
-
-    Unlike `author._deployer_version`, this never falls back to `None`:
-    it runs under an installed `deployer` (the package `uv run` provides),
-    and a provenance record needs a version string, not an optional one.
-    """
-    return importlib.metadata.version("deployer")
-
-
 def _apply_provenance(
     project: Path,
     pre: issue.Preflight | str,
@@ -322,23 +311,33 @@ def _apply_provenance(
     """Issue or withdraw the authoring provenance set for this run.
 
     A `Preflight` plus a written Dockerfile issues a new set; anything else
-    (preflight refused, or no Dockerfile written) withdraws whatever set an
-    earlier authoring run may have left behind, so no stale confirmation
-    survives an authoring that did not just reissue it.
+    (preflight refused, an undeterminable package version, or no Dockerfile
+    written) withdraws whatever set an earlier authoring run may have left
+    behind, so no stale confirmation survives an authoring that did not
+    just reissue it.
     """
     if (
         dockerfile_written
         and isinstance(pre, issue.Preflight)
         and signing_key is not None
     ):
-        out = issue.issue(pre, signing_key, deployer_version())
-        if not out.published:
+        version = deployer_version()
+        if version is None:
+            print(
+                "warning: ownership will not be confirmable: could not "
+                "determine the installed deployer version",
+                file=sys.stderr,
+            )
+        else:
+            out = issue.issue(pre, signing_key, version)
+            if out.published:
+                return
             print(
                 f"warning: ownership will not be confirmable: {out.reason}",
                 file=sys.stderr,
             )
-            if issue.withdraw(project):
-                print("warning: previous authoring set removed", file=sys.stderr)
+        if issue.withdraw(project):
+            print("warning: previous authoring set removed", file=sys.stderr)
         return
     if issue.withdraw(project):
         print("warning: previous authoring set removed", file=sys.stderr)

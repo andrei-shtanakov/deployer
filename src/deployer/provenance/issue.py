@@ -72,6 +72,12 @@ def preflight(project: Path, signing_key: Path | None) -> Preflight | str:
     will be issued."""
     if not gitrepo.is_checkout(project):
         return f"{project} is not a Git checkout"
+    try:
+        top = gitrepo.toplevel(project)
+    except GitError as exc:
+        return str(exc)
+    if project.resolve() != top.resolve():
+        return f"{project} is not the repository root ({top})"
     repo = gitrepo.origin_slug(project)
     if repo is None:
         return f"{project} has no origin remote"

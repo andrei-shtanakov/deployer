@@ -32,6 +32,16 @@ def test_no_origin_and_not_a_checkout(repo: Path, tmp_path: Path) -> None:
     assert gitrepo.is_checkout(repo) and not gitrepo.is_checkout(tmp_path / "nope")
 
 
+def test_toplevel_on_root_and_subdir(repo: Path) -> None:
+    assert gitrepo.toplevel(repo) == repo.resolve()
+    assert gitrepo.toplevel(repo / "src") == repo.resolve()
+
+
+def test_toplevel_raises_outside_a_checkout(tmp_path: Path) -> None:
+    with pytest.raises(gitrepo.GitError):
+        gitrepo.toplevel(tmp_path / "nope")
+
+
 def test_dirty_paths_cover_staged_unstaged_untracked(repo: Path) -> None:
     assert gitrepo.dirty_paths(repo) == []
     (repo / "src" / "m.py").write_text("x = 2\n")
