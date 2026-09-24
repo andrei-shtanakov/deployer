@@ -318,6 +318,19 @@ def test_verify_with_public_key(tmp_path, keypair):
     assert sshsig.public_key(key) == pub.rsplit(" ", 1)[0] or sshsig.public_key(key).startswith("ssh-ed25519 ")
 
 
+def test_temp_dir_failure_is_a_named_failure_not_an_exception(monkeypatch, tmp_path, keypair):
+    key, pub = keypair
+    sig = sshsig.sign(b"r", key)
+    def boom(*a, **k):
+        raise OSError("no space")
+    monkeypatch.setattr(sshsig.tempfile, "TemporaryDirectory", boom)
+    for result in (
+        sshsig.verify(b"r", sig, _allowed(tmp_path, pub), None),
+        sshsig.verify_with_public_key(b"r", sig, pub),
+    ):
+        assert not result.ok and "no space" in (result.reason or "")
+
+
 def test_missing_ssh_keygen_is_a_named_failure(monkeypatch, tmp_path, keypair):  # Review Focus 4
     key, pub = keypair
     monkeypatch.setenv("PATH", str(tmp_path / "empty"))
@@ -395,17 +408,17 @@ def verify(
     data: bytes, signature: bytes, allowed_signers: Path, revoked: Path | None
 ) -> Verified:
     """Verify against an allowed_signers file; never raises."""
-    with tempfile.TemporaryDirectory() as tmp:
-        sig_path = Path(tmp) / "sig"
-        sig_path.write_bytes(signature)
-        args = ["-Y", "verify", "-f", str(allowed_signers), "-I", PRINCIPAL,
-                "-n", NAMESPACE, "-s", str(sig_path)]
-        if revoked is not None:
-            args += ["-r", str(revoked)]
-        try:
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            sig_path = Path(tmp) / "sig"
+            sig_path.write_bytes(signature)
+            args = ["-Y", "verify", "-f", str(allowed_signers), "-I", PRINCIPAL,
+                    "-n", NAMESPACE, "-s", str(sig_path)]
+            if revoked is not None:
+                args += ["-r", str(revoked)]
             proc = _run(args, data)
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            return Verified(False, None, f"ssh-keygen verify could not run: {exc}")
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return Verified(False, None, f"ssh-keygen verify could not run: {exc}")
     if proc.returncode != 0:
         detail = (proc.stderr or proc.stdout).decode(errors="replace").strip()
         return Verified(False, None, f"signature not verified: {detail or proc.returncode}")
@@ -416,11 +429,14 @@ def verify(
 
 
 def verify_with_public_key(data: bytes, signature: bytes, public_line: str) -> Verified:
-    """Verify against one public key (authoring's own reuse check, A §5.2)."""
-    with tempfile.TemporaryDirectory() as tmp:
-        allowed = Path(tmp) / "allowed_signers"
-        allowed.write_text(f'{PRINCIPAL} namespaces="{NAMESPACE}" {public_line}\n')
-        return verify(data, signature, allowed, None)
+    """Verify against one public key (authoring's own reuse check, A §5.2); never raises."""
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            allowed = Path(tmp) / "allowed_signers"
+            allowed.write_text(f'{PRINCIPAL} namespaces="{NAMESPACE}" {public_line}\n')
+            return verify(data, signature, allowed, None)
+    except OSError as exc:
+        return Verified(False, None, f"could not prepare verification: {exc}")
 ```
 
 `OSError` covers `FileNotFoundError` when `ssh-keygen` is not on `PATH`; its message contains `ssh-keygen`. Wrap long lines with ruff.
@@ -742,13 +758,13 @@ def export_commit(path: Path, commit: str, dest: Path) -> None:
 - Consumes: Tasks 1, 2, 4; `deployer.facts.analyze_project`; `deployer.reproduce.ignore.{ci_ignore_file, local_ignore_file, load_rules, excluded_by}`.
 - Produces:
   - `@dataclass(frozen=True) Preflight(project: Path, repo: str, source_commit: str, tree: list[TreeRow], facts: ProjectFacts)`
-  - `preflight(project: Path, signing_key: Path | None) -> Preflight | str` — run **before** authoring writes anything; `str` is the reason no set will be issued (not a checkout; no origin; dirty tree listing the paths; no signing key; `ssh-keygen` unusable)
+  - `preflight(project: Path, signing_key: Path | None) -> Preflight | str` — run **before** authoring writes anything; `str` is the reason no set will be issued (not a checkout; no origin; dirty tree listing the paths; no signing key; key or `ssh-keygen` unusable; facts of the working tree differ from the facts of `source_commit`)
   - `@dataclass(frozen=True) Issued(published: bool, reason: str | None, set_dir: str | None)`
   - `issue(pre: Preflight, signing_key: Path, deployer_version: str) -> Issued` — after authoring wrote the Dockerfile
   - `withdraw(project: Path) -> bool` — removes `Dockerfile.current` first, then `Dockerfile/*`; returns whether anything was removed
 
 `issue()` in order (A §5.2):
-1. `analyze_project(pre.project)` must equal `pre.facts` (computed in `preflight` from `export_commit(source_commit)` into a temp dir). Differ → `Issued(False, "facts depend on files outside source_commit", None)`.
+1. (Done in `preflight`, see below: `pre.facts` from the export of `source_commit` equals `analyze_project` of the clean working tree, else no `Preflight`; the author receives exactly `pre.facts`.) `issue()` does not rescan.
 2. Build `Snapshot(format_version="1", source_commit, tree=pre.tree, tree_complete=True, facts=pre.facts)` → `snap_bytes = canonical_bytes(...)`; `Record(..., artifact_sha256=sha256_hex(Dockerfile bytes), snapshot_sha256=sha256_hex(snap_bytes))` → `rec_bytes`; `rec_sha = sha256_hex(rec_bytes)`.
 3. Exclusion: `ensure_excluded(project, paths)` where `paths` = the pointer and the three set files under `SET_ROOT/set_dir_name(rec_sha)`. It appends `.deployer/` to the effective CI ignore file (create root `.dockerignore` if none) and to `.containerignore` if present (only if not already excluding), then checks every path with `excluded_by(load_rules(...), path) is not None` for both `ci_ignore_file(project, "Dockerfile")` and `local_ignore_file(project, "Dockerfile", "podman")`; any rules with `unsupported` → not proven. Not proven → `Issued(False, "<reason>", None)`.
 4. `sig = sshsig.sign(rec_bytes, signing_key)` (`SshSigError` → `Issued(False, reason, None)`).
@@ -876,7 +892,9 @@ def test_exclusion_not_provable_blocks_the_set(repo_with_origin, keypair):
 
 Fixtures to add to `tests/provenance/conftest.py`: `repo` (as in Task 4) and `repo_with_origin` (the same plus `git remote add origin git@github.com:o/r.git`). Note that `.python-version` must be a file `analyze_project` reads (it does: `facts.py` reads `.python-version`).
 
-- [ ] **Step 2:** FAIL. **Step 3: Implement** `issue.py` following the order above. Keep each step a small function (`_facts_from_commit`, `_build`, `ensure_excluded`, `_publish`). `preflight` catches `GitError` and returns its message; it also calls `sshsig.public_key(signing_key)` to prove the key and `ssh-keygen` are usable. Use `tempfile.TemporaryDirectory()` for the export.
+- [ ] **Step 2:** FAIL. **Step 3: Implement** `issue.py` following the order above. Keep each step a small function (`_facts_from_commit`, `_build`, `ensure_excluded`, `_publish`). `preflight` catches `GitError` and returns its message; it calls `sshsig.public_key(signing_key)` to prove the key and `ssh-keygen` are usable and returns `SshSigError`'s message as the reason (tests: an unreadable key file; an empty `PATH`). Use `tempfile.TemporaryDirectory()` for the export.
+
+**The facts the author uses are the signed facts (A §2.2, §5.1).** `preflight` computes `pre.facts` from the export of `source_commit` **and** `analyze_project(project)` on the (clean) working tree; if they differ, a fact depends on an ignored or uncommitted file → return the reason, no set. When they are equal, the caller hands `pre.facts` to the author (Task 6), so the facts in the snapshot are by construction the facts authoring used. `issue()` no longer rescans: step 1 of `issue()` above is replaced by this preflight check, and `test_a_fact_from_an_untracked_ignored_file_blocks_the_set` asserts the refusal comes from `preflight`.
 
 - [ ] **Step 4:** PASS. **Step 5:** commit `feat(provenance): issue an immutable, signed, excluded set behind an atomic pointer`.
 
@@ -884,9 +902,15 @@ Fixtures to add to `tests/provenance/conftest.py`: `repo` (as in Task 4) and `re
 
 ### Task 6: `deployer author --signing-key`
 
-**Files:** Modify `src/deployer/cli.py` (`_cmd_author`, author parser); Test `tests/test_cli.py`.
+**Files:** Modify `src/deployer/cli.py` (`_cmd_author`, author parser), `src/deployer/author.py` (`author_dockerfile` gains `facts`); Test `tests/test_cli.py`, `tests/test_author.py`.
 
-**Behaviour:** add `--signing-key` (default `os.environ.get("DEPLOYER_SIGNING_KEY")`). In `_cmd_author`, before `author_dockerfile`: `pre = issue.preflight(project, key)`; if `str`, print `warning: ownership will not be confirmable: <reason>` to stderr. After the Dockerfile is written (existing block): if `pre` is a `Preflight`, `out = issue.issue(pre, Path(key), deployer_version())`; if not published, print the warning with `out.reason` and call `issue.withdraw(project)` (print `warning: previous authoring set removed` when it returns `True`). If no Dockerfile was written, `withdraw` too. Exit codes unchanged. `deployer_version()` from `importlib.metadata.version("deployer")`.
+**`author_dockerfile(..., facts: ProjectFacts | None = None)`:** when given, it is used instead of `analyze_project(project_path)` (`src/deployer/author.py:114`); `None` keeps today's behaviour. Test in `tests/test_author.py`: with a fake author and `facts=ProjectFacts(name="given")`, the prompt input and the returned run reflect `"given"`, and `analyze_project` is not called (monkeypatch it to raise).
+
+**Behaviour:** add `--signing-key` (default `os.environ.get("DEPLOYER_SIGNING_KEY")`). In `_cmd_author`, before `author_dockerfile`: `pre = issue.preflight(project, key)`; if `str`, print `warning: ownership will not be confirmable: <reason>` to stderr. Call `author_dockerfile(..., facts=pre.facts if isinstance(pre, Preflight) else None)`. After authoring:
+- a `Preflight` and a Dockerfile written → `out = issue.issue(pre, Path(key), deployer_version())`; not published → warning with `out.reason`, then `issue.withdraw(project)`;
+- **preflight refused** (a `str`) and a Dockerfile written → `issue.withdraw(project)` — the new bytes can never match an old set, and a stale confirmation must not remain;
+- no Dockerfile written → `issue.withdraw(project)`.
+Whenever `withdraw` returns `True`, print `warning: previous authoring set removed`. Exit codes unchanged. `deployer_version()` from `importlib.metadata.version("deployer")`.
 
 - [ ] **Step 1: Tests** — with `monkeypatch.setattr(cli, "author_dockerfile", fake)` returning an `AuthoringRun` with one iteration whose Dockerfile is `DOCKERFILE` and a passing report (follow the existing author CLI tests in `tests/test_cli.py`), and `repo_with_origin` + `keypair`:
   - with `--signing-key`: exit as before, `.deployer/authoring/Dockerfile.current` exists;
@@ -904,7 +928,7 @@ Fixtures to add to `tests/provenance/conftest.py`: `repo` (as in Task 4) and `re
 - `@dataclass(frozen=True) OwnershipFacts(status: Literal["confirmed","not_confirmed"], step: int | None, reason: str | None, key_fingerprint: str | None, record_sha256: str | None, snapshot_sha256: str | None, record: Record | None, snapshot: Snapshot | None)`
 - `verify_ownership(source_dir: Path, *, repo: str, artifact_path: str, trust: Path, checked_roots: tuple[Path, ...]) -> OwnershipFacts` — steps 0–6 in order; the first failure returns `not_confirmed` with `step` and `reason`; hashes filled only when obtained; fingerprint only after step 3 passes.
 
-Steps exactly as A §2.4. Step 0: `trust.outside(trust, *checked_roots)`; also require `trust/allowed_signers` to exist. Step 1: pointer parses as `Dockerfile/<64 hex>`, the three files exist, both JSONs validate (`Record`/`Snapshot`; `ValidationError` → reason names the file). Step 2: `sha256_hex(record bytes) == dir name`. Step 3: `sshsig.verify(rec_bytes, sig, trust/allowed_signers, trust/revoked_keys if exists)`. Step 4: artifact hash vs `source_dir/artifact_path` bytes (missing file → reason), `repo` and `artifact_path` equality. Step 5: snapshot hash. Step 6: `tree_complete`, no duplicate paths, `source_commit` equal.
+Steps exactly as A §2.4. Step 0: `trust.outside(trust, *checked_roots)`; also require `trust/allowed_signers` to exist. **Step 1** (parse, not structure): pointer parses as `Dockerfile/<64 hex>`, the three files exist; `record.json` validates as `Record` (the record is small and fully signed — a malformed record is a step-1 failure); `snapshot.json` is only parsed as a JSON object whose `format_version` is `"1"` — its structure is **not** validated here. Step 2: `sha256_hex(record bytes) == dir name`. Step 3: `sshsig.verify(rec_bytes, sig, trust/allowed_signers, trust/revoked_keys if exists)`. Step 4: artifact hash vs `source_dir/artifact_path` bytes (missing file → reason), `repo` and `artifact_path` equality. Step 5: snapshot hash. **Step 6** (structure): validate the snapshot as `Snapshot` — a missing or non-string `TreeRow` field is a step-6 failure — then `tree_complete`, no duplicate paths, `source_commit` equal. `OwnershipFacts.snapshot` is set only after step 6 passes.
 
 - [ ] **Step 1: Tests** — build sets with `provenance.issue` in a temp git repo (reuse `tests/provenance/conftest.py` fixtures by importing them), copy the repo tree to a `source_dir`, then mutate one thing per test, re-signing via `sshsig.sign` where the step needs it:
 
@@ -942,12 +966,17 @@ plus `test_trust_inside_the_checked_tree_is_step_0` (direct and via symlink), `t
 - `match_copy_ci(text: str) -> CopyMatch | None | Literal["ambiguous"]`, `match_copy_local(stderr: str) -> …`, `match_from_ci(text: str) -> FromMatch | None | Literal["ambiguous"]`, `match_from_local(stdout: str, stderr: str) -> …`
 
 Regexes (line-anchored, after R's ANSI/timestamp stripping):
-- `copy-missing/buildkit`: reuse R's `compare._error_blocks` for the single block span; the checksum line `failed to calculate checksum of ref [^:]+::[^:]+: "/(?P<p>[^"]+)": not found`; exactly one such line; the block's `>>>` line text must start with `COPY` or `ADD`.
+- `copy-missing/buildkit` — one diagnostic, possibly repeated, bound to its build step. In the real `run-1` log the same error appears twice: the step-bound `#12 ERROR: failed to calculate checksum of ref <R>: "/docs/setup.md": not found` and BuildKit's final summary `ERROR: failed to build: … failed to calculate checksum of ref <R>: "/docs/setup.md": not found`. The rule:
+  1. the single `Dockerfile:<N>` block (R's `compare._error_blocks`) whose `>>>` text starts with `COPY` or `ADD` gives the span and the instruction text;
+  2. the step header `^#(?P<k>\d+) \[[^\]]*\] (?P<instr>.+)$` whose normalised `instr` equals that `>>>` instruction gives the step number `k` (exactly one such header, else `"ambiguous"`);
+  3. the step-bound line `^#<k> ERROR: failed to calculate checksum of ref (?P<ref>\S+): "/(?P<p>[^"]+)": not found$` — exactly one;
+  4. every other line containing `failed to calculate checksum of ref` must be an unprefixed summary (`^ERROR: `) carrying the **same** `<ref>` and `<p>` — a repeat, not a candidate; any other checksum line (another step, ref or path) → `"ambiguous"`.
+  `evidence_lines` lists the block, the header, the step-bound line and each repeat.
 - `copy-missing/podman`: `^Error: building at STEP "(?P<step>(?:COPY|ADD) [^"]*)": checking on sources under "[^"]*": copier: stat: "/(?P<p>[^"]+)": no such file or directory$`
 - `from-args/buildkit`: `dockerfile parse error on line (?P<n>\d+): FROM requires either one or three arguments`; exactly one distinct `n`.
 - `from-args/podman`: stderr line `^Error: FROM requires either one argument, or three: ` and no `STEP ` line in stdout.
 
-- [ ] **Step 1: Tests** — `test_every_row_matches_its_real_recording` (parametrize over `ROWS`, load the recording file — for `snapshot.json` use `load_snapshot` + `shape.job_text` — assert a non-ambiguous match; for run-1 the path is `docs/setup.md`, lines `(11, 11)`); negatives with synthetic text: no match, two checksum lines → `"ambiguous"`, podman line with a different message → `None`, a parse error of another kind on line 1 → `None`, FROM local with a `STEP` line present → `None`.
+- [ ] **Step 1: Tests** — `test_every_row_matches_its_real_recording` (parametrize over `ROWS`, load the recording file — for `snapshot.json` use `load_snapshot` + `shape.job_text` — assert a non-ambiguous match; for run-1 the path is `docs/setup.md`, lines `(11, 11)`, and both the `#12 ERROR` line and the summary repeat are in `evidence_lines`); negatives with synthetic text: no match; a second step-bound checksum line for another step → `"ambiguous"`; a summary repeat with a different ref or path → `"ambiguous"`; two step headers with the same instruction text → `"ambiguous"`; podman line with a different message → `None`, a parse error of another kind on line 1 → `None`, FROM local with a `STEP` line present → `None`.
 - [ ] **Step 2–4.** **Step 5:** commit `feat(admission): the closed template table with recording-backed rows`.
 
 ---
@@ -958,7 +987,7 @@ Regexes (line-anchored, after R's ANSI/timestamp stripping):
 
 **Interfaces — Produces** (pydantic, `extra="forbid"`):
 - `Binding(repo, head_sha, artifact_path, artifact_sha256)`
-- `Ownership(status: Literal["confirmed","not_confirmed"], reason: str | None = None, key_fingerprint: str | None = None, record_sha256: str | None = None, snapshot_sha256: str | None = None)` — validator: `confirmed` ⇒ `reason is None` and fingerprint, both hashes present; `not_confirmed` ⇒ `reason` set and `key_fingerprint is None`
+- `Ownership(status: Literal["confirmed","not_confirmed"], reason: str | None = None, key_fingerprint: str | None = None, record_sha256: str | None = None, snapshot_sha256: str | None = None)` — validator: `confirmed` ⇒ `reason is None` and fingerprint, both hashes present; `not_confirmed` ⇒ `reason` set. A fingerprint **may** accompany `not_confirmed`: a verified signature (step 3 passed) with a later failure (e.g. step 4, the current bytes differ) is still a verified signature — it is not confirmed ownership of the current bytes.
 - `Defect(cls: Literal[...], file: str, lines: tuple[int, int], object: str)`
 - `SideLink(row: str, object: str | None, evidence_file: str, evidence_lines: list[int])`, `DifferenceDecision(name: str, value: str, allowed: bool)`
 - `Link(ci: SideLink, local: SideLink, differences: list[DifferenceDecision])`
@@ -966,7 +995,7 @@ Regexes (line-anchored, after R's ANSI/timestamp stripping):
 - `AdmissionSection(verdict: Literal["admitted","insufficient_grounds"], binding: Binding, ownership: Ownership, defect: Defect | None = None, link: Link | None = None, unmet: list[Unmet] = [])` — validator (A §1, §6.2): `admitted` ⇒ ownership confirmed, `defect` and `link` present, `unmet == []`; `insufficient_grounds` ⇒ `unmet` non-empty.
 - `ADMISSION_VERDICT_SCHEMA_VERSION = "1.3"`
 
-- [ ] Tests: each invariant violation raises; a valid admitted and a valid refused section construct. Commit `feat(admission): the admission section with its invariants`.
+- [ ] Tests: each invariant violation raises; a valid admitted and a valid refused section construct; `test_step4_refusal_serialises_with_its_fingerprint` — run Task 7's `hand_edit_dockerfile` mutation through `verify_ownership`, map the `OwnershipFacts` to `Ownership`, build an `insufficient_grounds` section and round-trip it through `model_dump_json`/`model_validate_json` with the fingerprint kept. Commit `feat(admission): the admission section with its invariants`.
 
 ---
 
