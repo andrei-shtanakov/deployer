@@ -769,7 +769,7 @@ def _read_pubkey_line(path: str) -> str | None:
     """Read a public-key file's first non-blank line; ``None`` on a bad file."""
     try:
         text = Path(path).read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return None
     line = text.strip()
     return line or None

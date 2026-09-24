@@ -1805,3 +1805,12 @@ def test_trust_add_prints_the_trust_dir_used(
     pub.write_text("ssh-ed25519 AAAAone c\n")
     assert cli.main(["trust", "add", str(pub)]) == 0
     assert str(trust_dir) in capsys.readouterr().out
+
+
+def test_trust_add_rejects_a_non_utf8_pubkey_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("DEPLOYER_TRUST_DIR", str(tmp_path / "trust"))
+    bad = tmp_path / "bad.pub"
+    bad.write_bytes(b"\xff\xfe")
+    assert cli.main(["trust", "add", str(bad)]) == 2

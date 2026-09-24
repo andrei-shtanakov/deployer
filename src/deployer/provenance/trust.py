@@ -31,27 +31,50 @@ def _key_body(public_line: str) -> str:
     return " ".join(public_line.split()[:2])
 
 
+def _line_key_body(line: str) -> str:
+    """The trailing ``type base64`` pair of a stored line.
+
+    Both files store the pair last: `allowed_signers` prefixes it with the
+    principal and `namespaces="..."`, `revoked_keys` has nothing before it.
+    Taking the last two tokens (rather than a substring test) means a key
+    whose base64 happens to be a prefix of another stored key's base64 is
+    never mistaken for it.
+    """
+    tokens = line.split()
+    return " ".join(tokens[-2:]) if len(tokens) >= 2 else line.strip()
+
+
+def _file_has_key(path: Path, body: str) -> bool:
+    """Whether some line of ``path`` carries exactly this key body."""
+    if not path.is_file():
+        return False
+    return any(_line_key_body(ln) == body for ln in path.read_text().splitlines())
+
+
 def add(trust: Path, public_line: str) -> None:
     """Allow a key for ``deployer-authoring``."""
     trust.mkdir(parents=True, exist_ok=True)
     allowed = trust / ALLOWED_FILE
     body = _key_body(public_line)
-    existing = allowed.read_text() if allowed.is_file() else ""
-    if body not in existing:
+    if not _file_has_key(allowed, body):
         with allowed.open("a") as f:
             f.write(f'{PRINCIPAL} namespaces="{NAMESPACE}" {body}\n')
 
 
 def revoke(trust: Path, public_line: str) -> None:
-    """Drop a key from the allowed set and list it as revoked."""
+    """Drop a key from the allowed set and list it as revoked, once."""
     trust.mkdir(parents=True, exist_ok=True)
     body = _key_body(public_line)
     allowed = trust / ALLOWED_FILE
     if allowed.is_file():
-        kept = [ln for ln in allowed.read_text().splitlines() if body not in ln]
+        kept = [
+            ln for ln in allowed.read_text().splitlines() if _line_key_body(ln) != body
+        ]
         allowed.write_text("".join(f"{ln}\n" for ln in kept))
-    with (trust / REVOKED_FILE).open("a") as f:
-        f.write(f"{body}\n")
+    revoked = trust / REVOKED_FILE
+    if not _file_has_key(revoked, body):
+        with revoked.open("a") as f:
+            f.write(f"{body}\n")
 
 
 def replace(trust: Path, old_line: str, new_line: str) -> None:
