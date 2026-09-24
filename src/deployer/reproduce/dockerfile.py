@@ -140,6 +140,18 @@ def parse(text: str) -> ParsedDockerfile:
     )
 
 
+def unread_reason(parsed: ParsedDockerfile) -> str | None:
+    """Why the document as a whole is not read, or ``None``.
+
+    A non-default ``# escape=`` changes line continuation, so the split into
+    instructions itself is untrusted; every check built on that split —
+    syntax, sources, exactness — must say so rather than trust it.
+    """
+    if parsed.escape_directive not in (None, "\\"):
+        return f"escape directive not modelled: {parsed.escape_directive}"
+    return None
+
+
 def opens_heredoc(keyword: str, args: str) -> bool:
     """Whether an instruction's arguments open a heredoc.
 
@@ -158,12 +170,13 @@ def _heredoc_match(keyword: str, args: str) -> re.Match[str] | None:
 
 def syntax_checks(parsed: ParsedDockerfile, dockerfile: str) -> list[ReproductionCheck]:
     """The four checks of §3.1; one passed check per clean rule."""
-    if parsed.escape_directive not in (None, "\\"):
+    unread = unread_reason(parsed)
+    if unread is not None:
         return [
             ReproductionCheck(
                 check_id=check_id,
                 status="skipped",
-                reason=f"escape directive not modelled: {parsed.escape_directive}",
+                reason=unread,
             )
             for check_id in _CHECK_IDS
         ]

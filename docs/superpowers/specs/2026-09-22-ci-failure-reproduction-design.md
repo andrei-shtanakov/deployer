@@ -290,6 +290,9 @@ The alphabet applies to the source **as written**: the shell form is split on
 whitespace with no unquoting or unescaping (a quote, a backslash or a `$` reaches the
 alphabet and is refused), and a JSON form containing any backslash is unread as a
 whole, because the JSON decoder would resolve the escape before any check sees it.
+A Dockerfile whose `# escape=` directive is not `\` is not read at all: the split
+into instructions depends on it, so the syntax checks, the source check and §1.3 (d)
+all report `Dockerfile not fully read` instead of trusting that split.
 
 Every local source of every `COPY`/`ADD` is resolved against `context/` minus the
 ignored paths. Findings: `source <path> absent from the context`, `source <path>
