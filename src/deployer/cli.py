@@ -307,14 +307,15 @@ def _apply_provenance(
     pre: issue.Preflight | str,
     signing_key: Path | None,
     dockerfile_written: bool,
-) -> None:
+) -> bool:
     """Issue or withdraw the authoring provenance set for this run.
 
     A `Preflight` plus a written Dockerfile issues a new set; anything else
-    (preflight refused, an undeterminable package version, or no Dockerfile
-    written) withdraws whatever set an earlier authoring run may have left
-    behind, so no stale confirmation survives an authoring that did not
-    just reissue it.
+    (preflight refused, publication refused, an undeterminable package
+    version, or no Dockerfile written) withdraws whatever set an earlier
+    authoring run may have left behind, so no stale confirmation survives
+    an authoring that did not just reissue it. Returns ``False`` only when
+    that mandatory withdrawal failed.
     """
     if (
         dockerfile_written
@@ -331,16 +332,27 @@ def _apply_provenance(
         else:
             out = issue.issue(pre, signing_key, version)
             if out.published:
-                return
+                return True
             print(
                 f"warning: ownership will not be confirmable: {out.reason}",
                 file=sys.stderr,
             )
-        if issue.withdraw(project):
-            print("warning: previous authoring set removed", file=sys.stderr)
-        return
-    if issue.withdraw(project):
+    return _withdraw_previous_set(project)
+
+
+def _withdraw_previous_set(project: Path) -> bool:
+    """Withdraw an earlier authoring set; ``False`` (reported) if that failed."""
+    try:
+        removed = issue.withdraw(project)
+    except OSError as exc:
+        print(
+            f"error: previous authoring set could not be removed: {exc}",
+            file=sys.stderr,
+        )
+        return False
+    if removed:
         print("warning: previous authoring set removed", file=sys.stderr)
+    return True
 
 
 def _cmd_author(args: argparse.Namespace) -> int:
@@ -403,7 +415,7 @@ def _cmd_author(args: argparse.Namespace) -> int:
                 wf_dir.mkdir(parents=True, exist_ok=True)
                 (wf_dir / "ci.yml").write_text(last.ci + "\n")
         _print_report(last.report)
-    _apply_provenance(project, pre, signing_key, dockerfile_written)
+    provenance_ok = _apply_provenance(project, pre, signing_key, dockerfile_written)
     report_path = _write_report(
         project, "authoring-run.json", run.model_dump_json(indent=2)
     )
@@ -411,6 +423,8 @@ def _cmd_author(args: argparse.Namespace) -> int:
     if report_path is not None:
         line += f"; run report: {report_path}"
     print(line)
+    if not provenance_ok:
+        return 1
     accepted = ("success", "static_only") if args.no_docker else ("success",)
     return 0 if run.stopped_reason in accepted else 1
 

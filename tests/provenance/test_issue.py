@@ -404,9 +404,11 @@ def test_issue_refuses_when_the_lock_cannot_be_acquired(
     assert out.reason is not None and "lock" in out.reason
 
 
-def test_withdraw_returns_false_when_the_lock_cannot_be_acquired(
+def test_withdraw_still_removes_when_the_lock_cannot_be_acquired(
     repo_with_origin: Path, keypair: tuple[Path, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Spec §5.3: a normally completed run leaves no old confirmation, so a
+    lock failure must not keep the previous set (PR #85 review)."""
     key, _ = keypair
     pre = issue.preflight(repo_with_origin, key)
     assert isinstance(pre, issue.Preflight)
@@ -417,6 +419,35 @@ def test_withdraw_returns_false_when_the_lock_cannot_be_acquired(
         raise gitrepo.GitError("no .git here")
 
     monkeypatch.setattr(issue.gitrepo, "git_path", boom)
-    assert issue.withdraw(repo_with_origin) is False
-    # untouched: the pointer and set dir are both still there
-    assert (repo_with_origin / SET_ROOT / POINTER).exists()
+    assert issue.withdraw(repo_with_origin) is True
+    assert not (repo_with_origin / SET_ROOT / POINTER).exists()
+    assert not any((repo_with_origin / SET_ROOT / "Dockerfile").iterdir())
+
+
+def test_a_stale_run_does_not_replace_the_set_of_a_newer_dockerfile(
+    repo_with_origin: Path, keypair: tuple[Path, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Run A read its Dockerfile, then run B rewrote and published before A
+    took the lock: A must publish nothing (PR #85 review)."""
+    key, _ = keypair
+    pre = issue.preflight(repo_with_origin, key)
+    assert isinstance(pre, issue.Preflight)
+    _author(repo_with_origin)
+    real_acquire = issue._acquire_publication_lock
+    newer = DOCKERFILE + 'CMD ["python"]\n'
+
+    def b_publishes_first(project: Path) -> int:
+        monkeypatch.setattr(issue, "_acquire_publication_lock", real_acquire)
+        _author(repo_with_origin, newer)
+        assert issue.issue(pre, key, "0.1").published
+        return real_acquire(project)
+
+    monkeypatch.setattr(issue, "_acquire_publication_lock", b_publishes_first)
+    out = issue.issue(pre, key, "0.1")
+    assert not out.published and "changed" in (out.reason or "")
+    rec = Record.model_validate_json(
+        (
+            repo_with_origin / SET_ROOT / _pointer(repo_with_origin) / "record.json"
+        ).read_bytes()
+    )
+    assert rec.artifact_sha256 == sha256_hex(newer.encode())

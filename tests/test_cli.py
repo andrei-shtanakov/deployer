@@ -694,6 +694,28 @@ def test_author_with_signing_key_issues_provenance_set(
     assert (repo / ".deployer" / "authoring" / "Dockerfile.current").is_file()
 
 
+def test_author_fails_when_the_previous_set_cannot_be_removed(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """A mandatory withdrawal that fails is reported and is not a success."""
+    repo = make_repo_with_origin(tmp_path)
+    monkeypatch.setattr(
+        "deployer.cli.author_dockerfile", _fake_author_dockerfile(_SIGNED_DOCKERFILE)
+    )
+    monkeypatch.setattr("deployer.cli.AnthropicAuthor", lambda: object())
+
+    def broken(project: Path) -> bool:
+        raise OSError("read-only file system")
+
+    monkeypatch.setattr("deployer.cli.issue.withdraw", broken)
+
+    exit_code = cli.main(["author", str(repo), "--no-docker"])
+
+    assert exit_code == 1
+    err = capsys.readouterr().err
+    assert "error: previous authoring set could not be removed" in err
+
+
 def test_author_without_signing_key_warns_and_issues_nothing(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:

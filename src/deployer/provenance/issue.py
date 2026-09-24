@@ -300,6 +300,14 @@ def _release_publication_lock(fd: int) -> None:
         os.close(fd)
 
 
+def _current_artifact_sha(project: Path) -> str | None:
+    """The hash of the Dockerfile on disk now, or ``None`` if unreadable."""
+    try:
+        return sha256_hex((project / _ARTIFACT_PATH).read_bytes())
+    except OSError:
+        return None
+
+
 def _publish(
     project: Path,
     rec_sha: str,
@@ -307,14 +315,20 @@ def _publish(
     snap_bytes: bytes,
     sig: bytes,
     signing_key: Path,
+    artifact_sha: str,
 ) -> Issued:
     """Write or reuse the set directory, then atomically move the pointer.
 
-    The whole sequence — existence/reuse check, write-or-reuse, pointer
-    swap and prune — runs under the publication lock, so a concurrent
-    ``issue()`` for the same repository cannot interleave with this one.
-    A failure to acquire the lock itself becomes ``Issued(False, reason,
-    None)``; a failure once the lock is held propagates as before.
+    The whole sequence — artifact re-check, existence/reuse check,
+    write-or-reuse, pointer swap and prune — runs under the publication
+    lock, so a concurrent ``issue()`` for the same repository cannot
+    interleave with this one. Under the lock the Dockerfile on disk is
+    hashed again: if another authoring run rewrote it after this run read
+    it, this run is stale and publishes nothing. Concurrent authoring of
+    one repository can therefore end with no confirmation, never with a
+    pointer naming a set for bytes that are not on disk. A failure to
+    acquire the lock itself becomes ``Issued(False, reason, None)``; a
+    failure once the lock is held propagates as before.
     """
     target = project / SET_ROOT / set_dir_name(rec_sha)
     try:
@@ -322,6 +336,10 @@ def _publish(
     except (GitError, OSError) as exc:
         return Issued(False, f"could not acquire the publication lock: {exc}", None)
     try:
+        if _current_artifact_sha(project) != artifact_sha:
+            return Issued(
+                False, "Dockerfile changed before publication; not published", None
+            )
         if target.exists():
             reason = _check_reuse(target, rec_bytes, snap_bytes, signing_key)
             if reason is not None:
@@ -352,25 +370,35 @@ def issue(pre: Preflight, signing_key: Path, deployer_version: str) -> Issued:
         sig = sshsig.sign(rec_bytes, signing_key)
     except SshSigError as exc:
         return Issued(False, str(exc), None)
-    return _publish(pre.project, rec_sha, rec_bytes, snap_bytes, sig, signing_key)
+    return _publish(
+        pre.project,
+        rec_sha,
+        rec_bytes,
+        snap_bytes,
+        sig,
+        signing_key,
+        sha256_hex(dockerfile_bytes),
+    )
 
 
 def withdraw(project: Path) -> bool:
     """Remove ``Dockerfile.current`` first, then every set directory under
     ``SET_ROOT/Dockerfile/``; return whether anything was removed.
 
-    Runs under the publication lock like ``_publish``, so it cannot
-    interleave with a concurrent ``issue()``/``withdraw()`` on the same
-    repository. Kept total: if the lock cannot be acquired, this returns
-    ``False`` without touching anything, rather than raising.
+    Runs under the publication lock like ``_publish`` when the lock can be
+    taken. When it cannot, the removal still happens, unlocked: removing a
+    confirmation can only ever lose one, never create a false one, and
+    spec §5.3 forbids a normally completed run from leaving an old one
+    behind. A removal that itself fails raises ``OSError`` so the caller
+    can report it instead of completing as if nothing were left.
 
     Like ``_prune_other_sets``, this leaves non-directory entries and any
     live ``.tmp-*`` staging directory alone.
     """
     try:
-        fd = _acquire_publication_lock(project)
+        fd: int | None = _acquire_publication_lock(project)
     except (GitError, OSError):
-        return False
+        fd = None
     try:
         removed = False
         pointer = project / SET_ROOT / POINTER
@@ -386,4 +414,5 @@ def withdraw(project: Path) -> bool:
                 removed = True
         return removed
     finally:
-        _release_publication_lock(fd)
+        if fd is not None:
+            _release_publication_lock(fd)
