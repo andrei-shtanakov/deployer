@@ -375,15 +375,38 @@ def fetch_failed_run(
 
 
 def fetch_tree_listing(repo: str, sha: str, runner: GhRunner) -> TreeListing:
-    """The recursive Git tree at ``sha`` (spec §1.3 b, c)."""
+    """The recursive Git tree at ``sha`` (spec §1.3 b, c).
+
+    Every field is required and type-checked: a response missing ``sha``,
+    ``tree`` or a boolean ``truncated``, or an entry missing one of its four
+    string fields, is refused as a status-less :class:`GhError` — an unknown
+    completeness must never read as a confirmed ``truncated=False``.
+    """
     body = json.loads(
         runner.api([f"repos/{repo}/git/trees/{sha}?recursive=1"], timeout=GH_TIMEOUT_S)
     )
-    entries = [
-        TreeEntry(str(e["path"]), str(e["mode"]), str(e["type"]), str(e["sha"]))
-        for e in body.get("tree", [])
-    ]
-    return TreeListing(str(body.get("sha", sha)), entries, bool(body.get("truncated")))
+    if not isinstance(body, dict):
+        raise GhError("tree listing malformed: not an object", None)
+    tree, listed_sha, truncated = (
+        body.get("tree"),
+        body.get("sha"),
+        body.get("truncated"),
+    )
+    if not isinstance(tree, list) or not isinstance(listed_sha, str):
+        raise GhError("tree listing malformed: missing tree or sha", None)
+    if not isinstance(truncated, bool):
+        raise GhError("tree listing malformed: truncated is not a boolean", None)
+    return TreeListing(listed_sha, [_tree_entry(e) for e in tree], truncated)
+
+
+def _tree_entry(entry: object) -> TreeEntry:
+    """One listing entry with all four fields present as strings."""
+    fields = ("path", "mode", "type", "sha")
+    if not isinstance(entry, dict) or not all(
+        isinstance(entry.get(f), str) for f in fields
+    ):
+        raise GhError(f"tree listing malformed: bad entry {entry!r}", None)
+    return TreeEntry(entry["path"], entry["mode"], entry["type"], entry["sha"])
 
 
 def fetch_archive(
