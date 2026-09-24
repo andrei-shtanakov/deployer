@@ -57,9 +57,16 @@ class CheckRun:
 
 
 def read_check_output(
-    exit_code: int | None, launch_error: str | None, output: str
+    exit_code: int | None,
+    launch_error: str | None,
+    output: str,
+    dockerfile: str = "Dockerfile",
 ) -> tuple[BuilderSyntax, list[ReproductionCheck]]:
-    """The ordered table of §2; first match wins."""
+    """The ordered table of §2; first match wins.
+
+    ``dockerfile`` is the context-relative path the check ran on; lint
+    observations point there.
+    """
     if launch_error is not None or exit_code is None:
         return BuilderSyntax("skipped", None, None, launch_error or "not launched"), []
     lines = [ln.rstrip() for ln in output.splitlines()]
@@ -74,7 +81,7 @@ def read_check_output(
             check_id="builder_lint",
             status="observation",
             finding=f"{rule}: {description}",
-            location=Location(file="Dockerfile", lines=(line_no, line_no)),
+            location=Location(file=dockerfile, lines=(line_no, line_no)),
         )
         for rule, description, line_no in blocks
     ]
@@ -131,7 +138,9 @@ def run_builder_check(
     except OSError as exc:
         return BuilderSyntax("skipped", None, None, str(exc)), [], version, None
     stdout, stderr = proc.stdout or "", proc.stderr or ""
-    syntax, lint = read_check_output(proc.returncode, None, stdout + "\n" + stderr)
+    syntax, lint = read_check_output(
+        proc.returncode, None, stdout + "\n" + stderr, dockerfile
+    )
     return syntax, lint, version, CheckRun(stdout, stderr)
 
 
