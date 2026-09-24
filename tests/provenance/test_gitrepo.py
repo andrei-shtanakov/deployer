@@ -1,3 +1,4 @@
+import os
 import subprocess
 from pathlib import Path
 
@@ -47,3 +48,12 @@ def test_listing_and_export(repo: Path, tmp_path: Path) -> None:
     dest = tmp_path / "export"
     gitrepo.export_commit(repo, head, dest)
     assert (dest / "src" / "m.py").read_text() == "x = 1\n"
+
+
+def test_export_rejects_absolute_symlink(repo: Path, tmp_path: Path) -> None:
+    os.symlink("/etc/passwd", repo / "evil")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "evil symlink")
+    head = gitrepo.head_commit(repo)
+    with pytest.raises(gitrepo.GitError):
+        gitrepo.export_commit(repo, head, tmp_path / "export")

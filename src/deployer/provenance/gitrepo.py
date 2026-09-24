@@ -90,5 +90,8 @@ def export_commit(path: Path, commit: str, dest: Path) -> None:
     """Extract ``commit``'s tree into ``dest`` via ``git archive``."""
     data = _git(path, "archive", "--format=tar", commit)
     dest.mkdir(parents=True, exist_ok=True)
-    with tarfile.open(fileobj=io.BytesIO(data)) as tar:
-        tar.extractall(dest, filter="data")
+    try:
+        with tarfile.open(fileobj=io.BytesIO(data)) as tar:
+            tar.extractall(dest, filter="data")
+    except tarfile.TarError as exc:
+        raise GitError(f"cannot export {commit}: {exc}") from exc
