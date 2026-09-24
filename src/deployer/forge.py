@@ -19,7 +19,13 @@ from pydantic import TypeAdapter
 GH_TIMEOUT_S = 30.0
 """Wall-clock budget for one ``gh api`` invocation."""
 
-SNAPSHOT_SCHEMA_VERSION = "1.2"
+ARCHIVE_TIMEOUT_S = 120.0
+"""Wall-clock budget for downloading one source archive."""
+
+DEFAULT_MAX_ARCHIVE_MB = 200
+"""Default ``--max-archive-mb`` cap (spec §1.4) on a fetched source archive."""
+
+SNAPSHOT_SCHEMA_VERSION = "1.3"
 
 _PER_PAGE = 100
 _FAILED_CONCLUSIONS = frozenset({"failure", "timed_out"})
@@ -91,6 +97,20 @@ class FailedStep:
 
 
 @dataclass(frozen=True)
+class StepInfo:
+    """One step of a job as the jobs listing gives it, green or not.
+
+    Reproduction binds workflow steps to these one-to-one (spec §1.2 #5); the
+    reading layer keeps using ``FailedJob.steps``, which holds only the
+    non-green ones.
+    """
+
+    number: int
+    name: str
+    conclusion: str | None
+
+
+@dataclass(frozen=True)
 class Completeness:
     """Per-source collection state: three distinct states, not a boolean.
 
@@ -130,6 +150,7 @@ class FailedJob:
     steps: list[FailedStep]
     evidence: list[Evidence]
     completeness: Completeness = COMPLETE_BY_CONSTRUCTION
+    all_steps: list[StepInfo] | None = None
 
 
 @dataclass(frozen=True)
@@ -143,6 +164,9 @@ class FailedRun:
     url: str
     jobs: list[FailedJob]
     completeness: Completeness
+    workflow_ref_path: str | None = None
+    workflow_path: str | None = None
+    event: str | None = None
     snapshot_schema_version: str = SNAPSHOT_SCHEMA_VERSION
 
 
@@ -152,6 +176,25 @@ class AdapterRefusal:
 
     reason: Literal["not_finished", "not_failed"]
     detail: str
+
+
+@dataclass(frozen=True)
+class TreeEntry:
+    """One entry of a recursive Git tree listing, as GitHub returns it."""
+
+    path: str
+    mode: str
+    type: str
+    sha: str
+
+
+@dataclass(frozen=True)
+class TreeListing:
+    """The Git tree at a commit; ``truncated`` is GitHub's own flag."""
+
+    sha: str
+    entries: list[TreeEntry]
+    truncated: bool
 
 
 class GhError(Exception):
@@ -170,6 +213,29 @@ class GhRunner(Protocol):
         ...
 
 
+class GhBytesRunner(GhRunner, Protocol):
+    """A runner that can also return raw bytes (the tarball endpoint)."""
+
+    def api_bytes(self, argv: list[str], *, timeout: float) -> bytes:
+        """Return stdout bytes; raise :class:`GhError` on failure."""
+        ...
+
+
+def _gh_failure(what: str, returncode: int, stderr: str) -> GhError:
+    """Map a nonzero ``gh api`` exit to a :class:`GhError`, HTTP status if any."""
+    stderr = stderr.strip()
+    match = _HTTP_STATUS_RE.search(stderr)
+    status = int(match.group(1)) if match else None
+    return GhError(
+        f"gh api {what} failed: {stderr or f'exit code {returncode}'}", status
+    )
+
+
+def _gh_env() -> dict[str, str]:
+    """The environment ``gh api`` runs under: prompts and update checks off."""
+    return {**os.environ, "GH_PROMPT_DISABLED": "1", "GH_NO_UPDATE_NOTIFIER": "1"}
+
+
 class SubprocessGh:
     """The real runner: ``gh api`` as an argument vector, never a shell."""
 
@@ -177,7 +243,6 @@ class SubprocessGh:
         """Run ``gh api *argv`` under ``timeout`` with prompts disabled."""
         cmd = ["gh", "api", *argv]
         what = " ".join(argv)
-        env = {**os.environ, "GH_PROMPT_DISABLED": "1", "GH_NO_UPDATE_NOTIFIER": "1"}
         try:
             proc = subprocess.run(
                 cmd,
@@ -187,18 +252,40 @@ class SubprocessGh:
                 timeout=timeout,
                 stdin=subprocess.DEVNULL,
                 check=False,
-                env=env,
+                env=_gh_env(),
             )
         except subprocess.TimeoutExpired as exc:
             raise GhError(f"gh api {what} timed out after {timeout}s") from exc
         except OSError as exc:
             raise GhError(f"gh api could not start: {exc}") from exc
         if proc.returncode != 0:
-            stderr = (proc.stderr or "").strip()
-            match = _HTTP_STATUS_RE.search(stderr)
-            status = int(match.group(1)) if match else None
-            detail = stderr or f"exit code {proc.returncode}"
-            raise GhError(f"gh api {what} failed: {detail}", status)
+            raise _gh_failure(what, proc.returncode, proc.stderr or "")
+        return proc.stdout
+
+    def api_bytes(self, argv: list[str], *, timeout: float) -> bytes:
+        """``gh api *argv`` returning raw stdout bytes (archives, not text).
+
+        ``gh``'s HTTP client follows the tarball endpoint's redirect. Same
+        timeout and status mapping as :meth:`api`.
+        """
+        cmd = ["gh", "api", *argv]
+        what = " ".join(argv)
+        try:
+            proc = subprocess.run(
+                cmd,
+                capture_output=True,
+                timeout=timeout,
+                stdin=subprocess.DEVNULL,
+                check=False,
+                env=_gh_env(),
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise GhError(f"gh api {what} timed out after {timeout}s") from exc
+        except OSError as exc:
+            raise GhError(f"gh api could not start: {exc}") from exc
+        if proc.returncode != 0:
+            stderr = (proc.stderr or b"").decode("utf-8", errors="replace")
+            raise _gh_failure(what, proc.returncode, stderr)
         return proc.stdout
 
 
@@ -208,8 +295,9 @@ _run_adapter: TypeAdapter[FailedRun] = TypeAdapter(FailedRun)
 def dump_snapshot(run: FailedRun) -> str:
     """Serialize a snapshot as versioned JSON (``snapshot_schema_version``).
 
-    Schema 1.2 adds ``level`` to each piece of evidence; like the per-job
-    ``completeness`` of 1.1 it is additive, so an older document still loads.
+    Schema 1.3 adds ``workflow_ref_path``, ``workflow_path``, ``event`` on
+    the run and ``all_steps`` on each job; additive like 1.1 and 1.2, so
+    older documents still load with them ``None``.
     """
     return _run_adapter.dump_json(run, indent=2).decode()
 
@@ -264,6 +352,9 @@ def fetch_failed_run(
                 Completeness(logs=logs_state, annotations=annotations_state),
             )
         )
+    raw_path = run.get("path")
+    ref_path = str(raw_path) if raw_path is not None else None
+    raw_event = run.get("event")
     return FailedRun(
         repo=ref.repo,
         run_id=ref.run_id,
@@ -277,12 +368,56 @@ def fetch_failed_run(
                 [j.completeness.annotations for j in jobs], _ANNOTATIONS_RANK, "absent"
             ),
         ),
+        workflow_ref_path=ref_path,
+        workflow_path=normalise_workflow_path(ref_path) if ref_path else None,
+        event=str(raw_event) if raw_event is not None else None,
     )
+
+
+def fetch_tree_listing(repo: str, sha: str, runner: GhRunner) -> TreeListing:
+    """The recursive Git tree at ``sha`` (spec §1.3 b, c)."""
+    body = json.loads(
+        runner.api([f"repos/{repo}/git/trees/{sha}?recursive=1"], timeout=GH_TIMEOUT_S)
+    )
+    entries = [
+        TreeEntry(str(e["path"]), str(e["mode"]), str(e["type"]), str(e["sha"]))
+        for e in body.get("tree", [])
+    ]
+    return TreeListing(str(body.get("sha", sha)), entries, bool(body.get("truncated")))
+
+
+def fetch_archive(
+    repo: str, sha: str, runner: GhBytesRunner, *, max_bytes: int
+) -> bytes:
+    """The source tarball of ``sha``; bytes pass through unaltered (spec §1.4).
+
+    Over ``max_bytes`` is refused as a status-less :class:`GhError`: the
+    download happened, but this layer will not unpack it. The cap is
+    enforced only after ``api_bytes`` returns — the whole archive is
+    downloaded and buffered in memory first, whatever its size, and only
+    then measured against ``max_bytes``; this does not stream or abort the
+    download early.
+    """
+    blob = runner.api_bytes([f"repos/{repo}/tarball/{sha}"], timeout=ARCHIVE_TIMEOUT_S)
+    if len(blob) > max_bytes:
+        raise GhError(f"archive exceeds {max_bytes} bytes ({len(blob)})", None)
+    return blob
 
 
 def _run_path(run_id: int, attempt: int | None) -> str:
     base = f"actions/runs/{run_id}"
     return base if attempt is None else f"{base}/attempts/{attempt}"
+
+
+def normalise_workflow_path(raw: str) -> str:
+    """The run's ``path`` without a trailing ``@<ref>`` (split on the last ``@``).
+
+    GitHub documents values such as ``.github/workflows/build.yml@main``; the
+    file in the tree is the part before the ref. Validation of the result is
+    the reproduction layer's job (spec §1.1), not the snapshot's.
+    """
+    head, sep, _ = raw.rpartition("@")
+    return head if sep else raw
 
 
 def _refuse(run: dict[str, Any]) -> AdapterRefusal | None:
@@ -434,6 +569,14 @@ def _build_job(
     completeness: Completeness,
 ) -> FailedJob:
     all_steps = list(record.get("steps") or [])
+    step_infos = [
+        StepInfo(
+            number=int(s["number"]),
+            name=str(s.get("name", "")),
+            conclusion=None if s.get("conclusion") is None else str(s["conclusion"]),
+        )
+        for s in all_steps
+    ]
     step_evidence, job_evidence = _bind_log(log_text, job_id, all_steps)
     steps = [
         FailedStep(
@@ -458,6 +601,7 @@ def _build_job(
         steps=steps,
         evidence=job_evidence,
         completeness=completeness,
+        all_steps=step_infos,
     )
 
 

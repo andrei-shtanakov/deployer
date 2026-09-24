@@ -4,6 +4,7 @@ import json
 import re
 import subprocess
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -18,11 +19,17 @@ from deployer.forge import (
     FailedStep,
     GhError,
     RunRef,
+    StepInfo,
     StepRef,
     SubprocessGh,
+    TreeEntry,
+    TreeListing,
     dump_snapshot,
+    fetch_archive,
     fetch_failed_run,
+    fetch_tree_listing,
     load_snapshot,
+    normalise_workflow_path,
 )
 
 _JOBS_RE = re.compile(r"/attempts/(\d+)/jobs\?per_page=100&page=(\d+)$")
@@ -659,7 +666,7 @@ def test_snapshot_round_trips_through_versioned_json(fake_gh):
     assert isinstance(snapshot, FailedRun)
     text = dump_snapshot(snapshot)
     document = json.loads(text)
-    assert document["snapshot_schema_version"] == "1.2"
+    assert document["snapshot_schema_version"] == "1.3"
     assert document["jobs"][0]["completeness"] == {
         "logs": "present",
         "annotations": "present",
@@ -741,7 +748,7 @@ def test_snapshot_types_construct_positionally():
     refusal = AdapterRefusal("not_failed", "conclusion is success")
     assert refusal.reason == "not_failed"
     run = FailedRun("o/r", 1, 1, "sha", "url", [], Completeness("present", "absent"))
-    assert run.snapshot_schema_version == "1.2"
+    assert run.snapshot_schema_version == "1.3"
     assert FailedJob(1, "j", "failure", [], []).steps == []
     assert FailedStep(StepRef(1, 1), "s", "failure", []).ref.number == 1
     assert Evidence(None, "a line").level is None
@@ -830,3 +837,145 @@ def test_subprocess_gh_missing_binary_is_a_gh_error(monkeypatch):
     monkeypatch.setattr(subprocess, "run", missing)
     with pytest.raises(GhError):
         SubprocessGh().api(["x"], timeout=1.0)
+
+
+# --- schema 1.3: workflow path, event, all steps -----------------------------
+
+
+def test_snapshot_carries_workflow_path_event_and_all_steps(fake_gh):
+    fake_gh.run = {
+        **fake_gh.run,
+        "path": ".github/workflows/build.yml@main",
+        "event": "workflow_dispatch",
+    }
+    fake_gh.job_pages = [
+        [job(1, steps=[step(1, "Set up job", "success"), step(2, "Build")])]
+    ]
+    snapshot = fetch_failed_run(RunRef("o/r", 1), attempt=1, runner=fake_gh)
+    assert isinstance(snapshot, FailedRun)
+    assert snapshot.workflow_ref_path == ".github/workflows/build.yml@main"
+    assert snapshot.workflow_path == ".github/workflows/build.yml"
+    assert snapshot.event == "workflow_dispatch"
+    assert snapshot.jobs[0].all_steps == [
+        StepInfo(1, "Set up job", "success"),
+        StepInfo(2, "Build", "failure"),
+    ]
+    # the kept failed steps are unchanged: only the non-green one
+    assert [s.name for s in snapshot.jobs[0].steps] == ["Build"]
+
+
+def test_run_without_path_or_event_records_none(fake_gh):
+    snapshot = fetch_failed_run(RunRef("o/r", 1), attempt=1, runner=fake_gh)
+    assert isinstance(snapshot, FailedRun)
+    assert snapshot.workflow_ref_path is None
+    assert snapshot.workflow_path is None
+    assert snapshot.event is None
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        (".github/workflows/a.yml", ".github/workflows/a.yml"),
+        (".github/workflows/a.yml@main", ".github/workflows/a.yml"),
+        (
+            ".github/workflows/a.yml@refs/heads/x@y",
+            ".github/workflows/a.yml@refs/heads/x",
+        ),
+    ],
+)
+def test_normalise_workflow_path_strips_the_last_ref_suffix(raw, expected):
+    assert normalise_workflow_path(raw) == expected
+
+
+def test_a_1_2_snapshot_loads_with_the_new_fields_absent():
+    old = json.loads(
+        (Path(__file__).parent / "fixtures" / "runs" / "authoring.json").read_text()
+    )
+    snapshot = load_snapshot(json.dumps(old))
+    assert snapshot.snapshot_schema_version == "1.2"
+    assert snapshot.workflow_path is None and snapshot.event is None
+    assert snapshot.jobs[0].all_steps is None
+
+
+# --- binary archive and tree listing (spec §1.4) ------------------------------
+
+
+class BytesGh:
+    """A GhBytesRunner fake: serves one tarball and one listing."""
+
+    def __init__(self, blob: bytes, listing: dict[str, Any]) -> None:
+        self.blob = blob
+        self.listing = listing
+        self.calls: list[list[str]] = []
+
+    def api(self, argv: list[str], *, timeout: float) -> str:
+        self.calls.append(list(argv))
+        return json.dumps(self.listing)
+
+    def api_bytes(self, argv: list[str], *, timeout: float) -> bytes:
+        self.calls.append(list(argv))
+        return self.blob
+
+
+def test_fetch_archive_passes_bytes_unaltered():
+    blob = bytes(range(256)) * 4  # not valid UTF-8 anywhere
+    gh = BytesGh(blob, {})
+    assert fetch_archive("o/r", "abc", gh, max_bytes=10_000) == blob
+    assert gh.calls == [["repos/o/r/tarball/abc"]]
+
+
+def test_fetch_archive_refuses_over_the_cap():
+    gh = BytesGh(b"x" * 11, {})
+    with pytest.raises(GhError, match="archive exceeds 10 bytes") as info:
+        fetch_archive("o/r", "abc", gh, max_bytes=10)
+    assert info.value.status is None
+
+
+def test_fetch_tree_listing_keeps_path_mode_type_sha_and_truncation():
+    listing = {
+        "sha": "abc",
+        "truncated": False,
+        "tree": [
+            {"path": "src", "mode": "040000", "type": "tree", "sha": "t1"},
+            {"path": "src/a.py", "mode": "100644", "type": "blob", "sha": "b1"},
+            {"path": "run.sh", "mode": "100755", "type": "blob", "sha": "b2"},
+        ],
+    }
+    gh = BytesGh(b"", listing)
+    out = fetch_tree_listing("o/r", "abc", gh)
+    assert out == TreeListing(
+        sha="abc",
+        truncated=False,
+        entries=[
+            TreeEntry("src", "040000", "tree", "t1"),
+            TreeEntry("src/a.py", "100644", "blob", "b1"),
+            TreeEntry("run.sh", "100755", "blob", "b2"),
+        ],
+    )
+    assert gh.calls == [["repos/o/r/git/trees/abc?recursive=1"]]
+
+
+def test_subprocess_api_bytes_runs_gh_without_text_mode(monkeypatch):
+    seen: dict[str, Any] = {}
+
+    def fake_run(cmd, **kwargs):
+        seen["cmd"] = cmd
+        seen["kwargs"] = kwargs
+        return subprocess.CompletedProcess(cmd, 0, stdout=b"\x00\xff", stderr=b"")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    assert SubprocessGh().api_bytes(["repos/o/r/tarball/x"], timeout=5) == b"\x00\xff"
+    assert seen["cmd"] == ["gh", "api", "repos/o/r/tarball/x"]
+    assert "text" not in seen["kwargs"] and "errors" not in seen["kwargs"]
+
+
+def test_subprocess_api_bytes_maps_http_status(monkeypatch):
+    def fake_run(cmd, **kwargs):
+        return subprocess.CompletedProcess(
+            cmd, 1, stdout=b"", stderr=b"gh: Not Found (HTTP 404)"
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    with pytest.raises(GhError) as info:
+        SubprocessGh().api_bytes(["repos/o/r/tarball/x"], timeout=5)
+    assert info.value.status == 404

@@ -690,7 +690,7 @@ def test_render_verdict_carries_its_own_schema_version_first():
         if isinstance(where, dict):
             assert set(where) == {"job_id", "number"}
     # The nested run keeps its own, distinct schema version.
-    assert document["run"]["snapshot_schema_version"] == "1.2"
+    assert document["run"]["snapshot_schema_version"] == "1.3"
 
 
 # --- per-job completeness: a fail-fast matrix ------------------------------
