@@ -775,23 +775,35 @@ def _read_pubkey_line(path: str) -> str | None:
     return line or None
 
 
+def _read_and_validate_pubkey(path: str) -> str | int:
+    """Read and validate a public-key file: the line, or an exit code already
+    reported on stderr."""
+    line = _read_pubkey_line(path)
+    if line is None:
+        print(f"error: cannot read {path}", file=sys.stderr)
+        return 2
+    try:
+        trust.validate_public_line(line)
+    except trust.TrustError:
+        print(f"error: {path}: not a public key", file=sys.stderr)
+        return 2
+    return line
+
+
 def _cmd_trust(args: argparse.Namespace) -> int:
     trust_directory = trust.trust_dir(os.environ)
     if args.trust_command == "replace":
-        old_line = _read_pubkey_line(args.old_pubkey)
-        if old_line is None:
-            print(f"error: cannot read {args.old_pubkey}", file=sys.stderr)
-            return 2
-        new_line = _read_pubkey_line(args.new_pubkey)
-        if new_line is None:
-            print(f"error: cannot read {args.new_pubkey}", file=sys.stderr)
-            return 2
+        old_line = _read_and_validate_pubkey(args.old_pubkey)
+        if isinstance(old_line, int):
+            return old_line
+        new_line = _read_and_validate_pubkey(args.new_pubkey)
+        if isinstance(new_line, int):
+            return new_line
         trust.replace(trust_directory, old_line, new_line)
     else:
-        line = _read_pubkey_line(args.pubkey)
-        if line is None:
-            print(f"error: cannot read {args.pubkey}", file=sys.stderr)
-            return 2
+        line = _read_and_validate_pubkey(args.pubkey)
+        if isinstance(line, int):
+            return line
         if args.trust_command == "add":
             trust.add(trust_directory, line)
         else:
