@@ -286,6 +286,10 @@ records it `skipped: source pattern not modelled`, and §1.3 (d) records `.git
 exclusion not proven`, so the restoration is an approximation. One gate decides both,
 so the two checks can never disagree about what was read; review rounds of #77 kept
 finding places where two separate heuristics did.
+The alphabet applies to the source **as written**: the shell form is split on
+whitespace with no unquoting or unescaping (a quote, a backslash or a `$` reaches the
+alphabet and is refused), and a JSON form containing any backslash is unread as a
+whole, because the JSON decoder would resolve the escape before any check sees it.
 
 Every local source of every `COPY`/`ADD` is resolved against `context/` minus the
 ignored paths. Findings: `source <path> absent from the context`, `source <path>
