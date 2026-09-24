@@ -31,9 +31,12 @@ Verdict schema 1.1 (additive over 1.0): ``causes`` is always ``[]`` and every
 import json
 import re
 from dataclasses import dataclass
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import TypeAdapter
+
+if TYPE_CHECKING:
+    from deployer.reproduce.model import ReproductionSection
 
 from deployer.forge import (
     Completeness,
@@ -48,6 +51,16 @@ from deployer.forge import (
 Outcome = Literal["CLASSIFIED", "UNCLASSIFIED", "EVIDENCE_UNAVAILABLE"]
 
 VERDICT_SCHEMA_VERSION = "1.1"
+
+REPRODUCTION_VERDICT_SCHEMA_VERSION = "1.2"
+"""The document's schema once a ``reproduction`` section is attached.
+
+Additive over 1.1: no key of the 1.1 document is renamed or removed: without
+a reproduction section (``render_verdict`` called with none, i.e. no
+``--reproduce``), the verdict's own keys are unchanged from 1.1 — the nested
+``run`` snapshot is schema 1.3 either way, so the document is not
+byte-identical to a 1.1 one.
+"""
 
 _JOB_LEVEL_NOTE = "cited evidence is job-level (no step binding)"
 _NO_OBSERVATION_NOTE = "no observation matched"
@@ -445,13 +458,26 @@ def _missing(completeness: Completeness) -> list[str]:
 _diagnosis_adapter: TypeAdapter[RunDiagnosis] = TypeAdapter(RunDiagnosis)
 
 
-def render_verdict(diagnosis: RunDiagnosis) -> str:
+def render_verdict(
+    diagnosis: RunDiagnosis, reproduction: "ReproductionSection | None" = None
+) -> str:
     """Serialize a verdict document as versioned JSON (``deployer diagnose``).
 
     ``verdict_schema_version`` is the document's own schema version and is
     inserted as the first key; the nested ``run`` keeps its own
-    ``snapshot_schema_version`` (``forge.py``) untouched.
+    ``snapshot_schema_version`` (``forge.py``) untouched. With
+    ``reproduction`` given, the document gains a ``reproduction`` key and
+    reads schema 1.2 (additive); without it, the verdict's own keys are
+    unchanged from 1.1 — the nested ``run`` snapshot is schema 1.3 either
+    way, so the document as a whole is not byte-identical to a 1.1 one.
     """
     payload = _diagnosis_adapter.dump_python(diagnosis, mode="json")
-    document = {"verdict_schema_version": VERDICT_SCHEMA_VERSION, **payload}
+    if reproduction is None:
+        document = {"verdict_schema_version": VERDICT_SCHEMA_VERSION, **payload}
+    else:
+        document = {
+            "verdict_schema_version": REPRODUCTION_VERDICT_SCHEMA_VERSION,
+            **payload,
+            "reproduction": reproduction.model_dump(mode="json"),
+        }
     return json.dumps(document, indent=2) + "\n"

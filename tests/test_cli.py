@@ -24,6 +24,8 @@ from deployer.models import (
     FailureKind,
     VerificationReport,
 )
+from deployer.reproduce import ReproductionSection, TryDirError
+from deployer.reproduce.model import Location, ReproductionCheck, ReproEvidence
 
 
 @pytest.fixture(autouse=True)
@@ -1611,3 +1613,128 @@ def test_the_real_project_fixture_diagnoses_through_the_cli(
     (failure,) = document["failures"]
     assert failure["kind"] is None
     assert any(o.startswith("assertion error: ") for o in failure["observations"])
+
+
+# --- Task 13: `deployer diagnose --reproduce` -----------------------------
+
+
+def test_print_reproduction_reports_no_syntax_finding(capsys) -> None:
+    section = ReproductionSection(
+        status="refused",
+        refusal="no container runtime: none found",
+        checks=[
+            ReproductionCheck(check_id="syntax_first_from", status="passed"),
+            ReproductionCheck(check_id="syntax_from_args", status="passed"),
+            ReproductionCheck(check_id="syntax_keyword", status="passed"),
+            ReproductionCheck(check_id="syntax_continuation", status="passed"),
+        ],
+    )
+    cli._print_reproduction(section)
+    assert "syntax: no finding among checks 1–4" in capsys.readouterr().out
+
+
+def test_print_reproduction_says_nothing_when_a_syntax_check_failed(capsys) -> None:
+    section = ReproductionSection(
+        status="refused",
+        refusal="no container runtime: none found",
+        checks=[
+            ReproductionCheck(check_id="syntax_first_from", status="passed"),
+            ReproductionCheck(
+                check_id="syntax_keyword",
+                status="failed",
+                finding="syntax error at line 2: unknown instruction RUNN",
+                location=Location(file="Dockerfile", lines=(2, 2)),
+                evidence=[ReproEvidence(kind="log_excerpt", text="RUNN x")],
+            ),
+        ],
+    )
+    cli._print_reproduction(section)
+    assert "no finding among checks" not in capsys.readouterr().out
+
+
+def test_diagnose_rejects_nonpositive_build_timeout(capsys) -> None:
+    assert cli.main(["diagnose", RUN_URL, "--build-timeout", "0"]) == 2
+    assert "--build-timeout" in capsys.readouterr().err
+
+
+def test_diagnose_rejects_nonpositive_max_archive_mb(capsys) -> None:
+    assert cli.main(["diagnose", RUN_URL, "--max-archive-mb", "0"]) == 2
+    assert "--max-archive-mb" in capsys.readouterr().err
+
+
+def test_max_archive_mb_reaches_reproduce_run(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "diagnose_run", lambda s: diagnosis("UNCLASSIFIED"))
+    monkeypatch.setattr(cli, "resolve_runtime", lambda *a, **k: None)
+    captured: dict[str, object] = {}
+
+    def fake_reproduce_run(*args, **kwargs):
+        captured.update(kwargs)
+        return ReproductionSection(status="refused", refusal="x")
+
+    monkeypatch.setattr(cli, "reproduce_run", fake_reproduce_run)
+    assert cli.main(["diagnose", RUN_URL, "--reproduce", "--max-archive-mb", "7"]) == 3
+    assert captured["max_archive_mb"] == 7
+
+
+def test_max_archive_mb_defaults_to_the_forge_default(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "diagnose_run", lambda s: diagnosis("UNCLASSIFIED"))
+    monkeypatch.setattr(cli, "resolve_runtime", lambda *a, **k: None)
+    captured: dict[str, object] = {}
+
+    def fake_reproduce_run(*args, **kwargs):
+        captured.update(kwargs)
+        return ReproductionSection(status="refused", refusal="x")
+
+    monkeypatch.setattr(cli, "reproduce_run", fake_reproduce_run)
+    cli.main(["diagnose", RUN_URL, "--reproduce"])
+    assert captured["max_archive_mb"] == cli.DEFAULT_MAX_ARCHIVE_MB
+
+
+def test_reproduce_with_container_host_is_exit_2(capsys) -> None:
+    code = cli.main(
+        ["diagnose", RUN_URL, "--reproduce", "--container-host", "ssh://u@h"]
+    )
+    assert code == 2
+    assert "--reproduce" in capsys.readouterr().err
+
+
+def test_reproduce_keeps_the_reading_exit_code(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "diagnose_run", lambda s: diagnosis("UNCLASSIFIED"))
+    monkeypatch.setattr(cli, "resolve_runtime", lambda *a, **k: None)
+    section = ReproductionSection(status="refused", refusal="event x not supported")
+    monkeypatch.setattr(cli, "reproduce_run", lambda *a, **k: section)
+    out = tmp_path / "v.json"
+    assert (
+        cli.main(["diagnose", RUN_URL, "--reproduce", "--output-file", str(out)]) == 3
+    )
+    document = json.loads(out.read_text())
+    assert document["verdict_schema_version"] == "1.2"
+    assert document["reproduction"]["status"] == "refused"
+
+
+def test_try_dir_error_is_exit_2(monkeypatch, tmp_path, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "diagnose_run", lambda s: diagnosis("UNCLASSIFIED"))
+    monkeypatch.setattr(cli, "resolve_runtime", lambda *a, **k: None)
+
+    def boom(*a, **k):
+        raise TryDirError("source.json names another head_sha")
+
+    monkeypatch.setattr(cli, "reproduce_run", boom)
+    assert cli.main(["diagnose", RUN_URL, "--reproduce"]) == 2
+    assert "another head_sha" in capsys.readouterr().err
+
+
+def test_without_reproduce_nothing_is_called(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "diagnose_run", lambda s: diagnosis("UNCLASSIFIED"))
+
+    def forbidden(*a, **k):
+        raise AssertionError("reproduce_run must not run without --reproduce")
+
+    monkeypatch.setattr(cli, "reproduce_run", forbidden)
+    assert cli.main(["diagnose", RUN_URL]) == 3
+    assert not (tmp_path / ".deployer-runs").exists()

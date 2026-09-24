@@ -188,3 +188,18 @@ def test_a_check_that_cannot_launch_is_skipped(fake_containers):
     )
     assert (syntax.state, lint, buildx, raw) == ("skipped", [], "0.15.1", None)
     assert "exec format error" in (syntax.reason or "")
+
+
+def test_builder_evidence_names_the_stream_that_held_the_diagnostic(fake_containers):
+    """A parse error printed on stderr is cited as check.stderr (review of #78)."""
+    fake_containers.responses[("buildx", "version")] = proc(
+        stdout="github.com/docker/buildx v0.15.1 abc\n"
+    )
+    fake_containers.responses[("build", "--check")] = proc(
+        1, stdout="", stderr="dockerfile parse error on line 1: bad\n"
+    )
+    syntax, _, _, _ = run_builder_check(
+        ContainerRuntime(tool="docker"), Path("/c"), "Dockerfile", 60
+    )
+    merged = merge_syntax([], syntax, "Dockerfile")
+    assert [e.path for c in merged for e in c.evidence] == ["check.stderr"]
