@@ -175,3 +175,16 @@ def test_lint_observations_point_at_the_checked_dockerfile():
     assert [c.location.file for c in lint if c.location] == [
         "docker/Dockerfile.release"
     ]
+
+
+def test_a_check_that_cannot_launch_is_skipped(fake_containers):
+    """The OSError path of run_builder_check (known minor, now covered)."""
+    fake_containers.responses[("buildx", "version")] = proc(
+        stdout="github.com/docker/buildx v0.15.1 abc\n"
+    )
+    fake_containers.responses[("build", "--check")] = OSError("exec format error")
+    syntax, lint, buildx, raw = run_builder_check(
+        ContainerRuntime(tool="docker"), Path("/c"), "Dockerfile", 60
+    )
+    assert (syntax.state, lint, buildx, raw) == ("skipped", [], "0.15.1", None)
+    assert "exec format error" in (syntax.reason or "")

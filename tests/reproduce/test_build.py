@@ -4,6 +4,8 @@ import json
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from deployer.models import ContainerRuntime
 from deployer.reproduce.build import (
     build_containers_state,
@@ -93,3 +95,18 @@ def test_local_repo_digests(fake_containers):
         "a": ["sha256:" + "1" * 64],
         "b": [],
     }
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        UnicodeDecodeError("utf-8", b"\xff", 0, 1, "bad"),
+        proc(stdout="null"),
+        proc(stdout="42"),
+        proc(stdout='{"a": 1}'),
+    ],
+)
+def test_local_repo_digests_never_raises_and_is_unknown(fake_containers, answer):
+    """Undecodable or non-list output is unknown, never an error (known minor)."""
+    fake_containers.responses[("image", "inspect")] = answer
+    assert local_repo_digests(PODMAN, ["a"]) == {"a": []}
