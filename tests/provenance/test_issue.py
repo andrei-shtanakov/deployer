@@ -8,8 +8,9 @@ from pathlib import Path
 
 import pytest
 
-from deployer.provenance import issue, sshsig
+from deployer.provenance import gitrepo, issue, sshsig
 from deployer.provenance.model import POINTER, SET_ROOT, Record, sha256_hex
+from tests.provenance.conftest import make_key
 
 DOCKERFILE = "FROM python:3.12-slim\nCOPY src ./src\n"
 
@@ -144,6 +145,9 @@ def test_interrupted_before_the_pointer_keeps_the_old_set(
     assert rec.artifact_sha256 != sha256_hex(
         (repo_with_origin / "Dockerfile").read_bytes()
     )
+    # the failed pointer swap leaves no stray temp pointer file behind
+    leftovers = list((repo_with_origin / SET_ROOT).glob(".tmp-pointer-*"))
+    assert leftovers == []
 
 
 def test_reissuing_the_same_record_reuses_without_writing(
@@ -189,4 +193,91 @@ def test_exclusion_not_provable_blocks_the_set(
     pre = issue.preflight(repo_with_origin, key)
     assert isinstance(pre, issue.Preflight)
     _author(repo_with_origin)
+    before = (repo_with_origin / ".dockerignore").read_bytes()
     assert "exclusion" in (issue.issue(pre, key, "0.1").reason or "")
+    # refused before writing: the unsupported file is left untouched
+    assert (repo_with_origin / ".dockerignore").read_bytes() == before
+
+
+def test_reuse_refuses_without_raising_when_the_set_dir_is_incomplete(
+    repo_with_origin: Path, keypair: tuple[Path, str]
+) -> None:
+    key, _ = keypair
+    pre = issue.preflight(repo_with_origin, key)
+    assert isinstance(pre, issue.Preflight)
+    _author(repo_with_origin)
+    first = issue.issue(pre, key, "0.1")
+    assert first.set_dir is not None
+    set_dir = repo_with_origin / SET_ROOT / first.set_dir
+    for child in set_dir.iterdir():
+        child.unlink()
+    out = issue.issue(pre, key, "0.1")
+    assert not out.published
+    assert out.reason is not None and "does not match" in out.reason
+
+
+def test_preflight_reports_a_git_error_from_dirty_paths(
+    repo_with_origin: Path,
+    keypair: tuple[Path, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    key, _ = keypair
+
+    def boom(path: Path) -> list[str]:
+        raise gitrepo.GitError("boom")
+
+    monkeypatch.setattr(issue.gitrepo, "dirty_paths", boom)
+    reason = issue.preflight(repo_with_origin, key)
+    assert isinstance(reason, str) and "boom" in reason
+
+
+def test_prune_skips_stray_files_and_live_tmp_dirs(
+    repo_with_origin: Path, keypair: tuple[Path, str]
+) -> None:
+    key, _ = keypair
+    pre = issue.preflight(repo_with_origin, key)
+    assert isinstance(pre, issue.Preflight)
+    _author(repo_with_origin)
+    first = issue.issue(pre, key, "0.1")
+    assert first.published
+    parent = repo_with_origin / SET_ROOT / "Dockerfile"
+    (parent / "stray.txt").write_text("x")
+    (parent / ".tmp-x-1").mkdir()
+    subprocess.run(["git", "-C", str(repo_with_origin), "add", "-A"], check=True)
+    subprocess.run(
+        ["git", "-C", str(repo_with_origin), "commit", "-qm", "s"], check=True
+    )
+    pre2 = issue.preflight(repo_with_origin, key)
+    assert isinstance(pre2, issue.Preflight)
+    _author(repo_with_origin, DOCKERFILE + 'CMD ["python"]\n')
+    second = issue.issue(pre2, key, "0.1")
+    assert second.published
+    assert (parent / "stray.txt").is_file()
+    assert (parent / ".tmp-x-1").is_dir()
+
+
+def test_reuse_refuses_a_tampered_signature(
+    repo_with_origin: Path, keypair: tuple[Path, str]
+) -> None:
+    key, _ = keypair
+    pre = issue.preflight(repo_with_origin, key)
+    assert isinstance(pre, issue.Preflight)
+    _author(repo_with_origin)
+    first = issue.issue(pre, key, "0.1")
+    assert first.set_dir is not None
+    sig_path = repo_with_origin / SET_ROOT / first.set_dir / "record.json.sig"
+    sig_path.write_bytes(b"not a signature")
+    assert not issue.issue(pre, key, "0.1").published
+
+
+def test_reuse_refuses_a_signature_from_a_different_key(
+    repo_with_origin: Path, keypair: tuple[Path, str], tmp_path: Path
+) -> None:
+    key, _ = keypair
+    pre = issue.preflight(repo_with_origin, key)
+    assert isinstance(pre, issue.Preflight)
+    _author(repo_with_origin)
+    first = issue.issue(pre, key, "0.1")
+    assert first.published
+    other_key, _ = make_key(tmp_path, "other")
+    assert not issue.issue(pre, other_key, "0.1").published

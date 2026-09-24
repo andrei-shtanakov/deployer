@@ -75,7 +75,10 @@ def preflight(project: Path, signing_key: Path | None) -> Preflight | str:
     repo = gitrepo.origin_slug(project)
     if repo is None:
         return f"{project} has no origin remote"
-    dirty = gitrepo.dirty_paths(project)
+    try:
+        dirty = gitrepo.dirty_paths(project)
+    except GitError as exc:
+        return str(exc)
     if dirty:
         return "working tree is dirty: " + ", ".join(dirty)
     if signing_key is None:
@@ -141,10 +144,27 @@ def _ensure_pattern(project: Path, file: str | None, create: bool) -> None:
         f.write(f"{sep}.deployer/\n")
 
 
+def _refusal_for_unsupported(project: Path, file: str | None) -> str | None:
+    """A refusal reason if ``file``'s current rules have an unsupported
+    pattern; ``None`` if ``file`` doesn't exist yet or has none."""
+    if file is None:
+        return None
+    rules = ignore.load_rules(project, file)
+    if rules.unsupported is not None:
+        return f"exclusion not provable: unsupported pattern in {file}"
+    return None
+
+
 def ensure_excluded(project: Path, paths: list[str]) -> str | None:
     """Prove every path in ``paths`` is excluded from both build contexts;
     the reason it could not be proven, or ``None`` once it is."""
-    _ensure_pattern(project, ignore.ci_ignore_file(project, _ARTIFACT_PATH), True)
+    ci_file = ignore.ci_ignore_file(project, _ARTIFACT_PATH)
+    local_file = ignore.local_ignore_file(project, _ARTIFACT_PATH, "podman")
+    for file in (ci_file, local_file):
+        reason = _refusal_for_unsupported(project, file)
+        if reason is not None:
+            return reason
+    _ensure_pattern(project, ci_file, True)
     if (project / ".containerignore").is_file():
         _ensure_pattern(project, ".containerignore", False)
     for file in (
@@ -163,17 +183,26 @@ def ensure_excluded(project: Path, paths: list[str]) -> str | None:
 def _check_reuse(
     target: Path, rec_bytes: bytes, snap_bytes: bytes, signing_key: Path
 ) -> str | None:
-    """``None`` if the existing set matches exactly, else why it does not."""
-    matches = (target / RECORD_FILE).read_bytes() == rec_bytes and (
-        target / SNAPSHOT_FILE
-    ).read_bytes() == snap_bytes
-    if matches:
-        existing_sig = (target / SIGNATURE_FILE).read_bytes()
-        pub = sshsig.public_key(signing_key)
-        matches = sshsig.verify_with_public_key(rec_bytes, existing_sig, pub).ok
-    if matches:
-        return None
-    return f"existing set {target.name} does not match; not written"
+    """``None`` if the existing set matches exactly, else why it does not.
+
+    A missing file, a non-directory ``target``, or any other read failure
+    all mean the same thing here: the existing set cannot be trusted as a
+    match, so it is refused rather than raising.
+    """
+    reason = f"existing set {target.name} does not match; not written"
+    if not target.is_dir():
+        return reason
+    try:
+        matches = (target / RECORD_FILE).read_bytes() == rec_bytes and (
+            target / SNAPSHOT_FILE
+        ).read_bytes() == snap_bytes
+        if matches:
+            existing_sig = (target / SIGNATURE_FILE).read_bytes()
+            pub = sshsig.public_key(signing_key)
+            matches = sshsig.verify_with_public_key(rec_bytes, existing_sig, pub).ok
+    except OSError:
+        matches = False
+    return None if matches else reason
 
 
 def _write_set(target: Path, rec_bytes: bytes, snap_bytes: bytes, sig: bytes) -> None:
@@ -188,20 +217,48 @@ def _write_set(target: Path, rec_bytes: bytes, snap_bytes: bytes, sig: bytes) ->
 
 
 def _replace_pointer(project: Path, rec_sha: str) -> None:
-    """Atomically point ``Dockerfile.current`` at the given set."""
+    """Atomically point ``Dockerfile.current`` at the given set.
+
+    On failure the temp pointer file is unlinked on a best-effort basis
+    before the error is re-raised, so a crashed run leaves no stray
+    ``.tmp-pointer-*`` file behind alongside the untouched old pointer.
+    """
     set_root = project / SET_ROOT
     set_root.mkdir(parents=True, exist_ok=True)
     tmp = set_root / f".tmp-pointer-{os.getpid()}"
     tmp.write_text(set_dir_name(rec_sha) + "\n")
-    os.replace(tmp, set_root / POINTER)
+    try:
+        os.replace(tmp, set_root / POINTER)
+    except OSError:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
+def _is_prunable_set_dir(child: Path, rec_sha: str) -> bool:
+    """Whether ``child`` is a finished set directory safe to remove: a real
+    directory, not the one just published, and not another run's
+    in-progress ``.tmp-*`` staging directory."""
+    if not child.is_dir():
+        return False
+    if child.name == rec_sha:
+        return False
+    return not child.name.startswith(".tmp-")
 
 
 def _prune_other_sets(project: Path, rec_sha: str) -> None:
-    """Remove every other directory under ``SET_ROOT/Dockerfile/``."""
+    """Remove every other set directory under ``SET_ROOT/Dockerfile/``.
+
+    Non-directory entries and any live ``.tmp-*`` staging directory (another
+    run in flight) are left alone; a leftover crashed-run tmp dir is
+    harmless since it is already excluded under ``.deployer/``. A real
+    removal failure is left to raise: the pointer is already correct by the
+    time this runs, so the stale directories are cosmetic, not correctness
+    risk.
+    """
     parent = project / SET_ROOT / SET_PARENT
     for child in parent.iterdir():
-        if child.name != rec_sha:
-            shutil.rmtree(child, ignore_errors=True)
+        if _is_prunable_set_dir(child, rec_sha):
+            shutil.rmtree(child)
 
 
 def _publish(
@@ -247,7 +304,11 @@ def issue(pre: Preflight, signing_key: Path, deployer_version: str) -> Issued:
 
 def withdraw(project: Path) -> bool:
     """Remove ``Dockerfile.current`` first, then every set directory under
-    ``SET_ROOT/Dockerfile/``; return whether anything was removed."""
+    ``SET_ROOT/Dockerfile/``; return whether anything was removed.
+
+    Like ``_prune_other_sets``, this leaves non-directory entries and any
+    live ``.tmp-*`` staging directory alone.
+    """
     removed = False
     pointer = project / SET_ROOT / POINTER
     if pointer.exists():
@@ -256,6 +317,8 @@ def withdraw(project: Path) -> bool:
     parent = project / SET_ROOT / SET_PARENT
     if parent.is_dir():
         for child in parent.iterdir():
-            shutil.rmtree(child, ignore_errors=True)
+            if not _is_prunable_set_dir(child, rec_sha=""):
+                continue
+            shutil.rmtree(child)
             removed = True
     return removed
