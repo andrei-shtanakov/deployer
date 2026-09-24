@@ -54,17 +54,20 @@ paragraph.
   findings-without-classes is a later task.
 - [ ] CI-failure reproduction: restore the artifact and its context at the run's actual checkout SHA, run deterministic checks and L2 on a supported build configuration, report findings with status and evidence — no causal class @owner:repo:deployer @id:ci-failure-reproduction @epic:eco.dark-factory
   Spec: `docs/superpowers/specs/2026-09-22-ci-failure-reproduction-design.md` on the docs
-  branch `docs/ci-failure-reproduction-spec` (rev 3 of the diagnosis line, DRAFT revised
-  after the owner's review → external review by exact SHA → plan). Fixed points: `exact` is
-  a property of the restored TREE, earned from the actual checkout SHA and the absence of
-  transforming steps, else `approximation` with the unmet conditions named; the command
-  from the log is never executed — only a parsed, supported build configuration through
-  L2, else refusal; a successful build does not license a run — only a declared test, run
-  intent or healthcheck, else "build ok; behaviour not verified"; this repo's parser, the
-  builder's `--check` (Buildx ≥ 0.15 / Dockerfile 1.8; Podman has none) and the actual
-  build are three separate things with detected availability; findings use a small
-  separate result type, not `CheckResult`; images may be fetched under an explicit
-  `--reproduce`, digests recorded, no offline promise; no ENVIRONMENT candidate.
+  branch `docs/ci-failure-reproduction-spec` (rev 5, DRAFT revised after the external
+  review of rev 4 → targeted review of the rev 4→5 diff → plan). Rev 4/5 narrow the slice: one
+  failed job whose failed step is its only, supported `docker build .`; `push`/`workflow_dispatch`
+  only, workflow and checkout both at `head_sha`; a confirmed-local endpoint only; the build IS the reproduction — no image run in this slice.
+  Fixed points: `exact` is a property of the restored TREE, earned from the checkout log's
+  SHA, the checkout options, inert preceding steps (exact strings) and no `.gitattributes` at all,
+  else `approximation` with the unmet conditions named; the workflow's build line is
+  parsed, never executed, and built through a new adapter over `container_run`, not
+  `verify._build`; the parser runs a closed list of syntax checks, the builder's `--check`
+  runs only under `--reproduce`; CI vs local is one state from a fixed order, identity =
+  Dockerfile line span; `--reproduce` keeps the reading layer's exit code except two exit-2 cases (with
+  `--container-host`; an uncreatable try dir or a `source.json` naming another `head_sha`); acceptance = committed
+  offline cases (run-1/2/3/5 trees vendored + derived negative bundles listing every changed file), uv-minimal dropped;
+  no causal class, no ENVIRONMENT candidate.
 - [ ] Fix authoring from a diagnosis: artifact edit, L1/L2, confirm the diagnosed cause is gone @owner:repo:deployer @blocked_by:todo://deployer/ci-failure-diagnosis @id:ci-fix-authoring @epic:eco.dark-factory
   — the other half of the founding doc's "generate/fix ... diagnose failed CI", split
   out with the owner 2026-09-21 so the diagnosis slice can be accepted on its own.
