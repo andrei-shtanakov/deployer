@@ -186,3 +186,33 @@ def test_ignore_rules_do_not_make_git_reachability_exact(tmp_path):
     assert context_conditions(parse("FROM a\nCOPY . /app\n")) == [
         ".git exclusion not proven: COPY . at line 2"
     ]
+
+
+def test_a_quoted_heredoc_marker_in_the_destination_opens_nothing(tmp_path):
+    """Only an unquoted `<<` is a heredoc (fifth review of #77)."""
+    parsed = parse('FROM a\nCOPY .git "/saved<<marker"\n')
+    assert context_conditions(parsed) == [
+        ".git exclusion not proven: COPY .git at line 2"
+    ]
+
+
+def test_json_form_after_flags_checks_the_real_sources(tmp_path):
+    """Flags are split off before the JSON array is read (fifth review of #77)."""
+    for name in ("a", "b"):
+        (tmp_path / name).write_text("x")
+    checks = copy_source_checks(
+        parse('FROM a\nCOPY --chown=0 ["a", "b", "/dst/"]\n'),
+        tmp_path,
+        "Dockerfile",
+        load_rules(tmp_path, None),
+    )
+    assert [(c.check_id, c.status) for c in checks] == [("copy_sources", "passed")]
+    missing = copy_source_checks(
+        parse('FROM a\nCOPY --chown=0 ["a", "c", "/dst/"]\n'),
+        tmp_path,
+        "Dockerfile",
+        load_rules(tmp_path, None),
+    )
+    assert [c.finding for c in missing if c.status == "failed"] == [
+        "source c absent from the context"
+    ]

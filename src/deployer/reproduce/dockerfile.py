@@ -121,11 +121,7 @@ def parse(text: str) -> ParsedDockerfile:
         keyword, _, rest = logical.partition(" ")
         instruction = Instruction(keyword.upper(), rest.strip(), first, number)
         instructions.append(instruction)
-        heredoc_match = (
-            _HEREDOC_RE.search(_QUOTED_RE.sub("", rest))
-            if keyword.upper() in _HEREDOC_KEYWORDS
-            else None
-        )
+        heredoc_match = _heredoc_match(keyword, rest)
         if heredoc_match:
             heredoc = (heredoc_match.group(3), heredoc_match.group(1) == "-")
             heredoc_owner_index = len(instructions) - 1
@@ -142,6 +138,22 @@ def parse(text: str) -> ParsedDockerfile:
         escape_directive=directives.get("escape"),
         dangling_continuation=dangling,
     )
+
+
+def opens_heredoc(keyword: str, args: str) -> bool:
+    """Whether an instruction's arguments open a heredoc.
+
+    Only RUN, COPY and ADD take heredocs, and only an unquoted ``<<WORD``
+    opens one: ``LABEL x="<<EOF"`` or a quoted path containing ``<<`` does
+    not. The parser and the source checks share this one rule.
+    """
+    return _heredoc_match(keyword, args) is not None
+
+
+def _heredoc_match(keyword: str, args: str) -> re.Match[str] | None:
+    if keyword.upper() not in _HEREDOC_KEYWORDS:
+        return None
+    return _HEREDOC_RE.search(_QUOTED_RE.sub("", args))
 
 
 def syntax_checks(parsed: ParsedDockerfile, dockerfile: str) -> list[ReproductionCheck]:
