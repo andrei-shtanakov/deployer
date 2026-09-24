@@ -103,11 +103,23 @@ def local_repo_digests(rt: ContainerRuntime, images: list[str]) -> dict[str, lis
         args = ["image", "inspect", "--format", "{{json .RepoDigests}}", image]
         try:
             result = runtime.container_run(
-                rt, args, capture_output=True, text=True, timeout=_INSPECT_TIMEOUT_S
+                rt,
+                args,
+                capture_output=True,
+                text=True,
+                errors="replace",
+                timeout=_INSPECT_TIMEOUT_S,
             )
             values = json.loads(result.stdout) if result.returncode == 0 else []
-        except (subprocess.TimeoutExpired, OSError, json.JSONDecodeError):
+        except (
+            subprocess.TimeoutExpired,
+            OSError,
+            json.JSONDecodeError,
+            UnicodeDecodeError,
+        ):
             values = []
+        if not isinstance(values, list):
+            values = []  # null, a number or an object says nothing
         out[image] = [
             str(value).split("@", 1)[1] for value in values or [] if "@" in str(value)
         ]
