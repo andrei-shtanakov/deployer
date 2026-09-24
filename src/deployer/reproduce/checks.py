@@ -5,7 +5,6 @@ import json
 import os
 import posixpath
 import re
-import shlex
 from pathlib import Path
 
 from deployer.reproduce.dockerfile import (
@@ -166,6 +165,10 @@ def _sources(inst: Instruction) -> tuple[list[str], str | None]:
     flags = lead.group(1).split() if lead else []
     body = args[lead.end(1) :].strip() if lead else args
     if body.startswith("["):
+        if "\\" in body:
+            # The decoder resolves escapes ("s\\u0072c" -> "src") before any
+            # check could see them: the written source is unknown.
+            return [], "escape in JSON form not modelled"
         try:
             parsed = json.loads(body)
         except json.JSONDecodeError:
@@ -174,10 +177,9 @@ def _sources(inst: Instruction) -> tuple[list[str], str | None]:
             return [], "unparseable JSON form"
         rest = [str(t) for t in parsed]
     else:
-        try:
-            tokens = shlex.split(body)
-        except ValueError:
-            return [], "unparseable quoting"
+        # No shell-style unquoting or unescaping: tokens reach the alphabet as
+        # written, so quotes, backslashes and `$` are seen and refused there.
+        tokens = body.split()
         flags += [t for t in tokens if t.startswith("--")]
         rest = [t for t in tokens if not t.startswith("--")]
     if any(f.startswith("--from") for f in flags):
