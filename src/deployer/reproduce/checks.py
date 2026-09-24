@@ -4,16 +4,22 @@ import fnmatch
 import json
 import os
 import posixpath
+import re
 import shlex
 from pathlib import Path
 
-from deployer.reproduce.dockerfile import Instruction, ParsedDockerfile
+from deployer.reproduce.dockerfile import (
+    Instruction,
+    ParsedDockerfile,
+    opens_heredoc,
+)
 from deployer.reproduce.ignore import IgnoreRules, excluded_by, glob_to_regex
 from deployer.reproduce.model import Location, ReproductionCheck, ReproEvidence
 
 LISTING_REF = "../../source.json#tree"
 _REMOTE_PREFIXES = ("http://", "https://", "git@", "git://")
 _HEREDOC_REASON = "heredoc source not modelled"
+_LEADING_FLAGS_RE = re.compile(r"((?:--\S+\s+)*)")
 _UNMODELLED_FLAGS = ("--parents", "--exclude")
 
 
@@ -137,21 +143,32 @@ def _may_reach_git(source: str) -> bool:
 
 
 def _sources(inst: Instruction) -> tuple[list[str], str | None]:
+    """The local sources of a COPY/ADD, or why they cannot be read.
+
+    Leading ``--flag`` tokens are split off first, so the JSON array form is
+    read as JSON whether or not flags precede it.
+    """
     args = inst.args.strip()
-    if "<<" in args:
+    if opens_heredoc(inst.keyword, args):
         return [], _HEREDOC_REASON
-    if args.startswith("["):
+    lead = _LEADING_FLAGS_RE.match(args)
+    flags = lead.group(1).split() if lead else []
+    body = args[lead.end(1) :].strip() if lead else args
+    if body.startswith("["):
         try:
-            tokens = [str(t) for t in json.loads(args)]
+            parsed = json.loads(body)
         except json.JSONDecodeError:
             return [], "unparseable JSON form"
+        if not isinstance(parsed, list):
+            return [], "unparseable JSON form"
+        rest = [str(t) for t in parsed]
     else:
         try:
-            tokens = shlex.split(args)
+            tokens = shlex.split(body)
         except ValueError:
             return [], "unparseable quoting"
-    flags = [t for t in tokens if t.startswith("--")]
-    rest = [t for t in tokens if not t.startswith("--")]
+        flags += [t for t in tokens if t.startswith("--")]
+        rest = [t for t in tokens if not t.startswith("--")]
     if any(f.startswith("--from") for f in flags):
         return [], "--from source is checked in its stage or image, not the context"
     if any(f.startswith(_UNMODELLED_FLAGS) for f in flags):
