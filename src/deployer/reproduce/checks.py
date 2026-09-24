@@ -89,18 +89,20 @@ def external_images(parsed: ParsedDockerfile) -> list[str]:
     return list(dict.fromkeys(images))
 
 
-def context_conditions(parsed: ParsedDockerfile, rules: IgnoreRules) -> list[str]:
+def context_conditions(parsed: ParsedDockerfile) -> list[str]:
     """Exactness conditions (d) and (e) of §1.3, as unmet-condition strings.
 
-    (d) holds only when keeping ``.git`` out of the context is *proven*: a
-    COPY/ADD form this slice cannot read, an ignore pattern it cannot
-    evaluate, or a negation that may re-include something under ``.git`` all
-    leave it unproven, and unproven is unmet (§1.3: unknown → approximation).
+    (d) is deliberately narrow: this slice never tries to prove that the
+    ignore file keeps ``.git`` out of the context — each attempt to reason
+    about exclusions and re-inclusions produced a new counter-example. Any
+    local COPY/ADD source that may reach ``.git`` (the context root, a first
+    path segment that can match ``.git``, or a form this slice cannot read)
+    is an unmet condition, so the restoration is an approximation.
     """
     unmet: list[str] = []
     for inst in parsed.instructions:
         if inst.keyword in ("COPY", "ADD") and not _from_flags(inst):
-            unmet.extend(_git_conditions(inst, rules))
+            unmet.extend(_git_conditions(inst))
         if inst.keyword == "RUN" and any(
             t.startswith("--mount") for t in inst.args.split()
         ):
@@ -108,35 +110,19 @@ def context_conditions(parsed: ParsedDockerfile, rules: IgnoreRules) -> list[str
     return unmet
 
 
-def _git_conditions(inst: Instruction, rules: IgnoreRules) -> list[str]:
+def _git_conditions(inst: Instruction) -> list[str]:
     """Unmet (d) conditions of one local COPY/ADD."""
+    where = f"{inst.keyword} at line {inst.first_line}"
     sources, why = _sources(inst)
     if why is not None:
         if why == _HEREDOC_REASON:
             return []  # inline content: nothing is read from the context
-        return [
-            f".git reachability not established: {inst.keyword} at line "
-            f"{inst.first_line} ({why})"
-        ]
-    unmet: list[str] = []
-    for source in (_norm(s) for s in sources):
-        if not _may_reach_git(source):
-            continue
-        reached = f".git reachable: {inst.keyword} {source} at line {inst.first_line}"
-        if rules.unsupported is not None:
-            unmet.append(
-                f"{reached} (ignore pattern not modelled: {rules.unsupported})"
-            )
-        elif source.startswith(".git"):
-            if excluded_by(rules, source) is None:
-                unmet.append(reached)
-        elif excluded_by(rules, ".git") is None:
-            unmet.append(reached)
-        else:
-            reinclusion = _git_reinclusion(rules)
-            if reinclusion is not None:
-                unmet.append(f"{reached} (re-included by !{reinclusion})")
-    return unmet
+        return [f".git exclusion not proven: {where} ({why})"]
+    return [
+        f".git exclusion not proven: {inst.keyword} {source} at line {inst.first_line}"
+        for source in (_norm(s) for s in sources)
+        if _may_reach_git(source)
+    ]
 
 
 def _may_reach_git(source: str) -> bool:
@@ -148,18 +134,6 @@ def _may_reach_git(source: str) -> bool:
     """
     first = source.split("/", 1)[0]
     return source == "." or fnmatch.fnmatchcase(".git", first)
-
-
-def _git_reinclusion(rules: IgnoreRules) -> str | None:
-    """A negated pattern that may re-include something under ``.git``.
-
-    Conservative: a negation naming ``.git`` itself, or starting with a
-    wildcard (``*``, ``?``, ``**``), may reach a path under ``.git``.
-    """
-    for _line, pattern, negated in rules.patterns:
-        if negated and (pattern.startswith(".git") or pattern[:1] in ("*", "?")):
-            return pattern
-    return None
 
 
 def _sources(inst: Instruction) -> tuple[list[str], str | None]:
