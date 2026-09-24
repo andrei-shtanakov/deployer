@@ -4,3 +4,8 @@ Restores a failed run's tree at ``head_sha``, runs a closed list of
 deterministic checks, rebuilds the failed build step on a confirmed-local
 endpoint and compares it with CI. Nothing here carries a ``FailureKind``.
 """
+
+from deployer.reproduce.model import ReproductionSection
+from deployer.reproduce.run import TryDirError, reproduce_run
+
+__all__ = ["ReproductionSection", "TryDirError", "reproduce_run"]
