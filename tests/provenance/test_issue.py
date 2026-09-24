@@ -20,6 +20,11 @@ def _author(repo: Path, text: str = DOCKERFILE) -> None:
     (repo / "Dockerfile").write_text(text)
 
 
+def _written(pre: issue.Preflight) -> bytes:
+    """The bytes the simulated authoring run wrote."""
+    return (pre.project / "Dockerfile").read_bytes()
+
+
 def _pointer(repo: Path) -> str:
     return (repo / SET_ROOT / POINTER).read_text().strip()
 
@@ -31,7 +36,7 @@ def test_issue_publishes_a_verifiable_set(
     pre = issue.preflight(repo_with_origin, key)
     assert isinstance(pre, issue.Preflight)
     _author(repo_with_origin)
-    out = issue.issue(pre, key, "0.1")
+    out = issue.issue(pre, key, "0.1", _written(pre))
     assert out.published and out.set_dir == _pointer(repo_with_origin)
     assert out.set_dir is not None
     set_dir = repo_with_origin / SET_ROOT / out.set_dir
@@ -126,7 +131,7 @@ def test_interrupted_before_the_pointer_keeps_the_old_set(
     pre = issue.preflight(repo_with_origin, key)
     assert isinstance(pre, issue.Preflight)
     _author(repo_with_origin)
-    first = issue.issue(pre, key, "0.1")
+    first = issue.issue(pre, key, "0.1", _written(pre))
     assert first.set_dir is not None
     subprocess.run(["git", "-C", str(repo_with_origin), "add", "-A"], check=True)
     subprocess.run(
@@ -144,7 +149,7 @@ def test_interrupted_before_the_pointer_keeps_the_old_set(
 
     monkeypatch.setattr(os, "replace", boom)
     try:
-        issue.issue(pre2, key, "0.1")
+        issue.issue(pre2, key, "0.1", _written(pre2))
     except OSError:
         pass
     assert _pointer(repo_with_origin) == first.set_dir  # old set still named, intact
@@ -166,15 +171,15 @@ def test_reissuing_the_same_record_reuses_without_writing(
     pre = issue.preflight(repo_with_origin, key)
     assert isinstance(pre, issue.Preflight)
     _author(repo_with_origin)
-    first = issue.issue(pre, key, "0.1")
+    first = issue.issue(pre, key, "0.1", _written(pre))
     assert first.set_dir is not None
     set_dir = repo_with_origin / SET_ROOT / first.set_dir
     mtimes = {p.name: p.stat().st_mtime_ns for p in set_dir.iterdir()}
-    again = issue.issue(pre, key, "0.1")
+    again = issue.issue(pre, key, "0.1", _written(pre))
     assert again.published and again.set_dir == first.set_dir
     assert {p.name: p.stat().st_mtime_ns for p in set_dir.iterdir()} == mtimes
     (set_dir / "snapshot.json").write_text("{}")  # tampered
-    assert not issue.issue(pre, key, "0.1").published
+    assert not issue.issue(pre, key, "0.1", _written(pre)).published
 
 
 def test_withdraw_removes_pointer_then_dirs(
@@ -184,7 +189,7 @@ def test_withdraw_removes_pointer_then_dirs(
     pre = issue.preflight(repo_with_origin, key)
     assert isinstance(pre, issue.Preflight)
     _author(repo_with_origin)
-    issue.issue(pre, key, "0.1")
+    issue.issue(pre, key, "0.1", _written(pre))
     assert issue.withdraw(repo_with_origin)
     assert not (repo_with_origin / SET_ROOT / POINTER).exists()
     assert not any((repo_with_origin / SET_ROOT / "Dockerfile").iterdir())
@@ -203,7 +208,7 @@ def test_exclusion_not_provable_blocks_the_set(
     assert isinstance(pre, issue.Preflight)
     _author(repo_with_origin)
     before = (repo_with_origin / ".dockerignore").read_bytes()
-    assert "exclusion" in (issue.issue(pre, key, "0.1").reason or "")
+    assert "exclusion" in (issue.issue(pre, key, "0.1", _written(pre)).reason or "")
     # refused before writing: the unsupported file is left untouched
     assert (repo_with_origin / ".dockerignore").read_bytes() == before
 
@@ -215,12 +220,12 @@ def test_reuse_refuses_without_raising_when_the_set_dir_is_incomplete(
     pre = issue.preflight(repo_with_origin, key)
     assert isinstance(pre, issue.Preflight)
     _author(repo_with_origin)
-    first = issue.issue(pre, key, "0.1")
+    first = issue.issue(pre, key, "0.1", _written(pre))
     assert first.set_dir is not None
     set_dir = repo_with_origin / SET_ROOT / first.set_dir
     for child in set_dir.iterdir():
         child.unlink()
-    out = issue.issue(pre, key, "0.1")
+    out = issue.issue(pre, key, "0.1", _written(pre))
     assert not out.published
     assert out.reason is not None and "does not match" in out.reason
 
@@ -247,7 +252,7 @@ def test_prune_skips_stray_files_and_live_tmp_dirs(
     pre = issue.preflight(repo_with_origin, key)
     assert isinstance(pre, issue.Preflight)
     _author(repo_with_origin)
-    first = issue.issue(pre, key, "0.1")
+    first = issue.issue(pre, key, "0.1", _written(pre))
     assert first.published
     parent = repo_with_origin / SET_ROOT / "Dockerfile"
     (parent / "stray.txt").write_text("x")
@@ -259,7 +264,7 @@ def test_prune_skips_stray_files_and_live_tmp_dirs(
     pre2 = issue.preflight(repo_with_origin, key)
     assert isinstance(pre2, issue.Preflight)
     _author(repo_with_origin, DOCKERFILE + 'CMD ["python"]\n')
-    second = issue.issue(pre2, key, "0.1")
+    second = issue.issue(pre2, key, "0.1", _written(pre2))
     assert second.published
     assert (parent / "stray.txt").is_file()
     assert (parent / ".tmp-x-1").is_dir()
@@ -272,11 +277,11 @@ def test_reuse_refuses_a_tampered_signature(
     pre = issue.preflight(repo_with_origin, key)
     assert isinstance(pre, issue.Preflight)
     _author(repo_with_origin)
-    first = issue.issue(pre, key, "0.1")
+    first = issue.issue(pre, key, "0.1", _written(pre))
     assert first.set_dir is not None
     sig_path = repo_with_origin / SET_ROOT / first.set_dir / "record.json.sig"
     sig_path.write_bytes(b"not a signature")
-    assert not issue.issue(pre, key, "0.1").published
+    assert not issue.issue(pre, key, "0.1", _written(pre)).published
 
 
 def test_reuse_refuses_a_signature_from_a_different_key(
@@ -286,10 +291,10 @@ def test_reuse_refuses_a_signature_from_a_different_key(
     pre = issue.preflight(repo_with_origin, key)
     assert isinstance(pre, issue.Preflight)
     _author(repo_with_origin)
-    first = issue.issue(pre, key, "0.1")
+    first = issue.issue(pre, key, "0.1", _written(pre))
     assert first.published
     other_key, _ = make_key(tmp_path, "other")
-    assert not issue.issue(pre, other_key, "0.1").published
+    assert not issue.issue(pre, other_key, "0.1", _written(pre)).published
 
 
 def test_reuse_refuses_when_the_key_becomes_unusable(
@@ -299,13 +304,13 @@ def test_reuse_refuses_when_the_key_becomes_unusable(
     pre = issue.preflight(repo_with_origin, key)
     assert isinstance(pre, issue.Preflight)
     _author(repo_with_origin)
-    assert issue.issue(pre, key, "0.1").published
+    assert issue.issue(pre, key, "0.1", _written(pre)).published
 
     def broken(_key: Path) -> str:
         raise sshsig.SshSigError("ssh-keygen -y failed: gone")
 
     monkeypatch.setattr(sshsig, "public_key", broken)
-    assert not issue.issue(pre, key, "0.1").published
+    assert not issue.issue(pre, key, "0.1", _written(pre)).published
 
 
 def test_concurrent_issue_calls_serialize_and_leave_one_consistent_set(
@@ -338,7 +343,7 @@ def test_concurrent_issue_calls_serialize_and_leave_one_consistent_set(
         _author(repo_with_origin, DOCKERFILE + 'CMD ["python"]\n')
 
         def run_second() -> None:
-            second_result.append(issue.issue(pre, key, "0.2"))
+            second_result.append(issue.issue(pre, key, "0.2", _written(pre)))
 
         thread = threading.Thread(target=run_second)
         second_thread.append(thread)
@@ -350,7 +355,7 @@ def test_concurrent_issue_calls_serialize_and_leave_one_consistent_set(
         real_replace_pointer(project, rec_sha)
 
     monkeypatch.setattr(issue, "_replace_pointer", hook)
-    first = issue.issue(pre, key, "0.1")
+    first = issue.issue(pre, key, "0.1", _written(pre))
     thread = second_thread[0]
     thread.join(timeout=5)
     assert not thread.is_alive()
@@ -379,7 +384,7 @@ def test_lock_file_is_not_dirty_after_issuing(
     pre = issue.preflight(repo_with_origin, key)
     assert isinstance(pre, issue.Preflight)
     _author(repo_with_origin)
-    out = issue.issue(pre, key, "0.1")
+    out = issue.issue(pre, key, "0.1", _written(pre))
     assert out.published
     lock_path = gitrepo.git_path(repo_with_origin, issue._LOCK_FILE_NAME)
     assert lock_path.is_file()
@@ -399,7 +404,7 @@ def test_issue_refuses_when_the_lock_cannot_be_acquired(
         raise gitrepo.GitError("no .git here")
 
     monkeypatch.setattr(issue.gitrepo, "git_path", boom)
-    out = issue.issue(pre, key, "0.1")
+    out = issue.issue(pre, key, "0.1", _written(pre))
     assert not out.published
     assert out.reason is not None and "lock" in out.reason
 
@@ -413,7 +418,7 @@ def test_withdraw_still_removes_when_the_lock_cannot_be_acquired(
     pre = issue.preflight(repo_with_origin, key)
     assert isinstance(pre, issue.Preflight)
     _author(repo_with_origin)
-    assert issue.issue(pre, key, "0.1").published
+    assert issue.issue(pre, key, "0.1", _written(pre)).published
 
     def boom(path: Path, name: str) -> Path:
         raise gitrepo.GitError("no .git here")
@@ -439,15 +444,65 @@ def test_a_stale_run_does_not_replace_the_set_of_a_newer_dockerfile(
     def b_publishes_first(project: Path) -> int:
         monkeypatch.setattr(issue, "_acquire_publication_lock", real_acquire)
         _author(repo_with_origin, newer)
-        assert issue.issue(pre, key, "0.1").published
+        assert issue.issue(pre, key, "0.1", _written(pre)).published
         return real_acquire(project)
 
     monkeypatch.setattr(issue, "_acquire_publication_lock", b_publishes_first)
-    out = issue.issue(pre, key, "0.1")
-    assert not out.published and "changed" in (out.reason or "")
+    out = issue.issue(pre, key, "0.1", _written(pre))
+    assert not out.published and "not this run's output" in (out.reason or "")
     rec = Record.model_validate_json(
         (
             repo_with_origin / SET_ROOT / _pointer(repo_with_origin) / "record.json"
         ).read_bytes()
     )
     assert rec.artifact_sha256 == sha256_hex(newer.encode())
+
+
+def test_bytes_replaced_before_issue_are_not_signed(
+    repo_with_origin: Path, keypair: tuple[Path, str]
+) -> None:
+    """The run wrote A; the file holds B by the time issue() runs: nothing
+    is signed for B (PR #85 review)."""
+    key, _ = keypair
+    pre = issue.preflight(repo_with_origin, key)
+    assert isinstance(pre, issue.Preflight)
+    _author(repo_with_origin)
+    written = _written(pre)
+    _author(repo_with_origin, DOCKERFILE + "USER nobody\n")
+    out = issue.issue(pre, key, "0.1", written)
+    assert not out.published
+    assert not (repo_with_origin / SET_ROOT / POINTER).exists()
+
+
+@pytest.mark.parametrize("link", [".deployer", SET_ROOT, f"{SET_ROOT}/Dockerfile"])
+def test_withdraw_refuses_a_symlinked_provenance_path(
+    repo_with_origin: Path, tmp_path: Path, link: str
+) -> None:
+    """A symlink anywhere on the provenance path is never followed: the data
+    it points at survives, and the refusal raises (PR #85 review)."""
+    victim = tmp_path / "data"
+    (victim / "keep").mkdir(parents=True)
+    (victim / "keep" / "precious.txt").write_text("x")
+    path = repo_with_origin / link
+    path.parent.mkdir(parents=True, exist_ok=True)
+    os.symlink(victim, path)
+    with pytest.raises(OSError, match="symlink"):
+        issue.withdraw(repo_with_origin)
+    assert (victim / "keep" / "precious.txt").read_text() == "x"
+
+
+def test_issue_refuses_a_symlinked_ignore_file(
+    repo_with_origin: Path, keypair: tuple[Path, str], tmp_path: Path
+) -> None:
+    """A committed escaping symlink already fails preflight's export; this is
+    the remaining window, a symlink appearing while authoring runs."""
+    key, _ = keypair
+    pre = issue.preflight(repo_with_origin, key)
+    assert isinstance(pre, issue.Preflight)
+    outside = tmp_path / "outside.ignore"
+    outside.write_text("")
+    os.symlink(outside, repo_with_origin / ".dockerignore")
+    _author(repo_with_origin)
+    out = issue.issue(pre, key, "0.1", _written(pre))
+    assert not out.published and "symlink" in (out.reason or "")
+    assert outside.read_text() == ""

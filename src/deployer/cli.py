@@ -306,11 +306,12 @@ def _apply_provenance(
     project: Path,
     pre: issue.Preflight | str,
     signing_key: Path | None,
-    dockerfile_written: bool,
+    dockerfile: bytes | None,
 ) -> bool:
     """Issue or withdraw the authoring provenance set for this run.
 
-    A `Preflight` plus a written Dockerfile issues a new set; anything else
+    A `Preflight` plus the exact Dockerfile bytes this run wrote
+    (``dockerfile``; ``None`` when none was written) issues a new set; anything else
     (preflight refused, publication refused, an undeterminable package
     version, or no Dockerfile written) withdraws whatever set an earlier
     authoring run may have left behind, so no stale confirmation survives
@@ -318,7 +319,7 @@ def _apply_provenance(
     that mandatory withdrawal failed.
     """
     if (
-        dockerfile_written
+        dockerfile is not None
         and isinstance(pre, issue.Preflight)
         and signing_key is not None
     ):
@@ -330,7 +331,7 @@ def _apply_provenance(
                 file=sys.stderr,
             )
         else:
-            out = issue.issue(pre, signing_key, version)
+            out = issue.issue(pre, signing_key, version, dockerfile)
             if out.published:
                 return True
             print(
@@ -402,12 +403,12 @@ def _cmd_author(args: argparse.Namespace) -> int:
     except TargetConfigError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
-    dockerfile_written = False
+    dockerfile: bytes | None = None
     if run.iterations:
         last = run.iterations[-1]
         if not _is_parse_failure(last.report):
-            dockerfile_written = True
-            (project / "Dockerfile").write_text(last.dockerfile + "\n")
+            dockerfile = (last.dockerfile + "\n").encode()
+            (project / "Dockerfile").write_bytes(dockerfile)
             if last.compose is not None:
                 (project / "compose.yaml").write_text(last.compose + "\n")
             if last.ci is not None:
@@ -415,7 +416,7 @@ def _cmd_author(args: argparse.Namespace) -> int:
                 wf_dir.mkdir(parents=True, exist_ok=True)
                 (wf_dir / "ci.yml").write_text(last.ci + "\n")
         _print_report(last.report)
-    provenance_ok = _apply_provenance(project, pre, signing_key, dockerfile_written)
+    provenance_ok = _apply_provenance(project, pre, signing_key, dockerfile)
     report_path = _write_report(
         project, "authoring-run.json", run.model_dump_json(indent=2)
     )

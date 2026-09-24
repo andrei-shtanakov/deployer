@@ -135,6 +135,28 @@ def _build(
     return snap_bytes, rec_bytes, sha256_hex(rec_bytes)
 
 
+_GUARDED_PATHS = (
+    ".deployer",
+    SET_ROOT,
+    f"{SET_ROOT}/{SET_PARENT}",
+    f"{SET_ROOT}/{POINTER}",
+)
+
+
+def _symlink_refusal(project: Path, extra: tuple[str, ...] = ()) -> str | None:
+    """A reason if any provenance path (or ``extra``) is a symlink.
+
+    Provenance writes and removals must stay inside the project: a symlink
+    at ``.deployer``, ``SET_ROOT``, the set parent or the pointer would
+    redirect them elsewhere (and ``rmtree`` would delete what it points
+    at), so any symlink there refuses instead of being followed.
+    """
+    for rel in (*_GUARDED_PATHS, *extra):
+        if (project / rel).is_symlink():
+            return f"{rel} is a symlink; provenance not touched"
+    return None
+
+
 def _ensure_pattern(project: Path, file: str | None, create: bool) -> None:
     """Append ``.deployer/`` to ``file``, or create it, unless some rule in
     it already excludes ``.deployer/``."""
@@ -168,6 +190,12 @@ def ensure_excluded(project: Path, paths: list[str]) -> str | None:
     the reason it could not be proven, or ``None`` once it is."""
     ci_file = ignore.ci_ignore_file(project, _ARTIFACT_PATH)
     local_file = ignore.local_ignore_file(project, _ARTIFACT_PATH, "podman")
+    ignore_files = tuple(
+        f for f in (ci_file or ".dockerignore", ".containerignore") if f is not None
+    )
+    reason = _symlink_refusal(project, ignore_files)
+    if reason is not None:
+        return reason
     for file in (ci_file, local_file):
         reason = _refusal_for_unsupported(project, file)
         if reason is not None:
@@ -336,9 +364,14 @@ def _publish(
     except (GitError, OSError) as exc:
         return Issued(False, f"could not acquire the publication lock: {exc}", None)
     try:
+        reason = _symlink_refusal(project)
+        if reason is not None:
+            return Issued(False, reason, None)
         if _current_artifact_sha(project) != artifact_sha:
             return Issued(
-                False, "Dockerfile changed before publication; not published", None
+                False,
+                "Dockerfile on disk is not this run's output; not published",
+                None,
             )
         if target.exists():
             reason = _check_reuse(target, rec_bytes, snap_bytes, signing_key)
@@ -353,11 +386,19 @@ def _publish(
         _release_publication_lock(fd)
 
 
-def issue(pre: Preflight, signing_key: Path, deployer_version: str) -> Issued:
+def issue(
+    pre: Preflight, signing_key: Path, deployer_version: str, dockerfile: bytes
+) -> Issued:
     """Publish a signed, excluded, immutable provenance set for the
     Dockerfile authoring just wrote, then atomically repoint
-    ``Dockerfile.current`` at it."""
-    dockerfile_bytes = (pre.project / _ARTIFACT_PATH).read_bytes()
+    ``Dockerfile.current`` at it.
+
+    ``dockerfile`` is the exact bytes this authoring run wrote. The record
+    is built from them, never from a re-read of the file, and publication
+    refuses (under the lock) unless the file on disk still holds exactly
+    these bytes: only this run's own output is ever signed.
+    """
+    dockerfile_bytes = dockerfile
     snap_bytes, rec_bytes, rec_sha = _build(pre, dockerfile_bytes, deployer_version)
     paths = [f"{SET_ROOT}/{POINTER}"] + [
         f"{SET_ROOT}/{set_dir_name(rec_sha)}/{name}"
@@ -400,6 +441,9 @@ def withdraw(project: Path) -> bool:
     except (GitError, OSError):
         fd = None
     try:
+        reason = _symlink_refusal(project)
+        if reason is not None:
+            raise OSError(reason)
         removed = False
         pointer = project / SET_ROOT / POINTER
         if pointer.exists():
