@@ -266,6 +266,50 @@ above are unchanged: the verdict lives in the document only, and a consumer
 reads it from there (absent or malformed means not admitted). Design:
 `docs/superpowers/specs/2026-09-24-ci-failure-admission-design.md`.
 
+## Fix
+
+```sh
+uv run deployer fix <verdict.json> --clone <path> [--signing-key …] [--build-timeout 900]
+uv run deployer fix publish <fix.json> --base <branch>
+uv run deployer fix confirm <fix.json>
+```
+
+Given a verdict document whose `admission` section reads `admitted` (see Admission
+above), authors the one instruction that removes the proven defect, proves it locally,
+publishes the fix as a PR, and confirms in CI that the defect is gone — three claims kept
+apart (locally confirmed / fix proposed / defect removal confirmed in CI; see
+`docs/superpowers/specs/2026-09-25-ci-fix-authoring-design.md`). `fix.json` (schema
+`"1.0"`) is dev-side evidence written to the fix directory and never committed to the
+project; its `status` is one of `in_progress`, `stopped`, `locally_confirmed`,
+`fix_proposed`, `ci_confirmed`. A `stopped` document carries one of five reasons: `no
+admission`, `fix method not established`, `no proposal`, `no local confirmation`,
+`commit blocked`.
+
+**Local confirmation, publication and CI confirmation are not available in practice
+yet.** Both proof stages read their positive evidence off a closed table of template
+rows, and a row is enabled only together with the test that checks it against a real
+recording of that build (design §9) — no recording exists yet, so every row stays
+disabled. A correct input that passes every earlier check (admission, binding, the
+proposal envelope, the commit) still stops at the recording gate:
+
+```
+no local confirmation: templates not enabled
+```
+
+The earlier refusals are still possible and behave as designed — `no admission`, `fix
+method not established`, `no proposal` and `commit blocked` all still fire on the inputs
+that trigger them; only the recording-backed proof past them is unreachable. CI
+confirmation is gated the same way, one stage later (design §11 stages 3–4):
+`deployer fix confirm` never reaches `ci_confirmed` while its templates are disabled.
+It still reports the other insufficient reasons (`no qualifying run`, `defect recurred`,
+`qualification undetermined`, …) where they apply; when a qualifying attempt is otherwise
+clean, the reason is `templates not enabled`.
+
+Exit codes: `fix` — `0` `locally_confirmed`, `1` `stopped`, `2` invalid invocation or
+local I/O; `fix publish` — `0` pushed and a PR created or found, `1` refused, `2` local
+I/O; `fix confirm` — `0` the attempt is positive (`ci_confirmed`), `1` insufficient or not
+published, `2` local I/O.
+
 ## Bench
 
 The corpus (`corpus/synthetic/`) is a set of small target projects with

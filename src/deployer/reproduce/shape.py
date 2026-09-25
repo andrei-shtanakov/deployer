@@ -81,7 +81,7 @@ def precheck(run: FailedRun) -> FailedJob | Refusal:
     if run.event not in _EVENTS:
         return Refusal(f"event {run.event} not supported")
     for kept_job in run.jobs:
-        shas = _checkout_shas(job_text(kept_job))
+        shas = checkout_shas(job_text(kept_job))
         if len(shas) != 1:
             return Refusal("checkout SHA not established")
         if shas[0] != run.head_sha:
@@ -91,10 +91,41 @@ def precheck(run: FailedRun) -> FailedJob | Refusal:
     return run.jobs[0]
 
 
-def check_workflow(
-    run: FailedRun, job: FailedJob, workflow_text: str
-) -> Shape | Refusal:
-    """§1.2 #4-#8 against the workflow read from the tree at ``head_sha``."""
+def job_key(workflow_text: str, job_name: str) -> str | Refusal:
+    """The workflow job key an API job ``name`` maps to, by R's name rule.
+
+    A job maps to the one key whose ``definition.name or key`` equals the
+    name; none or several is a refusal, as is an unreadable workflow.
+    """
+    jobs = workflow_jobs(workflow_text)
+    if isinstance(jobs, Refusal):
+        return jobs
+    matches = keys_named(jobs, job_name)
+    if len(matches) != 1:
+        return Refusal(
+            f"no workflow job named {job_name}"
+            if not matches
+            else f"several workflow jobs named {job_name}"
+        )
+    return matches[0]
+
+
+def keys_named(jobs: dict[Any, Any], job_name: str) -> list[str]:
+    """Every workflow job key whose ``definition.name or key`` is ``job_name``."""
+    return [
+        k
+        for k, v in jobs.items()
+        if isinstance(v, dict) and (v.get("name") or k) == job_name
+    ]
+
+
+def workflow_jobs(workflow_text: str) -> dict[Any, Any] | Refusal:
+    """The workflow's ``jobs`` mapping, or why the workflow cannot give one."""
+    loaded = _load(workflow_text)
+    return loaded if isinstance(loaded, Refusal) else loaded[1]
+
+
+def _load(workflow_text: str) -> tuple[dict[str, Any], dict[Any, Any]] | Refusal:
     try:
         document = yaml.safe_load(workflow_text)
     except yaml.YAMLError as exc:
@@ -102,18 +133,56 @@ def check_workflow(
     jobs = document.get("jobs") if isinstance(document, dict) else None
     if not isinstance(jobs, dict):
         return Refusal("workflow has no jobs")
-    matches = [
-        k
-        for k, v in jobs.items()
-        if isinstance(v, dict) and (v.get("name") or k) == job.name
-    ]
-    if len(matches) != 1:
-        return Refusal(
-            f"no workflow job named {job.name}"
-            if not matches
-            else f"several workflow jobs named {job.name}"
-        )
-    key = matches[0]
+    return document, jobs
+
+
+def check_workflow(
+    run: FailedRun, job: FailedJob, workflow_text: str
+) -> Shape | Refusal:
+    """§1.2 #4-#8 against the workflow read from the tree at ``head_sha``."""
+    prepared = _prepare(workflow_text, job)
+    if isinstance(prepared, Refusal):
+        return prepared
+    document, definition, bound, key = prepared
+    return _check_steps(document, definition, bound, job, key)
+
+
+def bind_build_any(workflow_text: str, job: FailedJob) -> Shape | Refusal:
+    """R's binding of ``job`` to the workflow, whatever the job's outcome.
+
+    The job maps by R's name rule and binds step by step as in
+    :func:`check_workflow`; the build step is the unique bound step whose
+    single-line ``run:`` parses as a build line — its conclusion is never
+    looked at. Every one of R's refusals holds: job-level constructs, a
+    multi-line build run, several build steps, exactly one checkout before
+    the build with no forbidden input, an unsupported build line, a
+    ``working-directory``; non-inert steps between the checkout and the
+    build are recorded as unmet, not refused.
+    """
+    prepared = _prepare(workflow_text, job)
+    if isinstance(prepared, Refusal):
+        return prepared
+    document, definition, bound, key = prepared
+    located = _locate_build(bound)
+    if isinstance(located, Refusal):
+        return located
+    build_index, parsed = located
+    return _finish_shape(document, definition, bound, job, key, build_index, parsed)
+
+
+def _prepare(
+    workflow_text: str, job: FailedJob
+) -> (
+    tuple[dict[str, Any], dict[str, Any], list[tuple[dict[str, Any], StepInfo]], str]
+    | Refusal
+):
+    """The job's workflow key, definition and step binding (§1.2 #4, #5)."""
+    key = job_key(workflow_text, job.name)
+    if isinstance(key, Refusal):
+        return key
+    loaded = _load(workflow_text)
+    assert not isinstance(loaded, Refusal)  # job_key has just loaded it
+    document, jobs = loaded
     definition: dict[str, Any] = jobs[key]
     for construct, label in (
         ("uses", "job-level uses"),
@@ -132,7 +201,88 @@ def check_workflow(
     bound = _bind(steps, runner_steps)
     if isinstance(bound, Refusal):
         return bound
-    return _check_steps(document, definition, bound, job, key)
+    return document, definition, bound, key
+
+
+def _locate_build(
+    bound: list[tuple[dict[str, Any], StepInfo]],
+) -> tuple[int, BuildConfig | Unsupported] | Refusal:
+    """The unique build step by its parsed ``run:`` line, conclusion ignored."""
+    if _multiline_builds(bound):
+        return Refusal("unsupported build configuration: multi-line run")
+    builds = _single_line_builds(bound)
+    if len(builds) > 1:
+        return Refusal("several build steps")
+    if not builds:
+        return Refusal("no build step")
+    return builds[0]
+
+
+def _single_line_builds(
+    bound: list[tuple[dict[str, Any], StepInfo]],
+) -> list[tuple[int, BuildConfig | Unsupported]]:
+    """Every bound step whose single-line ``run:`` parses as a build line."""
+    parsed = [
+        (i, parse_build_line(_single_line(s)))
+        for i, (s, _) in enumerate(bound)
+        if "run" in s
+    ]
+    return [(i, p) for i, p in parsed if p is not None]
+
+
+def _multiline_builds(bound: list[tuple[dict[str, Any], StepInfo]]) -> list[int]:
+    """Every bound multi-line ``run:`` whose first line parses as a build."""
+    return [
+        i
+        for i, (s, _) in enumerate(bound)
+        if "run" in s
+        and _is_multiline(s)
+        and parse_build_line(str(s["run"]).strip().splitlines()[0]) is not None
+    ]
+
+
+def _finish_shape(
+    document: dict[str, Any],
+    definition: dict[str, Any],
+    bound: list[tuple[dict[str, Any], StepInfo]],
+    job: FailedJob,
+    key: str,
+    build_index: int,
+    parsed: BuildConfig | Unsupported,
+) -> Shape | Refusal:
+    """#6 checkout, #7 build line, #8 working-directory, then the inert list."""
+    checkouts = [
+        i
+        for i, (s, _) in enumerate(bound[:build_index])
+        if _CHECKOUT_RE.match(str(s.get("uses", "")))
+    ]
+    if len(checkouts) != 1:
+        return Refusal("exactly one checkout step before the build is required")
+    with_block = bound[checkouts[0]][0].get("with") or {}
+    for name in _CHECKOUT_FORBIDDEN:
+        if name in with_block:
+            return Refusal(f"checkout input {name} not supported")
+    if isinstance(parsed, Unsupported):
+        return Refusal(f"unsupported build configuration: {parsed.what}")
+    build_step = bound[build_index][0]
+    if (
+        "working-directory" in build_step
+        or _default_wd(definition)
+        or _default_wd(document)
+    ):
+        return Refusal("working-directory not supported")
+    unmet = [
+        f"step {info.number} ({info.name}) is not on the inert list"
+        for step, info in bound[checkouts[0] + 1 : build_index]
+        if not _is_inert(step)
+    ]
+    return Shape(
+        job=job,
+        workflow_job=key,
+        build_step=bound[build_index][1].number,
+        build=parsed,
+        preceding_unmet=unmet,
+    )
 
 
 def _check_steps(
@@ -163,19 +313,8 @@ def _check_steps(
         if name in with_block:
             return Refusal(f"checkout input {name} not supported")
 
-    builds = [
-        (i, parse_build_line(_single_line(s)))
-        for i, (s, _) in enumerate(bound)
-        if "run" in s and parse_build_line(_single_line(s)) is not None
-    ]
-    multi = [
-        i
-        for i, (s, _) in enumerate(bound)
-        if "run" in s
-        and _is_multiline(s)
-        and parse_build_line(str(s["run"]).strip().splitlines()[0]) is not None
-    ]
-    if multi:
+    builds = _single_line_builds(bound)
+    if _multiline_builds(bound):
         return Refusal("unsupported build configuration: multi-line run")
     if len(builds) > 1:
         return Refusal("several build steps")
@@ -233,7 +372,8 @@ def _find_build_position(
     return failed_indices[0] if failed_indices else len(bound)
 
 
-def _checkout_shas(text: str) -> list[str]:
+def checkout_shas(text: str) -> list[str]:
+    """Every 40-hex SHA the checkout's ``git log -1`` printed in ``text``."""
     lines = text.splitlines()
     return [
         lines[i + 1].strip()

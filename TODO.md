@@ -91,6 +91,58 @@ paragraph.
   a guess. How a fix is confirmed is decided in its own design — L1/L2 alone are NOT
   enough to claim "the CI is fixed", because they verify the artifact this repo
   produced, not the run that failed.
+  Design: `docs/superpowers/specs/2026-09-25-ci-fix-authoring-design.md`. Stages 1–2
+  (design §11) are shipped in code: gate, binding, the proposal envelopes, the set plan
+  and commit, `fix.json`, `deployer fix`/`fix publish` with templates disabled (PRs
+  F1a–F1c, #90–#93), the derived run-1 fix-bundle data (F1d, #94, owner review), and
+  reading CI runs, qualification and `deployer fix confirm` with templates disabled (F2,
+  #95). Still open: every template row stays disabled until its recording lands
+  (§9), so `locally_confirmed`, publication and `ci_confirmed` are unreachable in
+  practice — see the gated follow-ups below — and stage 5's end-to-end acceptance has
+  not run.
+- [ ] L-recordings: real local Podman builds backing the fix's local template rows @owner:github:andrei-shtanakov @id:fix-l-recordings @trigger:"owner permits real local recording runs" @epic:eco.dark-factory
+  Design §9: run-1 and run-5's corrected Dockerfiles, plus a bad FROM in a later stage,
+  several stages on the same image, and a later failure after the corrected COPY. A
+  template row is enabled only together with the test that checks it against its real
+  recording. Without these no `locally_confirmed` and no publication — `deployer fix`
+  stops at `no local confirmation: templates not enabled`.
+- [ ] C-recordings: real CI `push` runs of fix commits on the polygon repository, backing the CI template rows @owner:github:andrei-shtanakov @id:fix-c-recordings @trigger:"owner permits real CI recording runs" @epic:eco.dark-factory
+  Design §9: successful BuildKit forms (the COPY header + `DONE`, `CACHED`, the FROM
+  stage header), a run with a later independent failure, and a re-run. Without these a
+  published proposal is never CI-confirmed — `deployer fix confirm` reports
+  `ci_confirmation_insufficient: templates not enabled`.
+- [ ] End-to-end acceptance of `ci-fix-authoring` and closing the item (design §11 stage 5) @owner:repo:deployer @id:ci-fix-authoring-e2e-acceptance @blocked_by:todo://deployer/fix-l-recordings @epic:eco.dark-factory
+  Needs both recording classes enabled first: a real local proof through the L-recording
+  rows and a real CI confirmation through the C-recording rows, then the acceptance run
+  itself. It is also blocked by `fix-c-recordings` (the C-recordings item above): Robin
+  keeps only one blocker tag per item, so the tag names the local stage, which comes
+  first. `ci-fix-authoring` stays open until this closes it (design §11: "the item stays
+  open until stage 5").
+- [ ] `fix confirm` has no lock: two concurrent confirms can drop an appended attempt @id:fix-confirm-concurrent-lock @epic:eco.dark-factory
+  `fix/confirm.py` loads `fix.json`, appends one attempt to `ci_attempts` and saves —
+  read-modify-write with no lock. Two `deployer fix confirm` runs racing on the same
+  `fix.json` can each read the same `ci_attempts`, and the loser's save silently drops
+  the winner's appended attempt instead of both surviving.
+- [ ] `reproduce/shape.py:131` catches only `yaml.YAMLError`; a bad YAML date raises `ValueError` @id:reproduce-shape-yaml-date-valueerror @epic:eco.dark-factory
+  `_load`'s `except yaml.YAMLError` does not cover a malformed YAML date scalar, which
+  `yaml.safe_load` raises as a bare `ValueError` — an unhandled exception out of a
+  function documented as total. `fix/qualify.py`'s caller is safe regardless: it wraps
+  the read behind its own broad `except Exception`, so today the crash cannot reach a
+  qualification result, but `_load`'s own contract is still narrower than it claims.
+- [ ] Private cross-package helper imports should become public @id:fix-private-helpers-public @epic:eco.dark-factory
+  `_as_r_reads` (`admission/prepare.py:151`, imported by six `fix/*.py` modules —
+  `author`, `binding`, `envelope`, `fromfix`, `publish`, `qualify`), `_build_job`
+  (`forge.py:839`, imported by `fix/ci_eval.py`) and `_instruction_key`
+  (`admission/templates.py:348`, imported by `fix/ci_eval.py`) are all underscore-private
+  names reached across a package boundary.
+  None has broken yet, but nothing stops the owning module from changing their shape
+  without noticing the cross-package callers.
+- [ ] In a partial clone, `cat-file` in `fix publish` and `fix confirm` could fetch over the network @id:fix-cat-file-partial-clone-fetch @epic:eco.dark-factory
+  `fix/publish.py` and `fix/confirm.py` read committed blobs with `git cat-file blob
+  <commit>:<path>` (`fix/workspace.py` too, for the original Dockerfile at `HEAD`). In an
+  ordinary clone every reachable blob is already local, but in a partial clone
+  (`--filter=blob:none`/`tree:none`) a missing blob triggers Git's own lazy fetch over
+  the network — silently, from inside a command the design describes as local-only.
 - [ ] Step-level log binding in forge: read the run-level log archive so a step's OUTPUT is bound to its StepRef, not only its `##[group]` header block @owner:repo:deployer @id:forge-step-level-log-binding @epic:eco.dark-factory
   Today `actions/jobs/{id}/logs` gives no line→step binding beyond the runner's `##[group]Run
   <name>` block, so the diagnostic text (test output, build errors) lands as honest job-level

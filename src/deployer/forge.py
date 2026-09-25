@@ -11,8 +11,8 @@ import json
 import os
 import re
 import subprocess
-from dataclasses import dataclass
-from typing import Any, Literal, Protocol
+from dataclasses import dataclass, field
+from typing import Any, Literal, Protocol, TypeGuard
 
 from pydantic import TypeAdapter
 
@@ -168,6 +168,54 @@ class FailedRun:
     workflow_path: str | None = None
     event: str | None = None
     snapshot_schema_version: str = SNAPSHOT_SCHEMA_VERSION
+
+
+@dataclass(frozen=True)
+class RunSummary:
+    """One row of the runs listing for a commit (spec §7.1).
+
+    ``attempts`` is the run's ``run_attempt``: the attempts ``1..attempts``
+    exist, whether or not each is completed. ``path`` is the workflow path
+    normalised by :func:`normalise_workflow_path` (no ``@<ref>``), the form
+    reproduction binds; ``head_branch`` is ``None`` when GitHub gives none.
+    """
+
+    run_id: int
+    attempts: int
+    event: str
+    head_sha: str
+    path: str
+    head_branch: str | None
+
+
+@dataclass(frozen=True)
+class AttemptRead:
+    """One attempt of a run of any outcome, read as far as it could be.
+
+    ``status``/``conclusion`` are the attempt's own; ``status`` is
+    ``"unknown"`` when its metadata could not be read. ``jobs`` holds every
+    job of the attempt (no green filter), each built like a failed-run job;
+    it is ``None`` when the attempt is not ``completed`` (nothing was read
+    past its metadata) or when ``error`` is set. ``logs_state`` is per job
+    id. ``error`` records any ``GhError`` — HTTP status or none — and any
+    malformed or unparseable response; it is never raised. ``logs`` maps a
+    job id to the exact log text read for it (the text ``_build_job`` was
+    given); a job whose log was not read (``logs_state`` other than
+    ``"present"``) has no key, so a consumer never mistakes an absent log
+    for an empty one.
+
+    Annotations are not read: each job's ``completeness.annotations`` is
+    ``"absent"`` by construction and says nothing about GitHub.
+    """
+
+    run: RunSummary
+    attempt: int
+    status: str
+    conclusion: str | None
+    jobs: list[FailedJob] | None
+    logs_state: dict[int, LogsState]
+    error: str | None
+    logs: dict[int, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -374,6 +422,195 @@ def fetch_failed_run(
     )
 
 
+def list_runs_for_sha(repo: str, sha: str, runner: GhRunner) -> list[RunSummary] | str:
+    """Every workflow run of commit ``sha``, or why the listing is not whole.
+
+    Paginates ``actions/runs?head_sha=`` under the same ``total_count`` rule
+    as the jobs listing: a short, malformed or inconsistent listing — and a
+    row that is malformed or names another commit — is returned as a reason
+    string, never as a shorter list (an absent run could hide a
+    contradiction, spec §7.4). A ``run_id`` listed twice is a reason too
+    (a page shifted between reads can repeat one run and hide another), never
+    de-duplicated. A ``GhError`` of any kind and an unparseable
+    response are reasons too: nothing but a programming error raises.
+    """
+    gh = _Gh(runner, repo)
+    try:
+        rows = gh.paged(f"actions/runs?head_sha={sha}", "workflow_runs", "runs")
+    except GhError as exc:
+        return str(exc)
+    except ValueError as exc:
+        return f"runs listing unparseable: {exc}"
+    runs: list[RunSummary] = []
+    for row in rows:
+        summary = _run_summary(row)
+        if summary is None:
+            return f"runs listing malformed: bad row {row!r}"
+        if summary.head_sha != sha:
+            return (
+                f"runs listing inconsistent: run {summary.run_id} "
+                f"has head_sha {summary.head_sha}, not {sha}"
+            )
+        if any(r.run_id == summary.run_id for r in runs):
+            return f"runs listing incomplete: run {summary.run_id} listed twice"
+        runs.append(summary)
+    return runs
+
+
+def _run_summary(row: object) -> RunSummary | None:
+    """A listing row as a :class:`RunSummary`, or ``None`` if it is malformed."""
+    if not isinstance(row, dict):
+        return None
+    run_id, attempts = row.get("id"), row.get("run_attempt")
+    event, head_sha, path = row.get("event"), row.get("head_sha"), row.get("path")
+    branch = row.get("head_branch")
+    if not (_is_int(run_id) and _is_int(attempts)):
+        return None
+    if not (
+        isinstance(event, str) and isinstance(head_sha, str) and isinstance(path, str)
+    ):
+        return None
+    if branch is not None and not isinstance(branch, str):
+        return None
+    return RunSummary(
+        run_id=run_id,
+        attempts=attempts,
+        event=event,
+        head_sha=head_sha,
+        path=normalise_workflow_path(path),
+        head_branch=branch,
+    )
+
+
+def _is_int(value: object) -> TypeGuard[int]:
+    """An int that is not a bool (JSON ``true`` must not pass as an id)."""
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def read_attempt(
+    repo: str, run: RunSummary, attempt: int, runner: GhRunner
+) -> AttemptRead:
+    """Read one attempt of ``run`` whatever its outcome (spec §7.1).
+
+    The attempt's metadata fixes ``status``/``conclusion``; a completed
+    attempt then has **all** its jobs read (the jobs listing's completeness
+    rule applies) and each job's full log, recorded per job in
+    ``logs_state`` with :meth:`_Gh.logs`' semantics (410 ``unavailable``,
+    another status ``error``). An attempt that is not completed reads no
+    jobs. Every failure — a ``GhError`` with or without a status, an
+    incomplete listing, a malformed or unparseable response — lands in
+    ``error`` with ``jobs=None``; nothing but a programming error raises.
+    """
+    gh = _Gh(runner, repo)
+    try:
+        meta = gh.json(_run_path(run.run_id, attempt))
+    except GhError as exc:
+        return _attempt_error(run, attempt, "unknown", None, str(exc))
+    except ValueError as exc:
+        return _attempt_error(
+            run, attempt, "unknown", None, f"attempt metadata unparseable: {exc}"
+        )
+    identity = _attempt_identity_error(meta, run, attempt)
+    if identity is not None:
+        return _attempt_error(run, attempt, "unknown", None, identity)
+    status = meta.get("status")
+    conclusion = meta.get("conclusion")
+    if not isinstance(status, str) or not (
+        conclusion is None or isinstance(conclusion, str)
+    ):
+        return _attempt_error(
+            run,
+            attempt,
+            "unknown",
+            None,
+            f"attempt metadata malformed: status={status!r} conclusion={conclusion!r}",
+        )
+    if status != "completed":
+        return AttemptRead(run, attempt, status, conclusion, None, {}, None)
+    try:
+        jobs, logs_state, logs = _read_all_jobs(gh, run.run_id, attempt)
+    except GhError as exc:
+        return _attempt_error(run, attempt, status, conclusion, str(exc))
+    except ValueError as exc:
+        return _attempt_error(
+            run, attempt, status, conclusion, f"jobs listing unparseable: {exc}"
+        )
+    return AttemptRead(run, attempt, status, conclusion, jobs, logs_state, None, logs)
+
+
+def _attempt_identity_error(meta: object, run: RunSummary, attempt: int) -> str | None:
+    """Why the metadata is not attempt ``attempt`` of ``run``, or ``None``.
+
+    ``head_sha`` must equal the listed run's, ``run_attempt`` the requested
+    attempt, and ``id`` — only when present — the run id. A missing value or
+    a wrong type is malformed, a different value a mismatch; either names the
+    field, and neither is ever accepted silently.
+    """
+    if not isinstance(meta, dict):
+        return f"attempt metadata malformed: not an object ({type(meta).__name__})"
+    head_sha, run_attempt = meta.get("head_sha"), meta.get("run_attempt")
+    if not isinstance(head_sha, str):
+        return f"attempt metadata malformed: head_sha={head_sha!r}"
+    if head_sha != run.head_sha:
+        return f"attempt metadata mismatch: head_sha {head_sha}, not {run.head_sha}"
+    if not _is_int(run_attempt):
+        return f"attempt metadata malformed: run_attempt={run_attempt!r}"
+    if run_attempt != attempt:
+        return f"attempt metadata mismatch: run_attempt {run_attempt}, not {attempt}"
+    if "id" not in meta:
+        return None
+    run_id = meta["id"]
+    if not _is_int(run_id):
+        return f"attempt metadata malformed: id={run_id!r}"
+    if run_id != run.run_id:
+        return f"attempt metadata mismatch: id {run_id}, not {run.run_id}"
+    return None
+
+
+def _attempt_error(
+    run: RunSummary, attempt: int, status: str, conclusion: str | None, error: str
+) -> AttemptRead:
+    return AttemptRead(run, attempt, status, conclusion, None, {}, error)
+
+
+def _read_all_jobs(
+    gh: "_Gh", run_id: int, attempt: int
+) -> tuple[list[FailedJob], dict[int, LogsState], dict[int, str]]:
+    """Every job of the attempt with its log state and, when read, its log
+    text; raises ``GhError`` on failure.
+
+    A malformed job record (no int ``id``, a step without an int ``number``)
+    is raised as a status-less ``GhError`` before its log is fetched.
+    """
+    jobs: list[FailedJob] = []
+    states: dict[int, LogsState] = {}
+    texts: dict[int, str] = {}
+    for record in gh.jobs(run_id, attempt):
+        _check_job_record(record)
+        job_id = int(record["id"])
+        log_text, state = gh.logs(job_id)
+        states[job_id] = state
+        if state == "present":
+            texts[job_id] = log_text
+        jobs.append(
+            _build_job(record, job_id, log_text, [], Completeness(state, "absent"))
+        )
+    return jobs, states, texts
+
+
+def _check_job_record(record: object) -> None:
+    """Refuse a job record ``_build_job`` could not read without guessing."""
+    steps = record.get("steps") if isinstance(record, dict) else None
+    ok = (
+        isinstance(record, dict)
+        and _is_int(record.get("id"))
+        and (steps is None or isinstance(steps, list))
+        and all(isinstance(s, dict) and _is_int(s.get("number")) for s in steps or [])
+    )
+    if not ok:
+        raise GhError(f"job record malformed: {record!r}", None)
+
+
 def fetch_tree_listing(repo: str, sha: str, runner: GhRunner) -> TreeListing:
     """The recursive Git tree at ``sha`` (spec §1.3 b, c).
 
@@ -501,32 +738,58 @@ class _Gh:
         two counts (if either) is the true one.
         """
         base = f"actions/runs/{run_id}/attempts/{attempt}/jobs"
-        collected: list[dict[str, Any]] = []
+        return self.paged(base, "jobs", "jobs")
+
+    def paged(self, base: str, key: str, label: str) -> list[Any]:
+        """Every row of a ``total_count`` listing, or a status-less GhError.
+
+        The completeness rule of :meth:`jobs`, shared with the runs listing:
+        each page must be an object whose ``key`` is a list and whose
+        ``total_count`` is an int (else ``malformed``); the count is fixed by
+        the first page (a different one later is ``inconsistent``); meeting
+        the count ends the loop, and an empty page before it is met — or
+        more rows than the count — is ``incomplete``. ``label`` names the
+        listing in the message. ``base`` may carry its own query; the page
+        parameters are appended to it.
+        """
+        sep = "&" if "?" in base else "?"
+        collected: list[Any] = []
         total: int | None = None
         page = 1
         while True:
-            body = self.json(f"{base}?per_page={_PER_PAGE}&page={page}")
-            page_jobs = body.get("jobs")
-            page_total = body.get("total_count")
-            if not isinstance(page_jobs, list) or not isinstance(page_total, int):
+            body = self.json(f"{base}{sep}per_page={_PER_PAGE}&page={page}")
+            rows = body.get(key) if isinstance(body, dict) else None
+            page_total = body.get("total_count") if isinstance(body, dict) else None
+            if (
+                not isinstance(rows, list)
+                or not isinstance(page_total, int)
+                or isinstance(page_total, bool)
+            ):
                 raise GhError(
-                    f"jobs listing malformed: page {page} has "
-                    f"jobs={page_jobs!r} total_count={page_total!r}",
+                    f"{label} listing malformed: page {page} has "
+                    f"{key}={rows!r} total_count={page_total!r}",
                     None,
                 )
             if total is None:
                 total = page_total
             elif page_total != total:
                 raise GhError(
-                    f"jobs listing inconsistent: total_count {total} then {page_total}",
+                    f"{label} listing inconsistent: "
+                    f"total_count {total} then {page_total}",
                     None,
                 )
-            collected.extend(page_jobs)
-            if len(collected) >= total:
-                return collected
-            if not page_jobs:
+            collected.extend(rows)
+            if len(collected) > total:
                 raise GhError(
-                    f"jobs listing incomplete: {len(collected)} of {total}", None
+                    f"{label} listing incomplete: {len(collected)} rows "
+                    f"exceed total_count {total}",
+                    None,
+                )
+            if len(collected) == total:
+                return collected
+            if not rows:
+                raise GhError(
+                    f"{label} listing incomplete: {len(collected)} of {total}", None
                 )
             page += 1
 
