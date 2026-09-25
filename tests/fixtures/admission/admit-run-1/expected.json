@@ -1,0 +1,22 @@
+{
+  "base": "run-1",
+  "trust": {
+    "kind": "dir",
+    "path": "trust"
+  },
+  "verdict": "admitted",
+  "ownership": {
+    "status": "confirmed",
+    "step": null
+  },
+  "unmet": [],
+  "defect": {
+    "class": "missing_copy_source",
+    "file": "Dockerfile",
+    "lines": [
+      11,
+      11
+    ]
+  },
+  "accepted": true
+}

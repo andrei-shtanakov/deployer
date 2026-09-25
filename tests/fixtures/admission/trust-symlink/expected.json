@@ -1,0 +1,22 @@
+{
+  "base": "run-1",
+  "trust": {
+    "kind": "symlink_into_tree",
+    "path": "ci-trust"
+  },
+  "verdict": "insufficient_grounds",
+  "ownership": {
+    "status": "not_confirmed",
+    "step": 0
+  },
+  "unmet": [
+    {
+      "condition": 1,
+      "reason_contains": [
+        "ownership not confirmed: step 0: ",
+        "lies inside"
+      ]
+    }
+  ],
+  "accepted": false
+}
