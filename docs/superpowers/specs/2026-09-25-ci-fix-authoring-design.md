@@ -197,6 +197,14 @@ the failing condition):
    form (no glob, `$`, `\`, whitespace or `..`; R's normalisation), written in the
    notation of the original (e.g. no leading `./` when the original had none). An
    effective ignore file with an unmodelled pattern leaves exclusion unprovable → stop.
+   **The artifact being corrected is never a candidate:** the exact path
+   `binding.artifact_path` is excluded, because the fix itself changes its bytes and
+   substituting it as a source would make the result depend on the edit. Only that path
+   is excluded — another file named `Dockerfile` elsewhere in the listing stays a
+   candidate under conditions 2–4. No other file is excluded by name (e.g. a
+   `.dockerignore` that passes conditions 2–4 stays a candidate): being listed means only
+   that a candidate is admissible; the model must justify its choice and a human reviews
+   it.
 4. **Collisions**, both checked after R's normalisation:
    - (a) *duplicate source* — the new source equals another source of the instruction;
    - (b) *destination name conflict* — the instruction has two or more sources (so the
