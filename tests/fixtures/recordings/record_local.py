@@ -137,6 +137,25 @@ def _cases(nonce: str) -> tuple[Case, ...]:
             (Check("copy", COPY_FIXED), Check("from", "FROM python:3.12-slim AS b")),
             setup,
         ),
+        # Buildah checks FROM's argument count per stage, when the stage starts
+        # (docs/fix-buildah-from-parse.md). Here the bad FROM's stage needs a:
+        # a builds first, then the bad stage fails.
+        Case(
+            "l8-from-bad-after-built-stage",
+            (
+                "FROM python:3.12-slim AS a\nRUN true\n"
+                f"{FROM_BAD}\n"
+                "COPY --from=a /etc/hostname /hostname-a\n"
+            ),
+            (Check("from", FROM_BAD),),
+        ),
+        # A bad FROM in a stage nothing depends on is skipped, never checked:
+        # the build succeeds with the defect still in the file.
+        Case(
+            "l9-from-bad-in-skipped-stage",
+            (f"{FROM_BAD}\nRUN true\n\nFROM python:3.12-slim AS final\nRUN true\n"),
+            (Check("from", FROM_BAD),),
+        ),
     )
 
 

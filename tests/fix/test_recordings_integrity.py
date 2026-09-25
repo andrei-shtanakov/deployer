@@ -17,7 +17,7 @@ import pytest
 RECORDINGS = Path(__file__).parent.parent / "fixtures" / "recordings"
 LOCAL = RECORDINGS / "local"
 CHECKSUMS = RECORDINGS / "CHECKSUMS.sha256"
-NOT_CHECKSUMMED = {"CHECKSUMS.sha256", "record_local.py"}
+NOT_CHECKSUMMED = {"CHECKSUMS.sha256", "record_local.py", "record_ci.py"}
 LOCAL_CASES = [
     "l1-copy-cold",
     "l2-copy-warm",
@@ -26,6 +26,8 @@ LOCAL_CASES = [
     "l5-stages-same-image",
     "l6-copy-later-failure",
     "l7-stages-both-built",
+    "l8-from-bad-after-built-stage",
+    "l9-from-bad-in-skipped-stage",
 ]
 CASE_FILES = (
     "argv.json",
