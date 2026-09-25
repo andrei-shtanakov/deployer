@@ -7,7 +7,7 @@ Not a frontend: it checks exactly four things and says so. "No finding" means
 import re
 from dataclasses import dataclass
 
-from deployer.reproduce.model import Location, ReproductionCheck, ReproEvidence
+from deployer.reproduce.model import ReproductionCheck
 
 KEYWORDS = frozenset(
     {
@@ -169,71 +169,14 @@ def _heredoc_match(keyword: str, args: str) -> re.Match[str] | None:
 
 
 def syntax_checks(parsed: ParsedDockerfile, dockerfile: str) -> list[ReproductionCheck]:
-    """The four checks of §3.1; one passed check per clean rule."""
-    unread = unread_reason(parsed)
-    if unread is not None:
-        return [
-            ReproductionCheck(
-                check_id=check_id,
-                status="skipped",
-                reason=unread,
-            )
-            for check_id in _CHECK_IDS
-        ]
-    findings: dict[str, list[tuple[tuple[int, int], str, str]]] = {
-        c: [] for c in _CHECK_IDS
-    }
-    instructions = parsed.instructions
-    head = next((i for i in instructions if i.keyword != "ARG"), None)
-    if head is None or head.keyword != "FROM":
-        span = (head.first_line, head.last_line) if head else (1, 1)
-        text = head.text if head is not None else "empty Dockerfile"
-        findings["syntax_first_from"].append(
-            (span, "the first instruction is not FROM", text)
-        )
-    for inst in instructions:
-        if inst.keyword == "FROM" and not _from_args_ok(inst.args):
-            findings["syntax_from_args"].append(
-                (
-                    (inst.first_line, inst.last_line),
-                    "FROM takes one or three arguments",
-                    inst.text,
-                )
-            )
-        if inst.keyword not in KEYWORDS:
-            findings["syntax_keyword"].append(
-                (
-                    (inst.first_line, inst.last_line),
-                    f"unknown instruction {inst.keyword}",
-                    inst.text,
-                )
-            )
-    if parsed.dangling_continuation and instructions:
-        last = instructions[-1]
-        findings["syntax_continuation"].append(
-            (
-                (last.last_line, last.last_line),
-                "line continuation ends the file",
-                last.text,
-            )
-        )
-    status = "observation" if parsed.syntax_directive else "failed"
-    checks: list[ReproductionCheck] = []
-    for check_id in _CHECK_IDS:
-        if not findings[check_id]:
-            checks.append(ReproductionCheck(check_id=check_id, status="passed"))
-            continue
-        for span, message, text in findings[check_id]:
-            checks.append(
-                ReproductionCheck(
-                    check_id=check_id,
-                    status=status,
-                    finding=f"syntax error at line {span[0]}: {message}",
-                    location=Location(file=dockerfile, lines=span),
-                    evidence=[ReproEvidence(kind="log_excerpt", text=text)],
-                )
-            )
-    return checks
+    """The four checks of §3.1; one passed check per clean rule.
+
+    A fold over :func:`deployer.reproduce.detail.syntax_records`.
+    """
+    # Imported here: ``detail`` builds on this module's parser and rules.
+    from deployer.reproduce.detail import fold_syntax, syntax_records
+
+    return fold_syntax(syntax_records(parsed, dockerfile))
 
 
 def _from_args_ok(args: str) -> bool:

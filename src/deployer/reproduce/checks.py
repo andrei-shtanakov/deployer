@@ -27,52 +27,14 @@ _UNMODELLED_FLAGS = ("--parents", "--exclude")
 def copy_source_checks(
     parsed: ParsedDockerfile, context: Path, dockerfile: str, rules: IgnoreRules
 ) -> list[ReproductionCheck]:
-    """Every local COPY/ADD source against ``context`` minus ignored paths."""
-    unread = unread_reason(parsed)
-    if unread is not None:
-        return [
-            ReproductionCheck(
-                check_id="copy_sources",
-                status="skipped",
-                reason=f"Dockerfile not fully read ({unread})",
-            )
-        ]
-    if rules.unsupported is not None:
-        return [
-            ReproductionCheck(
-                check_id="copy_sources",
-                status="skipped",
-                reason=f"ignore pattern not modelled: {rules.unsupported}",
-            )
-        ]
-    files = _context_paths(context)
-    findings: list[ReproductionCheck] = []
-    skipped: list[ReproductionCheck] = []
-    checked = 0  # a pass needs at least one source actually checked
-    for inst in parsed.instructions:
-        if inst.keyword not in ("COPY", "ADD"):
-            continue
-        sources, why_skipped = _sources(inst)
-        if why_skipped is not None:
-            skipped.append(_skip(inst, why_skipped))
-            continue
-        for raw in sources:
-            if inst.keyword == "ADD" and raw.startswith(_REMOTE_PREFIXES):
-                skipped.append(_skip(inst, f"remote ADD source {raw}"))
-                continue
-            # The alphabet is checked on the source AS WRITTEN: normalising
-            # first would let `$SRC/../x` collapse to `x` and pass.
-            if _has_unmodelled_chars(raw):
-                skipped.append(_skip(inst, f"source pattern not modelled: {raw}"))
-                continue
-            source = _norm(raw)
-            checked += 1
-            findings.extend(
-                _check_source(inst, source, files, context, dockerfile, rules)
-            )
-    if not findings and checked:
-        findings = [ReproductionCheck(check_id="copy_sources", status="passed")]
-    return findings + skipped
+    """Every local COPY/ADD source against ``context`` minus ignored paths.
+
+    A fold over :func:`deployer.reproduce.detail.copy_source_records`.
+    """
+    # Imported here: ``detail`` builds on this module's helpers.
+    from deployer.reproduce.detail import copy_source_records, fold_copy_sources
+
+    return fold_copy_sources(copy_source_records(parsed, context, dockerfile, rules))
 
 
 def from_ref_checks(parsed: ParsedDockerfile) -> list[ReproductionCheck]:
