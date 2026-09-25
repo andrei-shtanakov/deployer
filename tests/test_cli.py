@@ -1,10 +1,13 @@
 import json
+import os
 import subprocess
 from pathlib import Path
 
 import pytest
 
 from deployer import cli
+from deployer.admission.model import AdmissionSection, Ownership, Unmet
+from deployer.admission.model import Binding as AdmissionBinding
 from deployer.artifacts import render_artifact_response
 from deployer.cli import main
 from deployer.diagnose import FailureVerdict, Outcome, RunDiagnosis
@@ -714,6 +717,32 @@ def test_author_fails_when_the_previous_set_cannot_be_removed(
     assert exit_code == 1
     err = capsys.readouterr().err
     assert "error: previous authoring set could not be removed" in err
+
+
+def test_author_survives_a_provenance_write_error(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """An OSError while issuing warns, withdraws and keeps the exit code."""
+    repo = make_repo_with_origin(tmp_path)
+    key, _pub = make_key(tmp_path)
+    monkeypatch.setattr(
+        "deployer.cli.author_dockerfile", _fake_author_dockerfile(_SIGNED_DOCKERFILE)
+    )
+    monkeypatch.setattr("deployer.cli.AnthropicAuthor", lambda: object())
+
+    def broken(*_args: object) -> object:
+        raise PermissionError("read-only")
+
+    monkeypatch.setattr("deployer.cli.issue.issue", broken)
+
+    exit_code = cli.main(
+        ["author", str(repo), "--no-docker", "--signing-key", str(key)]
+    )
+
+    assert exit_code == 0
+    err = capsys.readouterr().err
+    assert "provenance could not be written: read-only" in err
+    assert (repo / ".deployer" / "authoring-run.json").is_file()
 
 
 def test_author_without_signing_key_warns_and_issues_nothing(
@@ -1918,6 +1947,121 @@ def test_without_reproduce_nothing_is_called(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(cli, "reproduce_run", forbidden)
     assert cli.main(["diagnose", RUN_URL]) == 3
     assert not (tmp_path / ".deployer-runs").exists()
+
+
+def _attempted() -> ReproductionSection:
+    """A minimal attempted section, as R's model accepts it."""
+    return ReproductionSection.model_validate(
+        {
+            "status": "attempted",
+            "try_dir": ".deployer-runs/1/reproduction/attempt-1/tries/001",
+            "build": {
+                "argv": ["podman", "build"],
+                "exit_code": 1,
+                "launch_error": None,
+                "failed_instruction": None,
+                "signature": None,
+                "stdout": "build.stdout",
+                "stderr": "build.stderr",
+                "image_cleanup": "not_attempted",
+                "build_containers": "not_checked",
+            },
+            "comparison": {"state": "inconclusive", "reason": "no CI span"},
+        }
+    )
+
+
+def _refused_admission() -> AdmissionSection:
+    return AdmissionSection(
+        verdict="insufficient_grounds",
+        binding=AdmissionBinding(
+            repo="o/r",
+            head_sha="a" * 40,
+            artifact_path="Dockerfile",
+            artifact_sha256="b" * 64,
+        ),
+        ownership=Ownership(status="not_confirmed", reason="no set"),
+        unmet=[
+            Unmet(condition=1, reason="ownership not confirmed: step 1: missing"),
+            Unmet(condition=3, reason="restoration approximation, not exact"),
+        ],
+    )
+
+
+def test_attempted_reproduction_adds_admission(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A §6.2: attempted → prepare + decide; verdict printed, 1.3 written,
+    the reading exit code kept."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "diagnose_run", lambda s: diagnosis("UNCLASSIFIED"))
+    monkeypatch.setattr(cli, "resolve_runtime", lambda *a, **k: None)
+    section = _attempted()
+    monkeypatch.setattr(cli, "reproduce_run", lambda *a, **k: section)
+    seen: dict[str, object] = {}
+    marker = object()
+
+    def fake_prepare(run: object, sec: object, root: Path, env: object) -> object:
+        seen.update(section=sec, root=root, env=env)
+        return marker
+
+    def fake_decide(facts: object) -> AdmissionSection:
+        assert facts is marker
+        return _refused_admission()
+
+    monkeypatch.setattr(cli, "prepare", fake_prepare)
+    monkeypatch.setattr(cli, "decide", fake_decide)
+    out = tmp_path / "v.json"
+    code = cli.main(["diagnose", RUN_URL, "--reproduce", "--output-file", str(out)])
+    assert code == 3
+    assert seen["section"] is section and seen["root"] == tmp_path
+    assert seen["env"] is os.environ
+    printed = capsys.readouterr().out
+    assert "admission: insufficient_grounds" in printed
+    assert "unmet (1): ownership not confirmed: step 1: missing" in printed
+    assert "unmet (3): restoration approximation, not exact" in printed
+    document = json.loads(out.read_text())
+    assert document["verdict_schema_version"] == "1.3"
+    assert document["admission"]["verdict"] == "insufficient_grounds"
+
+
+def test_not_attempted_reproduction_has_no_admission(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A §6.2: the section is absent unless R reached ``attempted``."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "diagnose_run", lambda s: diagnosis("UNCLASSIFIED"))
+    monkeypatch.setattr(cli, "resolve_runtime", lambda *a, **k: None)
+    refused = ReproductionSection(status="refused", refusal="event x")
+    monkeypatch.setattr(cli, "reproduce_run", lambda *a, **k: refused)
+
+    def forbidden(*a: object, **k: object) -> object:
+        raise AssertionError("no admission is prepared without an attempt")
+
+    monkeypatch.setattr(cli, "prepare", forbidden)
+    out = tmp_path / "v.json"
+    code = cli.main(["diagnose", RUN_URL, "--reproduce", "--output-file", str(out)])
+    assert code == 3
+    document = json.loads(out.read_text())
+    assert document["verdict_schema_version"] == "1.2"
+    assert "admission" not in document
+
+
+def test_preparation_try_dir_error_is_exit_2(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A ``ci.log`` write failure is R's try-directory exit 2 (R §6)."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "diagnose_run", lambda s: diagnosis("UNCLASSIFIED"))
+    monkeypatch.setattr(cli, "resolve_runtime", lambda *a, **k: None)
+    monkeypatch.setattr(cli, "reproduce_run", lambda *a, **k: _attempted())
+
+    def boom(*a: object, **k: object) -> object:
+        raise TryDirError("cannot write ci.log: disk full")
+
+    monkeypatch.setattr(cli, "prepare", boom)
+    assert cli.main(["diagnose", RUN_URL, "--reproduce"]) == 2
+    assert "cannot write ci.log" in capsys.readouterr().err
 
 
 def test_trust_add_writes_the_allowed_signers(

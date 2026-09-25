@@ -143,3 +143,34 @@ def test_replace_refuses_a_malformed_old_key_and_touches_nothing(
         trust.replace(tmp_path, _bad_line(label, new_pub), new_pub)
     assert not (tmp_path / trust.ALLOWED_FILE).exists()
     assert not (tmp_path / trust.REVOKED_FILE).exists()
+
+
+def _case_insensitive(root: Path) -> bool:
+    """Probe ``root``'s filesystem: does a case-swapped name reach the file?"""
+    probe = root / "case-probe"
+    probe.write_text("")
+    try:
+        return (root / "CASE-PROBE").exists()
+    finally:
+        probe.unlink()
+
+
+def test_outside_sees_through_a_case_variant_spelling(tmp_path: Path) -> None:
+    """On a case-insensitive filesystem (APFS), ``WORK/t`` is inside ``work``
+    although the strings differ: compared by file identity."""
+    if not _case_insensitive(tmp_path):
+        pytest.skip("case-sensitive filesystem")
+    repo = tmp_path / "work"
+    (repo / "t").mkdir(parents=True)
+    assert trust.outside(tmp_path / "WORK" / "t", repo) is not None
+    assert trust.outside(tmp_path / "WORK" / "not-yet" / "t", repo) is not None
+    assert trust.outside(tmp_path / "Work", repo) is not None
+
+
+def test_outside_identity_does_not_widen_to_siblings(tmp_path: Path) -> None:
+    """A sibling of the repo stays outside it."""
+    repo = tmp_path / "work"
+    repo.mkdir()
+    (tmp_path / "trust").mkdir()
+    assert trust.outside(tmp_path / "trust", repo) is None
+    assert trust.outside(tmp_path / "missing" / "trust", repo) is None

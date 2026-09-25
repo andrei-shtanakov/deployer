@@ -2,6 +2,7 @@
 
 import base64
 import binascii
+import os
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -24,13 +25,36 @@ def trust_dir(env: Mapping[str, str]) -> Path:
 
 
 def outside(trust: Path, *repos: Path) -> str | None:
-    """``None`` when the trust dir's real path is outside every repo, else why not."""
+    """``None`` when the trust dir's real path is outside every repo, else why not.
+
+    Paths are compared by spelling and, for every existing ancestor of the
+    trust dir, by file identity (``st_dev``, ``st_ino``): on a
+    case-insensitive filesystem (APFS) ``/x/WORK`` names ``/x/work`` although
+    the strings differ.
+    """
     real = trust.resolve(strict=False)
-    for repo in repos:
-        root = repo.resolve(strict=False)
+    roots = [repo.resolve(strict=False) for repo in repos]
+    for root in roots:
         if real == root or root in real.parents:
             return f"trust directory {real} lies inside {root}"
+    identities = {
+        ident: root for root in roots if (ident := _identity(root)) is not None
+    }
+    for ancestor in (real, *real.parents):
+        ident = _identity(ancestor)
+        root = identities.get(ident) if ident is not None else None
+        if root is not None:
+            return f"trust directory {real} lies inside {root}"
     return None
+
+
+def _identity(path: Path) -> tuple[int, int] | None:
+    """``(st_dev, st_ino)`` of an existing path, else ``None``."""
+    try:
+        st = os.stat(path)
+    except (OSError, ValueError):
+        return None
+    return (st.st_dev, st.st_ino)
 
 
 def _key_body(public_line: str) -> str:

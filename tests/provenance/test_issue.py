@@ -648,3 +648,26 @@ def test_withdraw_unlinks_a_symlinked_pointer_without_following_it(
     assert issue.withdraw(repo_with_origin) is True
     assert not (repo_with_origin / SET_ROOT / POINTER).is_symlink()
     assert outside.read_text() == "x"
+
+
+def test_an_unwritable_ignore_file_refuses_instead_of_raising(
+    repo_with_origin: Path, keypair: tuple[Path, str]
+) -> None:
+    """PR #85 review minor: a write error while ensuring exclusion is a
+    refusal, not a traceback."""
+    key, _ = keypair
+    ignore_file = repo_with_origin / ".dockerignore"
+    ignore_file.write_text("*.pyc\n")
+    subprocess.run(["git", "-C", str(repo_with_origin), "add", "-A"], check=True)
+    subprocess.run(
+        ["git", "-C", str(repo_with_origin), "commit", "-qm", "i"], check=True
+    )
+    pre = issue.preflight(repo_with_origin, key)
+    assert isinstance(pre, issue.Preflight)
+    _author(repo_with_origin)
+    ignore_file.chmod(0o444)
+    try:
+        out = issue.issue(pre, key, "0.1", _written(pre))
+    finally:
+        ignore_file.chmod(0o644)
+    assert not out.published and "exclusion could not be written" in (out.reason or "")
