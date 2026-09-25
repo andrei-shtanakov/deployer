@@ -188,22 +188,20 @@ def _status(worktree: Path) -> str:
 # --- run-5: F1 ---------------------------------------------------------------
 
 
-def test_run5_stops_at_templates_not_enabled_by_default(run5: Case) -> None:
-    """Production reality: every row disabled → ``no local confirmation``."""
+def test_run5_locally_confirmed_by_default(run5: Case) -> None:
+    """Production rows: the recording-backed local FROM row confirms the F1
+    line without the seam."""
     run5.set_build(FROM_STDOUT)
     doc = run5.run()
-    assert doc.status == "stopped"
-    assert doc.stop_reason == "no local confirmation"
-    assert doc.stop_detail == "templates not enabled"
+    assert doc.status == "locally_confirmed", (doc.stop_reason, doc.stop_detail)
+    assert doc.stop_reason is None and doc.stop_detail is None
     assert doc.proposal is not None and doc.proposal.transformation == "F1"
     assert doc.proposal.replacement.strip() == F1_LINE
     assert doc.local_proof is not None
-    assert doc.publication is not None and doc.publication.fix_commit is None
+    assert doc.local_proof.evidence[0]["evidence"] == "passed"
+    assert doc.publication is not None and doc.publication.fix_commit is not None
     assert load(run5.fix_dir() / FIX_FILE) == doc
     assert run5.chooser.prompts == []
-    worktree = Path(doc.publication.worktree)
-    assert _status(worktree) == ""
-    assert git(worktree, "rev-parse", "HEAD") == doc.input.head
 
 
 def test_run5_with_the_seam_is_locally_confirmed(run5: Case) -> None:
@@ -321,14 +319,13 @@ def test_run1_unique_with_the_seam_is_locally_confirmed(unique: Case) -> None:
     assert "COPY docs/setup.md ./setup.md" not in committed
 
 
-def test_run1_unique_stops_at_templates_not_enabled_by_default(unique: Case) -> None:
-    """Without the seam the proposal is made but not locally confirmed."""
+def test_run1_unique_locally_confirmed_by_default(unique: Case) -> None:
+    """Production rows: the recording-backed local COPY row confirms the
+    model's proposal without the seam."""
     unique.set_build(COPY_STDOUT)
     doc = unique.run()
-    assert (doc.stop_reason, doc.stop_detail) == (
-        "no local confirmation",
-        "templates not enabled",
-    )
+    assert doc.status == "locally_confirmed", (doc.stop_reason, doc.stop_detail)
+    assert (doc.stop_reason, doc.stop_detail) == (None, None)
     assert len(unique.chooser.prompts) == 1
 
 
@@ -508,6 +505,26 @@ def test_no_container_runtime_is_no_local_confirmation(run5: Case) -> None:
         "no local confirmation",
         "no container runtime found",
     )
+    _assert_no_commit(doc)
+
+
+def test_unmatched_build_output_commits_nothing(run5: Case) -> None:
+    """The build ran but the enabled row does not confirm: no fix commit,
+    and the worktree stays clean at ``input.head``."""
+    run5.set_build("STEP 1/1: FROM other:1\n")
+    doc = run5.run()
+    assert doc.stop_reason == "no local confirmation"
+    assert doc.local_proof is not None
+    assert doc.local_proof.evidence[0]["evidence"] != "passed"
+    _assert_no_commit(doc)
+
+
+def _assert_no_commit(doc: FixDocument) -> None:
+    """A stop before the commit leaves no fix commit and a clean worktree."""
+    assert doc.publication is not None and doc.publication.fix_commit is None
+    worktree = Path(doc.publication.worktree)
+    assert _status(worktree) == ""
+    assert git(worktree, "rev-parse", "HEAD") == doc.input.head
 
 
 def test_a_docker_backend_is_no_local_confirmation(run5: Case) -> None:

@@ -291,12 +291,14 @@ def test_zero_candidates() -> None:
     ("dockerfile", "fragment"),
     [
         (b"FROM x:1\nCOPY app.py\\\n /app/\n", "continuation"),
+        # Ruling O: the strict-form gate refuses the form feed first.
+        (b"FROM x:1\nCOPY app.py \\\x0c\n /app/\n", "control character"),
         (b"FROM x:1\nCOPY\tapp.py /app/\n", "not separated by a space"),
         (b'FROM x:1\nCOPY ["app.py", "/app/"]\n', "JSON"),
         (b'FROM x:1\nCOPY --chown="app" app.py /app/\n', "quote"),
         (b"FROM x:1\nCOPY app.py \\\n# note\n /app/\n", "comment"),
         (b"FROM x:1\nCOPY <<EOF /app/x\nhi\nEOF\n", "heredoc"),
-        (b"# escape=`\nFROM x:1\nCOPY app.py /app/\n", "escape"),
+        (b"# escape=`\nFROM x:1\nCOPY app.py /app/\n", "parser directive"),
         (b"FROM x:1\nCOPY app.py /app\\ dir/\n", "backslash"),
         (b"FROM x:1\nCOPY app.py --chown=x /app/\n", "reads as a flag"),
         (b"FROM x:1\nCOPY --from=build app.py /app/\n", "--from"),
@@ -304,6 +306,7 @@ def test_zero_candidates() -> None:
     ],
     ids=[
         "glued-continuation",
+        "formfeed-continuation",
         "tab-after-keyword",
         "json-form",
         "quote",
@@ -428,21 +431,24 @@ def test_add_refused_in_this_slice() -> None:
 
 
 @pytest.mark.parametrize(
-    "dockerfile",
+    ("dockerfile", "fragment"),
     [
-        b"FROM x:1\nCOPY app.py app.py\n",
-        b"FROM x:1\nCOPY app.py\x1cother.py /a/\n",
-        b"FROM x:1\nCOPY app.py\x0cother.py /a/\n",
+        (b"FROM x:1\nCOPY app.py app.py\n", "as a whole token"),
+        # Ruling O: the strict-form gate refuses these separators first.
+        (b"FROM x:1\nCOPY app.py\x1cother.py /a/\n", "control character"),
+        (b"FROM x:1\nCOPY app.py\x0cother.py /a/\n", "control character"),
     ],
     ids=["token-twice", "x1c-separator", "x0c-separator"],
 )
-def test_token_not_located_once_refused_before_any_model(dockerfile: bytes) -> None:
+def test_token_not_located_once_refused_before_any_model(
+    dockerfile: bytes, fragment: str
+) -> None:
     """The whole-token byte match runs in the envelope, not only in apply."""
     listing = [_file("src/app.py"), _file("other.py")]
     result = _eligible(dockerfile, "app.py", listing)
     assert isinstance(result, str)
     assert result.startswith("1 read alike")
-    assert "as a whole token" in result
+    assert fragment in result
 
 
 def test_deployer_dir_and_artifact_never_candidates() -> None:
@@ -506,3 +512,36 @@ def test_single_source_destination_may_be_a_file() -> None:
     assert _paths(_eligible(dockerfile, "app.py", [_file("src/app.py")])) == (
         "src/app.py",
     )
+
+
+# --- Ruling O: the strict-form gate stops the envelope -----------------------
+
+_O_ENVELOPE = {
+    "lone-cr": b"FROM x:1\nCOPY app.py /app/\nRUN true \\\r \nCOPY a b\n",
+    "hd-dq": b'FROM x:1\nCOPY app.py /app/\nRUN cat <<"EOF"\nx\nEOF\n',
+    "bom-escape": b"\xef\xbb\xbf# escape=`\nFROM x:1\nCOPY app.py /app/\n",
+}
+
+
+@pytest.mark.parametrize("case", list(_O_ENVELOPE), ids=list(_O_ENVELOPE))
+def test_o_strict_form_refused(case: str) -> None:
+    """Outside the strict form: ``fix method not established`` before a model."""
+    dockerfile = _O_ENVELOPE[case]
+    line = 3 if case == "bom-escape" else 2
+    result = eligible_sources(
+        _bound(dockerfile, line),
+        "app.py",
+        [_file("src/app.py")],
+        _NO_RULES,
+        _NO_RULES,
+        dockerfile=dockerfile,
+    )
+    assert isinstance(result, str)
+    assert result.startswith("1 read alike")
+    assert "not modelled" in result
+
+
+def test_o_crlf_still_eligible() -> None:
+    """CRLF endings pass the gate: the envelope still finds the candidate."""
+    dockerfile = b"FROM x:1\r\nCOPY app.py /app/\r\n"
+    assert not isinstance(_eligible(dockerfile, "app.py", [_file("src/app.py")]), str)

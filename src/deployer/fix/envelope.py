@@ -19,7 +19,12 @@ from dataclasses import dataclass
 from deployer.admission.decide import GLOB_CHARS, LINK_MODES, REMOTE_PREFIXES
 from deployer.admission.prepare import _as_r_reads
 from deployer.fix.binding import Bound
-from deployer.fix.reading import comment_reason, join_reason, keyword_reason
+from deployer.fix.reading import (
+    comment_reason,
+    join_reason,
+    keyword_reason,
+    strict_form_reason,
+)
 from deployer.provenance.model import TreeRow
 from deployer.reproduce.checks import _is_modelled_source, _norm, _sources
 from deployer.reproduce.dockerfile import opens_heredoc, parse, unread_reason
@@ -93,7 +98,11 @@ def eligible_sources(
     as ``fix method not established``. The basename floor is applied here,
     before any model call.
     """
-    reason = _document_reason(bound, dockerfile) or _bound_reason(bound)
+    reason = (
+        strict_form_reason(dockerfile)
+        or _document_reason(bound, dockerfile)
+        or _bound_reason(bound)
+    )
     if reason is not None:
         return f"{_READ_ALIKE}: {reason}"
     located = _locate(bound, absent)

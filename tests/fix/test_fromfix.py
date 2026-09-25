@@ -350,6 +350,9 @@ def test_refusal_comment_inside_continuation() -> None:
         (b"FROM python:3.12-slim\\\nextra\n", "continuation"),
         (b"FROM img:1 extra\\\n\n", "continuation"),
         (b"FROM --platform=linux/amd64\\\nimg:1 extra\n", "continuation"),
+        # Review N2: a form feed after the backslash continues only in R.
+        # Ruling O: the strict-form gate refuses the form feed first.
+        (b"FROM img:1 extra \\\x0c\n\n", "control character"),
         # The token opening a continuation line is refused, not modelled.
         (b"FROM python:3.12-slim \\\nextra\n", "same line"),
         (b"FROM img:1 \\\r\n\textra\r\n", "same line"),
@@ -375,7 +378,9 @@ def test_refusal_keyword_not_space_separated(other: bytes) -> None:
     """Critical 2: R's keyword split on a space only hides references."""
     result, _ = _propose(b"FROM img:1 extra\n" + other)
     assert isinstance(result, str)
-    assert "not separated by a space" in result
+    # Ruling O: the strict-form gate refuses the vertical tab first.
+    fragment = "control character" if b"\x0b" in other else "not separated"
+    assert fragment in result
 
 
 @pytest.mark.parametrize(
@@ -464,4 +469,35 @@ def test_refusal_escape_directive() -> None:
     """A non-default ``# escape=`` makes R's split untrusted: no proposal."""
     result, _ = _propose(b"# escape=`\nFROM img:1 extra \\\n\n", line=2)
     assert isinstance(result, str)
-    assert "escape directive" in result
+    # Ruling O: the strict-form gate refuses every parser directive first.
+    assert "parser directive" in result
+
+
+# --- Ruling O: the F1 collision repros --------------------------------------
+
+# ``FROM … builder`` beside a later ``AS builder`` that R hides and Buildah
+# reads; without the strict-form gate each returned F1 ``… AS builder``.
+_O_COLLISION = {
+    "comment-heredoc": b"RUN true # x<<EOF\n",
+    "hd-space": b'RUN cat <<" "\nx \\\n \n',
+    "lone-cr": b"RUN true \\\r \n",
+}
+
+
+@pytest.mark.parametrize("case", list(_O_COLLISION), ids=list(_O_COLLISION))
+def test_o_f1_hidden_stage_name_refused(case: str) -> None:
+    """The file-wide gate runs before the F1 stage-name check reads R's parse."""
+    dockerfile = (
+        b"FROM python:3.12-slim builder\n"
+        + _O_COLLISION[case]
+        + b"FROM python:3.12-slim AS builder\nRUN true\n"
+    )
+    result, _ = _propose(dockerfile)
+    assert isinstance(result, str)
+    assert "not modelled" in result
+
+
+def test_o_f1_crlf_still_proposed() -> None:
+    """CRLF endings pass the gate: F1 is still proposed."""
+    result, _ = _propose(b"FROM python:3.12-slim builder\r\nRUN true\r\n")
+    assert isinstance(result, FromFix) and result.transformation == "F1"

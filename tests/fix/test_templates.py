@@ -1,10 +1,11 @@
 """Closed "passed" template tables (design §6.3, §7.3, §9, §10 test seam).
 
-Every matcher here is a **hypothesis**: no real Podman or BuildKit output of
-a passing corrected build has been recorded (the owner has not allowed real
-runs). So these tests assert the negatives, and only that the matcher
-returns ``passed`` on the *synthetic* shape the pipeline tests use — never
-that this shape is what Podman or BuildKit actually print.
+The local (Podman) rows are backed by the L-recordings and replayed on them in
+``test_local_recordings.py``; the tests here pin their rules on synthetic
+lines. The CI (BuildKit) matchers are still **hypotheses**: these tests assert
+the negatives, and only that the matcher returns ``passed`` on the
+*synthetic* shape the pipeline tests use — never that this shape is what
+BuildKit actually prints.
 """
 
 from pathlib import Path
@@ -14,10 +15,16 @@ import pytest
 from deployer.fix import templates
 from deployer.fix.templates import ROWS, Outcome, enabled_rows, match_ci, match_local
 from tests.fix.conftest import enable_for_test
+from tests.fix.test_local_recordings import EXPECTED as RECORDED
+from tests.fix.test_local_recordings import recorded_checks, replay
 
-_SRC = Path(__file__).resolve().parents[2] / "src"
+_ROOT = Path(__file__).resolve().parents[2]
+_SRC = _ROOT / "src"
 _COPY = "COPY docs/setup.md /app/docs/setup.md"
 _FROM = "FROM python:3.12-slim AS extra"
+_TAG = "localhost/deployer-fix-x"
+_DOCKERFILE = f'{_FROM}\nWORKDIR /app\n{_COPY}\nCMD ["python"]\n'.encode()
+_LOCAL_ROWS = ("copy-passed/podman", "from-parsed/podman")
 
 # Synthetic shapes (NOT recordings) ------------------------------------------
 
@@ -56,18 +63,30 @@ def test_rows_are_the_four_closed_rows() -> None:
 
 
 def test_no_row_enabled_without_recording() -> None:
-    """§9: a production row is enabled only with its recording; today none has
-    one, so nothing is enabled without the test seam."""
-    assert all(row.recording is None for row in ROWS)
-    assert enabled_rows() == ()
-    assert all(row.recording is not None for row in enabled_rows())
+    """§9: a production row is enabled only with its recording. Exactly the
+    two local rows are; the cases under each one's ``Row.recording`` replay
+    through ``match_local`` to the replay test's table; the CI rows stay
+    disabled."""
+    enabled = enabled_rows()
+    assert tuple(row.id for row in enabled) == _LOCAL_ROWS
+    for row in enabled:
+        assert row.recording is not None
+        root = _ROOT / row.recording
+        mine = [c for c in recorded_checks(root) if c[1] == row.kind]
+        assert mine, row.id
+        for check in mine:
+            outcome = replay(root, check)
+            got = (outcome.evidence, outcome.lines, outcome.detail)
+            assert got == RECORDED[check], (row.id, check)
+    assert all(row.recording is None for row in ROWS if row.side == "ci")
 
 
 def test_seam_enables_and_restores() -> None:
     """The seam injects rows for the ``with`` block only."""
-    with enable_for_test("copy-passed/podman") as rows:
-        assert enabled_rows() == rows
-    assert enabled_rows() == ()
+    production = enabled_rows()
+    with enable_for_test("copy-passed/buildkit") as rows:
+        assert enabled_rows() == production + rows
+    assert enabled_rows() == production
 
 
 def test_seam_rejects_unknown_row() -> None:
@@ -94,38 +113,53 @@ def test_registry_unreachable_from_src() -> None:
 
 
 @pytest.mark.parametrize("kind", ["copy", "from"])
-def test_not_enabled_by_default(kind: str) -> None:
-    """Without the seam every matcher yields ``not_enabled``, even on text
+def test_ci_not_enabled_by_default(kind: str) -> None:
+    """Without the seam the CI matchers yield ``not_enabled``, even on text
     that would otherwise pass."""
-    local = match_local(kind, _COPY, _PODMAN_COPY_OK, "")  # type: ignore[arg-type]
     ci = match_ci(kind, _COPY, _BUILDKIT_COPY_OK)  # type: ignore[arg-type]
-    for outcome in (local, ci):
-        assert outcome == Outcome("not_enabled", (), "templates not enabled", None)
+    assert ci == Outcome("not_enabled", (), "templates not enabled", None)
+
+
+def test_local_enabled_by_default() -> None:
+    """The recording-backed local rows need no seam."""
+    outcome = match_local(
+        "copy", _COPY, _PODMAN_COPY_OK, "", dockerfile=_DOCKERFILE, tag=_TAG
+    )
+    assert outcome.evidence == "passed"
 
 
 def test_other_row_does_not_enable_kind() -> None:
-    """Enabling the COPY row leaves FROM and the CI side disabled."""
-    with enable_for_test("copy-passed/podman"):
-        assert match_local("from", _FROM, _PODMAN_COPY_OK, "").evidence == (
-            "not_enabled"
-        )
-        assert match_ci("copy", _COPY, _BUILDKIT_COPY_OK).evidence == "not_enabled"
+    """Enabling the CI COPY row leaves CI FROM disabled."""
+    with enable_for_test("copy-passed/buildkit"):
+        assert match_ci("from", _FROM, _BUILDKIT_FROM_OK).evidence == "not_enabled"
 
 
 def test_unknown_kind_is_not_enabled() -> None:
     """A kind outside the closed table never raises."""
     with enable_for_test():
-        outcome = match_local("run", _COPY, "", "")  # type: ignore[arg-type]
+        outcome = match_local(
+            "run",  # type: ignore[arg-type]
+            _COPY,
+            "",
+            "",
+            dockerfile=_DOCKERFILE,
+            tag=_TAG,
+        )
     assert outcome.evidence == "not_enabled"
 
 
 # COPY / Podman --------------------------------------------------------------
 
 
-def _local_copy(stdout: str, stderr: str = "", text: str = _COPY) -> Outcome:
-    """``match_local`` for COPY with the seam on."""
-    with enable_for_test("copy-passed/podman"):
-        return match_local("copy", text, stdout, stderr)
+def _local_copy(
+    stdout: str,
+    stderr: str = "",
+    text: str = _COPY,
+    dockerfile: bytes = _DOCKERFILE,
+    tag: str = _TAG,
+) -> Outcome:
+    """``match_local`` for COPY (a production row)."""
+    return match_local("copy", text, stdout, stderr, dockerfile=dockerfile, tag=tag)
 
 
 def test_podman_copy_synthetic_shape_passes() -> None:
@@ -135,7 +169,7 @@ def test_podman_copy_synthetic_shape_passes() -> None:
 
 def test_podman_copy_completion_passes() -> None:
     """A completion line after the last step of the sequence passes."""
-    stdout = f"STEP 2/2: {_COPY}\nSuccessfully tagged localhost/x:latest\n"
+    stdout = f"STEP 2/2: {_COPY}\nSuccessfully tagged {_TAG}:latest\n"
     assert _local_copy(stdout).evidence == "passed"
 
 
@@ -198,25 +232,345 @@ def test_podman_copy_unbindable_text(text: str) -> None:
     assert _local_copy(_PODMAN_COPY_OK, text=text).evidence == "binding_ambiguous"
 
 
-def test_podman_copy_stage_prefix_not_accepted() -> None:
-    """A ``[s/m]`` stage prefix is not assumed: the matcher is not widened."""
-    stdout = f"[1/2] STEP 2/3: {_COPY}\n[1/2] STEP 3/3: RUN x\n"
-    assert _local_copy(stdout).evidence == "not_confirmed"
+def test_podman_copy_prefixed_next_step_passes() -> None:
+    """``[i/n] STEP k/m`` followed by the same stage's ``k+1`` passes (l7)."""
+    stdout = f"[1/2] STEP 2/3: {_COPY}\n--> 1a2b\n[1/2] STEP 3/3: RUN x\n"
+    assert _local_copy(stdout) == Outcome("passed", (1, 3), None, None)
+
+
+def test_podman_copy_prefixed_next_step_of_other_stage() -> None:
+    """The same ``k+1/m`` under another stage prefix does not pass."""
+    stdout = f"[1/2] STEP 2/3: {_COPY}\n[2/2] STEP 3/3: RUN x\n"
+    outcome = _local_copy(stdout)
+    assert (outcome.evidence, outcome.detail) == (
+        "binding_ambiguous",
+        "next step not of this stage",
+    )
+
+
+def test_podman_copy_last_step_of_non_final_stage() -> None:
+    """k == m of a non-final stage: the next stage's start does not prove it."""
+    stdout = (
+        f"[1/2] STEP 3/3: {_COPY}\n--> 1a2b\n[2/2] STEP 1/2: FROM python:3.12-slim\n"
+    )
+    outcome = _local_copy(stdout)
+    assert (outcome.evidence, outcome.detail) == (
+        "binding_ambiguous",
+        "next stage start does not prove it",
+    )
+
+
+@pytest.mark.parametrize(
+    "done",
+    [f"[2/2] COMMIT {_TAG}", f"COMMIT {_TAG}", f"Successfully tagged {_TAG}:latest"],
+)
+def test_podman_copy_final_stage_own_tag_passes(done: str) -> None:
+    """After the final stage's last step, a completion naming the build's own
+    tag passes (a ``COMMIT`` carries the step's own prefix)."""
+    prefix = "[2/2] " if done.startswith("[") else ""
+    stdout = f"{prefix}STEP 3/3: {_COPY}\n{done}\n"
+    assert _local_copy(stdout).evidence == "passed"
+
+
+@pytest.mark.parametrize(
+    "done",
+    [
+        "COMMIT localhost/other",
+        "Successfully tagged localhost/other:latest",
+        f"Successfully tagged {_TAG}-2:latest",
+    ],
+)
+def test_podman_copy_foreign_tag_completion(done: str) -> None:
+    """A completion naming another tag does not count: binding ambiguous
+    (l2 prints a foreign ``Successfully tagged`` after its own)."""
+    outcome = _local_copy(f"STEP 3/3: {_COPY}\n{done}\n")
+    assert (outcome.evidence, outcome.detail) == (
+        "binding_ambiguous",
+        "completion of another tag",
+    )
+
+
+def test_podman_copy_explicit_tag_part_gets_no_latest() -> None:
+    """``:latest`` is added only to a tag with no explicit tag part."""
+    stdout = f"STEP 1/1: {_COPY}\nSuccessfully tagged localhost/x:v1:latest\n"
+    assert _local_copy(stdout, tag="localhost/x:v1").evidence == "binding_ambiguous"
+    stdout = f"STEP 1/1: {_COPY}\nSuccessfully tagged localhost/x:v1\n"
+    assert _local_copy(stdout, tag="localhost/x:v1").evidence == "passed"
+
+
+def test_podman_copy_empty_tag_binds_nothing() -> None:
+    """No tag given: no completion line can bind."""
+    stdout = f"STEP 1/1: {_COPY}\nSuccessfully tagged :latest\n"
+    assert _local_copy(stdout, tag="").evidence == "binding_ambiguous"
+
+
+def test_podman_copy_dockerfile_duplicate_ambiguous() -> None:
+    """An identical instruction elsewhere in the Dockerfile refuses before
+    any output is read, even when one step line would pass (l5)."""
+    dockerfile = f"FROM a AS x\n{_COPY}\nFROM b\n{_COPY}\n".encode()
+    outcome = _local_copy(_PODMAN_COPY_OK, dockerfile=dockerfile)
+    assert outcome == Outcome(
+        "binding_ambiguous",
+        (),
+        "Dockerfile: corrected instruction repeated at lines 2, 4",
+        None,
+    )
+
+
+def test_podman_copy_dockerfile_duplicate_as_r_reads() -> None:
+    """Instructions are compared as R reads them: keyword case, spacing and
+    continuations do not hide a duplicate."""
+    dockerfile = f"FROM a\n{_COPY}\ncopy  docs/setup.md \\\n  /app/docs/setup.md\n"
+    outcome = _local_copy(_PODMAN_COPY_OK, dockerfile=dockerfile.encode())
+    assert outcome.evidence == "binding_ambiguous"
+
+
+def test_podman_copy_absent_from_dockerfile() -> None:
+    """A corrected text that is no instruction of the Dockerfile cannot bind."""
+    outcome = _local_copy(_PODMAN_COPY_OK, dockerfile=b"FROM a\nRUN x\n")
+    assert (outcome.evidence, outcome.detail) == (
+        "binding_ambiguous",
+        "Dockerfile: corrected instruction absent",
+    )
+
+
+def test_i2_copy_continuation_twin_refused() -> None:
+    """Review I2: ``docs/a\\<newline>b`` reads ``docs/a b`` in R but prints
+    ``docs/ab`` in Podman; the whole-file reading check refuses it, so the
+    skipped stage's COPY cannot borrow the built one's line."""
+    text = "COPY docs/ab ./x"
+    dockerfile = (
+        b"FROM python:3.12-slim AS a\n"
+        b"COPY docs/ab ./x\n"
+        b"FROM python:3.12-slim AS b\n"
+        b"COPY docs/a\\\n"
+        b"b ./x\n"
+        b"RUN true\n"
+    )
+    stdout = "[2/2] STEP 2/3: COPY docs/ab ./x\n[2/2] STEP 3/3: RUN true\n"
+    outcome = _local_copy(stdout, text=text, dockerfile=dockerfile)
+    assert outcome.evidence == "binding_ambiguous"
+    assert outcome.detail is not None and "continuation" in outcome.detail
+
+
+_N_SPLIT = {"n1": b"RUN true # x<<EOF", "n2": b"RUN true \\\x0c"}
+
+
+@pytest.mark.parametrize("case", ["n1", "n2"])
+def test_n_copy_divergent_line_refused(case: str) -> None:
+    """Re-review N1/N2 (real Podman 5.7.0): Buildah reads the line as a plain
+    RUN, R as a heredoc or a continuation that swallows the built COPY; the
+    whole-file reading check refuses before any output is read."""
+    dockerfile = (
+        b"FROM python:3.12-slim AS a\nCOPY docs/ab ./x\nFROM python:3.12-slim AS b\n"
+        + _N_SPLIT[case]
+        + b"\nCOPY docs/ab ./x\nRUN true\n"
+    )
+    stdout = "[2/2] STEP 2/3: COPY docs/ab ./x\n[2/2] STEP 3/3: RUN true\n"
+    outcome = _local_copy(stdout, text="COPY docs/ab ./x", dockerfile=dockerfile)
+    assert outcome.evidence == "binding_ambiguous"
+    assert outcome.detail is not None and outcome.detail.startswith("Dockerfile: ")
+
+
+@pytest.mark.parametrize("case", ["n1", "n2"])
+def test_n_from_divergent_line_refused(case: str) -> None:
+    """The FROM variants of N1/N2: R hides the second FROM, Buildah builds it."""
+    text = "FROM python:3.12-slim"
+    dockerfile = (
+        text.encode() + b"\n" + _N_SPLIT[case] + b"\n" + text.encode() + b"\nRUN true\n"
+    )
+    stdout = f"[2/2] STEP 1/2: {text}\n[2/2] STEP 2/2: RUN true\n"
+    outcome = match_local("from", text, stdout, "", dockerfile=dockerfile, tag=_TAG)
+    assert outcome.evidence == "binding_ambiguous"
+    assert outcome.detail is not None and outcome.detail.startswith("Dockerfile: ")
+
+
+# Ruling O: the round-4 re-review repros (real Podman 5.7.0 builds). Buildah
+# reads the COPY/FROM in the second stage; R hides it (a lone CR taken as a
+# newline, a heredoc R does not open, a BOM hiding ``# escape=``). The other
+# delimiters Buildah opens and R does not (``<<"EOF"``, ``<<'EOF'``,
+# ``<<-"EOF"``, ``<<1EOF``) are in ``test_reading``'s gate cases.
+_O_COPY_SPLIT = {
+    "cr": b"RUN true \\\r \n",
+    "hd-space": b'RUN cat <<" "\nx \\\n \n',
+}
+_O_COPY_PREAMBLE = {
+    "bom-escape": b"\xef\xbb\xbf# escape=`\n",
+    "unknown-escape": b"# foo=bar\n# escape=`\n",
+}
+_O_COPY_IDS = [*_O_COPY_SPLIT, *_O_COPY_PREAMBLE]
+
+
+def _o_copy_dockerfile(case: str) -> bytes:
+    """The two-stage COPY repro for ``case``: stage ``a`` skipped."""
+    preamble = _O_COPY_PREAMBLE.get(case, b"")
+    split = _O_COPY_SPLIT.get(case, b"RUN true \\\n")
+    return (
+        preamble
+        + b"FROM python:3.12-slim AS a\nCOPY docs/ab ./x\nFROM python:3.12-slim AS b\n"
+        + split
+        + b"COPY docs/ab ./x\nRUN true\n"
+    )
+
+
+@pytest.mark.parametrize("case", _O_COPY_IDS, ids=_O_COPY_IDS)
+def test_o_copy_repro_refused(case: str) -> None:
+    """The strict-form gate refuses before any output is read."""
+    stdout = "[2/2] STEP 3/4: COPY docs/ab ./x\n[2/2] STEP 4/4: RUN true\n"
+    dockerfile = _o_copy_dockerfile(case)
+    outcome = _local_copy(stdout, text="COPY docs/ab ./x", dockerfile=dockerfile)
+    assert outcome.evidence == "binding_ambiguous"
+    assert outcome.detail is not None and outcome.detail.startswith("Dockerfile: ")
+    assert outcome.lines == ()
+
+
+_O_FROM = {
+    "cr": b"FROM python:3.12-slim\nRUN true \\\r \nFROM python:3.12-slim\nRUN true\n",
+    "hd-space": (
+        b'FROM python:3.12-slim\nRUN cat <<" "\nx \\\n \n'
+        b"FROM python:3.12-slim\nRUN true\n"
+    ),
+    "bom": (
+        b"\xef\xbb\xbfFROM python:3.12-slim\nRUN true\nFROM python:3.12-slim\n"
+        b"RUN true\nFROM python:3.13-slim\nCOPY --from=0 /etc/hostname /h\n"
+    ),
+}
+
+
+@pytest.mark.parametrize("case", list(_O_FROM), ids=list(_O_FROM))
+def test_o_from_repro_refused(case: str) -> None:
+    """The FROM variants: R sees one ``FROM python:3.12-slim``, Buildah two."""
+    text = "FROM python:3.12-slim"
+    stdout = f"[1/3] STEP 1/2: {text}\n[1/3] STEP 2/2: RUN true\n"
+    outcome = match_local("from", text, stdout, "", dockerfile=_O_FROM[case], tag=_TAG)
+    assert outcome.evidence == "binding_ambiguous"
+    assert outcome.detail is not None and outcome.detail.startswith("Dockerfile: ")
+
+
+def test_o_crlf_dockerfile_still_matches() -> None:
+    """CRLF endings pass the gate: the synthetic COPY shape still passes."""
+    dockerfile = _DOCKERFILE.replace(b"\n", b"\r\n")
+    assert _local_copy(_PODMAN_COPY_OK, dockerfile=dockerfile).evidence == "passed"
+
+
+@pytest.mark.parametrize(
+    "other", ['COPY "docs/setup.md" /app/docs/setup.md', "COPY $SRC /app/docs/setup.md"]
+)
+def test_j_copy_family_unmodelled_refused(other: str) -> None:
+    """Ruling J: any COPY/ADD with a quote or ``$`` makes uniqueness
+    unprovable."""
+    dockerfile = f"FROM a AS x\n{other}\nFROM b\n{_COPY}\n".encode()
+    outcome = _local_copy(_PODMAN_COPY_OK, dockerfile=dockerfile)
+    assert outcome.evidence == "binding_ambiguous"
+    assert outcome.detail is not None and "unprovable" in outcome.detail
+
+
+def test_podman_copy_escape_directive_unread() -> None:
+    """A non-default escape directive: the split is untrusted."""
+    dockerfile = b"# escape=`\n" + _DOCKERFILE
+    assert _local_copy(_PODMAN_COPY_OK, dockerfile=dockerfile).evidence == (
+        "binding_ambiguous"
+    )
 
 
 # FROM / Podman --------------------------------------------------------------
 
 
-def _local_from(stdout: str, stderr: str = "") -> Outcome:
-    """``match_local`` for FROM with the seam on."""
-    with enable_for_test("from-parsed/podman"):
-        return match_local("from", _FROM, stdout, stderr)
+def _local_from(
+    stdout: str, stderr: str = "", dockerfile: bytes = _DOCKERFILE
+) -> Outcome:
+    """``match_local`` for FROM (a production row)."""
+    return match_local("from", _FROM, stdout, stderr, dockerfile=dockerfile, tag=_TAG)
 
 
-def test_podman_from_synthetic_shape_passes() -> None:
-    """Any build-stage step and no parse error (file-wide, no text binding)."""
+@pytest.mark.parametrize("prefix", ["", "[2/2] "])
+def test_podman_from_own_step_line_passes(prefix: str) -> None:
+    """The corrected FROM's own ``STEP 1/m`` line, prefixed or not; no next
+    marker needed."""
+    assert _local_from(f"{prefix}STEP 1/2: {_FROM}\n") == Outcome(
+        "passed", (1,), None, None
+    )
+
+
+def test_podman_from_other_step_is_not_evidence() -> None:
+    """The old file-wide rule is gone: another stage's step proves nothing
+    about the corrected FROM (l9)."""
     stdout = "STEP 1/2: FROM python:3.12-slim\nSTEP 2/2: RUN x\n"
-    assert _local_from(stdout) == Outcome("passed", (1,), None, None)
+    outcome = _local_from(stdout)
+    assert (outcome.evidence, outcome.detail) == (
+        "not_confirmed",
+        "corrected step line absent",
+    )
+
+
+def test_podman_from_step_repeated_or_not_first() -> None:
+    """Twice → ambiguous; not step 1 → ambiguous."""
+    twice = f"STEP 1/2: {_FROM}\nSTEP 1/2: {_FROM}\n"
+    assert _local_from(twice).evidence == "binding_ambiguous"
+    assert _local_from(f"STEP 2/2: {_FROM}\n").evidence == "binding_ambiguous"
+
+
+def test_podman_from_step_bound_error() -> None:
+    """An error bound to the FROM step → not confirmed."""
+    stderr = f'Error: building at STEP "{_FROM}": pull access denied\n'
+    outcome = _local_from(f"STEP 1/2: {_FROM}\n", stderr)
+    assert (outcome.evidence, outcome.detail) == (
+        "not_confirmed",
+        "stderr: step-bound error",
+    )
+
+
+@pytest.mark.parametrize(
+    "built", ["FROM ${BASE}", 'FROM "python:3.12-slim"'], ids=["arg", "quoted"]
+)
+def test_i1_skipped_from_beside_rebuilt_twin(built: str) -> None:
+    """Review I1: the corrected FROM sits in a skipped stage; another FROM
+    that Podman prints rebuilt as the same line must not confirm it."""
+    text = "FROM python:3.12-slim"
+    dockerfile = (
+        f"ARG BASE=python:3.12-slim\n{text}\nRUN true\n{built}\nRUN true\n"
+    ).encode()
+    stdout = f"[2/2] STEP 1/2: {text}\n[2/2] STEP 2/2: RUN true\n"
+    outcome = match_local("from", text, stdout, "", dockerfile=dockerfile, tag=_TAG)
+    assert outcome.evidence == "binding_ambiguous"
+    assert outcome.detail is not None and "unprovable" in outcome.detail
+
+
+def test_from_display_twin_refused() -> None:
+    """FROMs differing only in ``as``/name case print the same line."""
+    dockerfile = f"{_FROM}\nRUN x\nFROM python:3.12-slim as EXTRA\n".encode()
+    outcome = _local_from(f"STEP 1/2: {_FROM}\n", dockerfile=dockerfile)
+    assert outcome.evidence == "binding_ambiguous"
+
+
+def test_from_numeric_stage_name_refused() -> None:
+    """Podman drops a numeric ``AS <n>`` from the printed line."""
+    dockerfile = f"{_FROM}\nRUN x\nFROM python:3.12-slim AS 0\n".encode()
+    outcome = _local_from(f"STEP 1/2: {_FROM}\n", dockerfile=dockerfile)
+    assert outcome.evidence == "binding_ambiguous"
+
+
+def test_from_flag_other_than_platform_refused() -> None:
+    """Only ``--platform=`` has a recorded display; any other FROM flag makes
+    uniqueness unprovable (#99 review)."""
+    dockerfile = f"{_FROM}\nRUN x\nFROM --foo=bar python:3.12-slim\n".encode()
+    outcome = _local_from(f"STEP 1/2: {_FROM}\n", dockerfile=dockerfile)
+    assert outcome.evidence == "binding_ambiguous"
+    assert "--platform=" in (outcome.detail or "")
+
+
+def test_from_platform_flag_still_read() -> None:
+    """``--platform=`` on another FROM is modelled: no refusal on that ground."""
+    dockerfile = f"{_FROM}\nRUN x\nFROM --platform=linux/amd64 busybox:1\n".encode()
+    outcome = _local_from(f"STEP 1/2: {_FROM}\n", dockerfile=dockerfile)
+    assert "flag other than" not in (outcome.detail or "")
+
+
+def test_podman_from_dockerfile_duplicate() -> None:
+    """Two identical FROMs: ambiguous before the output is read."""
+    dockerfile = f"{_FROM}\nRUN x\n{_FROM}\nRUN y\n".encode()
+    outcome = _local_from(f"[2/2] STEP 1/2: {_FROM}\n", dockerfile=dockerfile)
+    assert outcome.evidence == "binding_ambiguous"
 
 
 def test_podman_from_no_step() -> None:
@@ -233,7 +587,7 @@ def test_podman_from_no_step() -> None:
 )
 def test_podman_from_parse_error(stderr: str) -> None:
     """A parse error anywhere refutes the parse, whatever steps started."""
-    outcome = _local_from("STEP 1/2: FROM python:3.12-slim\n", stderr)
+    outcome = _local_from(f"STEP 1/2: {_FROM}\n", stderr)
     assert outcome.evidence == "not_confirmed"
     assert outcome.lines == (1,)
 
@@ -367,8 +721,22 @@ def test_matchers_never_raise(text: str, kind: str) -> None:
     """Any text, as corrected text or output, yields an ``Outcome``."""
     with enable_for_test():
         results = [
-            match_local(kind, text, text, text),  # type: ignore[arg-type]
-            match_local(kind, _COPY, text, text),  # type: ignore[arg-type]
+            match_local(
+                kind,  # type: ignore[arg-type]
+                text,
+                text,
+                text,
+                dockerfile=text.encode(),
+                tag=text,
+            ),
+            match_local(
+                kind,  # type: ignore[arg-type]
+                _COPY,
+                text,
+                text,
+                dockerfile=text.encode(),
+                tag=_TAG,
+            ),
             match_ci(kind, text, text),  # type: ignore[arg-type]
             match_ci(kind, _COPY, text),  # type: ignore[arg-type]
         ]

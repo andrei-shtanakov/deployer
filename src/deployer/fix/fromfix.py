@@ -20,7 +20,12 @@ from typing import Literal
 
 from deployer.admission.prepare import _as_r_reads
 from deployer.fix.binding import Bound
-from deployer.fix.reading import comment_reason, join_reason, keyword_reason
+from deployer.fix.reading import (
+    comment_reason,
+    join_reason,
+    keyword_reason,
+    strict_form_reason,
+)
 from deployer.reproduce.dockerfile import ParsedDockerfile, parse, unread_reason
 
 # The BuildKit ∩ Buildah stage-name grammar, matched against the raw token
@@ -124,6 +129,9 @@ def propose_from(
     ``dockerfile`` is the raw bytes ``parsed`` was read from, checked for
     continuations the builders would join differently from R.
     """
+    strict = strict_form_reason(dockerfile)
+    if strict is not None:
+        return strict
     instruction = bound.instruction
     unread = unread_reason(parsed)
     if unread is not None:

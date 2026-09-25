@@ -96,28 +96,22 @@ paragraph.
   and commit, `fix.json`, `deployer fix`/`fix publish` with templates disabled (PRs
   F1a–F1c, #90–#93), the derived run-1 fix-bundle data (F1d, #94, owner review), and
   reading CI runs, qualification and `deployer fix confirm` with templates disabled (F2,
-  #95). Still open: every template row stays disabled until its recording lands
-  (§9), so `locally_confirmed`, publication and `ci_confirmed` are unreachable in
-  practice — see the gated follow-ups below — and stage 5's end-to-end acceptance has
-  not run.
-- [ ] L-recordings: real local Podman builds backing the fix's local template rows @owner:github:andrei-shtanakov @id:fix-l-recordings @trigger:"owner permits real local recording runs" @epic:eco.dark-factory
-  Design §9: run-1 and run-5's corrected Dockerfiles, plus a bad FROM in a later stage,
-  several stages on the same image, and a later failure after the corrected COPY. A
-  template row is enabled only together with the test that checks it against its real
-  recording. Without these no `locally_confirmed` and no publication — `deployer fix`
-  stops at `no local confirmation: templates not enabled`.
+  #95). Stage 3 is shipped: the L-recordings (#97) back the two local rows, which are
+  enabled (F3b), so `locally_confirmed` and publication are reachable. Still open: the
+  CI rows stay disabled until the C-recordings back them (§9), so `ci_confirmed` is
+  unreachable in practice — see the gated follow-up below — and stage 5's end-to-end
+  acceptance has not run.
 - [ ] C-recordings: real CI `push` runs of fix commits on the polygon repository, backing the CI template rows @owner:github:andrei-shtanakov @id:fix-c-recordings @trigger:"owner permits real CI recording runs" @epic:eco.dark-factory
   Design §9: successful BuildKit forms (the COPY header + `DONE`, `CACHED`, the FROM
   stage header), a run with a later independent failure, and a re-run. Without these a
   published proposal is never CI-confirmed — `deployer fix confirm` reports
   `ci_confirmation_insufficient: templates not enabled`.
-- [ ] End-to-end acceptance of `ci-fix-authoring` and closing the item (design §11 stage 5) @owner:repo:deployer @id:ci-fix-authoring-e2e-acceptance @blocked_by:todo://deployer/fix-l-recordings @epic:eco.dark-factory
-  Needs both recording classes enabled first: a real local proof through the L-recording
-  rows and a real CI confirmation through the C-recording rows, then the acceptance run
-  itself. It is also blocked by `fix-c-recordings` (the C-recordings item above): Robin
-  keeps only one blocker tag per item, so the tag names the local stage, which comes
-  first. `ci-fix-authoring` stays open until this closes it (design §11: "the item stays
-  open until stage 5").
+- [ ] End-to-end acceptance of `ci-fix-authoring` and closing the item (design §11 stage 5) @owner:repo:deployer @id:ci-fix-authoring-e2e-acceptance @blocked_by:todo://deployer/fix-c-recordings @epic:eco.dark-factory
+  Needs both recording classes enabled first: the L-recording rows are enabled (F3b), so
+  a real local proof can run; the C-recording rows are not, so a real CI confirmation
+  cannot yet, and the tag now names that stage (`fix-l-recordings` is shipped). Then the
+  acceptance run itself. `ci-fix-authoring` stays open until this closes it (design §11:
+  "the item stays open until stage 5").
 - [ ] `fix confirm` has no lock: two concurrent confirms can drop an appended attempt @id:fix-confirm-concurrent-lock @epic:eco.dark-factory
   `fix/confirm.py` loads `fix.json`, appends one attempt to `ci_attempts` and saves —
   read-modify-write with no lock. Two `deployer fix confirm` runs racing on the same
@@ -261,6 +255,14 @@ them is the next thing to pick up.
 
 ## Shipped
 
+- [x] L-recordings: real local Podman builds backing the fix's local template rows @owner:github:andrei-shtanakov @id:fix-l-recordings @epic:eco.dark-factory
+  Design §9, §11 stage 3. Recorded by the owner's permission 2026-09-25 (#97: `l1`–`l9`,
+  Podman 5.7.0 / Buildah 1.42.0) with the pinned Buildah reading
+  `docs/fix-buildah-from-parse.md`. The two local rows (COPY/ADD, FROM) are enabled on
+  them (F3b): the matchers read Podman's `[i/n] ` stage prefix, require the corrected
+  instruction once in the Dockerfile, bind a completion only to the build's own tag, and
+  FROM's evidence is its own step line — the file-wide rule is withdrawn, refuted by
+  `l9` (design §6.3). `deployer fix` now reaches `locally_confirmed`.
 - [x] Owner question: should other failed reproduction findings veto admission? @owner:github:andrei-shtanakov @id:admission-other-findings-veto @epic:eco.dark-factory
   Decided by the owner 2026-09-25: no general veto. Another failed finding blocks
   admission only when it refutes the proof of the chosen defect (today: the other failed

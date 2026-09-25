@@ -180,6 +180,22 @@ runs, and a matcher separately binds a real diagnostic to the corrected instruct
 
 ## 4. The proposal
 
+**Strict form, file-wide, first** (stage 3 ruling, 2026-09-25). Our Dockerfile reader
+and Buildah split instructions differently on some inputs; review rounds of stage 3
+reproduced such divergences on real Podman builds (a heredoc opener, a form feed or a
+lone `\r` after a line-ending `\`, quoted heredoc delimiters, a BOM before
+`# escape=`), and each let an instruction hide from our reader. Rather than patching
+divergences one by one, one allow-list gate (`fix/reading.py::strict_form_reason`) runs
+on the whole Dockerfile before anything else in the COPY envelope (§4.1), the FROM
+transformations (§4.2) and the local matchers (§6.3). It refuses: a BOM; bytes that are
+not UTF-8; line endings other than `\n` / `\r\n` (any other `\r`); control characters
+other than tab and vertical whitespace (`\x0b`, `\x0c`, `\x1c`–`\x1f`, `\x85`,
+U+2028, U+2029); `<<` anywhere, comments and quotes included; any parser directive
+(`# <word>=` before the first instruction, `# syntax=` included); and anything but
+spaces or tabs after a line-ending `\`. A refusal is `fix method not established` in
+§4.1, no proposal in §4.2 and `binding ambiguous` in §6.3. This narrows coverage on
+purpose; a rule is loosened only with a recording that shows both readers agree.
+
 ### 4.1 `missing_copy_source` — the model proposes, a closed envelope admits
 
 **Envelope** (deterministic; any failure → `stopped: fix method not established` with
@@ -407,31 +423,75 @@ local Podman run on both sides and are not part of it.
 
 ### 6.3 Local positive evidence — closed, recording-backed
 
-A closed table of local "passed" templates (Podman). Until real recordings back a row,
-the row is a **hypothesis** and is disabled; a disabled row yields `no local confirmation:
-templates not enabled`.
+A closed table of local "passed" templates (Podman). A row is enabled only with the
+recording that backs it (§9); a disabled row yields `no local confirmation: templates not
+enabled`. Both local rows are backed by the L-recordings
+(`tests/fixtures/recordings/local`, Podman 5.7.0 / Buildah 1.42.0) and by the pinned
+Buildah reading in `docs/fix-buildah-from-parse.md`, and are enabled (owner, 2026-09-25).
 
-- **COPY/ADD (hypothesis):** the step line carrying the corrected instruction's exact
-  text, exactly once. A `STEP` line only proves the step **started**. Passing it needs the
-  next step of the **same stage and sequence**, or the build's completion, bound
-  unambiguously; the stage boundary is not guessed from `k/n`. An error bound to the step
-  itself → not confirmed.
-- **FROM (hypothesis):** evidence that the Dockerfile was **parsed** — a build-stage step
-  exists and no parse error — removes the diagnosed argument-count error. This rests on the
-  builder parsing the whole instruction list before building stages: established for
-  BuildKit (its instruction parse precedes stage construction); for Podman it is settled
-  in stage 3 by reading Buildah's parse path at the pinned version **and** by recordings
-  that include a bad FROM in a later stage. Loading the Dockerfile, the context or a
-  frontend is not such evidence. Parsing and pulling the image are distinct: a later
-  image-pull failure of the same FROM does not refute the parse result, is recorded
-  explicitly, and is not called "a failure of another instruction".
-- The FROM parse evidence is file-wide and needs **no** binding of a step line to the
-  corrected FROM. Text binding matters only for the optional image-pull record: if the
-  builder drops `AS` or normalises the reference so that a pull line cannot be bound to
-  the corrected FROM unambiguously, the pull result is not recorded — this never affects
-  the parse evidence. For COPY/ADD, a step line the closed template cannot bind to the
-  instruction unambiguously → `binding ambiguous`. No support for such forms is promised
-  before recordings; the matcher is not widened by assumption.
+What the recordings and the reading show, and every rule below relies on:
+
+- Podman checks each stage's FROM when the stage starts, not in a whole-file pass, and
+  prints the stage's FROM step line only **after** that check passed (note steps 5–6;
+  `l8`). This holds for FROM only: a COPY/ADD step line is printed **before** the step
+  runs, so it proves only that the step started.
+- Podman prints the FROM line **rebuilt** for display (Buildah `stage_executor.go`
+  `prepare`: the base after ARG/env expansion with quotes removed, `--platform=` in
+  front, ` AS <name>` only for a non-numeric name); COPY/ADD step lines print the
+  instruction as written.
+- A stage nothing depends on is **skipped**: none of its instructions runs and none of
+  its step lines is printed (`l5`, `l9`). A skipped stage's instruction is therefore
+  never confirmed: its step line is absent → not confirmed.
+- In a file with more than one stage every step line carries an `[i/n] ` prefix
+  (`[2/2] STEP 3/4: COPY …`, `[2/2] COMMIT <tag>`); `n` counts every stage, skipped ones
+  included (`l5`, `l7`). The matchers read the prefixed form and the unprefixed one.
+- **Uniqueness in the Dockerfile, first.** The corrected instruction's text must occur
+  exactly once among the corrected Dockerfile's instructions, compared as the rest of the
+  fix compares them (A's `_as_r_reads`, R's `dockerfile.parse`, `Instruction.text`; a FROM
+  by its rebuilt display form); otherwise → `binding ambiguous`, decided before any output
+  is read. That comparison is sound only in the modelled form, so it is refused
+  (`binding ambiguous`) when the whole corrected Dockerfile fails the fix-wide reading
+  checks (`fix/reading.py`: the strict form of §4, a continuation without a preceding blank, a keyword not
+  separated by a space, a comment inside a continuation, an unmodelled escape
+  directive), or when any instruction of the kind's family (FROM; COPY and ADD) holds
+  `$`, a quote or a backslash, is a COPY/ADD heredoc or JSON form, or is a FROM with a
+  numeric stage name. A skipped identical
+  instruction prints nothing, so it must never make the one printed line look unique:
+  `l5` has the identical COPY in a skipped and a built stage and prints one step line;
+  `l7` builds both and prints two.
+
+- **COPY/ADD:** the step line carrying the corrected instruction's exact text, prefixed
+  or not, exactly once across all stages (else `binding ambiguous`). A `STEP` line only
+  proves the step **started**. It passes only if the next marker is the **same stage's**
+  `STEP k+1/m`. After the last step (`k == m`) of the **final** stage, the build's
+  completion counts, and only bound to the build's own tag (the one the build was given,
+  `localhost/deployer-fix-<fix_id>`): `COMMIT <tag>` with the stage's prefix, or
+  `Successfully tagged <tag>` — `<tag>:latest` when the tag has no explicit tag part. A
+  completion naming another tag does not count (`l2` prints one) → `binding ambiguous`.
+  The last step of a **non-final** stage stays `binding ambiguous`: the next stage's
+  start does not prove it. An error bound to the step itself
+  (`Error: building at STEP "<text>"`) → not confirmed.
+- **FROM:** the evidence is the corrected FROM's **own** step line,
+  `STEP 1/m: <corrected FROM text>` (prefixed or not), exactly once. It needs no next
+  marker: Buildah prints it only after the stage's FROM check passed (note step 6). Any
+  Podman parse error in either stream, or an error bound to that step, → not confirmed.
+  The earlier file-wide rule ("a build-stage step exists and no parse error") is
+  withdrawn for Podman: `l9` exits 0 with the bad FROM still in the file, in a skipped
+  stage; `l8` builds an earlier stage and then fails the bad FROM when its stage starts.
+  Loading the Dockerfile or the context is not evidence. Parsing and pulling the image are
+  distinct: a later image-pull failure of the same FROM does not refute the step line, is
+  recorded explicitly, and is not called "a failure of another instruction". The optional
+  image-pull record needs a pull line bound to the corrected FROM unambiguously; if the
+  builder normalises the reference so that none binds, the pull result is not recorded —
+  this never affects the FROM evidence.
+- A step line the closed template cannot bind to the instruction unambiguously →
+  `binding ambiguous`. Forms the recordings do not show are not supported; the matcher is
+  not widened by assumption.
+
+BuildKit (§7.3) is unchanged: its FROM evidence stays file-wide. The C-recording
+`c8-from-bad-in-skipped-stage` (PR #98, C-recordings) confirmed
+BuildKit's whole-file parse: a bad FROM in a stage nothing depends on fails before any
+stage, unlike Podman's `l9`.
 
 ### 6.4 Later failures
 
@@ -643,10 +703,11 @@ C-recordings a published proposal is never CI-confirmed.
 
 ## 10. Acceptance — offline
 
-**Test seam.** Until recordings exist no production row is enabled, so the happy path is
-unreachable in production. Tests reach it by injecting an **enabled synthetic row**
-through a test-only registry (not reachable from the CLI or configuration); the test that
-no production row is enabled without a recording (§9) guards the seam.
+**Test seam.** A production row is enabled only with its recording (§9): the two local
+rows are, on the L-recordings; the CI rows are not, so the CI happy path is unreachable in
+production. Tests reach a disabled row by injecting an **enabled synthetic row** through a
+test-only registry (not reachable from the CLI or configuration); the test that no
+production row is enabled without a recording (§9) guards the seam.
 
 - **D (decision):** pure parts with hand-built inputs, one targeted mutation per case:
   - §3.1 binding: zero/several instruction matches; a failed cross-check; the link
@@ -677,8 +738,12 @@ no production row is enabled without a recording (§9) guards the seam.
     `docs/setup.md` (data, §11 stage 1b); and a case with two same-basename candidates →
     `fix method not established`.
 
-  Without the seam, P tests end at the expected refusals `no local confirmation:
-  templates not enabled` and `templates not enabled` — asserted outcomes, not skips.
+  Without the seam, the local side runs on the enabled, recording-backed rows: P tests
+  whose faked build prints the passing local template (the corrected instruction's step
+  line, then the same stage's next step) end at `locally_confirmed`, and those whose
+  output does not end at `no local confirmation: <the matcher's reason>`. The CI side
+  still ends at the expected refusal `templates not enabled` — asserted outcomes, not
+  skips.
 - **G (real local Git, offline — no model, no container builds):** the worktree leaves the
   user's checkout untouched; the commit contains exactly the §3 paths and change types; an
   extra changed file is refused by the full-diff check; a fix directory inside the clone

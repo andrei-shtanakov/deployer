@@ -242,6 +242,7 @@ def _prove(
         fix_tag(fix_id),
         build_timeout,
         kind,
+        corrected,
         _corrected_text(corrected, bound),
     )
 
@@ -345,9 +346,11 @@ def _build_and_match(
     tag: str,
     timeout: int,
     kind: templates.Kind,
+    corrected: bytes,
     corrected_text: str,
 ) -> str | None:
-    """Build, record the build and its cleanup as R does, read the template."""
+    """Build, record the build and its cleanup as R does, read the template
+    against the corrected bytes written and the build's own ``tag``."""
     run = build_mod.run_build(rt, context, build, tag, timeout)
     draft.build.update(
         argv=_relative_argv(run.argv, fix_dir),
@@ -365,7 +368,9 @@ def _build_and_match(
         return "the build timed out"
     if run.launch_error is not None:
         return f"the build did not run: {run.launch_error}"
-    outcome = templates.match_local(kind, corrected_text, run.stdout, run.stderr)
+    outcome = templates.match_local(
+        kind, corrected_text, run.stdout, run.stderr, dockerfile=corrected, tag=tag
+    )
     draft.evidence.append(_evidence(kind, corrected_text, outcome))
     if outcome.evidence != "passed":
         return outcome.detail or outcome.evidence
