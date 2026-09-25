@@ -355,7 +355,13 @@ _PATHOLOGICAL = [
 ]
 
 
-@pytest.mark.parametrize("text", _PATHOLOGICAL)
+@pytest.mark.parametrize(
+    "text",
+    _PATHOLOGICAL,
+    # Short ids: the inputs are huge or hold NUL bytes, which must not end up
+    # in node ids, PYTEST_CURRENT_TEST or CI logs.
+    ids=[f"case{index}" for index in range(len(_PATHOLOGICAL))],
+)
 @pytest.mark.parametrize("kind", ["copy", "from"])
 def test_matchers_never_raise(text: str, kind: str) -> None:
     """Any text, as corrected text or output, yields an ``Outcome``."""

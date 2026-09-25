@@ -494,7 +494,14 @@ def test_gate_turns_an_unreadable_try_dir_into_a_reason(scenario: Scenario) -> N
     assert isinstance(reason, str)
 
 
-@pytest.mark.parametrize("data", [b"[1,2]", b"null", b"[" * 200_000 + b"]" * 200_000])
+@pytest.mark.parametrize(
+    "data",
+    [b"[1,2]", b"null", b"[" * 200_000 + b"]" * 200_000],
+    # Short ids: pytest exports the node id in PYTEST_CURRENT_TEST, and Linux
+    # caps one environment string at 128 KiB, so a 400 KB id breaks every
+    # subprocess the fixture starts (E2BIG) on CI.
+    ids=["array", "null", "deeply-nested"],
+)
 def test_recheck_refuses_a_non_object_verdict(scenario: Scenario, data: bytes) -> None:
     """Totality: an array, ``null`` or a pathologically nested verdict is a
     reason, not a raise."""
