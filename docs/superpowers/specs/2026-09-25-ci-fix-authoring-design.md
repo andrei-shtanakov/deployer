@@ -1,8 +1,11 @@
 # CI fix authoring — design ("remove exactly the admitted defect")
 
-**Status:** DRAFT rev 1. Designed with the owner on 2026-09-25 (six sections, each
-approved with refinements). Next: a targeted consistency review, then the owner's
-review, then a plan. No code exists for this design.
+**Status:** DRAFT rev 2. Designed with the owner on 2026-09-25 (six sections, each
+approved with refinements); revised after the targeted consistency review of rev 1 at
+`648603d` (`../../../../_cowork_output/deployer-fix-authoring-spec-review-2026-09-25.md`,
+a dev-only workspace file; 7 must-fix, 19 should-fix, 7 minor — every point is resolved
+in this text, choices marked **[choice]** are the author's and await the owner's
+confirmation). Next: the owner's review, then a plan. No code exists for this design.
 **Item:** `todo://deployer/ci-fix-authoring`.
 **Base:** `master` @ `2417a9d` — the admission stack #84–#89. Cited specs:
 `docs/superpowers/specs/2026-09-24-ci-failure-admission-design.md` as **A** and
@@ -18,8 +21,8 @@ prove it in two separate stages:
 1. **Locally**, before any publication: the diagnosed defect's check passes for the
    corrected instruction and a local build shows positive evidence of passing that
    place.
-2. **In CI**, after publication: a real run on the exact fix commit carries positive
-   evidence of passing the corrected place.
+2. **In CI**, after publication: real runs on the exact fix commit carry positive
+   evidence of passing the corrected place, and no qualifying attempt contradicts it.
 
 Three claims are kept apart and never merged:
 
@@ -27,9 +30,10 @@ Three claims are kept apart and never merged:
   proves the corresponding place is passed.
 - **Fix proposed** — a PR is published with the local evidence; CI confirmation is
   awaited.
-- **Defect removal confirmed in CI** — a run on the exact fix commit, executing the
-  required build, carries positive evidence of passing the corrected place. A later
-  independent failure does not cancel it.
+- **Defect removal confirmed in CI** — among the qualifying attempts on the exact fix
+  commit, at least one carries positive evidence of passing the corrected place and none
+  shows the diagnosed defect again (§7.4). A later independent failure does not cancel
+  it.
 
 Successful L1/L2 of the artifact on its own is none of these. The absence of the old
 finding is not evidence either: a run that failed earlier, skipped the build or printed
@@ -52,82 +56,124 @@ run is cleared (owner decision, 2026-09-25).
 - `pull_request` runs as CI evidence; merge or squash commits as evidence for the fix
   commit (§7.2).
 - Proximity heuristics for choosing a replacement source (edit distance etc.).
-- Live or paid runs as part of this design's acceptance of the code stages. Recordings
-  (§9) each need the owner's separate permission.
+- Live or paid runs as part of the acceptance of the code stages. Recordings (§9) each
+  need the owner's separate permission.
+- A Docker local backend for the proof in this slice (§6.1).
 
 ## 1. Statuses and results
 
-`status` is the **reached** state; `last_operation` is the result of the latest
-command. They are stored separately (§8).
+`status` is the **reached** state; `last_operation` is the outcome of the latest command
+(its name, time, result and reason). They are stored separately (§8.1).
 
 | `status` | Meaning |
 |---|---|
+| `in_progress` | `deployer fix` started; a checkpoint was saved, no final state yet |
 | `stopped` (with `reason`) | No fix: see §1.1 |
-| `locally_confirmed` | §6 passed, commit prepared in the fix worktree (§5) |
+| `locally_confirmed` | §6 passed and the commit was created in the fix worktree (§5) |
 | `fix_proposed` | branch pushed, PR created or found (§8.3) |
-| `ci_confirmed` | the current confirmation evaluation (§7) is positive |
+| `ci_confirmed` | the **latest** confirmation attempt (§7.4) was positive |
 
-Transitions: `locally_confirmed → fix_proposed` only by `fix publish`;
-`fix_proposed ↔ ci_confirmed` only by `fix confirm`. A failed publication leaves
-`locally_confirmed`. A confirmation attempt that finds a contradiction takes a current
-`ci_confirmed` back to `fix_proposed`; the earlier positive evidence stays in the
-history (§7.5). `ci_confirmation_insufficient` is a `last_operation` outcome, never a
-`status`.
+Transitions:
 
-### 1.1 Stop reasons (top level)
+- `in_progress → stopped | locally_confirmed` — only by `deployer fix`. A document left in
+  `in_progress` (a crash) is never resumed: a new `deployer fix` starts a new fix
+  directory (§5.1); the old one stays as evidence.
+- `locally_confirmed → fix_proposed` — only by `fix publish`. Any refusal of
+  `fix publish` (§8.3) leaves the status unchanged and is recorded in `last_operation`.
+- `fix_proposed ↔ ci_confirmed` — only by `fix confirm`. **[choice]** The status mirrors
+  the latest attempt: a positive attempt sets `ci_confirmed`; any other outcome
+  (insufficient, contradictory, defect recurred) sets `fix_proposed`. Earlier positive
+  evidence stays in `ci_attempts[]` (§7.5); a later check may change the current
+  conclusion but never erases evidence.
+- `fix publish` on `fix_proposed`/`ci_confirmed` re-verifies and returns the existing
+  branch and PR (idempotent, §8.3). `fix confirm` on `in_progress`, `stopped` or
+  `locally_confirmed` refuses (nothing is published).
 
-- `no admission` — `accept_for_fix` did not return `Accepted`, or the clone does not
-  match the target (§2).
-- `fix method not established` — the COPY/ADD envelope or the model's answer did not
-  single out one replacement (§4), with the concrete explanation (no eligible
-  candidate; basename ambiguity; several plausible candidates; malformed answer).
+`ci_confirmation_insufficient` is a `last_operation` outcome, never a `status`.
+
+### 1.1 Stop reasons (top level, `deployer fix` only)
+
+- `no admission` — the clone does not match the target, `accept_for_fix` did not return
+  `Accepted`, or the current trust set does not confirm ownership (§2).
+- `fix method not established` — the instruction could not be bound (§3.1), or the
+  COPY/ADD envelope or the model's answer did not single out one replacement (§4.1),
+  with the concrete explanation.
 - `no proposal` — FROM outside F1/F2 (§4.2).
-- `no local confirmation` — §6 did not produce positive evidence, including "templates
-  not enabled".
-- `publication blocked` — a precondition of the commit failed (§5.3): issuing the new
-  provenance set, an ignore-file edit it would need, the full-diff check.
+- `no local confirmation` — §6 did not produce positive evidence, including
+  "templates not enabled" and "local backend differs from R's".
+- `commit blocked` — a precondition of the commit failed (§5.2–§5.3): exclusion that
+  would need an ignore-file edit, no signing key, an issuing failure, the full-diff
+  check.
 
 ## 2. The gate
 
 Input: the 1.3 verdict document, its try dir, and a local clone of the project.
 
 1. The clone is checked **as a whole**: a Git checkout at its repository root with an
-   `origin`, and a **clean** working tree (staged, unstaged and untracked, as A's
-   provenance preflight does). Equality of `HEAD` and of the Dockerfile bytes is not
-   enough on its own.
-2. The target is derived from the clone: `repo` from `origin`, `head_sha` = `HEAD`,
+   `origin`, `HEAD` = the admission `binding.head_sha`, and a **clean** working tree
+   (staged, unstaged and untracked, as A's provenance preflight does). Equality of `HEAD`
+   and of the Dockerfile bytes is not enough on its own.
+2. The fix directory (§5.1) and the worktree must lie **outside** the clone; otherwise
+   exit `2` (invalid invocation) — a worktree inside the clone would make it dirty.
+3. The target is derived from the clone: `repo` from `origin`, `head_sha` = `HEAD`,
    `artifact_path` from the admission binding, `artifact_sha256` over the clone's
-   Dockerfile bytes.
-3. `accept_for_fix(document, try_dir, target)` (A §7). Anything but `Accepted` →
+   Dockerfile bytes. In practice `admitted` implies `artifact_path == "Dockerfile"` at
+   the repository root (A's `issue` fixes the path and ownership step 4 requires the
+   record's path to equal the run's); the comparison inside `accept_for_fix` is kept as
+   a guard.
+4. `accept_for_fix(document, try_dir, target)` (A §7). Anything but `Accepted` →
    `stopped: no admission`.
+5. **Trust re-check.** `accept_for_fix` checks the document's shape and evidence, not the
+   trust set. Ownership is therefore re-verified with A's `verify_ownership` over R's
+   restored `source/`, with the **current** trust directory and `checked_roots` covering
+   the clone, the fix worktree and the fix directory. Not `confirmed` →
+   `stopped: no admission`. The same two checks run again in `fix publish` (§8.3); a key
+   revoked between admission and publication blocks it.
 
-Fix authoring never re-derives admission and never works on a clone state other than
-the admitted one.
+Fix authoring never re-derives admission from logs and never works on a clone state other
+than the admitted one.
 
 ## 3. Allowed change
 
 Exactly:
 
 - **one instruction** of the admitted Dockerfile (`binding.artifact_path`), and
-- the **provenance set** under `.deployer/authoring/` re-issued for the corrected
-  bytes (§5.2).
+- the **provenance set** re-issued for the corrected bytes (§5.2), whose effect on the
+  tree is fixed by A's `issue`: `.deployer/authoring/Dockerfile.current` modified, one new
+  directory `.deployer/authoring/Dockerfile/<record_sha256>/` with its three files added,
+  every other set directory under `.deployer/authoring/Dockerfile/` deleted.
 
-Every other project file is unchanged. The full diff of the prepared commit is checked
-against this before the commit (§5.3).
+Every other path is unchanged. The full diff of the prepared commit is checked against
+exactly these paths and change types before the commit (§5.3).
 
-### 3.1 The instruction link
+### 3.1 Binding the instruction
 
-The defect instruction is identified internally by its ordinal among the parsed
-instructions, its exact original text and its span (from A's `defect`). After the edit:
+A's `defect` carries `class`, `file`, `lines` and `object` — not an ordinal or exact
+bytes. They are derived:
+
+1. Parse the admitted Dockerfile bytes (R's `source/Dockerfile`, equal to the clone's by
+   the gate) with R's `dockerfile.parse`.
+2. Select the instruction whose `(first_line, last_line)` equals `defect.lines`; exactly
+   one must match.
+3. Cross-check: for `missing_copy_source`, `defect.object` is one of its sources; for
+   `from_argument_count`, R's normalised instruction text equals `defect.object`.
+4. The original bytes and the byte span are those lines of the original bytes; the
+   ordinal is the instruction's index.
+
+Zero or several matches, or a failed cross-check → `stopped: fix method not established`.
+
+After the edit:
 
 - the instruction count is unchanged (no instruction added or removed);
 - every other instruction is byte-identical;
-- the byte diff lies within the bound instruction's span.
+- the byte diff lies within the bound instruction's span, and the instruction's line
+  range is unchanged (both transformations are line-preserving: the COPY replacement
+  contains no whitespace, F1/F2 edit within the line).
 
-The stored link is `(file, original, replacement)`. The ordinal is an internal binding
-only, **not** evidence from CI: line numbers may shift, and a matcher separately binds a
-real diagnostic to the corrected instruction (§6.3, §7.3). Ambiguity there means no
-positive evidence.
+The stored link is `(file, lines, original, replacement)`. The ordinal is an internal
+binding only, **not** evidence from CI: step numbers (`#k`, `[stage k/n]`) differ between
+runs, and a matcher separately binds a real diagnostic to the corrected instruction (§6.3,
+§7.3). Ambiguity there means no positive evidence.
 
 ## 4. The proposal
 
@@ -144,9 +190,10 @@ the failing condition):
    boundary of the slice, not a claim that the absent source was a file: an absent path
    establishes no type.
 3. The new source is in the **effective build context**: not excluded by R's effective
-   ignore file on either side (CI and local), in the modelled form (no glob, `$`, `\`,
-   space or `..`; R's normalisation), written in the notation of the original (e.g. no
-   leading `./` when the original had none).
+   ignore file on either side (CI, and local for R's recorded backend), in the modelled
+   form (no glob, `$`, `\`, whitespace or `..`; R's normalisation), written in the
+   notation of the original (e.g. no leading `./` when the original had none). An
+   effective ignore file with an unmodelled pattern leaves exclusion unprovable → stop.
 4. **Collisions**, both checked after R's normalisation:
    - (a) *duplicate source* — the new source equals another source of the instruction;
    - (b) *destination name conflict* — the instruction has two or more sources (so the
@@ -165,8 +212,10 @@ explanation. The model is not called in a case the envelope already knows to be
 ambiguous.
 
 **The model's contract.** Input: the Dockerfile text, the bound instruction, the absent
-source, the facts of the signed snapshot (those admission verified), and the eligible
-blobs after conditions 2–4. Output, strict JSON:
+source, the facts of the signed snapshot, and the eligible blobs after conditions 2–4.
+The snapshot is the one `verify_ownership` returns in the gate's trust re-check (§2
+step 5, `OwnershipFacts.snapshot`) — already bound to the record and signature. Output,
+strict JSON:
 
 - `source` — one path from that list, or `null`;
 - `plausible` — the candidates the model judges plausible. With a non-null `source` it
@@ -189,13 +238,14 @@ rule; tests always use a fake.
 A FROM is edited only when the original instruction unambiguously contains a **complete
 literal image reference**: the first argument after recognised flags is a syntactically
 valid reference with an **explicit tag or digest**, so the trailing tokens cannot be part
-of it by grammar. Substitutions in the reference (`$`, `${…}`) and unmodelled forms are
-excluded. The reference, the recognised flags and an existing stage name are kept byte
-for byte; only the listed tokens change.
+of it by grammar. **Recognised flags** are exactly those R's FROM check skips: an inline
+`--platform=<value>`. Substitutions in the reference (`$`, `${…}`) and unmodelled forms
+are excluded. The reference, the flags and an existing stage name are kept byte for byte;
+only the listed tokens change.
 
 | Id | Original arguments | Conditions | Transformation | Example |
 |---|---|---|---|---|
-| F1 | `<ref> <token>` | `<token>` matches the stage-name grammar fixed for the supported builder pair (§4.3), is not `AS` in any case, collides with no stage name, and **takes part in no reference or build-target selection** — no `--from=<token>`, no `FROM <token>`, no `--target`/build parameter naming it. If this cannot be checked unambiguously → no proposal. | insert `AS` before `<token>` | `FROM python:3.12-slim extra` → `FROM python:3.12-slim AS extra` (R's run-5) |
+| F1 | `<ref> <token>` | `<token>` matches the stage-name grammar of §4.3, is not `AS` in any case, collides with no stage name, and **takes part in no reference or build-target selection** — no `--from=<token>`, no `FROM <token>`, no build arg of R's bound build configuration naming it (R's build-line parser refuses `--target` and other unknown flags, so a build arg is the only remaining channel). If this cannot be checked unambiguously → no proposal. | insert `AS` before `<token>` | `FROM python:3.12-slim extra` → `FROM python:3.12-slim AS extra` (R's run-5) |
 | F2 | `<ref> AS` (dangling, any case) | — | remove the dangling `AS` | `FROM python:3.12-slim AS` → `FROM python:3.12-slim` |
 
 Everything else → `stopped: no proposal`, for example: a reference without tag or digest
@@ -206,69 +256,117 @@ referenced anywhere. A reference to the name elsewhere does **not** prove that a
 stage restores the link the author meant: `COPY --from=<name>` may denote an external
 image or a named context, and adding a stage changes what it resolves to.
 
-The explanation is deterministic: the id, the original and new text, and the
-conditions checked. For run-5 the PR says it is a syntactic correction, not evidence that
-the author intended a stage named `extra`.
+The explanation is deterministic: the id, the original and new text, and the conditions
+checked. For run-5 the PR says it is a syntactic correction, not evidence that the author
+intended a stage named `extra`.
 
 ### 4.3 The stage-name grammar
 
-Fixed for the supported pair (BuildKit, Podman/Buildah) in the plan from their
-implementations, as the intersection both accept; a token either builder would reject
-or treat differently → no proposal.
+The intersection of what BuildKit and Buildah (Podman) accept for a stage name, derived
+from their sources at pinned versions (§11 stage 1 deliverable: source note with the
+pinned revisions, and tests over accepted and rejected tokens, `AS` in any case, and tokens
+only one builder accepts). A token either builder would reject or treat differently → no
+proposal.
 
-## 5. Preparation — worktree, provenance, commit
+## 5. Preparation — fix directory, worktree, provenance, commit
 
-### 5.1 The fix worktree
+### 5.1 The fix directory and the worktree
 
-All preparation happens in a **separate Git worktree** of the clone at `head_sha`. The
-clone's `HEAD` and working tree are never switched or touched. The branch name is
-derived from the class and `head_sha`.
+R's layout is `<root>/.deployer-runs/<run_id>/reproduction/attempt-<n>/` holding
+`source/`, `source.json` and `tries/<NNN>/`. Each `deployer fix` creates a **new
+sequenced** fix directory `attempt-<n>/fixes/<NNN>/` (never reused or overwritten,
+like R's tries). It holds `fix.json`, the local proof's `context/`, `build.stdout`,
+`build.stderr`, and the Git worktree `worktree/`.
+
+The worktree is a linked worktree of the clone at `head_sha`, on a new branch
+`deployer/fix/<class>/<head_sha[:12]>-<NNN>`. The clone's `HEAD` and working tree are
+never switched or touched. Both must lie outside the clone (§2 step 2). A's publication
+lock resolves per worktree (`git rev-parse --git-path` gives
+`<clone>/.git/worktrees/<id>/…`), so it does not serialise with a `deployer author` in the
+main clone; the two operate on different working trees.
 
 ### 5.2 The new provenance set
 
 The corrected Dockerfile gets a **new signed set**; the old record is never left as a
 confirmation of the new bytes.
 
-- Its source is the **original `head_sha`**: the snapshot and facts are fixed before
-  the edit is written (A's preflight in the worktree), and the signature covers the
-  exact bytes of the corrected Dockerfile — A's `issue` semantics, reused.
+- Its source is the **original `head_sha`**: A's `preflight` runs in the fresh worktree
+  before the edit is written, fixing the snapshot and facts; the signature covers the
+  exact bytes of the corrected Dockerfile.
+- **Exclusion is proved before anything is written.** A's `issue` appends `.deployer/` to
+  an ignore file when it is missing (`ensure_excluded` writes, then proves). This design
+  adds a **check-only** exclusion proof (a stage 1 code deliverable in `provenance`): if
+  proving exclusion would require any ignore-file edit → `stopped: commit blocked` and
+  nothing is written. When it passes, `issue` makes no ignore-file edit.
+- A missing signing key or any issuing failure → `stopped: commit blocked`.
 - The signature proves provenance, not the correctness of the fix, and does not
   guarantee a future `admitted`.
-- If issuing would need an ignore-file edit, a missing key, or any issuing failure →
-  `stopped: publication blocked`.
 
 ### 5.3 Order
 
-1. local proof (§6) in its own context;
-2. write the corrected Dockerfile in the worktree; issue the new set;
-3. check the **full** diff against §3 (one instruction + the provenance set, nothing
-   else);
-4. one commit containing both the corrected Dockerfile and the new set →
+1. Cheap preconditions first: fix directory writable, worktree creatable, signing key
+   present and usable (A's `preflight` in the worktree), check-only exclusion proof.
+2. Proposal (§4).
+3. Local proof (§6) in the fix directory's own context.
+4. Write the corrected Dockerfile into the worktree; issue the new set.
+5. Check the **full** diff against §3 (paths and change types).
+6. One commit containing both the corrected Dockerfile and the new set →
    `locally_confirmed`.
 
-A failure after the commit keeps the branch and the commit; nothing is deleted
-automatically. The result and the reason are stored (§8).
+The corrected bytes are produced **once**, in memory: the same bytes are written to the
+proof context (step 3) and the worktree (step 4), passed to `issue(…, dockerfile=<bytes>)`,
+and their SHA-256 recorded once (§6.5).
+
+A failure after the worktree exists keeps the worktree, and after the commit keeps the
+branch and the commit; nothing is deleted automatically. The result and the reason are
+stored (§8).
 
 ## 6. Local proof
 
-### 6.1 Context
+### 6.1 Context and backend
 
-R's restored `source/` stays untouched. It is copied into a separate fix directory next
-to the try dir and the corrected Dockerfile is written there; the build context is formed
-from it as R forms it, with the same effective ignore files. The context holds the result
-intended for the commit; the new provenance set is excluded from it. The build
-configuration is the one R bound from CI (`-f`, context `.`, build args), run through R's
-adapter and runtime.
+R's restored `source/` stays untouched. It is copied into the fix directory's `context/`
+and the corrected Dockerfile is written there; the build context is formed from it as R
+forms it, with the same effective ignore files. The context is the committed tree with the
+corrected Dockerfile; `.deployer/` (the old set, at this point) is excluded on both sides,
+as A requires.
+
+The build configuration is the one R bound from CI — `BuildConfig`'s `dockerfile` (`-f`),
+context `.`, `build_args` and `platform` (the image `tag` is not compared) — run through
+R's adapter.
+
+The local backend must equal the backend R recorded (`environment.backend`). The local
+templates are Podman-only in this slice; any other backend →
+`no local confirmation: local backend differs from R's` (a `--container-tool docker` run
+included), since both the templates and the local effective ignore file
+(`.containerignore` is read only for Podman) depend on it.
 
 ### 6.2 Offline checks, per instruction and condition
 
+R's checks do not report per instruction: `copy_sources` returns one aggregate `passed`
+without a location, a matching glob returns nothing, skips carry the instruction only in a
+free-text reason, and the four syntax checks emit one file-level `passed` each. This design
+therefore adds a **per-instruction projection** over R's check output (a stage 1 code
+deliverable in `fix`, with its own tests), mapping each `(check_id, instruction span)` to:
+
+- `failed` or `observation` — a located entry for that span;
+- `skipped` — the instruction named in a skip reason (R's reason format is part of the
+  projection's tests);
+- `passed` — neither of the above, and the check ran (`checked > 0` / its rule applied).
+
+Statuses are R's (`passed | failed | skipped | observation | inconclusive`). The
+comparison covers R's **offline** checks (`copy_sources` and the four syntax checks); the
+builder checks (`builder_check`, `builder_syntax`, `builder_lint`) are skipped by a local
+Podman run on both sides and are not part of it.
+
 - The defect's check passes **for the corrected instruction and its specific
   condition**: for `missing_copy_source`, `copy_sources` confirms the new source of that
-  instruction present and not excluded — a general `copy_sources: passed` is not
-  enough; for `from_argument_count`, `syntax_from_args` passes on it.
-- **No regressions:** R's closed checks run on the original and the corrected
-  Dockerfile and are compared per instruction and condition. Any change from `passed` to
-  `failed`, `skipped`, `unknown` or `inconclusive` fails the rule.
+  instruction present and not excluded; for `from_argument_count`, `syntax_from_args`
+  passes on it.
+- **No regressions:** the offline checks run **fresh** on `source/` (original bytes) and
+  on the fix context (corrected bytes) — not read from R's recorded manifest, whose checks
+  are merged with builder results — and are compared through the projection. Any change
+  from `passed` to `failed`, `skipped`, `observation` or `inconclusive` fails the rule.
 
 ### 6.3 Local positive evidence — closed, recording-backed
 
@@ -276,20 +374,20 @@ A closed table of local "passed" templates (Podman). Until real recordings back 
 the row is a **hypothesis** and is disabled; a disabled row yields `no local confirmation:
 templates not enabled`.
 
-- **COPY/ADD (hypothesis):** the step line carrying the corrected instruction's exact text,
-  exactly once. A `STEP` line only proves the step **started**. Passing it needs the next
-  step of the **same stage and sequence**, or the build's completion, bound
+- **COPY/ADD (hypothesis):** the step line carrying the corrected instruction's exact
+  text, exactly once. A `STEP` line only proves the step **started**. Passing it needs the
+  next step of the **same stage and sequence**, or the build's completion, bound
   unambiguously; the stage boundary is not guessed from `k/n`. An error bound to the step
   itself → not confirmed.
-- **FROM (hypothesis):** evidence that the Dockerfile was **parsed** — a build-stage
-  step exists and no parse error — removes the diagnosed argument-count error. This rests
-  on the builder parsing the whole instruction list before building stages: established
-  for BuildKit (its instruction parse precedes stage construction), to be **verified**
-  for Podman against its implementation and by recordings that include a bad FROM in a
-  later stage. Loading the Dockerfile, the context or a frontend is not such evidence.
-  Parsing and pulling the image are distinct: a later image-pull failure of the same FROM
-  does not refute the parse result, is recorded explicitly, and is not called "a failure
-  of another instruction".
+- **FROM (hypothesis):** evidence that the Dockerfile was **parsed** — a build-stage step
+  exists and no parse error — removes the diagnosed argument-count error. This rests on the
+  builder parsing the whole instruction list before building stages: established for
+  BuildKit (its instruction parse precedes stage construction); for Podman it is settled
+  in stage 3 by reading Buildah's parse path at the pinned version **and** by recordings
+  that include a bad FROM in a later stage. Loading the Dockerfile, the context or a
+  frontend is not such evidence. Parsing and pulling the image are distinct: a later
+  image-pull failure of the same FROM does not refute the parse result, is recorded
+  explicitly, and is not called "a failure of another instruction".
 - If the builder drops `AS` or normalises the reference so that the closed template
   cannot bind the line to the instruction unambiguously → `binding ambiguous`. No support
   for such forms is promised before recordings; the matcher is not widened by
@@ -300,39 +398,48 @@ templates not enabled`.
 A build failure after the corrected place is allowed only when the boundary is
 **proven**: the positive evidence of §6.3 was already obtained. If that cannot be
 established → no local confirmation. A timeout never confirms. The PR states the narrow
-claim: "the diagnosed source error is removed locally" — never "the substitution builds"
+claim — "the diagnosed source error is removed locally" — never "the substitution builds"
 when the build passed the corrected step and failed later.
 
 ### 6.5 Evidence
 
-The configuration is fixed in the evidence: the exact bytes (SHA-256) of the corrected
-Dockerfile, the build parameters, the runtime and its versions. `build.stdout` /
-`build.stderr` of the fix directory are referenced with the line rules of A (UTF-8,
-split on `\n`).
+The configuration is fixed in the evidence: the SHA-256 of the corrected Dockerfile, the
+build configuration (§6.1), the backend and its versions. `build.stdout` /
+`build.stderr` of the fix directory are referenced with A's line rules (UTF-8, split on
+`\n`, a final newline opens no line).
 
 ## 7. CI confirmation
 
 ### 7.1 Reading runs of any outcome
 
-A new reading function in `forge` reads a run of **any** conclusion: its metadata
-(event, `head_sha`, workflow path, attempts), jobs with their steps and conclusions, and
-the full log of the bound job, through the same GitHub API R uses, **without any
-rebuild**. The failed-run reading is unchanged. The existing reading and admission
-pipeline is **not** assumed to handle successful jobs: this is a separate requirement
-with its own tests.
+A new reading function in `forge` reads a run of **any** conclusion without any rebuild:
+its metadata (event, `head_sha`, `head_branch`, workflow path, attempts), each completed
+attempt's jobs with their steps and conclusions, and the full log of the bound job,
+through the same GitHub API R uses (`_Gh.jobs(run_id, attempt)` and `_Gh.logs(job_id)`
+are already conclusion-independent). Listing runs by `head_sha` is a new endpoint with
+the same pagination completeness check. The failed-run reading is unchanged.
+
+The existing binding (`shape.precheck` / `_check_steps`) is failure-bound — it works on
+non-green jobs only and locates the build from the failed step — so it is **not** reused
+as is. A new **qualification** function reuses R's pieces (the job-name-to-key rule, the
+event and path checks, `parse_build_line`, the checkout-SHA rule) but locates the build
+step by its parsed build line, independent of the step's conclusion. Both are a stage 2
+deliverable with their own tests.
 
 ### 7.2 Which runs qualify
 
-Runs are listed by `head_sha` = the **exact fix commit**. A run qualifies only when:
+Runs are listed by `head_sha` = the **exact fix commit**. A run's attempt qualifies only
+when:
 
 - its event is `push` or `workflow_dispatch` (`pull_request` excluded in this slice);
 - its workflow path equals the one R bound in the original run, and the workflow bytes at
   the fix commit equal those at `head_sha` (follows from §3);
-- a job with the same **workflow job key** (not the numeric GitHub job id, which belongs
-  to one run) exists;
-- R's `shape` applied to that job binds a build line with the original configuration
-  (`-f`, context, build args);
-- the checkout was at the fix commit, by R's own rules.
+- exactly one of its jobs maps, by R's name rule (API job `name` against
+  `definition.name or key` in the workflow at the fix commit), to R's original
+  `binding.workflow_job` key — not the numeric GitHub job id, which belongs to one run;
+- the qualification function binds a build line in that job with the original build
+  configuration (`dockerfile`, context, `build_args`, `platform`);
+- the checkout was at the fix commit, by R's checkout-SHA rule.
 
 A merge or squash commit does not confirm the fix commit: it is a different object.
 
@@ -348,19 +455,24 @@ A merge or squash commit does not confirm the fix commit: it is a different obje
 
 Until recordings back a row it is disabled → `templates not enabled`.
 
+**Recurrence of the diagnosed defect** is an A template row of the admitted class, bound
+by A's binding rules (A §4.2) to the corrected instruction — same line span, the corrected
+text — whatever its object. (For `missing_copy_source`, a "not found" for the new source
+is a recurrence of the class at the same instruction.)
+
 ### 7.4 Evaluating attempts
 
-All qualifying **completed attempts** available at the time of the check are
-considered — not only the latest of each run, since a re-run may hide an earlier
-positive or negative result.
+All qualifying **completed attempts** available at the time of the check are considered —
+not only the latest of each run, since a re-run may hide an earlier positive or negative
+result.
 
-- Positive evidence present, no recurrence of the diagnosed defect on the same
-  instruction → `ci_confirmed`.
-- Both present → `ci_confirmation_insufficient: contradictory runs`.
-- Network failures, skips or an unreached step are not contradictions, but confirm
-  nothing on their own.
-- An incomplete API listing or an unavailable log of a qualifying attempt means the
-  absence of contradictions cannot be claimed → insufficient.
+- Positive evidence present, no recurrence → `ci_confirmed`.
+- Positive evidence and a recurrence → insufficient: `contradictory runs`.
+- A recurrence and no positive evidence → insufficient: `defect recurred`.
+- Failures inside a qualifying run (network, skipped or unreached steps, earlier jobs) are
+  not contradictions, but confirm nothing on their own.
+- An incomplete listing or an unavailable log of a qualifying attempt (deployer's own
+  reads) means the absence of contradictions cannot be claimed → insufficient.
 
 A later independent failure in the same run does not cancel proven passage of the
 corrected place. Ambiguous binding → no positive evidence.
@@ -368,47 +480,58 @@ corrected place. Ambiguous binding → no positive evidence.
 ### 7.5 The result of a confirmation attempt
 
 Each attempt records the check time and the exact list of `run_id` / attempt / job key
-considered, the outcome, the reason and the evidence (run, attempt, job, log lines). A
-later check may change the current conclusion; earlier evidence is kept. Reasons for
-`ci_confirmation_insufficient` include: no qualifying run; CI failed before the build;
+considered, the outcome, the reason and the evidence (run, attempt, job, log lines).
+Reasons for `ci_confirmation_insufficient`: no qualifying run; CI failed before the build;
 build step not reached; unknown format; binding ambiguous; templates not enabled;
-contradictory runs; incomplete listing or unavailable log.
+contradictory runs; defect recurred; incomplete listing or unavailable log.
 
 ## 8. The fix document and the CLI
 
 ### 8.1 `fix.json` (schema 1.0)
 
-Stored in the fix directory next to R's try dir — dev-side evidence, never committed to
-the project. Fields:
+Stored in the fix directory (§5.1) — dev-side evidence, never committed to the project.
+Fields:
 
-- `input` — SHA-256 of the verdict document, its `binding`, the clone state (origin,
-  `HEAD`, clean-tree result);
-- `proposal` — `class`, `file`, `transformation` (`copy-source` | `F1` | `F2`),
+- `input` — SHA-256 of the verdict document, its `binding`, the clone state (path,
+  origin, `HEAD`, clean-tree result), the target;
+- `proposal` — `class`, `file`, `lines`, `transformation` (`copy-source` | `F1` | `F2`),
   `original`, `replacement`, internal `ordinal`, `rationale` (model or deterministic),
   `envelope` (each condition and its result);
-- `local_proof` — configuration, checks before/after per instruction and condition,
-  evidence files and lines, `later_failure` (separately: image pull of the same FROM /
-  another instruction);
-- `publication` — worktree, branch, fix commit, the full-diff check, PR URL;
+- `local_proof` — configuration, checks before/after through the projection, evidence
+  files and lines, `later_failure` (separately: image pull of the same FROM / another
+  instruction);
+- `publication` — worktree path, branch, fix commit, the full-diff check, `base` branch,
+  PR URL;
 - `ci_attempts[]` — append-only (§7.5);
 - `status`, `last_operation`.
 
 Writability is checked before any operation; the document is saved **atomically at
-checkpoints** (after the proposal, after the local proof, after the commit, after
-publication, after each confirmation attempt).
+checkpoints**: after the preconditions (`in_progress`), after the proposal, after the
+local proof, after the commit, after publication, after each confirmation attempt.
 
-### 8.2 Commands
+### 8.2 Commands and exit codes
 
-- `deployer fix <verdict.json> --clone <path> [--signing-key …]` — gate, proposal, local
-  proof, new provenance set, full-diff check, commit in the fix worktree. Exit `0` after
-  local confirmation and the prepared commit; `1` when stopped; `2` invalid invocation or
-  a local I/O failure (including reading/saving `fix.json`).
-- `deployer fix publish <fix.json>` — the explicit permission to push and create the
-  PR; no interactive confirmation inside. Exit `0` after a confirmed push and a created or
-  found PR.
-- `deployer fix confirm <fix.json>` — one confirmation attempt. Exit `0` when the current
-  status is `ci_confirmed`; `1` when insufficient (including an unavailable CI log or an
-  incomplete API listing); `2` for a local I/O failure.
+- `deployer fix <verdict.json> --clone <path> [--signing-key …]` — §2–§6, commit in the
+  fix worktree.
+  - `0`: `locally_confirmed` (commit prepared);
+  - `1`: `stopped` — every stop reason, whether or not a worktree or commit already
+    exists;
+  - `2`: invalid invocation (incl. a fix directory inside the clone) or a local I/O
+    failure (reading the verdict, saving `fix.json`).
+- `deployer fix publish <fix.json> --base <branch>` — the explicit permission to push and
+  create the PR; no interactive confirmation inside. **[choice]** The PR's base branch is a
+  required flag: the failed-run snapshot does not record the run's branch, and inferring
+  one is a guess.
+  - `0`: pushed and a PR created or found (also on an already `fix_proposed` or
+    `ci_confirmed` document);
+  - `1`: refused — admission or trust re-check failed, stored state changed, push or PR
+    creation failed, status not `locally_confirmed`/`fix_proposed`/`ci_confirmed`;
+  - `2`: local I/O failure.
+- `deployer fix confirm <fix.json>` — one confirmation attempt.
+  - `0`: the attempt is positive (`ci_confirmed`);
+  - `1`: insufficient (every §7.5 reason, including an unavailable CI log or an incomplete
+    API listing), or the document is not published;
+  - `2`: local I/O failure.
 
 Exit codes of existing commands are unchanged.
 
@@ -416,21 +539,24 @@ Exit codes of existing commands are unchanged.
 
 Before pushing, `fix publish`:
 
-- re-checks admission against the original state, **including the current trust set**
-  (a revoked key blocks publication) — a ready branch does not preserve the permission to
-  publish;
-- verifies the stored commit, its full diff and the evidence;
-- refuses when the recorded `HEAD`/branch has changed;
-- reuses an existing branch and PR: after a network timeout it neither publishes a
-  changed commit nor creates a duplicate PR.
+- re-runs the gate's admission and trust checks (§2 steps 4–5) with the **stored**
+  target and the **current** trust directory — a ready branch does not preserve the
+  permission to publish;
+- verifies that the fix branch's tip is the stored fix commit, and re-checks that
+  commit's full diff (§3) and the stored evidence hashes; any change → refused. The user's
+  own clone `HEAD` is not checked here (the worktree is independent of it);
+- reuses an existing remote branch and PR for that fix commit: after a network timeout it
+  neither publishes a changed commit nor creates a duplicate PR (a PR is looked up by the
+  branch before creation).
 
 A push or PR-creation failure leaves `locally_confirmed` and the local evidence intact.
 
 ### 8.4 Errors
 
 Every step is total: an exception becomes a reason in the document, never a traceback.
-After operations already performed, a later failure exits `2` with a short message and
-the identifiers of what was already created (worktree, branch, commit, PR).
+Exit `2` is reserved for local I/O failures; when one happens after operations already
+performed (a `fix.json` save after the commit was created), the message names the
+identifiers of what was created (fix directory, worktree, branch, commit, PR).
 
 ## 9. Recordings — the gates
 
@@ -444,65 +570,109 @@ Each class of recording needs the owner's **separate** permission for real runs.
   with a later independent failure, a re-run.
 
 A template row is enabled **only together with** the test that checks it against its
-real recording. If real logs require a matcher change, that code goes through the
-ordinary review; the data and expected results are the owner's separate review. Without
-L-recordings no `locally_confirmed` and no publication; without C-recordings a published
-proposal is never CI-confirmed.
+real recording; the production table carries, per row, the recording it is backed by, and
+a test asserts that no row is enabled without one. If real logs require a matcher change,
+that code goes through the ordinary review; the data and expected results are the owner's
+separate review. Without L-recordings no `locally_confirmed` and no publication; without
+C-recordings a published proposal is never CI-confirmed.
 
 ## 10. Acceptance — offline
 
-- **D (decision):** pure parts with hand-built inputs, one targeted mutation per case —
-  every §4.1 condition incl. collisions (a)/(b) and a multi-source instruction with a
-  non-file source; F1/F2 and each no-proposal branch; the model-answer checks (malformed,
-  `plausible` ≠ `source`, several candidates); the regression rule per instruction and
-  condition; matchers on synthetic lines (negatives only until recordings).
-- **P (pipeline):** from the committed A4 bundles `admit-run-1` / `admit-run-5`, with
-  Git, runtime, model and GitHub faked, a real worktree and `fix.json`:
+**Test seam.** Until recordings exist no production row is enabled, so the happy path is
+unreachable in production. Tests reach it by injecting an **enabled synthetic row**
+through a test-only registry (not reachable from the CLI or configuration); the test that
+no production row is enabled without a recording (§9) guards the seam.
+
+- **D (decision):** pure parts with hand-built inputs, one targeted mutation per case:
+  - §3.1 binding: zero/several instruction matches; a failed cross-check; the link
+    invariants (instruction count, other instructions byte-identical, diff within the
+    span, line range unchanged);
+  - §4.1: every envelope condition incl. collisions (a)/(b), a multi-source instruction
+    with a non-file source, an unmodelled ignore pattern; the model not called on zero
+    candidates or the basename floor (the fake asserts no call); the answer checks
+    (malformed, `plausible` ≠ `source`, several candidates, a citation of a missing path or
+    an unknown `ProjectFacts` field); exactly one call, no retry;
+  - §4.2/§4.3: F1/F2, each no-proposal branch, a name used by a build arg; the stage-name
+    grammar tests;
+  - §6.2: the projection over R's output (located failure, skip reason, aggregate
+    passed) and the regression rule per instruction and condition;
+  - §6.3/§7.3 matchers on synthetic lines: negatives only until recordings, incl.
+    `#k CACHED` not accepted and a missing or repeated `k` → `binding ambiguous`; a
+    timeout never confirms; the narrow PR claim after a proven pass and a later failure;
+  - §7.4: positive, contradictory, recurred, incomplete listing, unavailable log;
+  - status transitions and the exit-code table of each command (§1, §8.2).
+- **P (pipeline):** from the committed A4 bundles `admit-run-1` / `admit-run-5`, with the
+  container runtime, the model and GitHub faked, and **real** local Git (worktree, commit);
+  push and `gh` are faked:
   - run-5: F1 → `FROM python:3.12-slim AS extra`;
   - run-1: a **derived** case whose tree holds exactly one eligible file for the absent
-    `docs/setup.md` — tree, listings and signed data updated consistently, its
-    `PROVENANCE.md` separating the original failure record from the test modification
-    (owner review of the data); and a case with two same-basename candidates →
+    `docs/setup.md` (data, §11 stage 1b); and a case with two same-basename candidates →
     `fix method not established`.
 
-  Before recordings, P tests end at the expected refusals `no local confirmation:
+  Without the seam, P tests end at the expected refusals `no local confirmation:
   templates not enabled` and `templates not enabled` — asserted outcomes, not skips.
-- **G (real local Git, offline — no model, no container builds):** the worktree leaves
-  the user's checkout untouched; the commit contains exactly the Dockerfile instruction
-  and the provenance set; a changed `HEAD` is refused.
-- **Boundaries:** trust revoked before `publish`; a repeat after a network timeout; no
-  duplicate PR; a document-save failure after the commit was created; positive and
+- **G (real local Git, offline — no model, no container builds):** the worktree leaves the
+  user's checkout untouched; the commit contains exactly the §3 paths and change types; an
+  extra changed file is refused by the full-diff check; a fix directory inside the clone
+  exits `2`; the fix-branch tip changed before `publish` is refused.
+- **Gate (§2):** clone not at the repository root; no `origin`; untracked-only dirt;
+  `HEAD` ≠ `head_sha`; Dockerfile bytes ≠ `artifact_sha256`; a revoked key → each
+  `no admission`.
+- **Commit (§5.2–§5.3):** exclusion needing an ignore-file edit (nothing written), no
+  signing key, an `issue` failure → `commit blocked`; the configuration and SHA-256
+  recorded (§6.5).
+- **Document and errors (§8):** writability checked first; atomic checkpoint saves; a save
+  failure after the commit (exit `2`, identifiers named); an injected exception becomes a
+  reason, never a traceback; a crashed `in_progress` document is not resumed.
+- **Publication and confirmation boundaries:** trust revoked before `publish`; a stored
+  commit or diff tampered with; a repeat after a network timeout; no duplicate PR;
+  `publish` on an already published document; `confirm` on an unpublished one; positive and
   contradicting attempts; an incomplete API listing; an unavailable log; the transition
   `ci_confirmed → fix_proposed`.
+- **Reading (§7.1–§7.2), stage 2:** a successful run and all attempts are read; each
+  qualification filter refuses (a `pull_request` event; another workflow path; a job key
+  missing or matching several jobs; another build configuration; a checkout at another
+  SHA; a run on a merge commit).
 
 ## 11. Delivery
 
-Stages; code is split into PRs by the review kit's limits, data stays separate:
+Stages; code is split into PRs by the review kit's limits, data stays separate and is the
+owner's review:
 
-1. Fix authoring, local proof with templates disabled, worktree, `fix.json`,
-   `fix publish`.
-2. Reading runs of any outcome and all attempts; `fix confirm` with templates disabled.
-3. L-recordings, local template rows, their acceptance tests (data: owner review).
-4. C-recordings, CI template rows, their acceptance tests (data: owner review).
+1. **Fix authoring:** gate, binding, proposal and envelopes, the stage-name grammar with
+   its pinned-source note (§4.3), the check-only exclusion proof in `provenance` (§5.2),
+   the per-instruction check projection (§6.2), local proof with templates disabled, fix
+   directory and worktree, `fix.json`, `fix publish`.
+   **1b (data):** the derived run-1 case — tree, listings and signed data updated
+   consistently; its `PROVENANCE.md` separates the original failure record from the test
+   modification.
+2. **Reading runs** of any outcome and all attempts; the qualification function;
+   `fix confirm` with templates disabled.
+3. **L-recordings**, local template rows and their acceptance tests (data); the Buildah
+   parse-path reading for FROM (§6.3).
+4. **C-recordings**, CI template rows and their acceptance tests (data).
 5. End-to-end acceptance, documentation, and closing `todo://deployer/ci-fix-authoring`.
 
-The item stays open until stage 5; stages 1–2 may be accepted as implementation
-without claiming the agreed scope complete.
+The item stays open until stage 5; stages 1–2 may be accepted as implementation without
+claiming the agreed scope complete.
 
 ## 12. Decisions (owner, 2026-09-25)
 
 1. Proof level: local proof before the PR **and** CI confirmation by a real run on the
    fixed commit; three claims kept apart; missing old finding ≠ fix.
-2. Authoring: the model proposes, a deterministic closed envelope admits; one
-   instruction of the admitted Dockerfile.
+2. Authoring: the model proposes, a deterministic closed envelope admits; one instruction
+   of the admitted Dockerfile.
 3. COPY: only the proven-absent source changes; regular files only in this slice;
    basename floor, no proximity threshold; `plausible` is the model's assessment.
 4. FROM: closed list F1/F2 with a complete literal reference; no model; F1 only when the
    name takes part in no reference or target selection.
-5. Local "passed" templates are recording-backed; the fixed Dockerfile gets a new
-   signed set from the original `head_sha`.
+5. Local "passed" templates are recording-backed; the fixed Dockerfile gets a new signed
+   set from the original `head_sha`.
 6. CI: exact fix commit, `push`/`workflow_dispatch`, all completed attempts; at least one
    positive and no contradiction; `CACHED` not automatic.
-7. `fix publish` is a separate command; worktree preparation; statuses and last
-   operation stored apart.
+7. `fix publish` is a separate command; worktree preparation; statuses and last operation
+   stored apart.
 8. Delivery order as §11; recordings each need separate permission.
+
+Author's choices in rev 2 awaiting the owner's confirmation: the status mirrors the latest
+confirmation attempt (§1); the PR base branch is a required `--base` flag (§8.2).
