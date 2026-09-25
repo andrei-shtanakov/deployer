@@ -469,6 +469,27 @@ def test_deployer_dir_and_artifact_never_candidates() -> None:
     assert _paths(result) == ("Dockerfile", "src/app.py")
 
 
+def test_only_the_artifact_path_is_excluded_not_the_name() -> None:
+    """§4.1: exactly ``binding.artifact_path`` drops out; other files named
+    ``Dockerfile`` and a ``.dockerignore`` stay candidates."""
+    listing = [
+        _file(".dockerignore"),
+        _file("Dockerfile"),
+        _file("docker/Dockerfile"),
+        _file("src/app.py"),
+    ]
+    result = eligible_sources(
+        _bound(_SIMPLE),
+        "app.py",
+        listing,
+        _NO_RULES,
+        _NO_RULES,
+        dockerfile=_SIMPLE,
+        artifact_path="docker/Dockerfile",
+    )
+    assert _paths(result) == (".dockerignore", "Dockerfile", "src/app.py")
+
+
 def test_multi_source_destination_must_be_a_directory() -> None:
     """Several sources into a destination without ``/`` → stop."""
     dockerfile = b"FROM x:1\nCOPY app.py lib/util.py /app\n"
