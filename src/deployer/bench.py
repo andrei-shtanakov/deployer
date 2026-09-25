@@ -19,8 +19,8 @@ from deployer.artifacts import render_artifact_response
 from deployer.author import (
     DockerfileAuthor,
     _deployer_git_sha,
-    _deployer_version,
     author_dockerfile,
+    deployer_version,
 )
 from deployer.facts import analyze_project
 from deployer.models import (
@@ -398,7 +398,7 @@ def _run_bench_cases(
         label=label,
         author_backend=author_backend,
         corpus_commit=_corpus_commit(),
-        deployer_version=_deployer_version(),
+        deployer_version=deployer_version(),
         runtime=runtime,
         runtime_versions=(
             probe_runtime_versions(runtime) if runtime is not None else None

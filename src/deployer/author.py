@@ -25,7 +25,14 @@ from deployer.runtime import probe_runtime_versions
 from deployer.verify import DEFAULT_BUILD_TIMEOUT, DEFAULT_HEALTH_TIMEOUT, verify
 
 
-def _deployer_version() -> str | None:
+def deployer_version() -> str | None:
+    """The installed `deployer` package version, or `None` if it cannot be
+    determined (e.g. running unpackaged, outside an installed environment).
+
+    Public so other callers needing the same fallback — never raising, just
+    reporting "unknown" as `None` — reuse it instead of re-wrapping
+    `importlib.metadata.version` themselves.
+    """
     try:
         return importlib.metadata.version("deployer")
     except importlib.metadata.PackageNotFoundError:
@@ -97,6 +104,7 @@ def author_dockerfile(
     build_timeout: int = DEFAULT_BUILD_TIMEOUT,
     health_timeout: int = DEFAULT_HEALTH_TIMEOUT,
     smoke_suite: Path | None = None,
+    facts: ProjectFacts | None = None,
 ) -> AuthoringRun:
     """Generate -> verify -> repair until success, budget, or no progress.
 
@@ -111,8 +119,12 @@ def author_dockerfile(
     so a caller can never silently downgrade to static-only by omission.
     `smoke_suite` is the resolved ATP suite path for a `smoke`-intent target;
     it is forwarded unchanged to every `verify` call across the loop.
+    `facts`, when given, is used instead of scanning `project_path` again —
+    a caller that already has facts proven to match a committed source (a
+    provenance preflight) passes them through so the two never drift apart.
     """
-    facts = analyze_project(project_path)
+    if facts is None:
+        facts = analyze_project(project_path)
     validate_target_against_facts(target, facts)
     hints = collect_hints(facts, target.extras)
 
@@ -233,6 +245,6 @@ def author_dockerfile(
         max_iterations=max_iterations,
         runtime_versions=runtime_versions,
         author_info=author_info,
-        deployer_version=_deployer_version(),
+        deployer_version=deployer_version(),
         deployer_git_sha=_deployer_git_sha(),
     )

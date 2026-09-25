@@ -67,6 +67,46 @@ def test_success_on_first_iteration(hello_service: Path) -> None:
     assert run.iterations[0].dockerfile == GOOD.strip()
 
 
+def test_given_facts_used_instead_of_analyze_project(
+    hello_service: Path, monkeypatch
+) -> None:
+    """A caller-supplied `facts` is used as-is; `analyze_project` is never
+    consulted, so a provenance preflight's facts and the authoring run's
+    facts can never drift apart by a second, independent scan."""
+
+    def boom(_project_path):
+        raise AssertionError("analyze_project must not be called")
+
+    monkeypatch.setattr("deployer.author.analyze_project", boom)
+
+    captured: dict = {}
+
+    class CapturingAuthor:
+        def generate(self, facts: ProjectFacts, target: DeployTarget) -> str:
+            captured["facts"] = facts
+            return GOOD
+
+        def repair(
+            self,
+            facts: ProjectFacts,
+            target: DeployTarget,
+            dockerfile: str,
+            report: VerificationReport,
+        ) -> str:
+            return GOOD
+
+    given = ProjectFacts(name="given")
+    run = author_dockerfile(
+        hello_service,
+        DeployTarget(),
+        CapturingAuthor(),
+        runtime=None,
+        facts=given,
+    )
+    assert captured["facts"] is given
+    assert run.project == "given"
+
+
 def test_repair_path_fixes_bad_copy(hello_service: Path) -> None:
     author = ScriptedAuthor(BAD_COPY, GOOD)
     run = author_dockerfile(hello_service, DeployTarget(), author, runtime=None)

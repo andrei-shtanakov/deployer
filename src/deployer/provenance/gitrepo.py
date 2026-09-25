@@ -40,6 +40,24 @@ def is_checkout(path: Path) -> bool:
         return False
 
 
+def toplevel(path: Path) -> Path:
+    """The absolute root of the git work tree containing ``path``.
+
+    Raises ``GitError`` (via ``_git``) when ``path`` is not inside a work
+    tree; callers that already know it is (``is_checkout`` passed) still
+    need to handle that, since a race is always possible.
+    """
+    return Path(_git(path, "rev-parse", "--show-toplevel").decode().strip())
+
+
+def git_path(path: Path, name: str) -> Path:
+    """The filesystem path git associates with the internal name ``name``
+    (see ``git rev-parse --git-path``) — e.g. a file inside ``.git`` for a
+    normal checkout. A relative result is resolved against ``path``."""
+    raw = Path(_git(path, "rev-parse", "--git-path", name).decode().strip())
+    return raw if raw.is_absolute() else path / raw
+
+
 def origin_slug(path: Path) -> str | None:
     """``owner/name`` from the ``origin`` remote, or ``None`` if absent/unparseable."""
     try:

@@ -1,4 +1,5 @@
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -18,15 +19,18 @@ from deployer.forge import (
     load_snapshot,
 )
 from deployer.models import (
+    AuthoringRun,
     CheckResult,
     CheckStatus,
     DeployTarget,
     FailureKind,
+    IterationRecord,
     VerificationReport,
 )
+from deployer.provenance.model import SET_PARENT, SET_ROOT
 from deployer.reproduce import ReproductionSection, TryDirError
 from deployer.reproduce.model import Location, ReproductionCheck, ReproEvidence
-from tests.provenance.conftest import make_key
+from tests.provenance.conftest import make_key, make_repo_with_origin
 
 
 @pytest.fixture(autouse=True)
@@ -269,6 +273,7 @@ def test_author_flags_reach_library(tmp_path: Path, monkeypatch) -> None:
         build_timeout,
         health_timeout,
         smoke_suite=None,
+        facts=None,
     ):
         captured["timeouts"] = (build_timeout, health_timeout)
         return AuthoringRun(
@@ -624,6 +629,180 @@ def test_author_parse_failure_leaves_existing_dockerfile_unchanged(
     )
     assert exit_code == 1
     assert (project / "Dockerfile").read_text() == existing
+
+
+_SIGNED_DOCKERFILE = "FROM python:3.12-slim\nCOPY src ./src\n"
+
+
+def _fake_author_dockerfile(dockerfile_text: str):
+    """A stand-in for `author_dockerfile` that skips the LLM/verify loop and
+    always reports one passing static iteration."""
+
+    def fake(
+        project_path,
+        target,
+        author,
+        *,
+        max_iterations,
+        runtime,
+        build_timeout,
+        health_timeout,
+        smoke_suite=None,
+        facts=None,
+    ) -> AuthoringRun:
+        report = VerificationReport(
+            results=[CheckResult(check_id="parses", status=CheckStatus.PASSED)]
+        )
+        return AuthoringRun(
+            project="p",
+            target=DeployTarget(),
+            iterations=[
+                IterationRecord(
+                    index=0,
+                    dockerfile=dockerfile_text,
+                    report=report,
+                    duration_s=0.0,
+                )
+            ],
+            stopped_reason="static_only",
+            success=False,
+        )
+
+    return fake
+
+
+def _git(repo: Path, *args: str) -> None:
+    """Run a git command against ``repo``, raising on failure."""
+    subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True)
+
+
+def test_author_with_signing_key_issues_provenance_set(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo = make_repo_with_origin(tmp_path)
+    key, _pub = make_key(tmp_path)
+    monkeypatch.setattr(
+        "deployer.cli.author_dockerfile", _fake_author_dockerfile(_SIGNED_DOCKERFILE)
+    )
+    monkeypatch.setattr("deployer.cli.AnthropicAuthor", lambda: object())
+
+    exit_code = cli.main(
+        ["author", str(repo), "--no-docker", "--signing-key", str(key)]
+    )
+
+    assert exit_code == 0
+    assert (repo / ".deployer" / "authoring" / "Dockerfile.current").is_file()
+
+
+def test_author_fails_when_the_previous_set_cannot_be_removed(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """A mandatory withdrawal that fails is reported and is not a success."""
+    repo = make_repo_with_origin(tmp_path)
+    monkeypatch.setattr(
+        "deployer.cli.author_dockerfile", _fake_author_dockerfile(_SIGNED_DOCKERFILE)
+    )
+    monkeypatch.setattr("deployer.cli.AnthropicAuthor", lambda: object())
+
+    def broken(project: Path) -> bool:
+        raise OSError("read-only file system")
+
+    monkeypatch.setattr("deployer.cli.issue.withdraw", broken)
+
+    exit_code = cli.main(["author", str(repo), "--no-docker"])
+
+    assert exit_code == 1
+    err = capsys.readouterr().err
+    assert "error: previous authoring set could not be removed" in err
+
+
+def test_author_without_signing_key_warns_and_issues_nothing(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    repo = make_repo_with_origin(tmp_path)
+    monkeypatch.delenv("DEPLOYER_SIGNING_KEY", raising=False)
+    monkeypatch.setattr(
+        "deployer.cli.author_dockerfile", _fake_author_dockerfile(_SIGNED_DOCKERFILE)
+    )
+    monkeypatch.setattr("deployer.cli.AnthropicAuthor", lambda: object())
+
+    exit_code = cli.main(["author", str(repo), "--no-docker"])
+
+    assert exit_code == 0
+    assert "warning: ownership will not be confirmable" in capsys.readouterr().err
+    assert not (repo / ".deployer" / "authoring" / "Dockerfile.current").exists()
+
+
+def test_author_dirty_tree_warns_and_withdraws_previous_set(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    repo = make_repo_with_origin(tmp_path)
+    key, _pub = make_key(tmp_path)
+    monkeypatch.setattr(
+        "deployer.cli.author_dockerfile", _fake_author_dockerfile(_SIGNED_DOCKERFILE)
+    )
+    monkeypatch.setattr("deployer.cli.AnthropicAuthor", lambda: object())
+    pointer = repo / SET_ROOT / "Dockerfile.current"
+    set_parent_dir = repo / SET_ROOT / SET_PARENT
+
+    # A prior, clean run issues a set; commit everything it wrote (the
+    # Dockerfile, .dockerignore, the run report, the set itself) so the
+    # tree is genuinely clean again before the dirtiness under test is
+    # introduced — otherwise the first run's own untracked/modified files
+    # would already fail preflight's dirty check, and this test would pass
+    # for the wrong reason.
+    assert (
+        cli.main(["author", str(repo), "--no-docker", "--signing-key", str(key)]) == 0
+    )
+    assert pointer.is_file()
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "authoring set")
+
+    (repo / "untracked.txt").write_text("dirt\n")
+    capsys.readouterr()  # discard the first run's output
+
+    exit_code = cli.main(
+        ["author", str(repo), "--no-docker", "--signing-key", str(key)]
+    )
+
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    assert "warning: ownership will not be confirmable" in captured.err
+    assert "untracked.txt" in captured.err
+    assert "warning: previous authoring set removed" in captured.err
+    assert not pointer.exists()
+    assert not any(set_parent_dir.iterdir())
+
+
+def test_author_version_lookup_failure_does_not_crash(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """A `PackageNotFoundError` from the version lookup must not turn a
+    clean, signed authoring run into an unhandled traceback: `author.
+    deployer_version`'s existing `None` fallback applies, and the CLI
+    treats that like any other "cannot confirm ownership" outcome."""
+    import importlib.metadata
+
+    repo = make_repo_with_origin(tmp_path)
+    key, _pub = make_key(tmp_path)
+    monkeypatch.setattr(
+        "deployer.cli.author_dockerfile", _fake_author_dockerfile(_SIGNED_DOCKERFILE)
+    )
+    monkeypatch.setattr("deployer.cli.AnthropicAuthor", lambda: object())
+
+    def boom(name: str) -> str:
+        raise importlib.metadata.PackageNotFoundError(name)
+
+    monkeypatch.setattr("deployer.author.importlib.metadata.version", boom)
+
+    exit_code = cli.main(
+        ["author", str(repo), "--no-docker", "--signing-key", str(key)]
+    )
+
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    assert "warning: ownership will not be confirmable" in captured.err
+    assert not (repo / SET_ROOT / "Dockerfile.current").exists()
 
 
 def _make_corpus(tmp_path, name="case-one", requires_l2=False):
