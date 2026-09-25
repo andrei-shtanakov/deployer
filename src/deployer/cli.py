@@ -926,6 +926,7 @@ def _cmd_fix_publish(args: argparse.Namespace) -> int:
     if error:
         print(f"error: {error}", file=sys.stderr)
         return 2
+    _load_dotenv()
     try:
         doc = publish(
             Path(args.rest[0]),

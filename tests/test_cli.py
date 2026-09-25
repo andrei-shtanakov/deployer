@@ -2417,6 +2417,27 @@ def test_fix_publish_exit_codes(
     assert isinstance(call["gh"], SubprocessGh)
 
 
+def test_fix_publish_loads_dotenv_before_publish(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    publish_calls: list[dict[str, object]],
+) -> None:
+    """§8.2 review (PR #93): ``fix publish`` loads ``.env`` the same way
+    ``deployer fix`` does, so a ``DEPLOYER_TRUST_DIR`` set only there still
+    reaches ``publish``'s environment (and, through it, the ownership
+    check's trust directory)."""
+    monkeypatch.chdir(tmp_path)
+    fake_env: dict[str, str] = {}
+    monkeypatch.setattr(cli.os, "environ", fake_env)
+    trust_dir = tmp_path / "trust"
+    (tmp_path / ".env").write_text(f"DEPLOYER_TRUST_DIR={trust_dir}\n")
+    publish_calls.append({"result": _published_doc(tmp_path, "published")})
+    assert main(["fix", "publish", "fix.json", "--base", "main"]) == 0
+    call = publish_calls[-1]
+    assert call["env"] is fake_env
+    assert fake_env["DEPLOYER_TRUST_DIR"] == str(trust_dir)
+
+
 @pytest.mark.parametrize(
     ("error", "message"),
     [

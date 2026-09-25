@@ -409,6 +409,12 @@ def _same_dir(a: Path, b: Path) -> bool:
     return a.resolve() == b.resolve()
 
 
+def _same_repo(a: object, b: str) -> bool:
+    """Whether ``a`` is the ``owner/name`` slug ``b``, ignoring case (GitHub
+    owner and repository names are case-insensitive)."""
+    return isinstance(a, str) and a.casefold() == b.casefold()
+
+
 def _ownership_problem(
     doc: FixDocument, fix: _Fix, guards: Sequence[str], env: Mapping[str, str]
 ) -> str | None:
@@ -492,7 +498,7 @@ def _origin_problem(fix: _Fix, guards: Sequence[str]) -> str | None:
     """The worktree's ``origin`` is still the stored repository."""
     url = _run(fix.worktree, "remote", "get-url", _REMOTE, g=guards)
     slug = gitrepo.slug_from_url(url.stdout.decode(errors="replace").strip())
-    if url.code != 0 or slug != fix.repo:
+    if url.code != 0 or not _same_repo(slug, fix.repo):
         return f"the worktree's origin is {slug}, not the stored {fix.repo}"
     return None
 
@@ -719,7 +725,9 @@ def _lookup_pr(
     for pr in listed:
         if pr.ref != fix.branch:
             continue
-        ours = pr.sha == fix.commit and pr.base == base and pr.repo == fix.repo
+        ours = (
+            pr.sha == fix.commit and pr.base == base and _same_repo(pr.repo, fix.repo)
+        )
         if pr.state == "open":
             if not ours or pr.url is None:
                 return _Refusal(f"an open PR on {fix.branch} is not the fix: {pr}")
@@ -801,7 +809,11 @@ def _create_pr(gh: GhRunner, doc: FixDocument, fix: _Fix, base: str) -> str | _R
         created = _pr(json.loads(gh.api(argv, timeout=GH_TIMEOUT_S)))
     except Exception as exc:  # noqa: BLE001 — a failure is a refusal
         return _Refusal(f"PR creation failed: {_describe(exc)}")
-    ours = (created.sha, created.base, created.repo) == (fix.commit, base, fix.repo)
+    ours = (
+        created.sha == fix.commit
+        and created.base == base
+        and _same_repo(created.repo, fix.repo)
+    )
     if not ours or created.url is None:
         return _Refusal(f"the created PR is not the fix: {created}")
     return created.url

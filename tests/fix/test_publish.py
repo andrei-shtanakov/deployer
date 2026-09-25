@@ -93,6 +93,9 @@ class FakeGh:
     create_times_out: bool = False
     missing: bool = False
     head_sha: dict[str, str] = field(default_factory=dict)
+    created_repo: str = REPO
+    """``head.repo.full_name`` a creation answers with; a case variant of
+    ``REPO`` exercises the casefold comparison in ``_create_pr``."""
 
     def api(self, argv: list[str], *, timeout: float) -> str:
         """Answer a PR listing or a PR creation."""
@@ -118,7 +121,12 @@ class FakeGh:
             value.split("=", 1) for flag, value in zip(argv, argv[1:]) if flag == "-f"
         )
         self.created.append(fields)
-        pr = self.pr(fields["head"], self.head_sha[fields["head"]], fields["base"])
+        pr = self.pr(
+            fields["head"],
+            self.head_sha[fields["head"]],
+            fields["base"],
+            repo=self.created_repo,
+        )
         self.prs.append(pr)
         if self.create_times_out:
             raise GhError("gh api repos/x/pulls timed out after 30.0s")
@@ -519,6 +527,27 @@ def test_an_open_pr_from_another_repository_is_refused(pub: Published) -> None:
     pub.gh.prs.append(pub.gh.pr(pub.branch, pub.commit, BASE, repo="evil/fork"))
     _refused(pub.run(), "an open PR")
     assert "push" not in pub.remote.calls
+
+
+def test_an_open_pr_with_a_case_variant_repo_is_reused(pub: Published) -> None:
+    """§8.3 review (PR #93): GitHub owner and repository names ignore case
+    (``admission/ownership.py`` already compares them with ``casefold()``),
+    so an open PR whose ``head.repo.full_name`` is only a case variant of
+    the stored ``example/project`` is still the fix's own PR, not a
+    foreign one."""
+    assert REPO == "example/project"
+    pub.gh.prs.append(pub.gh.pr(pub.branch, pub.commit, BASE, repo="Example/Project"))
+    _ok(pub.run())
+    assert pub.gh.created == []
+
+
+def test_a_created_pr_with_a_case_variant_repo_is_accepted(pub: Published) -> None:
+    """§8.3 review (PR #93): the same casefold tolerance applies to a freshly
+    created PR — the response's ``head.repo.full_name`` may differ from the
+    stored slug only in case."""
+    pub.gh.created_repo = "Example/PROJECT"
+    _ok(pub.run())
+    assert len(pub.gh.created) == 1
 
 
 # --- refusals before the network ---------------------------------------------
