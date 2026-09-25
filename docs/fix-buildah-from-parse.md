@@ -191,10 +191,15 @@ Two more recordings fit the same source:
 - `l7-stages-both-built`: `COPY --from=a` makes stage `a` needed, so both stages build,
   one after the other, with `[1/2]` then `[2/2]` lines.
 
-Not recorded, and predicted from the source only: the L4 Dockerfile with
-`COPY --from=a …` in the second stage would first print stage `a`'s
-`[1/2] STEP 1/…: FROM python:3.12-slim AS a` and its steps, then fail with the same
-error.
+Two later recordings confirm both predictions this note made from the source alone:
+
+- `l8-from-bad-after-built-stage`: the L4 Dockerfile with `COPY --from=a …` in the
+  second stage. It prints stage `a`'s `[1/2] STEP 1/2: FROM python:3.12-slim AS a` and
+  `[1/2] STEP 2/2: RUN true`, then fails with the same error (exit 125). The FROM check
+  runs per stage, when the stage starts (step 5).
+- `l9-from-bad-in-skipped-stage`: the bad FROM sits in a stage nothing depends on. That
+  stage is skipped (step 4) and never checked, and the build **exits 0** with the defect
+  still in the file.
 
 ## What this means for the local FROM row
 
