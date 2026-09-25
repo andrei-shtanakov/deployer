@@ -378,15 +378,20 @@ def _prove_paths(project: Path, paths: Sequence[str]) -> str | None:
     """The reason ``paths`` are not excluded by both the CI and the local
     (podman) ignore file, or ``None`` once every path is; a missing file
     excludes nothing. Never writes."""
-    for file in (
-        ignore.ci_ignore_file(project, _ARTIFACT_PATH),
-        ignore.local_ignore_file(project, _ARTIFACT_PATH, "podman"),
+    for kind, file in (
+        ("CI", ignore.ci_ignore_file(project, _ARTIFACT_PATH)),
+        ("local (podman)", ignore.local_ignore_file(project, _ARTIFACT_PATH, "podman")),
     ):
         rules = ignore.load_rules(project, file)
         if rules.unsupported is not None:
             return f"exclusion not provable: unsupported pattern in {file}"
         for path in paths:
             if ignore.excluded_by(rules, path) is None:
+                if file is None:
+                    return (
+                        f"exclusion not provable: {path} is not excluded "
+                        f"(no {kind} ignore file)"
+                    )
                 return f"exclusion not provable: {path} is not excluded by {file}"
     return None
 
@@ -412,12 +417,20 @@ def exclusion_proven(project: Path, paths: Sequence[str]) -> str | None:
     narrower existing rule that does not already cover ``paths`` is
     reported as unproven rather than widened. ``None`` once every path is
     proven excluded.
+
+    Total: this never raises. An ``OSError`` while reading an ignore file
+    (unreadable, or the file vanishing between a presence check and the
+    read) is reported as a reason too, worded as a check failure rather
+    than a write failure.
     """
-    with _root_fd(project) as root_fd:
-        reason = _refusal_before_writes(project, root_fd)
-    if reason is not None:
-        return reason
-    return _prove_paths(project, paths)
+    try:
+        with _root_fd(project) as root_fd:
+            reason = _refusal_before_writes(project, root_fd)
+        if reason is not None:
+            return reason
+        return _prove_paths(project, paths)
+    except OSError as exc:
+        return f"exclusion could not be checked: {exc}"
 
 
 def _check_reuse(
@@ -668,7 +681,8 @@ def issue(
         else:
             reason = exclusion_proven(pre.project, paths)
     except OSError as exc:
-        reason = f"exclusion could not be written: {exc}"
+        verb = "written" if edit_ignore else "checked"
+        reason = f"exclusion could not be {verb}: {exc}"
     if reason is not None:
         return Issued(False, reason, None)
     try:
