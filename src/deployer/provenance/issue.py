@@ -7,10 +7,14 @@ immutable, signed, excluded set, then atomically repoints
 ``Dockerfile.current`` at it. ``withdraw`` removes a published set.
 """
 
+import errno
 import fcntl
 import os
 import shutil
+import stat
 import tempfile
+from collections.abc import Generator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -135,43 +139,172 @@ def _build(
     return snap_bytes, rec_bytes, sha256_hex(rec_bytes)
 
 
-_GUARDED_PATHS = (
-    ".deployer",
-    SET_ROOT,
-    f"{SET_ROOT}/{SET_PARENT}",
-    f"{SET_ROOT}/{POINTER}",
-)
+class _PathRefusal(OSError):
+    """A provenance path that must not be followed or written through: a
+    symlink, a non-directory component, or a non-regular file."""
 
 
-def _symlink_refusal(project: Path, extra: tuple[str, ...] = ()) -> str | None:
-    """A reason if any provenance path (or ``extra``) is a symlink.
+_DIR_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+_FILE_FLAGS = os.O_NOFOLLOW | os.O_NONBLOCK
+_CHAIN = (*SET_ROOT.split("/"), SET_PARENT)
 
-    Provenance writes and removals must stay inside the project: a symlink
-    at ``.deployer``, ``SET_ROOT``, the set parent or the pointer would
-    redirect them elsewhere (and ``rmtree`` would delete what it points
-    at), so any symlink there refuses instead of being followed.
+
+@contextmanager
+def _root_fd(project: Path) -> Generator[int]:
+    """The project root, opened once; every provenance operation is
+    relative to it. The root itself is user-chosen, so it may be a link."""
+    fd = os.open(project, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        yield fd
+    finally:
+        os.close(fd)
+
+
+def _open_component(parent_fd: int, name: str, rel: str, create: bool) -> int | None:
+    """Open directory ``name`` under ``parent_fd`` without following a
+    symlink, creating it first when ``create``; ``None`` if it is missing
+    and may not be created. A symlink raises ``_PathRefusal`` naming
+    ``rel``; so does any non-directory when ``create``, while without it a
+    plain file counts as missing (nothing provenance-shaped lives there)."""
+    if create:
+        try:
+            os.mkdir(name, 0o755, dir_fd=parent_fd)
+        except FileExistsError:
+            pass
+    try:
+        return os.open(name, _DIR_FLAGS, dir_fd=parent_fd)
+    except FileNotFoundError:
+        if create:
+            raise
+        return None
+    except OSError as exc:
+        if exc.errno not in (errno.ELOOP, errno.ENOTDIR):
+            raise
+        if not create and not _is_symlink_at(parent_fd, name):
+            return None  # a plain file: no provenance below it to remove
+        raise _PathRefusal(
+            f"{rel} is a symlink or not a directory; provenance not touched"
+        ) from exc
+
+
+def _is_symlink_at(dir_fd: int, name: str) -> bool:
+    """Whether ``name`` under ``dir_fd`` is a symlink (``lstat``-style)."""
+    try:
+        st = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+    except OSError:
+        return False
+    return stat.S_ISLNK(st.st_mode)
+
+
+@contextmanager
+def _open_chain(root_fd: int, create: bool) -> Generator[list[int]]:
+    """Walk ``.deployer`` -> ``authoring`` -> ``Dockerfile`` one component
+    at a time; the fds opened, in order, all closed on exit.
+
+    Without ``create`` the walk stops at the first missing component, so
+    the list may be shorter than the chain. Held fds pin the real
+    directories: a later swap of any path component for a symlink cannot
+    redirect an operation made relative to them.
     """
-    for rel in (*_GUARDED_PATHS, *extra):
-        if (project / rel).is_symlink():
-            return f"{rel} is a symlink; provenance not touched"
+    fds: list[int] = []
+    try:
+        parent = root_fd
+        for depth, name in enumerate(_CHAIN, start=1):
+            rel = "/".join(_CHAIN[:depth])
+            fd = _open_component(parent, name, rel, create)
+            if fd is None:
+                break
+            fds.append(fd)
+            parent = fd
+        yield fds
+    finally:
+        for fd in reversed(fds):
+            os.close(fd)
+
+
+def _open_regular(dir_fd: int, name: str, flags: int) -> int:
+    """Open file ``name`` under ``dir_fd`` never following a final symlink;
+    anything but a regular file raises ``_PathRefusal``."""
+    try:
+        fd = os.open(name, flags | _FILE_FLAGS, 0o644, dir_fd=dir_fd)
+    except OSError as exc:
+        if exc.errno == errno.ELOOP:
+            raise _PathRefusal(f"{name} is a symlink; not followed") from exc
+        raise
+    if not stat.S_ISREG(os.fstat(fd).st_mode):
+        os.close(fd)
+        raise _PathRefusal(f"{name} is not a regular file; not followed")
+    return fd
+
+
+def _read_at(dir_fd: int, name: str) -> bytes:
+    """The bytes of regular file ``name`` under ``dir_fd``, read through a
+    no-follow fd."""
+    with os.fdopen(_open_regular(dir_fd, name, os.O_RDONLY), "rb") as f:
+        return f.read()
+
+
+def _write_new_at(dir_fd: int, name: str, data: bytes) -> None:
+    """Create ``name`` under ``dir_fd`` exclusively (never through an
+    existing entry or symlink) and write ``data``."""
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    with os.fdopen(_open_regular(dir_fd, name, flags), "wb") as f:
+        f.write(data)
+
+
+def _append_at(dir_fd: int, name: str, text: str, create: bool) -> None:
+    """Append ``text`` to regular file ``name`` under ``dir_fd`` through a
+    no-follow fd, creating it when ``create``."""
+    flags = os.O_WRONLY | os.O_APPEND | (os.O_CREAT if create else 0)
+    with os.fdopen(_open_regular(dir_fd, name, flags), "a") as f:
+        f.write(text)
+
+
+def _entry_exists(dir_fd: int, name: str) -> bool:
+    """Whether ``name`` exists under ``dir_fd``, a symlink included."""
+    try:
+        os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return False
+    return True
+
+
+def _ignore_file_refusal(root_fd: int, files: tuple[str, ...]) -> str | None:
+    """A reason if an ignore file is not a plain root-level entry.
+
+    Writes are fd-anchored and can never go through a symlink; this check
+    exists for the exclusion *proof*, which reads by path: a symlinked
+    ignore file would prove exclusion from a file that is not the one in
+    the build context.
+    """
+    for name in files:
+        if "/" in name:
+            return f"{name} is not at the project root; not modified"
+        try:
+            st = os.stat(name, dir_fd=root_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            continue
+        if stat.S_ISLNK(st.st_mode):
+            return f"{name} is a symlink; provenance not touched"
     return None
 
 
-def _ensure_pattern(project: Path, file: str | None, create: bool) -> None:
+def _ensure_pattern(
+    project: Path, root_fd: int, file: str | None, create: bool
+) -> None:
     """Append ``.deployer/`` to ``file``, or create it, unless some rule in
-    it already excludes ``.deployer/``."""
+    it already excludes ``.deployer/``; every read and write goes through
+    a no-follow fd relative to the project root."""
     if file is None:
         if create:
-            (project / ".dockerignore").write_text(".deployer/\n")
+            _append_at(root_fd, ".dockerignore", ".deployer/\n", create=True)
         return
     rules = ignore.load_rules(project, file)
     if ignore.excluded_by(rules, ".deployer") is not None:
         return
-    path = project / file
-    text = path.read_text() if path.is_file() else ""
+    text = _read_at(root_fd, file).decode(errors="replace")
     sep = "" if text == "" or text.endswith("\n") else "\n"
-    with path.open("a") as f:
-        f.write(f"{sep}.deployer/\n")
+    _append_at(root_fd, file, f"{sep}.deployer/\n", create=False)
 
 
 def _refusal_for_unsupported(project: Path, file: str | None) -> str | None:
@@ -188,21 +321,30 @@ def _refusal_for_unsupported(project: Path, file: str | None) -> str | None:
 def ensure_excluded(project: Path, paths: list[str]) -> str | None:
     """Prove every path in ``paths`` is excluded from both build contexts;
     the reason it could not be proven, or ``None`` once it is."""
+    with _root_fd(project) as root_fd:
+        try:
+            return _ensure_excluded_at(project, root_fd, paths)
+        except _PathRefusal as exc:
+            return str(exc)
+
+
+def _ensure_excluded_at(project: Path, root_fd: int, paths: list[str]) -> str | None:
+    """``ensure_excluded`` with ignore-file writes anchored at ``root_fd``."""
     ci_file = ignore.ci_ignore_file(project, _ARTIFACT_PATH)
     local_file = ignore.local_ignore_file(project, _ARTIFACT_PATH, "podman")
     ignore_files = tuple(
         f for f in (ci_file or ".dockerignore", ".containerignore") if f is not None
     )
-    reason = _symlink_refusal(project, ignore_files)
+    reason = _ignore_file_refusal(root_fd, ignore_files)
     if reason is not None:
         return reason
     for file in (ci_file, local_file):
         reason = _refusal_for_unsupported(project, file)
         if reason is not None:
             return reason
-    _ensure_pattern(project, ci_file, True)
+    _ensure_pattern(project, root_fd, ci_file, True)
     if (project / ".containerignore").is_file():
-        _ensure_pattern(project, ".containerignore", False)
+        _ensure_pattern(project, root_fd, ".containerignore", False)
     for file in (
         ignore.ci_ignore_file(project, _ARTIFACT_PATH),
         ignore.local_ignore_file(project, _ARTIFACT_PATH, "podman"),
@@ -217,84 +359,106 @@ def ensure_excluded(project: Path, paths: list[str]) -> str | None:
 
 
 def _check_reuse(
-    target: Path, rec_bytes: bytes, snap_bytes: bytes, signing_key: Path
+    parent_fd: int, name: str, rec_bytes: bytes, snap_bytes: bytes, signing_key: Path
 ) -> str | None:
-    """``None`` if the existing set matches exactly, else why it does not.
+    """``None`` if the existing set ``name`` under ``parent_fd`` matches
+    exactly, else why it does not.
 
-    A missing file, a non-directory ``target``, or any other read failure
-    all mean the same thing here: the existing set cannot be trusted as a
-    match, so it is refused rather than raising.
+    A missing file, a non-directory or symlinked ``name``, or any other
+    read failure all mean the same thing here: the existing set cannot be
+    trusted as a match, so it is refused rather than raising.
     """
-    reason = f"existing set {target.name} does not match; not written"
-    if not target.is_dir():
+    reason = f"existing set {name} does not match; not written"
+    try:
+        set_fd = os.open(name, _DIR_FLAGS, dir_fd=parent_fd)
+    except OSError:
         return reason
     try:
-        matches = (target / RECORD_FILE).read_bytes() == rec_bytes and (
-            target / SNAPSHOT_FILE
-        ).read_bytes() == snap_bytes
+        matches = _read_at(set_fd, RECORD_FILE) == rec_bytes and (
+            _read_at(set_fd, SNAPSHOT_FILE) == snap_bytes
+        )
         if matches:
-            existing_sig = (target / SIGNATURE_FILE).read_bytes()
+            existing_sig = _read_at(set_fd, SIGNATURE_FILE)
             pub = sshsig.public_key(signing_key)
             matches = sshsig.verify_with_public_key(rec_bytes, existing_sig, pub).ok
     except (OSError, SshSigError):
         matches = False
+    finally:
+        os.close(set_fd)
     return None if matches else reason
 
 
-def _write_set(target: Path, rec_bytes: bytes, snap_bytes: bytes, sig: bytes) -> None:
-    """Write the three set files under a temp dir, then atomically rename."""
-    target.parent.mkdir(parents=True, exist_ok=True)
-    tmp_dir = target.parent / f".tmp-{target.name}-{os.getpid()}"
-    tmp_dir.mkdir()
-    (tmp_dir / RECORD_FILE).write_bytes(rec_bytes)
-    (tmp_dir / SNAPSHOT_FILE).write_bytes(snap_bytes)
-    (tmp_dir / SIGNATURE_FILE).write_bytes(sig)
-    os.rename(tmp_dir, target)
+def _write_set(
+    parent_fd: int, name: str, rec_bytes: bytes, snap_bytes: bytes, sig: bytes
+) -> None:
+    """Write the three set files into a temp dir under ``parent_fd``, then
+    atomically rename it to ``name`` — all relative to the held fds."""
+    tmp_name = f".tmp-{name}-{os.getpid()}"
+    os.mkdir(tmp_name, 0o755, dir_fd=parent_fd)
+    tmp_fd = os.open(tmp_name, _DIR_FLAGS, dir_fd=parent_fd)
+    try:
+        _write_new_at(tmp_fd, RECORD_FILE, rec_bytes)
+        _write_new_at(tmp_fd, SNAPSHOT_FILE, snap_bytes)
+        _write_new_at(tmp_fd, SIGNATURE_FILE, sig)
+    finally:
+        os.close(tmp_fd)
+    os.rename(tmp_name, name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
 
 
-def _replace_pointer(project: Path, rec_sha: str) -> None:
-    """Atomically point ``Dockerfile.current`` at the given set.
+def _replace_pointer(auth_fd: int, rec_sha: str) -> None:
+    """Atomically point ``Dockerfile.current`` (under ``auth_fd``) at the
+    given set, via ``renameat`` of an exclusively created temp file.
 
     On failure the temp pointer file is unlinked on a best-effort basis
     before the error is re-raised, so a crashed run leaves no stray
     ``.tmp-pointer-*`` file behind alongside the untouched old pointer.
     """
-    set_root = project / SET_ROOT
-    set_root.mkdir(parents=True, exist_ok=True)
-    tmp = set_root / f".tmp-pointer-{os.getpid()}"
-    tmp.write_text(set_dir_name(rec_sha) + "\n")
+    tmp = f".tmp-pointer-{os.getpid()}"
+    _unlink_quietly(auth_fd, tmp)  # a leftover of a crashed run with our pid
+    _write_new_at(auth_fd, tmp, (set_dir_name(rec_sha) + "\n").encode())
     try:
-        os.replace(tmp, set_root / POINTER)
+        os.rename(tmp, POINTER, src_dir_fd=auth_fd, dst_dir_fd=auth_fd)
     except OSError:
-        tmp.unlink(missing_ok=True)
+        _unlink_quietly(auth_fd, tmp)
         raise
 
 
-def _is_prunable_set_dir(child: Path, rec_sha: str) -> bool:
-    """Whether ``child`` is a finished set directory safe to remove: a real
-    directory, not the one just published, and not another run's
+def _unlink_quietly(dir_fd: int, name: str) -> None:
+    """Best-effort ``unlinkat``; never follows, never raises."""
+    try:
+        os.unlink(name, dir_fd=dir_fd)
+    except OSError:
+        pass
+
+
+def _prunable_names(parent_fd: int, keep: str) -> list[str]:
+    """Finished set directories under ``parent_fd`` safe to remove: real
+    directories (not symlinks), not ``keep``, and not another run's
     in-progress ``.tmp-*`` staging directory."""
-    if not child.is_dir():
-        return False
-    if child.name == rec_sha:
-        return False
-    return not child.name.startswith(".tmp-")
+    with os.scandir(parent_fd) as entries:
+        return [
+            e.name
+            for e in entries
+            if e.is_dir(follow_symlinks=False)
+            and e.name != keep
+            and not e.name.startswith(".tmp-")
+        ]
 
 
-def _prune_other_sets(project: Path, rec_sha: str) -> None:
-    """Remove every other set directory under ``SET_ROOT/Dockerfile/``.
+def _prune_other_sets(parent_fd: int, keep: str) -> bool:
+    """Remove every set directory under ``parent_fd`` except ``keep``;
+    whether any was removed.
 
     Non-directory entries and any live ``.tmp-*`` staging directory (another
     run in flight) are left alone; a leftover crashed-run tmp dir is
-    harmless since it is already excluded under ``.deployer/``. A real
-    removal failure is left to raise: the pointer is already correct by the
-    time this runs, so the stale directories are cosmetic, not correctness
-    risk.
+    harmless since it is already excluded under ``.deployer/``. Removal is
+    ``rmtree(name, dir_fd=parent_fd)`` (symlink-attack-safe), so it stays
+    inside the held directory. A real removal failure is left to raise.
     """
-    parent = project / SET_ROOT / SET_PARENT
-    for child in parent.iterdir():
-        if _is_prunable_set_dir(child, rec_sha):
-            shutil.rmtree(child)
+    names = _prunable_names(parent_fd, keep)
+    for name in names:
+        shutil.rmtree(name, dir_fd=parent_fd)
+    return bool(names)
 
 
 def _acquire_publication_lock(project: Path) -> int:
@@ -305,13 +469,15 @@ def _acquire_publication_lock(project: Path) -> int:
     calls for the same repository. The lock file lives at
     ``.git/deployer-authoring.lock`` (via ``gitrepo.git_path``), so it never
     appears in the work tree or in ``dirty_paths``. Raises ``GitError`` or
-    ``OSError`` when the lock cannot be taken.
+    ``OSError`` when the lock cannot be taken. The lock file is never
+    written; ``O_NOFOLLOW`` keeps a symlink at its name from creating a
+    file elsewhere (the ``.git`` location itself is Git's to resolve).
 
     POSIX-only (``fcntl.flock``); this project targets macOS and Linux,
     not Windows, so no Windows locking path is provided.
     """
     lock_path = gitrepo.git_path(project, _LOCK_FILE_NAME)
-    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX)
     except OSError:
@@ -328,10 +494,11 @@ def _release_publication_lock(fd: int) -> None:
         os.close(fd)
 
 
-def _current_artifact_sha(project: Path) -> str | None:
-    """The hash of the Dockerfile on disk now, or ``None`` if unreadable."""
+def _current_artifact_sha(root_fd: int) -> str | None:
+    """The hash of the Dockerfile on disk now, or ``None`` if unreadable or
+    not a regular file (a symlink is never this run's output)."""
     try:
-        return sha256_hex((project / _ARTIFACT_PATH).read_bytes())
+        return sha256_hex(_read_at(root_fd, _ARTIFACT_PATH))
     except OSError:
         return None
 
@@ -357,33 +524,53 @@ def _publish(
     pointer naming a set for bytes that are not on disk. A failure to
     acquire the lock itself becomes ``Issued(False, reason, None)``; a
     failure once the lock is held propagates as before.
+
+    Every write is relative to fds from one no-follow walk of the
+    provenance chain, so swapping a path component mid-run cannot redirect
+    it outside the project.
     """
-    target = project / SET_ROOT / set_dir_name(rec_sha)
     try:
         fd = _acquire_publication_lock(project)
     except (GitError, OSError) as exc:
         return Issued(False, f"could not acquire the publication lock: {exc}", None)
     try:
-        reason = _symlink_refusal(project)
-        if reason is not None:
-            return Issued(False, reason, None)
-        if _current_artifact_sha(project) != artifact_sha:
-            return Issued(
-                False,
-                "Dockerfile on disk is not this run's output; not published",
-                None,
-            )
-        if target.exists():
-            reason = _check_reuse(target, rec_bytes, snap_bytes, signing_key)
-            if reason is not None:
-                return Issued(False, reason, None)
-        else:
-            _write_set(target, rec_bytes, snap_bytes, sig)
-        _replace_pointer(project, rec_sha)
-        _prune_other_sets(project, rec_sha)
-        return Issued(True, None, set_dir_name(rec_sha))
+        with _root_fd(project) as root_fd:
+            if _current_artifact_sha(root_fd) != artifact_sha:
+                return Issued(
+                    False,
+                    "Dockerfile on disk is not this run's output; not published",
+                    None,
+                )
+            try:
+                with _open_chain(root_fd, create=True) as fds:
+                    return _publish_at(
+                        fds, rec_sha, rec_bytes, snap_bytes, sig, signing_key
+                    )
+            except _PathRefusal as exc:
+                return Issued(False, str(exc), None)
     finally:
         _release_publication_lock(fd)
+
+
+def _publish_at(
+    fds: list[int],
+    rec_sha: str,
+    rec_bytes: bytes,
+    snap_bytes: bytes,
+    sig: bytes,
+    signing_key: Path,
+) -> Issued:
+    """Reuse or write the set, repoint and prune, relative to the chain."""
+    _, auth_fd, parent_fd = fds
+    if _entry_exists(parent_fd, rec_sha):
+        reason = _check_reuse(parent_fd, rec_sha, rec_bytes, snap_bytes, signing_key)
+        if reason is not None:
+            return Issued(False, reason, None)
+    else:
+        _write_set(parent_fd, rec_sha, rec_bytes, snap_bytes, sig)
+    _replace_pointer(auth_fd, rec_sha)
+    _prune_other_sets(parent_fd, rec_sha)
+    return Issued(True, None, set_dir_name(rec_sha))
 
 
 def issue(
@@ -431,32 +618,35 @@ def withdraw(project: Path) -> bool:
     confirmation can only ever lose one, never create a false one, and
     spec §5.3 forbids a normally completed run from leaving an old one
     behind. A removal that itself fails raises ``OSError`` so the caller
-    can report it instead of completing as if nothing were left.
+    can report it instead of completing as if nothing were left; so does
+    a symlinked or non-directory component of the provenance chain.
 
-    Like ``_prune_other_sets``, this leaves non-directory entries and any
-    live ``.tmp-*`` staging directory alone.
+    Removals are relative to fds from one no-follow walk of the chain; a
+    missing component means nothing below it to remove. Like
+    ``_prune_other_sets``, this leaves non-directory entries and any live
+    ``.tmp-*`` staging directory alone.
     """
     try:
         fd: int | None = _acquire_publication_lock(project)
     except (GitError, OSError):
         fd = None
     try:
-        reason = _symlink_refusal(project)
-        if reason is not None:
-            raise OSError(reason)
-        removed = False
-        pointer = project / SET_ROOT / POINTER
-        if pointer.exists():
-            pointer.unlink()
-            removed = True
-        parent = project / SET_ROOT / SET_PARENT
-        if parent.is_dir():
-            for child in parent.iterdir():
-                if not _is_prunable_set_dir(child, rec_sha=""):
-                    continue
-                shutil.rmtree(child)
-                removed = True
-        return removed
+        with _root_fd(project) as root_fd, _open_chain(root_fd, create=False) as fds:
+            return _withdraw_at(fds)
     finally:
         if fd is not None:
             _release_publication_lock(fd)
+
+
+def _withdraw_at(fds: list[int]) -> bool:
+    """Unlink the pointer, then remove the set dirs, relative to ``fds``."""
+    removed = False
+    if len(fds) >= 2:
+        try:
+            os.unlink(POINTER, dir_fd=fds[1])
+            removed = True
+        except FileNotFoundError:
+            pass
+    if len(fds) == 3:
+        removed = _prune_other_sets(fds[2], keep="") or removed
+    return removed

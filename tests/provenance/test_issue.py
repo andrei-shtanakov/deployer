@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import threading
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -140,14 +141,16 @@ def test_interrupted_before_the_pointer_keeps_the_old_set(
     pre2 = issue.preflight(repo_with_origin, key)
     assert isinstance(pre2, issue.Preflight)
     _author(repo_with_origin, DOCKERFILE + 'CMD ["python"]\n')
-    real_replace = os.replace
+    real_rename = os.rename
 
-    def boom(src: str | os.PathLike[str], dst: str | os.PathLike[str]) -> None:
+    def boom(
+        src: str | os.PathLike[str], dst: str | os.PathLike[str], **kw: int | None
+    ) -> None:
         if str(dst).endswith(POINTER):
             raise OSError("killed")
-        return real_replace(src, dst)
+        return real_rename(src, dst, **kw)
 
-    monkeypatch.setattr(os, "replace", boom)
+    monkeypatch.setattr(os, "rename", boom)
     try:
         issue.issue(pre2, key, "0.1", _written(pre2))
     except OSError:
@@ -333,11 +336,11 @@ def test_concurrent_issue_calls_serialize_and_leave_one_consistent_set(
     second_thread: list[threading.Thread] = []
     triggered = False
 
-    def hook(project: Path, rec_sha: str) -> None:
+    def hook(auth_fd: int, rec_sha: str) -> None:
         nonlocal triggered
         if triggered:
             # the second call's own pointer swap: no more hooking
-            real_replace_pointer(project, rec_sha)
+            real_replace_pointer(auth_fd, rec_sha)
             return
         triggered = True
         _author(repo_with_origin, DOCKERFILE + 'CMD ["python"]\n')
@@ -352,7 +355,7 @@ def test_concurrent_issue_calls_serialize_and_leave_one_consistent_set(
         # second must still be blocked trying to acquire it
         thread.join(timeout=0.2)
         assert thread.is_alive()
-        real_replace_pointer(project, rec_sha)
+        real_replace_pointer(auth_fd, rec_sha)
 
     monkeypatch.setattr(issue, "_replace_pointer", hook)
     first = issue.issue(pre, key, "0.1", _written(pre))
@@ -506,3 +509,142 @@ def test_issue_refuses_a_symlinked_ignore_file(
     out = issue.issue(pre, key, "0.1", _written(pre))
     assert not out.published and "symlink" in (out.reason or "")
     assert outside.read_text() == ""
+
+
+def _commit_all(repo: Path, message: str) -> None:
+    subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", message], check=True)
+
+
+def test_withdraw_parent_swapped_after_the_walk_removes_only_the_real_set(
+    repo_with_origin: Path,
+    keypair: tuple[Path, str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TOCTOU (PR #85 review): once the walk is done, swapping the set
+    parent for a symlink cannot redirect the removal outside the project."""
+    key, _ = keypair
+    pre = issue.preflight(repo_with_origin, key)
+    assert isinstance(pre, issue.Preflight)
+    _author(repo_with_origin)
+    out = issue.issue(pre, key, "0.1", _written(pre))
+    assert out.set_dir is not None
+    sha = Path(out.set_dir).name
+    victim = tmp_path / "victim"
+    (victim / sha).mkdir(parents=True)
+    (victim / sha / "precious.txt").write_text("x")
+    parent = repo_with_origin / SET_ROOT / "Dockerfile"
+    moved = repo_with_origin / SET_ROOT / "Dockerfile-real"
+    real_rmtree = shutil.rmtree
+
+    def swap_then_rmtree(path: str, dir_fd: int | None = None) -> None:
+        if not moved.exists():
+            parent.rename(moved)
+            os.symlink(victim, parent)
+        real_rmtree(path, dir_fd=dir_fd)
+
+    monkeypatch.setattr(shutil, "rmtree", swap_then_rmtree)
+    assert issue.withdraw(repo_with_origin) is True
+    assert moved.is_dir()  # the swap happened
+    assert (victim / sha / "precious.txt").read_text() == "x"
+    assert not (moved / sha).exists()  # the held real set dir was removed
+
+
+def test_publish_parent_swapped_after_the_walk_writes_nothing_outside(
+    repo_with_origin: Path,
+    keypair: tuple[Path, str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TOCTOU (PR #85 review): swapping ``SET_ROOT`` for a symlink right
+    before the set write cannot make the write land outside the project."""
+    key, _ = keypair
+    pre = issue.preflight(repo_with_origin, key)
+    assert isinstance(pre, issue.Preflight)
+    _author(repo_with_origin)
+    (repo_with_origin / SET_ROOT).mkdir(parents=True)
+    victim = tmp_path / "victim"
+    victim.mkdir()
+    (victim / "keep.txt").write_text("x")
+    set_root = repo_with_origin / SET_ROOT
+    moved = repo_with_origin / ".deployer" / "authoring-real"
+    real_write_set = issue._write_set
+
+    def swap_then_write(*args: Any) -> None:
+        set_root.rename(moved)
+        os.symlink(victim, set_root)
+        real_write_set(*args)
+
+    monkeypatch.setattr(issue, "_write_set", swap_then_write)
+    try:
+        issue.issue(pre, key, "0.1", _written(pre))
+    except OSError:
+        pass
+    assert moved.is_dir()  # the swap happened
+    assert sorted(p.name for p in victim.iterdir()) == ["keep.txt"]
+    assert (victim / "keep.txt").read_text() == "x"
+    # the writes landed in the held real directory instead
+    assert (moved / POINTER).is_file()
+
+
+def test_ignore_file_swapped_for_a_symlink_before_the_append_is_refused(
+    repo_with_origin: Path,
+    keypair: tuple[Path, str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TOCTOU (PR #85 review): an ignore file replaced by a symlink after
+    the exclusion check but before the append is not written through."""
+    key, _ = keypair
+    (repo_with_origin / ".dockerignore").write_text("*.pyc\n")
+    _commit_all(repo_with_origin, "ignore")
+    pre = issue.preflight(repo_with_origin, key)
+    assert isinstance(pre, issue.Preflight)
+    _author(repo_with_origin)
+    outside = tmp_path / "outside.ignore"
+    outside.write_text("keep\n")
+    ignore_file = repo_with_origin / ".dockerignore"
+    real_excluded_by = issue.ignore.excluded_by
+    swapped = False
+
+    def swap_then_check(*args: Any) -> Any:
+        nonlocal swapped
+        result = real_excluded_by(*args)
+        if not swapped:
+            swapped = True
+            ignore_file.rename(repo_with_origin / ".dockerignore.real")
+            os.symlink(outside, ignore_file)
+        return result
+
+    monkeypatch.setattr(issue.ignore, "excluded_by", swap_then_check)
+    out = issue.issue(pre, key, "0.1", _written(pre))
+    assert swapped
+    assert not out.published and "symlink" in (out.reason or "")
+    assert outside.read_text() == "keep\n"
+
+
+def test_a_symlinked_dockerfile_under_the_lock_is_not_this_runs_output(
+    repo_with_origin: Path, keypair: tuple[Path, str], tmp_path: Path
+) -> None:
+    key, _ = keypair
+    pre = issue.preflight(repo_with_origin, key)
+    assert isinstance(pre, issue.Preflight)
+    outside = tmp_path / "Dockerfile"
+    outside.write_text(DOCKERFILE)
+    os.symlink(outside, repo_with_origin / "Dockerfile")
+    out = issue.issue(pre, key, "0.1", DOCKERFILE.encode())
+    assert not out.published and "not this run's output" in (out.reason or "")
+    assert not (repo_with_origin / SET_ROOT / POINTER).exists()
+
+
+def test_withdraw_unlinks_a_symlinked_pointer_without_following_it(
+    repo_with_origin: Path, tmp_path: Path
+) -> None:
+    outside = tmp_path / "target"
+    outside.write_text("x")
+    (repo_with_origin / SET_ROOT).mkdir(parents=True)
+    os.symlink(outside, repo_with_origin / SET_ROOT / POINTER)
+    assert issue.withdraw(repo_with_origin) is True
+    assert not (repo_with_origin / SET_ROOT / POINTER).is_symlink()
+    assert outside.read_text() == "x"
