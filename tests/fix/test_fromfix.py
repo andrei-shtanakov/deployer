@@ -160,11 +160,11 @@ def test_f1_run5() -> None:
 
 def test_f1_keeps_every_byte_crlf_platform_and_continuation() -> None:
     """Flags, spacing, CRLF and a continuation are kept byte for byte."""
-    dockerfile = b"from  --platform=$BUILDPLATFORM\tpython:3.12 \\\r\n   extra\r\n"
+    dockerfile = b"from  --platform=$BUILDPLATFORM \\\r\n\tpython:3.12\t extra\r\n"
     result, _ = _propose(dockerfile)
     assert isinstance(result, FromFix)
     assert result.replacement == (
-        b"from  --platform=$BUILDPLATFORM\tpython:3.12 \\\r\n   AS extra\r\n"
+        b"from  --platform=$BUILDPLATFORM \\\r\n\tpython:3.12\t AS extra\r\n"
     )
 
 
@@ -308,9 +308,104 @@ def test_refusal_single_argument() -> None:
     assert isinstance(result, str)
 
 
-def test_refusal_token_ambiguous_in_bytes() -> None:
-    """A comment inside the continuation repeating the token → no proposal."""
-    dockerfile = b"FROM python:3.12 \\\n# extra\n  extra\n"
+def test_refusal_comment_inside_continuation() -> None:
+    """A comment line inside the instruction could hold the token's bytes."""
+    dockerfile = b"FROM python:3.12 \\\n# x extra\n  extra\n"
     result, _ = _propose(dockerfile)
     assert isinstance(result, str)
-    assert "unambiguous" in result
+    assert "comment" in result
+
+
+# --- fix round 1 regressions -----------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("dockerfile", "reason"),
+    [
+        # BuildKit joins continuations with no separator: img:1extra.
+        (b"FROM python:3.12-slim\\\nextra\n", "continuation"),
+        (b"FROM img:1 extra\\\n\n", "continuation"),
+        (b"FROM --platform=linux/amd64\\\nimg:1 extra\n", "continuation"),
+        # The token opening a continuation line is refused, not modelled.
+        (b"FROM python:3.12-slim \\\nextra\n", "same line"),
+        (b"FROM img:1 \\\r\n\textra\r\n", "same line"),
+    ],
+)
+def test_refusal_continuation_join(dockerfile: bytes, reason: str) -> None:
+    """Critical 1: no F1 whose bytes BuildKit would join differently."""
+    result, _ = _propose(dockerfile)
+    assert isinstance(result, str)
+    assert reason in result
+
+
+@pytest.mark.parametrize(
+    "other",
+    [
+        b"COPY\t--from=extra /a /b\n",
+        b"FROM\textra\n",
+        b"RUN\t--mount=type=bind,from=extra true\n",
+        b"RUN\x0b--mount=type=bind,from=extra true\n",
+    ],
+)
+def test_refusal_keyword_not_space_separated(other: bytes) -> None:
+    """Critical 2: R's keyword split on a space only hides references."""
+    result, _ = _propose(b"FROM img:1 extra\n" + other)
+    assert isinstance(result, str)
+    assert "not separated by a space" in result
+
+
+@pytest.mark.parametrize(
+    "mount",
+    [
+        b'"from=extra"',
+        b"'from=extra'",
+        b"from=ext\\ra",
+        b'"from=other"',
+    ],
+)
+def test_refusal_quoted_mount(mount: bytes) -> None:
+    """Critical 3: BuildKit reads mounts as CSV, quotes and escapes included."""
+    dockerfile = (
+        b"FROM python:3.12-slim extra\nRUN --mount=type=bind,"
+        + mount
+        + b",target=/x true\n"
+    )
+    result, _ = _propose(dockerfile)
+    assert isinstance(result, str)
+    assert "quoted or escaped" in result
+
+
+def test_mount_from_other_stage_allows_f1() -> None:
+    """An unquoted mount naming another stage does not block F1."""
+    dockerfile = b"FROM python:3.12-slim extra\nRUN --mount=from=other,target=/x true\n"
+    result, _ = _propose(dockerfile)
+    assert isinstance(result, FromFix)
+
+
+def test_guard_condition_says_r_reading_only() -> None:
+    """Important 4: the re-read condition claims R's reading, no more."""
+    result, _ = _propose(b"FROM python:3.12-slim extra\n")
+    assert isinstance(result, FromFix)
+    guard = result.conditions[-1]
+    assert "R's parser" in guard and "not the builders'" in guard
+
+
+@pytest.mark.parametrize("token", ["scratch", "context"])
+def test_refusal_reserved_names(token: str) -> None:
+    """Minor 5: names BuildKit gives a meaning of its own."""
+    result, _ = _propose(f"FROM img:1 {token}\n".encode())
+    assert isinstance(result, str)
+    assert "reserves" in result
+
+
+def test_f2_with_trailing_continuation() -> None:
+    """F2 after a blank-preceded continuation keeps the continuation."""
+    result, _ = _propose(b"FROM img:1 aS \\\n\n")
+    assert isinstance(result, FromFix)
+    assert result.replacement == b"FROM img:1 \\\n"
+
+
+def test_f2_refused_when_as_opens_continuation_line() -> None:
+    """A dangling AS alone on a continuation line is not located."""
+    result, _ = _propose(b"FROM img:1 \\\n  AS\n")
+    assert isinstance(result, str)

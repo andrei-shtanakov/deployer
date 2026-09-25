@@ -50,6 +50,13 @@ _PLATFORM_FLAG = "--platform="
 # expansion or quoting — not checkable against a literal token.
 _UNRESOLVED = frozenset("$\"'\\")
 _GRAMMAR_NOTE = "docs/fix-stage-name-grammar.md"
+# Names BuildKit gives a meaning of its own; never proposed as stage names.
+_RESERVED_NAMES = frozenset({"scratch", "context"})
+# The builders' in-line whitespace: BuildKit splits arguments on
+# [\t\v\f\r ]+, and only space or tab separates words within one line.
+_BLANK = rb"[ \t]"
+# A word boundary on the right: in-line whitespace, a line end, or EOF.
+_WORD_END = rb"(?=[ \t\r\n]|\Z)"
 
 
 @dataclass(frozen=True)
@@ -110,12 +117,18 @@ def propose_from(
     configuration, the only channel left that could select the token.
     """
     instruction = bound.instruction
+    keyword_reason = _keyword_reason(parsed)
+    if keyword_reason is not None:
+        return keyword_reason
     if instruction.keyword != "FROM":
         return f"the bound instruction is not a FROM ({instruction.keyword})"
     if not 0 <= bound.ordinal < len(parsed.instructions) or (
         parsed.instructions[bound.ordinal] != instruction
     ):
         return "the bound instruction does not match the parsed Dockerfile"
+    join_reason = _continuation_reason(bound.original)
+    if join_reason is not None:
+        return join_reason
     tokens = instruction.args.split()
     flags, rest = _split_flags(tokens)
     if isinstance(flags, str):
@@ -130,6 +143,39 @@ def propose_from(
     if token.upper() == "AS":
         return _f2(bound, tokens, conditions)
     return _f1(parsed, bound, tokens, token, build_args, conditions)
+
+
+def _keyword_reason(parsed: ParsedDockerfile) -> str | None:
+    """Refuse when R's keyword split disagrees with the builders'.
+
+    R splits keyword from arguments on the first space only, so
+    ``COPY<TAB>--from=x`` reads as one keyword; the builders split on any
+    blank. Such a Dockerfile's words are not trusted for reference checks.
+    """
+    for instruction in parsed.instructions:
+        if any(char.isspace() for char in instruction.keyword):
+            line = instruction.first_line
+            return f"keyword at line {line} is not separated by a space"
+    return None
+
+
+def _continuation_reason(original: bytes) -> str | None:
+    """Refuse a continuation R and the builders may join differently.
+
+    R joins continuation lines with a space; BuildKit joins them with no
+    separator, so ``img:1\\<newline>extra`` reads as ``img:1extra`` there.
+    Only continuations after a space or tab read the same in both. A
+    comment line inside the continuation could also hold the token's bytes,
+    so it is refused too.
+    """
+    lines = original.splitlines()
+    if any(line.lstrip(b" \t").startswith(b"#") for line in lines[1:]):
+        return "a comment inside the instruction's continuation is not modelled"
+    for line in lines:
+        content = line.rstrip(b" \t")
+        if content.endswith(b"\\") and content[-2:-1] not in (b" ", b"\t"):
+            return "a line continuation without a preceding blank is not modelled"
+    return None
 
 
 def _is_domain(component: str) -> bool:
@@ -193,9 +239,8 @@ def _count_reason(rest: list[str]) -> str:
 def _f2(bound: Bound, tokens: list[str], conditions: list[str]) -> FromFix | str:
     """F2: delete the dangling ``AS`` and the whitespace before it."""
     conditions.append(f"the last argument {tokens[-1]!r} is a dangling AS")
-    matches = list(
-        re.finditer(rb"(?<=[^\s\\])[ \t]+(?i:as)(?![^\s\\])", bound.original)
-    )
+    pattern = rb"(?<=[^ \t\r\n\\])" + _BLANK + rb"+(?i:as)" + _WORD_END
+    matches = list(re.finditer(pattern, bound.original))
     if len(matches) != 1:
         return "the dangling AS is not located unambiguously in the original bytes"
     start, end = matches[0].span()
@@ -216,6 +261,11 @@ def _f1(
         return f"{token!r} is outside the stage-name grammar ({_GRAMMAR_NOTE})"
     conditions.append(f"{token!r} matches the stage-name grammar ({_GRAMMAR_NOTE})")
     conditions.append(f"{token!r} is not AS in any case")
+    if token in _RESERVED_NAMES:
+        return f"{token!r} is a name BuildKit reserves"
+    conditions.append(
+        f"{token!r} is not a reserved name ({', '.join(sorted(_RESERVED_NAMES))})"
+    )
     usage_reason = _usage_reason(parsed, bound.ordinal, token)
     if usage_reason is not None:
         return usage_reason
@@ -226,12 +276,27 @@ def _f1(
         if value.lower() == token:
             return f"build arg {name!r} names {token!r}"
     conditions.append(f"no build arg of the bound build configuration names {token!r}")
-    pattern = rb"(?<![^\s])" + re.escape(token.encode("ascii")) + rb"(?![^\s\\])"
+    # The token must follow other content on its own physical line: a token
+    # opening a continuation line would be glued to the previous line by
+    # BuildKit's join, so it is refused rather than modelled.
+    pattern = (
+        rb"[^ \t\r\n\\]"
+        + _BLANK
+        + rb"+("
+        + re.escape(token.encode("ascii"))
+        + rb")"
+        + _WORD_END
+    )
     matches = list(re.finditer(pattern, bound.original))
     if len(matches) != 1:
-        return f"{token!r} is not located unambiguously in the original bytes"
-    conditions.append(f"{token!r} located unambiguously in the original bytes")
-    at = matches[0].start()
+        return (
+            f"{token!r} is not located unambiguously after a blank on the "
+            "same line in the original bytes"
+        )
+    conditions.append(
+        f"{token!r} located once, after a blank on the same line, in the original bytes"
+    )
+    at = matches[0].start(1)
     replacement = bound.original[:at] + b"AS " + bound.original[at:]
     expected = [*tokens[:-1], "AS", token]
     return _checked("F1", bound, replacement, expected, conditions)
@@ -244,11 +309,15 @@ def _usage_reason(parsed: ParsedDockerfile, ordinal: int, token: str) -> str | N
     depends on expansion or quoting cannot be checked and is refused.
     """
     for index, instruction in enumerate(parsed.instructions):
-        words = instruction.args.split()
-        if instruction.keyword == "FROM" and index != ordinal:
+        # The whole line, not R's args: R's keyword split is on a space only.
+        keyword, *words = f"{instruction.keyword} {instruction.args}".split()
+        if keyword.upper() == "FROM" and index != ordinal:
             reason = _from_usage(words, token)
             if reason is not None:
                 return reason
+        for word in words:
+            if word.lower().startswith("--mount=") and _UNRESOLVED & set(word):
+                return f"--mount value {word!r} is quoted or escaped"
         for value in _from_values(words):
             if _UNRESOLVED & set(value):
                 return f"--from/from= value {value!r} contains a substitution"
@@ -300,7 +369,12 @@ def _checked(
     expected: list[str],
     conditions: list[str],
 ) -> FromFix | str:
-    """Re-read ``replacement`` as R does; it must be exactly ``expected``."""
+    """Re-read ``replacement`` with R's parser; it must be ``expected``.
+
+    A guard against a wrong splice under R's reading only: it does not
+    show that BuildKit or Buildah read the replacement the same way. The
+    builders' reading rests on the byte-level rules checked before it.
+    """
     reread = parse(_as_r_reads(replacement)).instructions
     same_lines = len(replacement.splitlines()) == len(bound.original.splitlines())
     if (
@@ -310,7 +384,10 @@ def _checked(
         or not same_lines
     ):
         return f"{transformation} does not re-read as the intended FROM"
-    conditions.append("the replacement re-reads as the intended FROM, same lines")
+    conditions.append(
+        "under R's parser (not the builders'), the replacement re-reads as the "
+        "intended FROM on the same lines"
+    )
     return FromFix(
         transformation=transformation, replacement=replacement, conditions=conditions
     )

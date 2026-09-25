@@ -117,3 +117,7 @@ folding: a token must already be ASCII lowercase, so both builders store the sam
 `as` itself matches the grammar (both builders would accept `FROM x AS as`), but F1
 refuses a token equal to `AS` in any case separately (design §4.2): `FROM <ref> as` is F2's
 dangling `AS`, never a stage named `as`.
+
+`scratch` and `context` also match the grammar, but F1 refuses them as well. BuildKit
+gives both names a meaning of its own: `scratch` is the empty base image, and
+`context` is used for named build contexts.
