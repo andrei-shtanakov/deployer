@@ -36,7 +36,9 @@ def _propose(
     )
     bound = bind_instruction(dockerfile, defect)
     assert isinstance(bound, Bound)
-    return propose_from(parsed, bound, build_args or {}, dockerfile), bound
+    return propose_from(
+        parsed, bound, tuple((build_args or {}).items()), dockerfile
+    ), bound
 
 
 # --- parse_reference -------------------------------------------------------
@@ -281,6 +283,28 @@ def test_refusal_build_arg_names_token() -> None:
     assert "build arg" in result
 
 
+def test_refusal_earlier_value_of_a_duplicate_build_arg() -> None:
+    """Ruling S: a name given twice is checked for both values, so an
+    earlier value naming the token refuses even when the last does not."""
+    dockerfile = b"FROM python:3.12-slim extra\n"
+    parsed = parse(_as_r_reads(dockerfile))
+    bound = bind_instruction(
+        dockerfile,
+        Defect.model_validate(
+            {
+                "class": "from_argument_count",
+                "file": "Dockerfile",
+                "lines": (1, 1),
+                "object": parsed.instructions[0].text,
+            }
+        ),
+    )
+    assert isinstance(bound, Bound)
+    pairs = (("STAGE", "extra"), ("STAGE", "other"))
+    result = propose_from(parsed, bound, pairs, dockerfile)
+    assert result == "build arg 'STAGE' names 'extra'"
+
+
 def test_unrelated_build_arg_allows_f1() -> None:
     """A build arg with another value does not block F1."""
     result, _ = _propose(b"FROM python:3.12-slim extra\n", build_args={"PY": "3.12"})
@@ -297,7 +321,7 @@ def test_refusal_not_from() -> None:
         original=b"RUN a b\n",
         instruction=parsed.instructions[1],
     )
-    result = propose_from(parsed, bound, {}, dockerfile)
+    result = propose_from(parsed, bound, (), dockerfile)
     assert isinstance(result, str)
     assert "not a FROM" in result
 

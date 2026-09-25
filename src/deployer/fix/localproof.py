@@ -218,7 +218,7 @@ def _prove(
     context = fix_dir / "context"
     shutil.copytree(source_dir, context, symlinks=True)
     _make_writable(context)
-    write_reason = _write_corrected(context, build.dockerfile, corrected)
+    write_reason = write_no_follow(context, build.dockerfile, corrected)
     if write_reason is not None:
         return write_reason
     draft.build.update(
@@ -263,34 +263,42 @@ def _dockerfile_reason(name: str) -> str | None:
     return None
 
 
-def _write_corrected(context: Path, name: str, corrected: bytes) -> str | None:
-    """Write ``corrected`` at ``context/<name>`` without following a link.
+def write_no_follow(
+    context: Path, name: str, data: bytes, mode: int | None = None
+) -> str | None:
+    """Write ``data`` at ``context/<name>`` without following a link; the
+    reason it could not, or ``None``.
 
     Every ancestor under ``context`` must be a real directory and the target
-    a regular file (an lstat walk); the target is unlinked and recreated with
-    ``O_CREAT|O_EXCL|O_NOFOLLOW``, so no write ever lands outside."""
+    an existing regular file (an lstat walk); the target is unlinked and
+    recreated with ``O_CREAT|O_EXCL|O_NOFOLLOW``, so no write ever lands
+    outside. The new file gets ``mode`` (permission bits), by default the
+    original file's own, set explicitly so the umask cannot change it: an
+    executable Dockerfile stays executable."""
     parts = posixpath.normpath(name).split("/")
     current = context
     for part in parts[:-1]:
         current = current / part
         try:
-            mode = os.lstat(current).st_mode
+            found = os.lstat(current).st_mode
         except FileNotFoundError:
             return f"dockerfile ancestor {part!r} is absent from the context"
-        if stat.S_ISLNK(mode) or not stat.S_ISDIR(mode):
+        if stat.S_ISLNK(found) or not stat.S_ISDIR(found):
             return f"dockerfile ancestor {part!r} is not a real directory"
     target = current / parts[-1]
     try:
-        mode = os.lstat(target).st_mode
+        found = os.lstat(target).st_mode
     except FileNotFoundError:
         return f"dockerfile {name!r} is absent from the context"
-    if not stat.S_ISREG(mode):
+    if not stat.S_ISREG(found):
         return f"dockerfile {name!r} is not a regular file"
+    permissions = stat.S_IMODE(found) if mode is None else mode
     target.unlink()
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
-    fd = os.open(target, flags, 0o644)
+    fd = os.open(target, flags, 0o600)
     with os.fdopen(fd, "wb") as handle:
-        handle.write(corrected)
+        os.fchmod(handle.fileno(), permissions)
+        handle.write(data)
     return None
 
 

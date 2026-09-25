@@ -8,7 +8,9 @@ bundles are untouched): ``basename-unique`` adds one other file named
 only through the ``enable_for_test`` seam.
 """
 
+import dataclasses
 import json
+import os
 import shutil
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -21,7 +23,9 @@ from deployer import runtime as runtime_mod
 from deployer.fix import author as author_mod
 from deployer.fix.author import FIX_FILE, FixAbort, author_fix
 from deployer.fix.document import FixDocument, load
+from deployer.fix.workspace import Committed, FixDirError, Vetted, new_fix_dir
 from deployer.models import ContainerRuntime
+from deployer.provenance.issue import Issued
 from deployer.provenance.model import POINTER, SET_ROOT
 from tests.admission.conftest import Replayed
 from tests.fix.conftest import (
@@ -234,6 +238,7 @@ def test_run5_with_the_seam_is_locally_confirmed(run5: Case) -> None:
     assert doc.last_operation is not None
     assert doc.last_operation.result == "locally_confirmed"
     assert doc.last_operation.reason is None  # the worktree index was synced
+    assert publication.index_synced is True
     assert _status(worktree) == ""
     assert git(run5.s.clone, "rev-parse", "HEAD") == clone_head
     assert _status(run5.s.clone) == ""
@@ -428,16 +433,30 @@ def test_a_save_failure_after_the_commit_names_the_identifiers(
     assert load(run5.fix_dir() / FIX_FILE).status == "in_progress"
 
 
-def test_a_fix_dir_inside_the_clone_exits_2(run5: Case) -> None:
-    """R's root inside the clone (ignored, so the clone stays clean): the
-    fix directory would be inside the clone → exit 2, no worktree."""
-    inside = run5.s.clone / ".work"
-    shutil.copytree(run5.s.r.root, inside, symlinks=True)
-    exclude = run5.s.clone / ".git" / "info" / "exclude"
-    exclude.write_text(exclude.read_text() + ".work/\n")
+def _root_inside_clone(case: Case, ignored: bool) -> Path:
+    """R's root copied under the clone (``.work``), optionally ignored via
+    ``info/exclude`` so the clone stays clean."""
+    inside = case.s.clone / ".work"
+    shutil.copytree(case.s.r.root, inside, symlinks=True)
+    if ignored:
+        exclude = case.s.clone / ".git" / "info" / "exclude"
+        exclude.write_text(exclude.read_text() + ".work/\n")
+    return inside
+
+
+@pytest.mark.parametrize("ignored", [True, False])
+def test_a_fix_location_inside_the_clone_exits_2_creating_nothing(
+    run5: Case, ignored: bool
+) -> None:
+    """Ruling Q: the fix location is checked before anything is written —
+    ignored or not (then the gate would say ``no admission``), exit 2 and no
+    fix directory, no ``fix.json``."""
+    inside = _root_inside_clone(run5, ignored)
+    attempt = inside / run5.s.r.attempt_dir.relative_to(run5.s.r.root)
     with pytest.raises(FixAbort, match="is inside the clone"):
         run5.run(root=inside)
-    assert not (run5.fix_dir() / "worktree").exists()
+    assert not (attempt / "fixes").exists()
+    assert not run5.fix_dir().exists()
 
 
 def test_an_unreadable_verdict_exits_2(run5: Case, tmp_path: Path) -> None:
@@ -499,3 +518,171 @@ def test_a_docker_backend_is_no_local_confirmation(run5: Case) -> None:
         "local backend differs from R's",
     )
     assert run5.builds() == []
+
+
+# --- fix round 1 regressions -------------------------------------------------
+
+
+def _verdict_with(case: Case, **reproduction: object) -> Path:
+    """The case's verdict with ``reproduction`` fields replaced."""
+    document = case.s.document()
+    document["reproduction"].update(reproduction)
+    path = case.tmp / "changed.json"
+    path.write_text(json.dumps(document))
+    return path
+
+
+def _run_on(case: Case, verdict: Path) -> FixDocument:
+    """``author_fix`` over ``verdict`` with the case's defaults."""
+    return author_fix(
+        verdict,
+        case.s.clone,
+        case.s.r.root,
+        case.s.env,
+        case.s.key,
+        case.chooser,
+        PODMAN,
+        60,
+    )
+
+
+def test_a_deeply_nested_verdict_exits_2(run5: Case) -> None:
+    """``json.loads`` recursing too deep is exit 2, not a traceback."""
+    deep = run5.tmp / "deep.json"
+    deep.write_text("[" * 100_000 + "]" * 100_000)
+    with pytest.raises(FixAbort, match="is not JSON"):
+        _run_on(run5, deep)
+    assert not (run5.s.r.attempt_dir / "fixes").exists()
+
+
+@pytest.mark.parametrize(
+    "try_dir",
+    [
+        "a\u0000b/tries/001",
+        "a\nb/tries/001",
+        "x",
+        "attempt-1/001",
+        "a/tries/x01",
+    ],
+)
+def test_a_malformed_try_dir_exits_2_creating_nothing(run5: Case, try_dir: str) -> None:
+    """Control characters (a NUL made ``mkdir`` raise ``ValueError``) and a
+    shape other than ``<attempt>/tries/<NNN>`` are exit 2 before any write."""
+    before = sorted(run5.s.r.root.rglob("fixes"))
+    with pytest.raises(FixAbort):
+        _run_on(run5, _verdict_with(run5, try_dir=try_dir))
+    assert sorted(run5.s.r.root.rglob("fixes")) == before
+
+
+def test_new_fix_dir_turns_a_value_error_into_fix_dir_error(tmp_path: Path) -> None:
+    """A path the OS cannot take (an embedded NUL) is ``FixDirError``."""
+    with pytest.raises(FixDirError):
+        new_fix_dir(tmp_path / "a\u0000b")
+
+
+def test_an_unsynced_index_is_recorded(
+    run5: Case, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ruling P: ``Committed.index_synced`` lands in ``publication``."""
+    real = author_mod.commit
+
+    def unsynced(worktree: Path, message: str, vetted: Vetted) -> Committed:
+        done = real(worktree, message, vetted)
+        return dataclasses.replace(done, index_synced=False, detail="index.lock")
+
+    monkeypatch.setattr(author_mod, "commit", unsynced)
+    run5.set_build(FROM_STDOUT)
+    with enable_for_test("from-parsed/podman"):
+        doc = run5.run()
+    assert doc.status == "locally_confirmed"
+    assert doc.publication is not None and doc.publication.index_synced is False
+    assert doc.last_operation is not None
+    assert doc.last_operation.reason == (
+        "the worktree index was not synced: index.lock"
+    )
+    assert load(run5.fix_dir() / FIX_FILE) == doc
+
+
+def _executable(r: Replayed) -> None:
+    """The admitted Dockerfile is committed as ``100755``."""
+    (r.unlock() / "Dockerfile").chmod(0o755)
+
+
+def test_an_executable_dockerfile_keeps_its_mode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ruling R: the corrected Dockerfile is written with the original mode,
+    so a ``100755`` Dockerfile reaches ``locally_confirmed`` and stays so."""
+    case = _case(tmp_path, monkeypatch, "run-5", _executable)
+    head = git(case.s.clone, "rev-parse", "HEAD")
+    assert git(case.s.clone, "ls-tree", head, "Dockerfile").startswith("100755")
+    case.set_build(FROM_STDOUT)
+    with enable_for_test("from-parsed/podman"):
+        doc = case.run()
+    assert doc.status == "locally_confirmed", (doc.stop_reason, doc.stop_detail)
+    assert doc.publication is not None and doc.publication.fix_commit is not None
+    worktree = Path(doc.publication.worktree)
+    listed = git(worktree, "ls-tree", doc.publication.fix_commit, "Dockerfile")
+    assert listed.startswith("100755")
+    assert os.stat(worktree / "Dockerfile").st_mode & 0o777 == 0o755
+
+
+def test_f1_receives_every_build_arg_pair(
+    run5: Case, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ruling S: the orchestrator passes R's pairs, not a last-wins dict."""
+    seen: list[object] = []
+    real = author_mod.propose_from
+
+    def spy(parsed: Any, bound: Any, build_args: Any, dockerfile: bytes) -> Any:
+        seen.append(build_args)
+        return real(parsed, bound, build_args, dockerfile)
+
+    monkeypatch.setattr(author_mod, "propose_from", spy)
+    run5.run()
+    assert seen == [()]  # run-5's build line has no build args: R's tuple
+
+
+def test_a_stop_after_the_write_says_the_file_was_written(
+    run5: Case, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An issuing failure after the corrected bytes reached the worktree
+    names that in the stop detail."""
+    monkeypatch.setattr(
+        author_mod, "issue", lambda *args, **kwargs: Issued(False, "boom", None)
+    )
+    run5.set_build(FROM_STDOUT)
+    with enable_for_test("from-parsed/podman"):
+        doc = run5.run()
+    worktree = run5.fix_dir() / "worktree"
+    assert doc.stop_reason == "commit blocked"
+    assert doc.stop_detail == (
+        "issuing failed: boom; the corrected Dockerfile was already written "
+        f"into the worktree {worktree}"
+    )
+    assert _status(worktree) == "M Dockerfile"
+
+
+def test_the_fix_path_is_announced_only_after_the_first_save(
+    run5: Case, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed first save is exit 2 and ``on_document`` is never told."""
+
+    def failing(doc: FixDocument, path: Path) -> None:
+        raise OSError("read-only")
+
+    monkeypatch.setattr(author_mod, "save", failing)
+    announced: list[Path] = []
+    with pytest.raises(FixAbort, match="read-only"):
+        author_fix(
+            run5.verdict(),
+            run5.s.clone,
+            run5.s.r.root,
+            run5.s.env,
+            run5.s.key,
+            run5.chooser,
+            PODMAN,
+            60,
+            on_document=announced.append,
+        )
+    assert announced == []

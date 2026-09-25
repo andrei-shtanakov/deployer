@@ -2332,3 +2332,30 @@ def test_fix_unreadable_verdict_exits_2(
     argv = ["fix", str(tmp_path / "absent.json"), "--clone", str(tmp_path)]
     assert main(argv) == 2
     assert "cannot read the verdict" in capsys.readouterr().err
+
+
+def test_fix_unexpected_exception_exits_2_without_a_traceback(
+    tmp_path: Path,
+    fix_calls: list[dict[str, object]],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The CLI's last safety net: an unexpected exception is a short message
+    and exit 2, never a traceback."""
+    _script(fix_calls, RuntimeError("surprise"))
+    assert main(["fix", "v.json", "--clone", str(tmp_path)]) == 2
+    err = capsys.readouterr().err
+    assert "failed unexpectedly: RuntimeError: surprise" in err
+    assert "Traceback" not in err
+
+
+def test_fix_deeply_nested_verdict_exits_2(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The real ``author_fix``: a verdict nested past the recursion limit."""
+    monkeypatch.setattr(cli, "resolve_runtime", lambda tool, host: None)
+    deep = tmp_path / "deep.json"
+    deep.write_text("[" * 100_000 + "]" * 100_000)
+    assert main(["fix", str(deep), "--clone", str(tmp_path)]) == 2
+    assert "is not JSON" in capsys.readouterr().err

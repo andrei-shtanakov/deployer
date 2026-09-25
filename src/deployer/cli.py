@@ -968,6 +968,12 @@ def _cmd_fix_author(args: argparse.Namespace) -> int:
     except FixAbort as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
+    except Exception as exc:  # noqa: BLE001 — the last safety net (F §8.4)
+        print(
+            f"error: deployer fix failed unexpectedly: {type(exc).__name__}: {exc}",
+            file=sys.stderr,
+        )
+        return 2
     _print_fix(doc)
     return 0 if doc.status == "locally_confirmed" else 1
 

@@ -151,7 +151,8 @@ class LocalProof(BaseModel):
 
 class Publication(BaseModel):
     """The fix worktree, branch, commit and, once published, the PR
-    (design §5, §8.3)."""
+    (design §5, §8.3). ``index_synced`` records whether the worktree's own
+    index was synced to the fix commit (``None`` before the commit)."""
 
     model_config = ConfigDict(extra="forbid")
     worktree: str
@@ -160,6 +161,7 @@ class Publication(BaseModel):
     diff_ok: bool
     base: str | None
     pr_url: str | None
+    index_synced: bool | None = None
 
 
 class CiAttempt(BaseModel):

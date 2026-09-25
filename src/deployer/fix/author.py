@@ -52,10 +52,7 @@ from deployer.fix.document import (
 from deployer.fix.envelope import apply_source, eligible_sources
 from deployer.fix.fromfix import propose_from
 from deployer.fix.gate import MAX_VERDICT_BYTES, Admitted, gate
-
-# TODO: _write_corrected should become public in fix.localproof; it is
-# imported here, not copied, so the worktree write keeps its no-follow walk.
-from deployer.fix.localproof import LocalResult, _write_corrected, local_proof
+from deployer.fix.localproof import LocalResult, local_proof, write_no_follow
 from deployer.fix.workspace import (
     CommitError,
     Committed,
@@ -72,6 +69,7 @@ from deployer.forge import load_snapshot
 from deployer.models import ContainerRuntime
 from deployer.provenance import gitrepo
 from deployer.provenance.issue import (
+    PlannedSet,
     Preflight,
     exclusion_proven,
     issue,
@@ -205,9 +203,9 @@ def author_fix(
     root, clone = root.absolute(), clone.absolute()
     data, stored = _read_verdict(verdict)
     session = _open_session(data, stored, root, clone)
+    session.save()
     if on_document is not None:
         on_document(session.path)
-    session.save()
     outcome = _author(session, data, root, env, signing_key, chooser, rt, build_timeout)
     if isinstance(outcome, Stop):
         return _stopped(session, outcome)
@@ -301,7 +299,7 @@ def _read_verdict(verdict: Path) -> tuple[dict[str, Any], StoredFile]:
         raise FixAbort(f"the verdict {verdict} exceeds {MAX_VERDICT_BYTES} bytes")
     try:
         data = json.loads(raw.decode("utf-8"))
-    except ValueError as exc:
+    except (ValueError, RecursionError) as exc:
         raise FixAbort(f"the verdict {verdict} is not JSON: {exc}") from exc
     if not isinstance(data, dict):
         raise FixAbort(f"the verdict {verdict} is not a JSON object")
@@ -313,10 +311,13 @@ def _open_session(
 ) -> _Session:
     """A new fix directory under R's attempt (§5.1), checked writable, and
     the ``in_progress`` document of what is known before the gate."""
-    try_dir = _plain(_get(data, "reproduction", "try_dir"))
-    if try_dir is None:
-        raise FixAbort("the verdict has no plain relative reproduction.try_dir")
+    try_dir = _try_dir(data)
     attempt = PurePosixPath(try_dir).parent.parent
+    fixes = root / attempt / "fixes"
+    if not outside(fixes, clone):
+        raise FixAbort(
+            f"the fix location {fixes} is inside the clone {clone}; nothing created"
+        )
     try:
         fix_dir = new_fix_dir(root / attempt)
     except FixDirError as exc:
@@ -365,6 +366,23 @@ def _initial_input(
     )
 
 
+def _try_dir(data: dict[str, Any]) -> str:
+    """R's ``reproduction.try_dir``: a plain relative path of the shape
+    ``<…>/tries/<NNN>`` (so its attempt directory is inside ``root``);
+    exit 2 otherwise, before anything is created."""
+    try_dir = _plain(_get(data, "reproduction", "try_dir"))
+    if try_dir is None:
+        raise FixAbort("the verdict has no plain relative reproduction.try_dir")
+    parts = try_dir.split("/")
+    seq = parts[-1]
+    if len(parts) < 3 or parts[-2] != "tries" or not (seq.isascii() and seq.isdigit()):
+        raise FixAbort(
+            f"reproduction.try_dir {try_dir!r} is not of the shape "
+            "<attempt>/tries/<NNN>"
+        )
+    return try_dir
+
+
 def _get(data: object, *keys: str) -> object:
     """``data[k1][k2]…``, or ``None`` where a level is missing."""
     for key in keys:
@@ -375,8 +393,11 @@ def _get(data: object, *keys: str) -> object:
 
 
 def _plain(value: object) -> str | None:
-    """``value`` if it is a plain relative path (Ruling I), else ``None``."""
+    """``value`` if it is a plain relative path (Ruling I) with no control
+    character, else ``None``."""
     if not isinstance(value, str) or not value or value.startswith("/"):
+        return None
+    if any(ord(char) < 0x20 or ord(char) == 0x7F for char in value):
         return None
     if any(part in ("", ".", "..") for part in value.split("/")):
         return None
@@ -663,7 +684,7 @@ def _ignore_rules(
 def _propose_from(inputs: _Inputs, bound: Bound) -> _Proposed | str:
     """F1/F2 (§4.2) with R's bound build args; a deterministic rationale."""
     parsed = dockerfile.parse(_as_r_reads(inputs.original))
-    fix = propose_from(parsed, bound, dict(inputs.build.build_args), inputs.original)
+    fix = propose_from(parsed, bound, inputs.build.build_args, inputs.original)
     if isinstance(fix, str):
         return fix
     rationale = {
@@ -801,10 +822,53 @@ def _commit(
     reason = exclusion_proven(worktree, plan.paths)
     if reason is not None:
         return f"final exclusion check: {reason}"
-    reason = _write_corrected(worktree, artifact, corrected)
+    reason = write_no_follow(worktree, artifact, corrected)
     if reason is not None:
         return f"the corrected Dockerfile is not written: {reason}"
-    issued = issue(pre, signing_key, version, corrected, edit_ignore=False)
+    try:
+        result = _issue_and_commit(
+            session,
+            artifact,
+            bound,
+            pre,
+            proposed,
+            _Signing(plan, version, signing_key),
+        )
+    except Exception as exc:  # noqa: BLE001 — named with the written file below
+        result = _describe(exc)
+    if isinstance(result, str):
+        return (
+            f"{result}; the corrected {artifact} was already written into the "
+            f"worktree {worktree}"
+        )
+    return result
+
+
+@dataclass(frozen=True)
+class _Signing:
+    """The planned set, the deployer version and the key that signs it."""
+
+    plan: PlannedSet
+    version: str
+    key: Path
+
+
+def _issue_and_commit(
+    session: _Session,
+    artifact: str,
+    bound: Bound,
+    pre: Preflight,
+    proposed: _Proposed,
+    signing: _Signing,
+) -> Committed | str:
+    """§5.3 steps 5-7 once the corrected bytes are in the worktree: issue
+    the planned set without an ignore-file edit, check the full diff,
+    commit."""
+    worktree = session.fix_dir.worktree
+    plan = signing.plan
+    issued = issue(
+        pre, signing.key, signing.version, proposed.corrected, edit_ignore=False
+    )
     if not issued.published:
         return f"issuing failed: {issued.reason}"
     if issued.set_dir != set_dir_name(plan.record_sha256):
@@ -848,7 +912,11 @@ def _confirmed(session: _Session, committed: Committed) -> None:
     session.update(
         status="locally_confirmed",
         publication=publication.model_copy(
-            update={"fix_commit": committed.sha, "diff_ok": True}
+            update={
+                "fix_commit": committed.sha,
+                "diff_ok": True,
+                "index_synced": committed.index_synced,
+            }
         ),
         last_operation=LastOperation(
             command="fix", at=_now(), result="locally_confirmed", reason=synced

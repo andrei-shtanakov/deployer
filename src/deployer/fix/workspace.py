@@ -169,7 +169,7 @@ def new_fix_dir(attempt_dir: Path) -> FixDir:
             except FileExistsError:
                 continue
             return FixDir(path=path, seq=seq, fix_id=str(uuid.uuid4()))
-    except OSError as exc:
+    except (OSError, ValueError) as exc:  # ValueError: e.g. an embedded NUL
         raise FixDirError(
             f"cannot create a fix directory under {fixes}: {exc}"
         ) from exc
