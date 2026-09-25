@@ -1,0 +1,13 @@
+{
+  "argv": [
+    "podman",
+    "build",
+    "--file",
+    "<context>/Dockerfile",
+    "--tag",
+    "localhost/deployer-lrec-l6-copy-later-failure",
+    "--force-rm",
+    "<context>"
+  ],
+  "launch_error": null
+}

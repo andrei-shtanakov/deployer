@@ -1,0 +1,13 @@
+{
+  "argv": [
+    "podman",
+    "build",
+    "--file",
+    "<context>/Dockerfile",
+    "--tag",
+    "localhost/deployer-lrec-l2-copy-warm",
+    "--force-rm",
+    "<context>"
+  ],
+  "launch_error": null
+}
