@@ -232,7 +232,7 @@ class LocalProof(BaseModel): dockerfile_sha256: str; build: dict; backend: str; 
 class Publication(BaseModel): worktree: str; branch: str; fix_commit: str | None; diff_ok: bool; base: str | None; pr_url: str | None
 class CiAttempt(BaseModel): at: str; considered: list[dict]; outcome: Literal["ci_confirmed", "ci_confirmation_insufficient"]; reason: str | None; evidence: list[dict]
 class FixDocument(BaseModel):
-    schema_version: Literal["1.0"]; status: Status; stop_reason: StopReason | None; stop_detail: str | None
+    schema_version: Literal["1.0"]; fix_id: str (UUID4, set once at creation); status: Status; stop_reason: StopReason | None; stop_detail: str | None
     input: Input; proposal: Proposal | None; local_proof: LocalProof | None
     publication: Publication | None; ci_attempts: list[CiAttempt]; last_operation: LastOperation | None
 
@@ -441,12 +441,13 @@ BRANCH_FMT = "deployer/fix/{cls}/{head12}-{seq}"
 class LocalResult: ok: bool; reason: str | None; proof: LocalProof   # document.LocalProof
 def local_proof(section: ReproductionSection, source_dir: Path, fix_dir: Path, corrected: bytes,
                 bound: Bound, cls: DefectClass, absent: str | None, new_source: str | None,
-                rt: ContainerRuntime, build_timeout: int) -> LocalResult
+                rt: ContainerRuntime, env: Mapping[str, str], build: BuildConfig,
+                fix_id: str, build_timeout: int) -> LocalResult
 ```
 
-Steps (F §6): backend must equal `section.environment.backend` (else `local backend differs from R's`); the endpoint must be confirmed local with R's `endpoint.confirm_local(rt, env)` (a refusal → `no local confirmation: <R's reason>`); copy `source/` to `fix_dir/context` (symlinks kept, made writable, as R does), write `corrected` to `context/<dockerfile>`; records before on `source_dir` (original bytes) and after on the context via Task 1 (CI rules; local rules for the backend) → Task 8 checks; build through `reproduce.build.run_build(rt, context, config, tag, timeout)` with R's bound `BuildConfig` (stored in `Input.build`) and a service tag unique to the fix dir, `localhost/deployer-fix-<run_id>-<fix seq>` (never CI's `-t`); afterwards `cleanup_image(rt, tag, built=exit_code == 0)` and `build_containers_state(rt, finished=launch_error is None)`, both recorded in `LocalProof.build` (`image_cleanup`, `build_containers`) exactly as R records them; write `build.stdout`/`build.stderr` with `reproduce.run._write_text`; `templates.match_local`; timeout → not ok; later failure recorded only after `passed`.
+Steps (F §6): backend must equal `section.environment.backend` (else `local backend differs from R's`); the endpoint must be confirmed local with R's `endpoint.confirm_local(rt, env)` (a refusal → `no local confirmation: <R's reason>`); copy `source/` to `fix_dir/context` (symlinks kept, made writable, as R does), write `corrected` to `context/<dockerfile>`; records before on `source_dir` (original bytes) and after on the context via Task 1 (CI rules; local rules for the backend) → Task 8 checks; build through `reproduce.build.run_build(rt, context, config, tag, timeout)` with R's bound `BuildConfig` (stored in `Input.build`) and a service tag unique to the fix dir, `localhost/deployer-fix-<fix_id>` where `fix_id` is a UUID4 generated once per fix directory and stored in `FixDocument.fix_id` (never CI's `-t`; `<run_id>-<seq>` would repeat across `attempt-N` directories); afterwards `cleanup_image(rt, tag, built=exit_code == 0)` and `build_containers_state(rt, finished=launch_error is None)`, both recorded in `LocalProof.build` (`image_cleanup`, `build_containers`) exactly as R records them; write `build.stdout`/`build.stderr` with `reproduce.run._write_text`; `templates.match_local`; timeout → not ok; later failure recorded only after `passed`.
 
-- [ ] Tests with the `FakeContainers` fixture from `tests/admission/conftest.py` and the replayed run-1/run-5 (no real builds): the endpoint refused under `DOCKER_HOST` / `--container-host`; the build argv carries the unique fix tag and never CI's; `rmi -f <tag>` issued after a successful build and its result recorded (`removed` / `failed` from a fake non-zero rmi); default → `no local confirmation: templates not enabled`; with the seam and a synthetic passing stdout → ok and `later_failure` recorded for a synthetic later error; timeout → not ok; backend `docker` → refused; a regression (corrected Dockerfile that breaks another source) → not ok naming it; `source/` untouched (tree hash before/after). Commit `feat(fix): the local proof`.
+- [ ] Tests with the `FakeContainers` fixture from `tests/admission/conftest.py` and the replayed run-1/run-5 (no real builds): the endpoint refused under `DOCKER_HOST` / `--container-host`; the build argv carries the unique fix tag and never CI's; two fix directories with the same `run_id` and the same fix sequence number (under `attempt-1` and `attempt-2`) get different tags; `rmi -f <tag>` issued after a successful build and its result recorded (`removed` / `failed` from a fake non-zero rmi); default → `no local confirmation: templates not enabled`; with the seam and a synthetic passing stdout → ok and `later_failure` recorded for a synthetic later error; timeout → not ok; backend `docker` → refused; a regression (corrected Dockerfile that breaks another source) → not ok naming it; `source/` untouched (tree hash before/after). Commit `feat(fix): the local proof`.
 
 ---
 
@@ -484,7 +485,7 @@ Order (F §8.3): load; status must be `locally_confirmed`/`fix_proposed`/`ci_con
 
 ### Task 15: Derived run-1 case (data, owner review)
 
-**Files:** Create `tests/fixtures/fix/copy-one-candidate/…`, `tests/fixtures/fix/copy-two-candidates/…`, `tests/fixtures/fix/make_fix_bundle.py`, `tests/fixtures/fix/CHECKSUMS.sha256`, `tests/fix/test_fix_bundle_integrity.py`; Modify `pyproject.toml`/`tests/conftest.py` (exclude `tests/fixtures/fix/*/tree`).
+**Files:** Create `tests/fixtures/fix/copy-basename-unique/…`, `tests/fixtures/fix/copy-basename-ambiguous/…`, `tests/fixtures/fix/make_fix_bundle.py`, `tests/fixtures/fix/CHECKSUMS.sha256`, `tests/fix/test_fix_bundle_integrity.py`; Modify `pyproject.toml`/`tests/conftest.py` (exclude `tests/fixtures/fix/*/tree`).
 
 Built from the run-1 **reproduction** bundle (`tests/fixtures/reproduction/run-1`; the A4 private key is gone by the owner's decision) by a generator that uses its **own new test key pair** (`--key PATH`, fresh ed25519 if omitted), writes its own `test-key.pub`, `trust/allowed_signers` and fingerprint into `PROVENANCE.md`, and never commits a private key. Cases, named for what they prove:
 
