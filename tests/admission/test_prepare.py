@@ -372,3 +372,18 @@ def test_unencodable_ci_text_is_a_try_dir_error(
     monkeypatch.setattr(shape_mod, "job_text", lambda job: "bad \udc80 byte")
     with pytest.raises(TryDirError, match="cannot write"):
         prepare(r.run, r.section, r.root, _env(tmp_path))
+
+
+def test_a_valueless_frontend_build_arg_is_an_unknown_dialect(
+    tmp_path: Path, fake_containers: FakeContainers
+) -> None:
+    """R refuses ``--build-arg BUILDKIT_SYNTAX`` without a value; should an
+    argv carry one anyway, it is CI's environment value, unseen: a dialect."""
+    r = _replay("run-1", tmp_path, fake_containers)
+    assert r.section.build is not None
+    argv = r.section.build.argv
+    extra = ["--build-arg", "BUILDKIT_SYNTAX"]
+    build = r.section.build.model_copy(update={"argv": [*argv[:2], *extra, *argv[2:]]})
+    section = r.section.model_copy(update={"build": build})
+    facts = prepare(r.run, section, r.root, _env(tmp_path))
+    assert facts.syntax_directive_ci == "<from CI environment>"

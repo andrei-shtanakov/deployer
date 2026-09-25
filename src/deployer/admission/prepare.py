@@ -119,8 +119,10 @@ def _ci_frontend(section: ReproductionSection) -> str | None:
         else:
             continue
         key, sep, frontend = value.partition("=")
-        if key == FRONTEND_ARG and sep:
-            found.append(frontend)
+        if key == FRONTEND_ARG:
+            # A bare ``--build-arg BUILDKIT_SYNTAX`` takes CI's environment
+            # value, unseen here: an unknown frontend, never "no switch".
+            found.append(frontend if sep else "<from CI environment>")
     return found[-1] if found else None
 
 
