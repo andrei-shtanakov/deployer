@@ -26,7 +26,7 @@ from deployer.reproduce.dockerfile import opens_heredoc, parse, unread_reason
 from deployer.reproduce.ignore import IgnoreRules, excluded_by
 
 REGULAR_MODES = frozenset({"100644", "100755"})
-_KEYWORDS = ("COPY", "ADD")
+_DEPLOYER_DIR = ".deployer/"
 _DOT = "./"
 _LEADING_FLAGS_RE = re.compile(r"((?:--\S+\s+)*)")
 # A whole token: preceded and followed by in-line whitespace, a line end,
@@ -60,6 +60,7 @@ class _Located:
 
     raw: str
     others: list[str]
+    span: tuple[int, int]
 
 
 def eligible_sources(
@@ -70,13 +71,16 @@ def eligible_sources(
     local_rules: IgnoreRules,
     *,
     dockerfile: bytes,
+    artifact_path: str = "Dockerfile",
 ) -> Candidates | str:
     """The replacement sources §4.1 admits for ``absent``, or why none are.
 
     ``absent`` is A's normalised source (``defect.object``); ``listing`` is
     R's ``head_sha`` tree; ``ci_rules``/``local_rules`` are R's effective
     ignore files on each side; ``dockerfile`` is the raw file ``bound`` was
-    bound in, read for document-wide forms (``# escape=``). A returned
+    bound in, read for document-wide forms (``# escape=``);
+    ``artifact_path`` is the Dockerfile's context-relative path, never a
+    candidate, like anything under ``.deployer/``. A returned
     string is the failing condition and its detail — the caller reports it
     as ``fix method not established``. The basename floor is applied here,
     before any model call.
@@ -98,19 +102,26 @@ def eligible_sources(
             )
     regular = _regular_files(listing)
     conditions.append(_ok(_REGULAR, f"{len(regular)} regular files in the listing"))
-    others_reason = _others_reason(located.others, regular)
+    others_reason = _others_reason(located.others, regular) or _destination_reason(
+        bound, located.others
+    )
     if others_reason is not None:
         return f"{_COLLISIONS}: {others_reason}"
     in_context = [
         path
         for path in regular
-        if path != absent
+        if path not in (absent, artifact_path)
+        and not path.startswith(_DEPLOYER_DIR)
         and _form_reason(path) is None
         and excluded_by(ci_rules, path) is None
         and excluded_by(local_rules, path) is None
     ]
     conditions.append(
-        _ok(_CONTEXT, f"{len(in_context)} in the modelled form, excluded by neither")
+        _ok(
+            _CONTEXT,
+            f"{len(in_context)} in the modelled form, excluded by neither, "
+            f"not {artifact_path!r} or under {_DEPLOYER_DIR!r}",
+        )
     )
     eligible = [path for path in in_context if not _collides(path, located.others)]
     conditions.append(
@@ -132,8 +143,12 @@ def eligible_sources(
 def apply_source(bound: Bound, absent: str, new: str) -> bytes | str:
     """``bound.original`` with the absent source's token replaced by ``new``.
 
-    ``new`` is a context-relative path (an entry of
-    :attr:`Candidates.eligible`); it is written in the original's notation
+    Precondition: valid only after :func:`eligible_sources` has admitted
+    ``bound`` for ``absent`` (it alone checks the document and the listing)
+    and ``new`` came from that call's :attr:`Candidates.eligible`; this
+    function does not re-check collisions, the listing or ignore rules.
+
+    ``new`` is a context-relative path; it is written in the original's notation
     — a leading ``./`` iff the absent source had one. The absent token must
     occur exactly once in the raw bytes as a whole whitespace-delimited
     token; only those bytes change. The result is re-read as R reads it and
@@ -150,14 +165,7 @@ def apply_source(bound: Bound, absent: str, new: str) -> bytes | str:
     if form_reason is not None:
         return f"replacement {new!r}: {form_reason}"
     written = _DOT + new if located.raw.startswith(_DOT) else new
-    pattern = _BEFORE + re.escape(located.raw.encode("ascii")) + _AFTER
-    matches = list(re.finditer(pattern, bound.original))
-    if len(matches) != 1:
-        return (
-            f"{located.raw!r} occurs {len(matches)} times as a whole token in the "
-            "instruction's bytes, expected exactly once"
-        )
-    start, end = matches[0].span()
+    start, end = located.span
     replacement = (
         bound.original[:start] + written.encode("ascii") + bound.original[end:]
     )
@@ -193,8 +201,13 @@ def _bound_reason(bound: Bound) -> str | None:
     split = keyword_reason([instruction])
     if split is not None:
         return split
-    if instruction.keyword not in _KEYWORDS:
-        return f"the bound instruction is not COPY/ADD ({instruction.keyword})"
+    if instruction.keyword == "ADD":
+        return (
+            "ADD replacement not supported in this slice: archive extraction "
+            "depends on content"
+        )
+    if instruction.keyword != "COPY":
+        return f"the bound instruction is not COPY ({instruction.keyword})"
     for reason in (
         join_reason(bound.original),
         comment_reason(bound.original),
@@ -232,9 +245,41 @@ def _locate(bound: Bound, absent: str) -> _Located | str:
     raw = written[0]
     if raw not in (absent, _DOT + absent) or _form_reason(absent) is not None:
         return f"the notation of {raw!r} is not modelled"
+    span = _token_span(bound.original, raw)
+    if isinstance(span, str):
+        return span
     at = sources.index(raw)
     others = sources[:at] + sources[at + 1 :]
-    return _Located(raw=raw, others=others)
+    return _Located(raw=raw, others=others, span=span)
+
+
+def _token_span(original: bytes, raw: str) -> tuple[int, int] | str:
+    """The byte span of ``raw`` as the one whole token in ``original``.
+
+    Whole means delimited by space, tab, a line end or the ends of the
+    bytes — the builders' blanks. A token R splits off on any other
+    whitespace (``\\x0c``, ``\\x1c``, ...) is not found, and a token written
+    twice (``COPY app.py app.py``) is ambiguous: both are refused.
+    """
+    pattern = _BEFORE + re.escape(raw.encode("ascii")) + _AFTER
+    matches = list(re.finditer(pattern, original))
+    if len(matches) != 1:
+        return (
+            f"{raw!r} occurs {len(matches)} times as a whole token in the "
+            "instruction's bytes, expected exactly once"
+        )
+    return matches[0].span()
+
+
+def _destination_reason(bound: Bound, others: list[str]) -> str | None:
+    """With several sources the destination must be a directory (``/``)."""
+    destination = bound.instruction.args.split()[-1]
+    if others and not destination.endswith("/"):
+        return (
+            f"several sources with destination {destination!r} not ending in "
+            "'/'; the builder rejects that form"
+        )
+    return None
 
 
 def _regular_files(listing: list[TreeRow]) -> list[str]:

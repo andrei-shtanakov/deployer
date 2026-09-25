@@ -272,7 +272,7 @@ def test_zero_candidates() -> None:
         (b"FROM x:1\nCOPY app.py /app\\ dir/\n", "backslash"),
         (b"FROM x:1\nCOPY app.py --chown=x /app/\n", "reads as a flag"),
         (b"FROM x:1\nCOPY --from=build app.py /app/\n", "--from"),
-        (b"FROM x:1\nRUN app.py /app/\n", "not COPY/ADD"),
+        (b"FROM x:1\nRUN app.py /app/\n", "not COPY"),
     ],
     ids=[
         "glued-continuation",
@@ -383,9 +383,77 @@ def test_apply_refuses_divergent_reading() -> None:
     assert "continuation" in result
 
 
-def test_apply_add_instruction() -> None:
-    """ADD is bound and edited like COPY."""
-    bound = _bound(b"FROM x:1\nADD --chmod=644 app.py /app/\n")
-    assert apply_source(bound, "app.py", "src/app.py") == (
-        b"ADD --chmod=644 src/app.py /app/\n"
+def test_add_refused_in_this_slice() -> None:
+    """ADD extracts archives by content, which no reading here establishes."""
+    dockerfile = b"FROM x:1\nADD --chmod=644 app.py /app/\n"
+    bound = _bound(dockerfile)
+    reason = (
+        "ADD replacement not supported in this slice: archive extraction "
+        "depends on content"
+    )
+    result = _eligible(dockerfile, "app.py", [_file("src/app.py")])
+    assert result == f"1 read alike, one token changes: {reason}"
+    assert apply_source(bound, "app.py", "src/app.py") == reason
+
+
+# --- fix round 1 regressions --------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "dockerfile",
+    [
+        b"FROM x:1\nCOPY app.py app.py\n",
+        b"FROM x:1\nCOPY app.py\x1cother.py /a/\n",
+        b"FROM x:1\nCOPY app.py\x0cother.py /a/\n",
+    ],
+    ids=["token-twice", "x1c-separator", "x0c-separator"],
+)
+def test_token_not_located_once_refused_before_any_model(dockerfile: bytes) -> None:
+    """The whole-token byte match runs in the envelope, not only in apply."""
+    listing = [_file("src/app.py"), _file("other.py")]
+    result = _eligible(dockerfile, "app.py", listing)
+    assert isinstance(result, str)
+    assert result.startswith("1 read alike")
+    assert "as a whole token" in result
+
+
+def test_deployer_dir_and_artifact_never_candidates() -> None:
+    """``.deployer/`` and the Dockerfile itself drop out whatever the rules."""
+    listing = [
+        _file("src/app.py"),
+        _file(".deployer/state/app2.py"),
+        _file("Dockerfile"),
+        _file("docker/Dockerfile.prod"),
+    ]
+    assert _paths(_eligible(_SIMPLE, "app.py", listing)) == (
+        "docker/Dockerfile.prod",
+        "src/app.py",
+    )
+    result = eligible_sources(
+        _bound(_SIMPLE),
+        "app.py",
+        listing,
+        _NO_RULES,
+        _NO_RULES,
+        dockerfile=_SIMPLE,
+        artifact_path="docker/Dockerfile.prod",
+    )
+    assert _paths(result) == ("Dockerfile", "src/app.py")
+
+
+def test_multi_source_destination_must_be_a_directory() -> None:
+    """Several sources into a destination without ``/`` → stop."""
+    dockerfile = b"FROM x:1\nCOPY app.py lib/util.py /app\n"
+    listing = [_file("lib/util.py"), _file("src/app.py")]
+    result = _eligible(dockerfile, "app.py", listing)
+    assert isinstance(result, str)
+    assert result.startswith("4 collisions")
+    assert "not ending in '/'" in result
+
+
+def test_single_source_destination_may_be_a_file() -> None:
+    """One source may be copied to a file name."""
+    dockerfile = b"FROM x:1\nCOPY app.py /app/main.py\n"
+    assert _paths(_eligible(dockerfile, "app.py", [_file("src/app.py")])) == (
+        "src/app.py",
     )
