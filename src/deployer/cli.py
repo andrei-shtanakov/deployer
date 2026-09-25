@@ -6,6 +6,7 @@ import re
 import subprocess
 import sys
 from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
 
 from pydantic import ValidationError
@@ -26,6 +27,8 @@ from deployer.diagnose import RunDiagnosis, diagnose_run, render_verdict
 from deployer.facts import TargetConfigError, analyze_project
 from deployer.fix.author import FixAbort, author_fix
 from deployer.fix.chooser import AnthropicChooser, SourceChooser
+from deployer.fix.confirm import REFUSED as REFUSED_CONFIRM
+from deployer.fix.confirm import ConfirmAbort, confirm
 from deployer.fix.document import FixDocument
 from deployer.fix.publish import (
     PUBLISHED,
@@ -975,8 +978,63 @@ def _print_publish(doc: FixDocument) -> int:
     return 0
 
 
+def _cmd_fix_confirm(args: argparse.Namespace) -> int:
+    """§8.2 ``deployer fix confirm <fix.json>``: 0 ``ci_confirmed``, 1
+    insufficient or not published, 2 invocation or local I/O."""
+    error = _fix_confirm_error(args)
+    if error:
+        print(f"error: {error}", file=sys.stderr)
+        return 2
+    _load_dotenv()
+    try:
+        doc = confirm(Path(args.rest[0]), SubprocessGh(), _utc_now)
+    except ConfirmAbort as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    except Exception as exc:  # noqa: BLE001 — the last safety net (F §8.4)
+        print(
+            "error: deployer fix confirm failed unexpectedly: "
+            f"{type(exc).__name__}: {exc}",
+            file=sys.stderr,
+        )
+        return 2
+    return _print_confirm(doc)
+
+
+def _fix_confirm_error(args: argparse.Namespace) -> str | None:
+    """Arguments ``deployer fix confirm`` needs, checked before any work."""
+    if len(args.rest) != 1:
+        return "deployer fix confirm takes exactly one fix.json"
+    if args.base is not None:
+        return "--base is not an argument of deployer fix confirm"
+    if args.clone is not None:
+        return "--clone is not an argument of deployer fix confirm"
+    return None
+
+
+def _utc_now() -> str:
+    """The current UTC time, ISO 8601, to the second."""
+    return datetime.now(UTC).isoformat(timespec="seconds")
+
+
+def _print_confirm(doc: FixDocument) -> int:
+    """The outcome of ``deployer fix confirm``, and its exit code."""
+    last = doc.last_operation
+    result = last.result if last is not None else None
+    reason = last.reason if last is not None else None
+    if result == "ci_confirmed":
+        print("ci_confirmed")
+    elif result == REFUSED_CONFIRM:
+        print(f"refused: {reason}")
+    else:
+        print(f"ci_confirmation_insufficient: {reason}")
+    print(f"status: {doc.status}")
+    return 0 if result == "ci_confirmed" else 1
+
+
 _FIX_ACTIONS: dict[str, Callable[[argparse.Namespace], int]] = {
     "publish": _cmd_fix_publish,
+    "confirm": _cmd_fix_confirm,
 }
 """``deployer fix <action> …`` handlers, recognised only as the first argument
 after ``fix`` (Ruling C): ``publish`` (Task 14) and ``confirm`` (Task 19)."""
@@ -1094,7 +1152,8 @@ def main(argv: list[str] | None = None) -> int:
         description=(
             "deployer fix <verdict.json> --clone PATH: author the fix and "
             "commit it in a fix worktree; deployer fix publish <fix.json> "
-            "--base BRANCH: push it and open (or find) its PR"
+            "--base BRANCH: push it and open (or find) its PR; deployer fix "
+            "confirm <fix.json>: one CI confirmation attempt"
         ),
     )
     p_fix.add_argument(
