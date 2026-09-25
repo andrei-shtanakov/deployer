@@ -56,14 +56,17 @@ never reach the daemon, local or remote. Invalid runtime configuration
 (missing requested tool, non-ssh host) exits 2.
 
 Exit codes: `0` success; `1` verification/authoring failed (including a
-missing `Dockerfile` for `verify`); `2` invalid invocation (bad flag
-values, project path not a directory, unreadable or invalid `--target`,
-invalid runtime configuration).
+missing `Dockerfile` for `verify`, and an `author` run that could not
+remove the previous authoring set it was required to withdraw); `2`
+invalid invocation (bad flag values, project path not a directory,
+unreadable or invalid `--target`, invalid runtime configuration).
+
 `author --signing-key` (default `DEPLOYER_SIGNING_KEY`) takes an ed25519
 private key and publishes a signed authoring provenance set for the written
 Dockerfile under `.deployer/authoring/` (plus a `.deployer/` line in
-`.dockerignore`), which `diagnose --reproduce` later checks ownership against
-(see "Admission" below). It is issued only from a clean checkout at the
+`.dockerignore`, and in `.containerignore` when present), which
+`diagnose --reproduce` later checks ownership against (see "Admission"
+below). It is issued only from a clean checkout at the
 repository root with an `origin` remote; otherwise authoring still runs and
 warns that ownership will not be confirmable. Authoring leaves the tree dirty
 (the Dockerfile and the set), so commit before the next signed run. Verifiers
