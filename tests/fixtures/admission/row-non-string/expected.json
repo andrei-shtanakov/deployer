@@ -1,0 +1,23 @@
+{
+  "base": "run-1",
+  "trust": {
+    "kind": "dir",
+    "path": "trust"
+  },
+  "verdict": "insufficient_grounds",
+  "ownership": {
+    "status": "not_confirmed",
+    "step": 6
+  },
+  "unmet": [
+    {
+      "condition": 1,
+      "reason_contains": [
+        "ownership not confirmed: step 6: ",
+        "is not a well-formed snapshot",
+        "tree.0.mode"
+      ]
+    }
+  ],
+  "accepted": false
+}

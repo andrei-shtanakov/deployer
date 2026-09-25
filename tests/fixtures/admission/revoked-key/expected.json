@@ -1,0 +1,22 @@
+{
+  "base": "run-1",
+  "trust": {
+    "kind": "dir",
+    "path": "revoked-key/trust"
+  },
+  "verdict": "insufficient_grounds",
+  "ownership": {
+    "status": "not_confirmed",
+    "step": 3
+  },
+  "unmet": [
+    {
+      "condition": 1,
+      "reason_contains": [
+        "ownership not confirmed: step 3: ",
+        "signature not verified"
+      ]
+    }
+  ],
+  "accepted": false
+}

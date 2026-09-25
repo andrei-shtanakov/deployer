@@ -1,0 +1,22 @@
+{
+  "base": "run-1",
+  "trust": {
+    "kind": "dir",
+    "path": "trust"
+  },
+  "verdict": "insufficient_grounds",
+  "ownership": {
+    "status": "confirmed",
+    "step": null
+  },
+  "unmet": [
+    {
+      "condition": 3,
+      "reason_contains": [
+        "unknown dialect: # syntax=docker/dockerfile:1 (local)",
+        "unknown dialect: # syntax=docker/dockerfile:1 (Dockerfile)"
+      ]
+    }
+  ],
+  "accepted": false
+}

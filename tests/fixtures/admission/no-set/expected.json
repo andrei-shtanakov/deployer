@@ -1,0 +1,22 @@
+{
+  "base": "run-1",
+  "trust": {
+    "kind": "dir",
+    "path": "trust"
+  },
+  "verdict": "insufficient_grounds",
+  "ownership": {
+    "status": "not_confirmed",
+    "step": 1
+  },
+  "unmet": [
+    {
+      "condition": 1,
+      "reason_contains": [
+        "ownership not confirmed: step 1: ",
+        "Dockerfile.current is missing"
+      ]
+    }
+  ],
+  "accepted": false
+}

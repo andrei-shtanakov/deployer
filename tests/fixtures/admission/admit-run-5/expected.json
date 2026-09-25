@@ -1,0 +1,22 @@
+{
+  "base": "run-5",
+  "trust": {
+    "kind": "dir",
+    "path": "trust"
+  },
+  "verdict": "admitted",
+  "ownership": {
+    "status": "confirmed",
+    "step": null
+  },
+  "unmet": [],
+  "defect": {
+    "class": "from_argument_count",
+    "file": "Dockerfile",
+    "lines": [
+      1,
+      1
+    ]
+  },
+  "accepted": true
+}
