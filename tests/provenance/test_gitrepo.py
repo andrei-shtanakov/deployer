@@ -27,6 +27,19 @@ def test_origin_slug_forms(repo: Path, url: str, slug: str) -> None:  # Review F
     assert gitrepo.origin_slug(repo) == slug
 
 
+@pytest.mark.parametrize(
+    ("url", "slug"),
+    [
+        ("git@github.com:o/r.git", "o/r"),
+        ("/tmp/remote/o/r.git", "o/r"),
+        ("not a url", None),
+    ],
+)
+def test_slug_from_url(url: str, slug: str | None) -> None:
+    """The pure parse ``origin_slug`` and ``fix publish`` share."""
+    assert gitrepo.slug_from_url(url) == slug
+
+
 def test_no_origin_and_not_a_checkout(repo: Path, tmp_path: Path) -> None:
     assert gitrepo.origin_slug(repo) is None
     assert gitrepo.is_checkout(repo) and not gitrepo.is_checkout(tmp_path / "nope")

@@ -999,6 +999,8 @@ def _fix_author_error(args: argparse.Namespace) -> str | None:
         return f"unexpected arguments: {' '.join(args.rest)}"
     if args.clone is None:
         return "--clone is required"
+    if args.base is not None:
+        return "--base is an argument of deployer fix publish only"
     if args.build_timeout < 1:
         return "--build-timeout must be >= 1"
     return None

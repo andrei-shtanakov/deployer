@@ -9,13 +9,15 @@ re-check over the stored inputs (:func:`recheck_admission`, never the
 clone's ``HEAD`` or cleanliness); the fix branch's tip is the stored fix
 commit, whose single parent is ``head_sha``; the fix **commit object's**
 full diff against ``head_sha`` is §3's allowed change, bound to the stored
-proposal, local proof and target; the worktree's ``origin`` is the stored
+proposal, local proof and target; the branch is the one ``deployer fix``
+names; the fix commit's own new set passes A's ownership check with the
+current trust directory; the worktree's ``origin`` is the stored
 repository. Then the network: the base is fetched and the future PR's diff
 checked (``merge-base(base_tip, fix_commit) == head_sha`` and
-``merge-base..fix_commit`` equal to the committed change); the branch is
-pushed without force (an existing remote branch at the fix commit is
-reused, at any other commit refused); an open PR for the branch is looked
-up before one is created.
+``merge-base..fix_commit`` equal to the committed change); the branch's PRs
+are looked up and checked against a recorded one **before** the push; the
+branch is pushed without force (an existing remote branch at the fix commit
+is reused, at any other commit refused); a PR is created only after that.
 
 Success moves ``locally_confirmed`` to ``fix_proposed`` and keeps
 ``fix_proposed``/``ci_confirmed``. A refusal leaves the status unchanged
@@ -29,7 +31,7 @@ user-configured program, and the push passes ``--no-verify`` as well.
 
 import hashlib
 import json
-import re
+import tempfile
 import urllib.parse
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -37,6 +39,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
+from deployer.admission.ownership import verify_ownership
 from deployer.admission.prepare import _as_r_reads
 from deployer.fix.binding import Bound, link_problem
 from deployer.fix.chooser import _fence
@@ -60,16 +63,24 @@ from deployer.fix.workspace import (
     _is_set_file,
     _run,
     _set_parts,
+    branch_name,
 )
 from deployer.forge import GH_TIMEOUT_S, GhRunner
-from deployer.provenance.model import RECORD_FILE, SET_ROOT, set_dir_name
+from deployer.provenance import gitrepo
+from deployer.provenance.model import (
+    RECORD_FILE,
+    SET_ROOT,
+    SIGNATURE_FILE,
+    SNAPSHOT_FILE,
+    set_dir_name,
+)
+from deployer.provenance.trust import trust_dir
 from deployer.reproduce.dockerfile import parse
 
 PUBLISHABLE = ("locally_confirmed", "fix_proposed", "ci_confirmed")
 PUBLISHED = "published"
 REFUSED = "refused"
 _REMOTE = "origin"
-_SLUG_RE = re.compile(r"[:/]([^/:]+)/([^/]+?)(?:\.git)?/?$")
 _NO_PROMPT = {"GIT_TERMINAL_PROMPT": "0"}
 
 
@@ -112,10 +123,19 @@ class SubprocessGitRemote:
     with terminal prompts disabled; hooks never run."""
 
     def fetch(self, repo_dir: Path, branch: str) -> str:
-        """``git fetch --no-tags origin refs/heads/<branch>``, then
-        ``FETCH_HEAD``'s commit."""
+        """``git fetch --no-tags --refmap= origin refs/heads/<branch>``, then
+        ``FETCH_HEAD``'s commit. The empty ``--refmap`` keeps the fetch from
+        updating ``refs/remotes/origin/<branch>`` opportunistically."""
         ref = f"refs/heads/{branch}"
-        _git(repo_dir, "fetch", "--no-tags", "--no-recurse-submodules", _REMOTE, ref)
+        _git(
+            repo_dir,
+            "fetch",
+            "--no-tags",
+            "--no-recurse-submodules",
+            "--refmap=",
+            _REMOTE,
+            ref,
+        )
         tip = _git(repo_dir, "rev-parse", "--verify", "FETCH_HEAD^{commit}")
         return tip.decode().strip()
 
@@ -143,7 +163,11 @@ class SubprocessGitRemote:
         return None
 
     def push(self, repo_dir: Path, branch: str, commit: str) -> None:
-        """``git push --no-verify origin <commit>:refs/heads/<branch>``."""
+        """``git push --no-verify origin <commit>:refs/heads/<branch>``.
+
+        Git has no flag to suppress it: when ``origin``'s fetch refspec maps
+        the branch, the push also creates ``refs/remotes/origin/<branch>``
+        in the clone (a remote-tracking ref, not a branch)."""
         _git(repo_dir, "push", "--no-verify", _REMOTE, f"{commit}:refs/heads/{branch}")
 
 
@@ -250,17 +274,20 @@ def _publish(
         return _Refusal(problem)
     state.doc = doc = _with_base(doc, base)
     state.save()
-    local = _local_checks(doc, fix, env)
+    local = _local_checks(doc, fix, env, state.path)
     if isinstance(local, _Refusal):
         return local
     problem = _future_diff_problem(git, fix, base, local)
     if problem is not None:
         return _Refusal(problem)
+    found = _lookup_pr(gh, doc, fix, base)
+    if isinstance(found, _Refusal):
+        return found
     problem = _push(git, fix)
     if problem is not None:
         return _Refusal(problem)
     state.pushed = f"branch {fix.branch} at {fix.commit}"
-    pr_url = _pull_request(gh, doc, fix, base)
+    pr_url = found if found is not None else _create_pr(gh, doc, fix, base)
     if isinstance(pr_url, _Refusal):
         return pr_url
     state.pushed = f"branch {fix.branch} at {fix.commit}, PR {pr_url}"
@@ -332,13 +359,17 @@ def _with_base(doc: FixDocument, base: str) -> FixDocument:
 
 
 def _local_checks(
-    doc: FixDocument, fix: _Fix, env: Mapping[str, str]
+    doc: FixDocument, fix: _Fix, env: Mapping[str, str], doc_path: Path
 ) -> list[tuple[str, str]] | _Refusal:
-    """Admission and trust re-checked, the tip, the fix commit's content and
-    the worktree's ``origin``; the committed ``(status, path)`` change."""
+    """Admission and trust re-checked, the branch name, the tip, the fix
+    commit's content and its new set's ownership, the worktree's
+    ``origin``; the committed ``(status, path)`` change."""
     reason = recheck_admission(doc, env)
     if reason is not None:
         return _Refusal(f"admission re-check: {reason}")
+    reason = _branch_problem(doc, fix, doc_path)
+    if reason is not None:
+        return _Refusal(reason)
     guards = _guards(fix.worktree)
     if isinstance(guards, str):
         return _Refusal(guards)
@@ -350,7 +381,84 @@ def _local_checks(
     change = _committed_change(doc, fix, guards)
     if isinstance(change, str):
         return _Refusal(f"the fix commit {fix.commit}: {change}")
+    reason = _ownership_problem(doc, fix, guards, env)
+    if reason is not None:
+        return _Refusal(f"the fix commit {fix.commit}: {reason}")
     return change
+
+
+def _branch_problem(doc: FixDocument, fix: _Fix, doc_path: Path) -> str | None:
+    """The fix branch is the one ``deployer fix`` names for this fix: the
+    class, ``head_sha`` and the fix directory's sequence number, where the
+    fix directory holds both ``fix.json`` and the worktree."""
+    fix_dir = fix.worktree.parent
+    if fix.worktree.name != "worktree" or not _same_dir(fix_dir, doc_path.parent):
+        return f"the worktree {fix.worktree} is not this fix directory's"
+    seq = fix_dir.name
+    if not (seq.isascii() and seq.isdigit()):
+        return f"the fix directory {fix_dir} has no sequence number"
+    assert doc.proposal is not None
+    expected = branch_name(doc.proposal.cls, fix.head, int(seq))
+    if fix.branch != expected:
+        return f"the stored branch {fix.branch!r} is not the fix's {expected!r}"
+    return None
+
+
+def _same_dir(a: Path, b: Path) -> bool:
+    """Whether ``a`` and ``b`` resolve to the same path."""
+    return a.resolve() == b.resolve()
+
+
+def _ownership_problem(
+    doc: FixDocument, fix: _Fix, guards: Sequence[str], env: Mapping[str, str]
+) -> str | None:
+    """A's ownership check (§2.4) over the fix commit's own set, with the
+    **current** trust directory: the pointer, the three set files and the
+    Dockerfile are written as raw blobs of the fix commit into a temporary
+    tree in the fix directory; the record must cover the locally proved
+    Dockerfile."""
+    assert doc.local_proof is not None
+    fix_dir = fix.worktree.parent
+    with tempfile.TemporaryDirectory(dir=fix_dir, prefix=".publish-") as tmp:
+        tree = Path(tmp)
+        reason = _materialize(fix, guards, tree)
+        if reason is not None:
+            return reason
+        roots = (tree, Path(doc.input.clone), fix.worktree, fix_dir)
+        facts = verify_ownership(
+            tree,
+            repo=fix.repo,
+            artifact_path=fix.dockerfile,
+            trust=trust_dir(env),
+            checked_roots=roots,
+        )
+    if facts.status != "confirmed" or facts.record is None:
+        return f"its set is not confirmed at step {facts.step}: {facts.reason}"
+    if facts.record.artifact_sha256 != doc.local_proof.dockerfile_sha256:
+        return "its signed record does not cover the locally proved Dockerfile"
+    return None
+
+
+def _materialize(fix: _Fix, guards: Sequence[str], tree: Path) -> str | None:
+    """Write the fix commit's pointer, set files and Dockerfile under
+    ``tree`` (raw blobs, no attributes applied); a reason on failure."""
+    pointer = _read(fix, guards, "cat-file", "blob", f"{fix.commit}:{_POINTER_PATH}")
+    name = pointer.decode("utf-8", errors="replace").strip()
+    set_dir = f"{SET_ROOT}/{name}"
+    files = [
+        _POINTER_PATH,
+        fix.dockerfile,
+        *(f"{set_dir}/{file}" for file in (RECORD_FILE, SNAPSHOT_FILE, SIGNATURE_FILE)),
+    ]
+    for rel in files:
+        parts = rel.split("/")
+        if any(part in ("", ".", "..") for part in parts) or rel.startswith("/"):
+            return f"{rel!r} is not a plain relative path"
+        data = _read(fix, guards, "cat-file", "blob", f"{fix.commit}:{rel}")
+        path = tree.joinpath(*parts)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+    return None
 
 
 def _read(fix: _Fix, guards: Sequence[str], *args: str) -> bytes:
@@ -383,8 +491,7 @@ def _tip_problem(fix: _Fix, guards: Sequence[str]) -> str | None:
 def _origin_problem(fix: _Fix, guards: Sequence[str]) -> str | None:
     """The worktree's ``origin`` is still the stored repository."""
     url = _run(fix.worktree, "remote", "get-url", _REMOTE, g=guards)
-    match = _SLUG_RE.search(url.stdout.decode(errors="replace").strip())
-    slug = f"{match.group(1)}/{match.group(2)}" if match else None
+    slug = gitrepo.slug_from_url(url.stdout.decode(errors="replace").strip())
     if url.code != 0 or slug != fix.repo:
         return f"the worktree's origin is {slug}, not the stored {fix.repo}"
     return None
@@ -587,70 +694,95 @@ def _push(git: GitRemote, fix: _Fix) -> str | None:
     return None
 
 
-def _pull_request(
+def _lookup_pr(
     gh: GhRunner, doc: FixDocument, fix: _Fix, base: str
-) -> str | _Refusal:
-    """The URL of the open PR for the fix branch — found (the fix commit
-    against ``base``) or created. Another open PR on the branch refuses; a
-    recorded PR that is no longer open is never replaced."""
+) -> str | None | _Refusal:
+    """Before any push: the URL of the open PR to reuse, or ``None`` when
+    one may be created.
+
+    Every PR ever opened from the fix branch is listed (``state=all``). An
+    open one must be the fix commit, from the fix repository, against
+    ``base``; any other open one refuses. A recorded ``pr_url`` must be that
+    open PR — a recorded PR that was closed or merged is never replaced. With
+    nothing recorded, a closed PR that already carried the fix commit
+    refuses too: the fix was proposed before, and a second PR is not made.
+    """
     assert doc.publication is not None
     recorded = doc.publication.pr_url
     try:
-        found = _find_pr(gh, fix, base)
+        listed = _list_prs(gh, fix)
     except Exception as exc:  # noqa: BLE001 — a failure is a refusal
         return _Refusal(f"PR lookup failed: {_describe(exc)}")
-    if isinstance(found, _Refusal):
-        return found
-    if recorded is not None and found != recorded:
-        return _Refusal(f"the recorded PR {recorded} is not the open PR ({found})")
-    if found is not None:
-        return found
-    try:
-        return _create_pr(gh, doc, fix, base)
-    except Exception as exc:  # noqa: BLE001 — a failure is a refusal
-        return _Refusal(f"PR creation failed: {_describe(exc)}")
+    if isinstance(listed, _Refusal):
+        return listed
+    matching: str | None = None
+    for pr in listed:
+        if pr.ref != fix.branch:
+            continue
+        ours = pr.sha == fix.commit and pr.base == base and pr.repo == fix.repo
+        if pr.state == "open":
+            if not ours or pr.url is None:
+                return _Refusal(f"an open PR on {fix.branch} is not the fix: {pr}")
+            matching = pr.url
+        elif pr.sha == fix.commit and recorded is None:
+            return _Refusal(f"a closed PR {pr.url} already carried the fix commit")
+    if recorded is not None and matching != recorded:
+        return _Refusal(
+            f"the recorded PR {recorded} is not open with the fix commit against "
+            f"{base} (open: {matching})"
+        )
+    return matching
 
 
-def _find_pr(gh: GhRunner, fix: _Fix, base: str) -> str | None | _Refusal:
-    """The open PR whose head is the fix branch at the fix commit and whose
-    base is ``base``; ``None`` if the branch has no open PR."""
+@dataclass(frozen=True)
+class _PR:
+    """The fields of one PR the checks read; ``None`` where absent."""
+
+    url: str | None
+    state: object
+    ref: object
+    sha: object
+    repo: object
+    base: object
+
+
+def _list_prs(gh: GhRunner, fix: _Fix) -> list[_PR] | _Refusal:
+    """Every PR (open or closed) whose head is ``owner:<fix branch>``."""
     owner = fix.repo.split("/", 1)[0]
     query = urllib.parse.urlencode(
-        {"state": "open", "head": f"{owner}:{fix.branch}", "per_page": "100"}
+        {"state": "all", "head": f"{owner}:{fix.branch}", "per_page": "100"}
     )
     listed = json.loads(
         gh.api([f"repos/{fix.repo}/pulls?{query}"], timeout=GH_TIMEOUT_S)
     )
     if not isinstance(listed, list):
         return _Refusal("the PR listing is not a JSON array")
-    matching: str | None = None
-    for pr in listed:
-        head, pr_base, url = _pr_fields(pr)
-        if head.get("ref") != fix.branch:
-            continue
-        if head.get("sha") != fix.commit or pr_base != base:
-            return _Refusal(
-                f"an open PR {url} on {fix.branch} has head {head.get('sha')} "
-                f"and base {pr_base}, not {fix.commit} and {base}"
-            )
-        if not isinstance(url, str):
-            return _Refusal(f"the open PR on {fix.branch} has no html_url")
-        matching = url
-    return matching
+    return [_pr(entry) for entry in listed]
 
 
-def _pr_fields(pr: object) -> tuple[Mapping[str, Any], object, object]:
-    """``(head, base ref, html_url)`` of one PR listing entry."""
-    if not isinstance(pr, Mapping):
-        return {}, None, None
-    head = pr.get("head")
-    base = pr.get("base")
-    base_ref = base.get("ref") if isinstance(base, Mapping) else None
-    return (head if isinstance(head, Mapping) else {}), base_ref, pr.get("html_url")
+def _pr(entry: object) -> _PR:
+    """One PR listing (or creation) entry's fields."""
+    raw = entry if isinstance(entry, Mapping) else {}
+    head = _mapping(raw.get("head"))
+    url = raw.get("html_url")
+    return _PR(
+        url=url if isinstance(url, str) else None,
+        state=raw.get("state"),
+        ref=head.get("ref"),
+        sha=head.get("sha"),
+        repo=_mapping(head.get("repo")).get("full_name"),
+        base=_mapping(raw.get("base")).get("ref"),
+    )
+
+
+def _mapping(value: object) -> Mapping[str, Any]:
+    """``value`` if it is a mapping, else an empty one."""
+    return value if isinstance(value, Mapping) else {}
 
 
 def _create_pr(gh: GhRunner, doc: FixDocument, fix: _Fix, base: str) -> str | _Refusal:
-    """Create the PR; the created PR must be the fix commit against ``base``."""
+    """Create the PR (only after the lookup and the push); the created PR
+    must be the fix commit, from the fix repository, against ``base``."""
     title, body = pr_text(doc)
     argv = [
         f"repos/{fix.repo}/pulls",
@@ -665,14 +797,14 @@ def _create_pr(gh: GhRunner, doc: FixDocument, fix: _Fix, base: str) -> str | _R
         "-f",
         f"body={body}",
     ]
-    created = json.loads(gh.api(argv, timeout=GH_TIMEOUT_S))
-    head, pr_base, url = _pr_fields(created)
-    if head.get("sha") != fix.commit or pr_base != base or not isinstance(url, str):
-        return _Refusal(
-            f"the created PR {url} is head {head.get('sha')} base {pr_base}, "
-            f"not {fix.commit} and {base}"
-        )
-    return url
+    try:
+        created = _pr(json.loads(gh.api(argv, timeout=GH_TIMEOUT_S)))
+    except Exception as exc:  # noqa: BLE001 — a failure is a refusal
+        return _Refusal(f"PR creation failed: {_describe(exc)}")
+    ours = (created.sha, created.base, created.repo) == (fix.commit, base, fix.repo)
+    if not ours or created.url is None:
+        return _Refusal(f"the created PR is not the fix: {created}")
+    return created.url
 
 
 def _published(doc: FixDocument, pr_url: str) -> FixDocument:

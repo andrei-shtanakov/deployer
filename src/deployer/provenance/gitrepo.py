@@ -64,6 +64,12 @@ def origin_slug(path: Path) -> str | None:
         url = _git(path, "remote", "get-url", "origin").decode().strip()
     except GitError:
         return None
+    return slug_from_url(url)
+
+
+def slug_from_url(url: str) -> str | None:
+    """``owner/name`` parsed from a remote URL (scp-like, ssh, https or a
+    path ending in ``owner/name[.git]``), or ``None`` if unparseable."""
     match = _SLUG_RE.search(url)
     return f"{match.group(1)}/{match.group(2)}" if match else None
 

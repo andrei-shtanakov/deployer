@@ -34,6 +34,7 @@ from deployer.provenance import trust
 from deployer.provenance.model import SET_ROOT
 from tests.fix.conftest import enable_for_test, git
 from tests.fix.test_author import FROM_STDOUT, Case, _case
+from tests.provenance.conftest import make_key
 
 BASE = "main"
 REPO = "example/project"
@@ -90,6 +91,7 @@ class FakeGh:
     calls: list[list[str]] = field(default_factory=list)
     created: list[dict[str, str]] = field(default_factory=list)
     create_times_out: bool = False
+    missing: bool = False
     head_sha: dict[str, str] = field(default_factory=dict)
 
     def api(self, argv: list[str], *, timeout: float) -> str:
@@ -97,9 +99,18 @@ class FakeGh:
         self.calls.append(argv)
         if "POST" in argv:
             return self._create(argv)
+        if self.missing:
+            raise GhError("gh api could not start: [Errno 2] No such file: 'gh'")
         query = parse_qs(urlsplit(argv[0]).query)
         head = query["head"][0].split(":", 1)[1]
-        return json.dumps([pr for pr in self.prs if _head(pr)["ref"] == head])
+        state = query["state"][0]
+        return json.dumps(
+            [
+                pr
+                for pr in self.prs
+                if _head(pr)["ref"] == head and state in ("all", pr["state"])
+            ]
+        )
 
     def _create(self, argv: list[str]) -> str:
         """Create a PR from the ``-f`` fields."""
@@ -113,18 +124,26 @@ class FakeGh:
             raise GhError("gh api repos/x/pulls timed out after 30.0s")
         return json.dumps(pr)
 
-    def pr(self, branch: str, sha: str, base: str) -> dict[str, object]:
+    def pr(
+        self,
+        branch: str,
+        sha: str,
+        base: str,
+        state: str = "open",
+        repo: str = REPO,
+    ) -> dict[str, object]:
         """A PR listing entry."""
         number = len(self.prs) + 1
         return {
             "number": number,
+            "state": state,
             "html_url": f"https://github.com/{REPO}/pull/{number}",
-            "head": {"ref": branch, "sha": sha},
+            "head": {"ref": branch, "sha": sha, "repo": {"full_name": repo}},
             "base": {"ref": base},
         }
 
 
-def _head(pr: dict[str, object]) -> dict[str, str]:
+def _head(pr: dict[str, object]) -> dict[str, object]:
     """A PR's ``head`` mapping."""
     head = pr["head"]
     assert isinstance(head, dict)
@@ -190,7 +209,16 @@ class Published:
 def pub(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Published]:
     """run-5 ``locally_confirmed``; ``origin`` a bare repo with ``main`` at
     ``head_sha``."""
+    yield _published(tmp_path, monkeypatch)
+
+
+def _published(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fix_key: Path | None = None
+) -> Published:
+    """:func:`pub`, the fix's set signed with ``fix_key`` when given."""
     case = _case(tmp_path, monkeypatch, "run-5")
+    if fix_key is not None:
+        case.s.key = fix_key
     case.set_build(FROM_STDOUT)
     with enable_for_test("from-parsed/podman"):
         doc = case.run()
@@ -205,7 +233,7 @@ def pub(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Published]:
     publication = doc.publication
     assert publication is not None and publication.fix_commit is not None
     gh.head_sha[publication.branch] = publication.fix_commit
-    yield Published(case, case.fix_dir() / FIX_FILE, bare, Remote(), gh)
+    return Published(case, case.fix_dir() / FIX_FILE, bare, Remote(), gh)
 
 
 def _put(pub: Published, commit: str, branch: str) -> None:
@@ -377,12 +405,13 @@ def test_a_push_failure_on_a_repeat_leaves_fix_proposed(pub: Published) -> None:
 def test_a_push_failure_on_the_first_publish_keeps_locally_confirmed(
     pub: Published,
 ) -> None:
-    """No PR is looked up or created after a failed push."""
+    """The PRs are looked up before the push; none is created after it
+    failed."""
     pub.remote.fail = {"push"}
     doc = pub.run()
     _refused(doc, "injected")
     assert doc.status == "locally_confirmed"
-    assert pub.gh.calls == []
+    assert len(pub.gh.calls) == 1 and pub.gh.created == []
 
 
 def test_a_remote_branch_at_another_commit_is_refused(pub: Published) -> None:
@@ -392,7 +421,7 @@ def test_a_remote_branch_at_another_commit_is_refused(pub: Published) -> None:
     doc = pub.run()
     _refused(doc, f"the remote branch {pub.branch} is at {head}")
     assert pub.remote_ref(pub.branch) == head
-    assert pub.gh.calls == []
+    assert pub.gh.created == []
 
 
 def test_a_remote_branch_at_the_fix_commit_is_reused(pub: Published) -> None:
@@ -418,15 +447,117 @@ def test_an_open_pr_with_another_head_or_base_is_refused(
 def test_a_recorded_pr_that_is_no_longer_open_is_not_replaced(
     pub: Published,
 ) -> None:
-    """A published fix whose PR was closed: refused, no second PR."""
+    """A published fix whose PR vanished from the listing: refused, no second
+    PR."""
     pub.run()
     pub.gh.prs.clear()
     doc = pub.run()
-    _refused(doc, "is not the open PR")
+    _refused(doc, "is not open with the fix commit")
     assert len(pub.gh.created) == 1
 
 
+def test_a_repeat_after_a_squash_merge_is_refused_without_a_push(
+    pub: Published,
+) -> None:
+    """The PR was merged (closed) and its branch deleted: the lookup refuses
+    before anything is pushed again."""
+    pub.run()
+    pub.gh.prs[0]["state"] = "closed"
+    git(pub.bare, "update-ref", "-d", f"refs/heads/{pub.branch}")
+    pub.remote.calls.clear()
+    doc = pub.run()
+    _refused(doc, "is not open with the fix commit")
+    assert doc.status == "fix_proposed"
+    assert "push" not in pub.remote.calls and "remote_tip" not in pub.remote.calls
+    assert pub.remote_ref(pub.branch) is None
+    assert len(pub.gh.created) == 1
+
+
+def test_an_edited_pr_url_is_refused_without_a_push(pub: Published) -> None:
+    """A recorded ``pr_url`` that is not the open PR: refused before the
+    push."""
+    pub.run()
+    publication = pub.doc.publication
+    assert publication is not None
+    elsewhere = f"https://github.com/{REPO}/pull/99"
+    pub.rewrite(publication=publication.model_copy(update={"pr_url": elsewhere}))
+    git(pub.bare, "update-ref", "-d", f"refs/heads/{pub.branch}")
+    pub.remote.calls.clear()
+    _refused(pub.run(), f"the recorded PR {elsewhere}")
+    assert "push" not in pub.remote.calls
+    assert pub.remote_ref(pub.branch) is None
+
+
+def test_a_missing_gh_pushes_nothing(pub: Published) -> None:
+    """``gh`` cannot run: the lookup fails before the push."""
+    pub.gh.missing = True
+    doc = pub.run()
+    _refused(doc, "PR lookup failed")
+    assert doc.status == "locally_confirmed"
+    assert "push" not in pub.remote.calls
+    assert pub.remote_ref(pub.branch) is None
+
+
+def test_a_closed_pr_with_the_fix_commit_is_not_duplicated(pub: Published) -> None:
+    """Nothing recorded, but a closed PR already carried the fix commit."""
+    pub.gh.prs.append(pub.gh.pr(pub.branch, pub.commit, BASE, state="closed"))
+    doc = pub.run()
+    _refused(doc, "a closed PR")
+    assert pub.gh.created == [] and "push" not in pub.remote.calls
+
+
+def test_a_closed_pr_with_another_commit_is_ignored(pub: Published) -> None:
+    """An old closed PR on the branch name for another commit is no reason
+    to refuse."""
+    pub.gh.prs.append(pub.gh.pr(pub.branch, "0" * 40, BASE, state="closed"))
+    _ok(pub.run())
+    assert len(pub.gh.created) == 1
+
+
+def test_an_open_pr_from_another_repository_is_refused(pub: Published) -> None:
+    """A PR whose head is a fork's branch of the same name is not reused."""
+    pub.gh.prs.append(pub.gh.pr(pub.branch, pub.commit, BASE, repo="evil/fork"))
+    _refused(pub.run(), "an open PR")
+    assert "push" not in pub.remote.calls
+
+
 # --- refusals before the network ---------------------------------------------
+
+
+def test_a_renamed_branch_is_refused_before_the_network(pub: Published) -> None:
+    """``publication.branch`` edited to another branch at the fix commit."""
+    git(pub.worktree, "branch", "evil", pub.commit)
+    publication = pub.doc.publication
+    assert publication is not None
+    pub.rewrite(publication=publication.model_copy(update={"branch": "evil"}))
+    doc = pub.run()
+    _refused(doc, "the stored branch 'evil' is not the fix's")
+    assert pub.remote.calls == [] and pub.gh.calls == []
+    assert pub.remote_ref("evil") is None
+
+
+@pytest.mark.parametrize("what", ["verdict", "evidence"])
+def test_tampered_stored_inputs_are_refused_before_the_network(
+    pub: Published, what: str
+) -> None:
+    """The verdict or an evidence file changed since ``deployer fix``."""
+    stored = pub.doc.input
+    path = Path(stored.verdict.path if what == "verdict" else stored.evidence[0].path)
+    path.chmod(0o644)
+    path.write_bytes(path.read_bytes() + b" ")
+    doc = pub.run()
+    _refused(doc, "has changed")
+    assert pub.remote.calls == [] and pub.gh.calls == []
+
+
+def test_the_fetch_does_not_update_the_remote_tracking_base(pub: Published) -> None:
+    """``--refmap=``: ``refs/remotes/origin/main`` is not created by the
+    fetch (the push's own tracking ref for the fix branch is documented)."""
+    clone = pub.case.s.clone
+    git(clone, "update-ref", "-d", f"refs/remotes/origin/{BASE}")
+    _ok(pub.run())
+    tracking = git(clone, "for-each-ref", "--format=%(refname)", "refs/remotes/")
+    assert f"refs/remotes/origin/{BASE}" not in tracking.splitlines()
 
 
 def test_a_revoked_key_is_refused(pub: Published) -> None:
@@ -482,10 +613,16 @@ def test_a_tampered_local_proof_hash_is_refused(pub: Published) -> None:
     _refused(pub.run(), "not the locally proved one")
 
 
-def _recommit(pub: Published, extra: str | None, keep_old_set: bool = False) -> str:
+def _recommit(
+    pub: Published,
+    extra: str | None,
+    keep_old_set: bool = False,
+    replace: dict[str, bytes] | None = None,
+) -> str:
     """A commit on ``head_sha`` with the fix commit's tree plus ``extra``
-    (and, with ``keep_old_set``, ``head_sha``'s set files back); the branch
-    and the stored fix commit re-pointed at it."""
+    (with ``keep_old_set``, ``head_sha``'s set files back; ``replace``
+    overwriting paths); the branch and the stored fix commit re-pointed at
+    it."""
     worktree, head = pub.worktree, pub.doc.input.head
     index = pub.case.tmp / "extra-index"
     env = {**os.environ, "GIT_INDEX_FILE": str(index)}
@@ -514,6 +651,9 @@ def _recommit(pub: Published, extra: str | None, keep_old_set: bool = False) -> 
             meta, path = row.split("\t")
             mode, _, sha = meta.split()
             entries.append(f"{mode},{sha},{path}")
+    for path, data in (replace or {}).items():
+        sha = plumb("hash-object", "-w", "--stdin", data=data)
+        entries.append(f"100644,{sha},{path}")
     assert entries
     cacheinfo = [arg for entry in entries for arg in ("--cacheinfo", entry)]
     plumb("update-index", "--add", *cacheinfo)
@@ -532,6 +672,41 @@ def test_a_fix_commit_with_another_path_is_refused(pub: Published) -> None:
     _recommit(pub, "README.extra")
     _refused(pub.run(), "README.extra: A is not an allowed change")
     assert pub.remote.calls == []
+
+
+def _set_file(pub: Published, name: str) -> str:
+    """The path of ``name`` in the fix commit's new set."""
+    pointer = git(pub.worktree, "show", f"{pub.commit}:{SET_ROOT}/Dockerfile.current")
+    return f"{SET_ROOT}/{pointer}/{name}"
+
+
+@pytest.mark.parametrize(
+    ("name", "step"), [("record.json.sig", "step 3"), ("snapshot.json", "step 1")]
+)
+def test_a_forged_new_set_is_refused(pub: Published, name: str, step: str) -> None:
+    """An amended fix commit whose signature or snapshot is garbage, with
+    ``fix_commit`` edited to it: A's ownership check over the fix commit's
+    own set refuses before any network call."""
+    _recommit(pub, None, replace={_set_file(pub, name): b"garbage\n"})
+    doc = pub.run()
+    _refused(doc, f"its set is not confirmed at {step}")
+    assert pub.remote.calls == [] and pub.gh.calls == []
+
+
+def test_a_new_set_signed_by_a_key_revoked_since_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The admission key stays trusted (the re-check passes); the fix's own
+    set was signed by a second key, revoked after ``deployer fix``."""
+    keys = tmp_path / "fix-keys"
+    keys.mkdir()
+    fix_key, fix_pub = make_key(keys, "fixkey")
+    trust.add(tmp_path / "trust", fix_pub)
+    pub = _published(tmp_path, monkeypatch, fix_key)
+    trust.revoke(pub.case.s.trust, fix_pub)
+    doc = pub.run()
+    _refused(doc, "its set is not confirmed at step 3")
+    assert pub.remote.calls == [] and pub.gh.calls == []
 
 
 def test_a_fix_commit_keeping_an_old_set_is_refused(pub: Published) -> None:

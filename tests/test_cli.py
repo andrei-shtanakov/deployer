@@ -2309,6 +2309,7 @@ def test_fix_passes_flags_and_the_signing_key_env(
         ["fix", "v.json"],
         ["fix", "v.json", "extra", "--clone", "c"],
         ["fix", "v.json", "--clone", "c", "--build-timeout", "0"],
+        ["fix", "v.json", "--clone", "c", "--base", "main"],
         ["fix", "publish", "fix.json"],
         ["fix", "confirm", "fix.json"],
     ],
@@ -2316,9 +2317,9 @@ def test_fix_passes_flags_and_the_signing_key_env(
 def test_fix_invalid_invocations_exit_2(
     fix_calls: list[dict[str, object]], argv: list[str]
 ) -> None:
-    """Missing ``--clone``, stray arguments, a bad timeout, ``publish``
-    without ``--base`` and ``confirm`` (Task 19) → 2, ``author_fix`` never
-    called."""
+    """Missing ``--clone``, stray arguments, a bad timeout, ``--base``
+    without ``publish``, ``publish`` without ``--base`` and ``confirm``
+    (Task 19) → 2, ``author_fix`` never called."""
     assert main(argv) == 2
     assert fix_calls == []
 
