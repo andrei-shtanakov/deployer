@@ -33,6 +33,7 @@ from deployer.admission.consumer import (
     accept_for_fix,
 )
 from deployer.admission.model import AdmissionSection, Binding
+from deployer.diagnose import diagnose_run, render_verdict
 from deployer.forge import load_snapshot
 from deployer.reproduce.run import reproduce_run
 from tests.admission.conftest import confirmed_ownership
@@ -43,6 +44,25 @@ HEAD = "a" * 40
 ART_SHA = "b" * 64
 CI_LOG = "line 1\nline 2\nline 3\n"
 STDERR = "Error: copy failed\n"
+
+
+REPRODUCTION: dict[str, Any] = {
+    "status": "attempted",
+    "binding": {"dockerfile": "Dockerfile"},
+    "restoration": {"state": "exact", "sha": HEAD},
+    "comparison": {
+        "state": "reproduced_with_differences",
+        "dimensions": {
+            "backend": "differs",
+            "host_arch": "unknown",
+            "base_image_digests": "unknown",
+            "ignore_file": "same",
+            "restoration": "same",
+        },
+    },
+}
+"""The parts of R's section the gate cross-checks, agreeing with
+:func:`_section`."""
 
 
 def _target(**overrides: str) -> Target:
@@ -108,7 +128,8 @@ def _document(section: object = None, **overrides: object) -> dict[str, Any]:
     """A 1.3 verdict document around ``section`` (the valid one by default)."""
     base: dict[str, Any] = {
         "verdict_schema_version": "1.3",
-        "reproduction": {"status": "attempted"},
+        "run": {"repo": "o/r", "head_sha": HEAD},
+        "reproduction": copy.deepcopy(REPRODUCTION),
         "admission": _section() if section is None else section,
     }
     base.update(overrides)
@@ -599,7 +620,7 @@ class Pipeline:
 def _pipeline(case: str, root: Path) -> Pipeline:
     """Replay ``case`` through R, prepare its facts, decide with a confirmed
     ownership over the bundle's listing, and wrap the section in a 1.3
-    document as ``render_verdict`` would (JSON round-trip)."""
+    document with ``render_verdict``."""
     bundle = BUNDLES / case
     run = load_snapshot((bundle / "snapshot.json").read_text())
     with pytest.MonkeyPatch.context() as mp:
@@ -621,11 +642,8 @@ def _pipeline(case: str, root: Path) -> Pipeline:
     ownership = confirmed_ownership(run.head_sha, facts.head_listing)
     admission = decide(dataclasses.replace(facts, ownership=ownership))
     assert admission.verdict == "admitted", admission.unmet
-    document = {
-        "verdict_schema_version": "1.3",
-        "reproduction": json.loads(section.model_dump_json()),
-        "admission": json.loads(admission.model_dump_json()),
-    }
+    rendered = render_verdict(diagnose_run(run), section, admission)
+    document = json.loads(rendered)
     b = facts.binding
     assert b.artifact_sha256 is not None and section.try_dir is not None
     target = Target(b.repo, b.head_sha, b.artifact_path, b.artifact_sha256)
@@ -893,3 +911,71 @@ def test_split_lines_is_the_templates_numbering() -> None:
     text = "x\r\n  y \x0cz\n\u2028w"
     assert templates.split_lines(text) == text.split("\n")
     assert templates._lines(text) == [p.strip() for p in text.split("\n")]
+
+
+# --- pre-PR round: the rest of the document agrees with the admission ----------
+
+
+def _set(document: dict[str, Any], path: str, value: object) -> None:
+    """Set the dotted ``path`` of ``document`` to ``value``."""
+    *parents, last = path.split(".")
+    node = document
+    for key in parents:
+        node = node[key]
+    node[last] = value
+
+
+@pytest.mark.parametrize(
+    ("path", "value", "problem"),
+    [
+        ("reproduction.comparison.state", "not_reproduced", "comparison.state"),
+        ("reproduction.restoration.state", "approximation", "restoration.state"),
+        ("reproduction.restoration.sha", "f" * 40, "restoration.sha"),
+        ("reproduction.binding.dockerfile", "other/Dockerfile", "dockerfile"),
+        ("run.head_sha", "f" * 40, "run.head_sha"),
+        ("run.repo", "other/project", "run.repo"),
+        ("run", None, "run.repo"),
+        ("reproduction.comparison", None, "comparison.state"),
+        ("reproduction.comparison.dimensions", [], "dimensions is not a mapping"),
+        ("reproduction.comparison.dimensions.backend", "same", "difference backend"),
+        ("reproduction.comparison.dimensions.extra", "differs", "difference extra"),
+    ],
+    ids=[
+        "comparison-not-reproduced",
+        "restoration-approximation",
+        "restoration-other-sha",
+        "reproduction-other-dockerfile",
+        "run-other-head",
+        "run-other-repo",
+        "run-missing",
+        "comparison-missing",
+        "dimensions-not-mapping",
+        "dimension-value-differs",
+        "dimension-not-decided",
+    ],
+)
+def test_document_contradicting_the_admission_is_refused(
+    pipeline_copy: Callable[[str], Pipeline], path: str, value: object, problem: str
+) -> None:
+    """M1: one mutation of a real run-1 document per cross-check."""
+    p = pipeline_copy("run-1")
+    _set(p.document, path, value)
+    result = accept_for_fix(p.document, p.try_dir, p.target)
+    _refused(result, "malformed", problem)
+
+
+def test_a_differently_cased_run_repo_is_not_a_contradiction(
+    pipeline_copy: Callable[[str], Pipeline],
+) -> None:
+    """m2: GitHub owner/name ignore case, in the cross-check too."""
+    p = pipeline_copy("run-1")
+    p.document["run"]["repo"] = p.document["run"]["repo"].upper()
+    assert isinstance(accept_for_fix(p.document, p.try_dir, p.target), Accepted)
+
+
+def test_target_repo_is_compared_case_insensitively(try_dir: Path) -> None:
+    """m2: ``O/R`` is the binding's ``o/r``; another repo is still refused."""
+    assert isinstance(
+        accept_for_fix(_document(), try_dir, _target(repo="O/R")), Accepted
+    )
+    _refused(accept_for_fix(_document(), try_dir, _target(repo="O/X")), "binding repo")

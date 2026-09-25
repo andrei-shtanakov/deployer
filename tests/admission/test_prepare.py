@@ -7,84 +7,24 @@ import hashlib
 import json
 import os
 import shutil
-from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
 
-from deployer import runtime as runtime_mod
 from deployer.admission import decide, prepare
 from deployer.admission.ownership import verify_ownership
-from deployer.forge import FailedRun, load_snapshot
+from deployer.forge import load_snapshot
 from deployer.models import ContainerRuntime
 from deployer.provenance.model import TreeRow
 from deployer.reproduce import shape as shape_mod
 from deployer.reproduce.build import run_build
 from deployer.reproduce.buildline import BuildConfig, parse_build_line
 from deployer.reproduce.model import ReproductionSection
-from deployer.reproduce.run import TryDirError, _make_writable, reproduce_run
+from deployer.reproduce.run import TryDirError, reproduce_run
 from deployer.reproduce.shape import job_text
-from tests.admission.conftest import REPO, AdmissionSet
+from tests.admission.conftest import REPO, AdmissionSet, replay_case
 from tests.reproduce.bundles import BUNDLES, BundleGh, _containers
 from tests.reproduce.conftest import FakeContainers, proc
-
-
-@dataclass(frozen=True)
-class Replayed:
-    """R's attempted try of one bundle under ``root``."""
-
-    bundle: Path
-    run: FailedRun
-    section: ReproductionSection
-    root: Path
-
-    @property
-    def try_dir(self) -> Path:
-        """The try directory R wrote."""
-        assert self.section.try_dir is not None
-        return self.root / self.section.try_dir
-
-    @property
-    def attempt_dir(self) -> Path:
-        """The attempt directory holding ``source/`` and ``source.json``."""
-        return self.try_dir.parent.parent
-
-    @property
-    def source(self) -> Path:
-        """The tree R restored at ``head_sha``."""
-        return self.attempt_dir / "source"
-
-    def unlock(self) -> Path:
-        """Make R's read-only ``source/`` writable for a targeted mutation."""
-        _make_writable(self.source)
-        return self.source
-
-
-@pytest.fixture()
-def fake_containers(monkeypatch: pytest.MonkeyPatch) -> FakeContainers:
-    """R's container calls answered by a fake, as in R §8.A."""
-    fake = FakeContainers()
-    monkeypatch.setattr(runtime_mod, "container_run", fake)
-    return fake
-
-
-def _replay(case: str, tmp_path: Path, fake: FakeContainers) -> Replayed:
-    """Replay ``case`` through R under ``tmp_path / "work"``."""
-    bundle = BUNDLES / case
-    rt, env = _containers(bundle, fake)
-    run = load_snapshot((bundle / "snapshot.json").read_text())
-    root = tmp_path / "work"
-    section = reproduce_run(
-        run,
-        gh=BundleGh(bundle, tmp_path / "bundle"),
-        rt=rt,
-        runtime_error=None,
-        env=env,
-        root=root,
-        build_timeout=60,
-    )
-    assert section.status == "attempted"
-    return Replayed(bundle, run, section, root)
 
 
 def _env(tmp_path: Path) -> dict[str, str]:
@@ -102,7 +42,7 @@ def test_run_1_facts_are_rs_own(
     tmp_path: Path, fake_containers: FakeContainers
 ) -> None:
     """Rulings 1-6 over the replayed run-1 try."""
-    r = _replay("run-1", tmp_path, fake_containers)
+    r = replay_case("run-1", tmp_path, fake_containers)
     facts = prepare(r.run, r.section, r.root, _env(tmp_path))
     source_json = json.loads((r.attempt_dir / "source.json").read_text())
     # (1) the head listing is R's source.json listing for the same attempt
@@ -156,7 +96,7 @@ def test_ignore_hashes_over_rs_effective_paths(
 ) -> None:
     """Ruling 2: podman's ``.containerignore`` locally, ``.dockerignore`` in
     CI, each hashed from the restored tree."""
-    r = _replay("containerignore", tmp_path, fake_containers)
+    r = replay_case("containerignore", tmp_path, fake_containers)
     facts = prepare(r.run, r.section, r.root, _env(tmp_path))
     assert r.section.comparison is not None
     ci_path, local_path = r.section.comparison.values["ignore_file"]
@@ -173,7 +113,7 @@ def test_symlinked_ignore_file_has_no_hash(
 ) -> None:
     """A present path the no-follow reader refuses: its hash is not obtained
     (A §1), so ``ignore_file: same`` cannot be concluded."""
-    r = _replay("containerignore", tmp_path, fake_containers)
+    r = replay_case("containerignore", tmp_path, fake_containers)
     source = r.unlock()
     (source / ".dockerignore").unlink()
     os.symlink(".containerignore", source / ".dockerignore")
@@ -220,7 +160,7 @@ def test_source_json_of_another_sha_is_a_try_dir_error(
     tmp_path: Path, fake_containers: FakeContainers
 ) -> None:
     """Ruling 7: R's records unreadable or foreign → TryDirError, as R."""
-    r = _replay("run-1", tmp_path, fake_containers)
+    r = replay_case("run-1", tmp_path, fake_containers)
     meta = r.attempt_dir / "source.json"
     data = json.loads(meta.read_text())
     meta.write_text(json.dumps({**data, "head_sha": "f" * 40}))
@@ -238,7 +178,7 @@ def test_ci_log_write_failure_is_a_try_dir_error(
     tmp_path: Path, fake_containers: FakeContainers
 ) -> None:
     """Ruling 7: ``ci.log`` goes through R's write helper."""
-    r = _replay("run-1", tmp_path, fake_containers)
+    r = replay_case("run-1", tmp_path, fake_containers)
     (r.try_dir / "ci.log").mkdir()
     with pytest.raises(TryDirError, match="cannot write"):
         prepare(r.run, r.section, r.root, _env(tmp_path))
@@ -249,7 +189,7 @@ def test_symlinked_dockerfile_has_no_artifact_hash(
 ) -> None:
     """Ruling 6: the artifact is read without following links; a hash not
     obtained is absent (A §1) and the verdict is not ``admitted``."""
-    r = _replay("run-1", tmp_path, fake_containers)
+    r = replay_case("run-1", tmp_path, fake_containers)
     source = r.unlock()
     (source / "Dockerfile").rename(source / "Dockerfile.real")
     os.symlink("Dockerfile.real", source / "Dockerfile")
@@ -265,7 +205,7 @@ def test_trust_dir_inside_the_working_root_is_refused(
     tmp_path: Path, fake_containers: FakeContainers
 ) -> None:
     """``root`` is a checked root: a trust dir under it fails step 0."""
-    r = _replay("run-1", tmp_path, fake_containers)
+    r = replay_case("run-1", tmp_path, fake_containers)
     trust = r.root / "trust"
     trust.mkdir()
     facts = prepare(r.run, r.section, r.root, {"DEPLOYER_TRUST_DIR": str(trust)})
@@ -286,7 +226,7 @@ def test_end_to_end_issued_set_is_confirmed(
 ) -> None:
     """A §8.2: ``provenance.issue`` in a temporary Git repository → its tree
     as the restored ``source/`` → the preparation layer → confirmed."""
-    r = _replay("run-1", tmp_path, fake_containers)
+    r = replay_case("run-1", tmp_path, fake_containers)
     source = r.unlock()
     shutil.rmtree(source)
     shutil.copytree(admission_set.source, source)
@@ -319,7 +259,7 @@ def test_ci_frontend_build_arg_is_a_ci_dialect(
 ) -> None:
     """T11 fix round 1: ``BUILDKIT_SYNTAX`` switches CI's frontend (Podman
     ignores it), so it is CI's dialect and the link is refused at (3)."""
-    r = _replay("run-1", tmp_path, fake_containers)
+    r = replay_case("run-1", tmp_path, fake_containers)
     assert r.section.build is not None
     argv = r.section.build.argv
     build = r.section.build.model_copy(
@@ -353,7 +293,7 @@ def test_no_frontend_build_arg_means_no_ci_dialect(
     tmp_path: Path, fake_containers: FakeContainers
 ) -> None:
     """Another build arg (or a key merely prefixed alike) is not a switch."""
-    r = _replay("run-1", tmp_path, fake_containers)
+    r = replay_case("run-1", tmp_path, fake_containers)
     assert r.section.build is not None
     argv = r.section.build.argv
     extra = ["--build-arg", "BUILDKIT_SYNTAXX=x", "--build-arg", "V=1"]
@@ -368,7 +308,7 @@ def test_unencodable_ci_text_is_a_try_dir_error(
 ) -> None:
     """T11 fix round 1: ``ci.log`` that cannot be encoded is R's try-dir
     exit 2, not a traceback out of ``diagnose``."""
-    r = _replay("run-1", tmp_path, fake_containers)
+    r = replay_case("run-1", tmp_path, fake_containers)
     monkeypatch.setattr(shape_mod, "job_text", lambda job: "bad \udc80 byte")
     with pytest.raises(TryDirError, match="cannot write"):
         prepare(r.run, r.section, r.root, _env(tmp_path))
@@ -379,7 +319,7 @@ def test_a_valueless_frontend_build_arg_is_an_unknown_dialect(
 ) -> None:
     """R refuses ``--build-arg BUILDKIT_SYNTAX`` without a value; should an
     argv carry one anyway, it is CI's environment value, unseen: a dialect."""
-    r = _replay("run-1", tmp_path, fake_containers)
+    r = replay_case("run-1", tmp_path, fake_containers)
     assert r.section.build is not None
     argv = r.section.build.argv
     extra = ["--build-arg", "BUILDKIT_SYNTAX"]

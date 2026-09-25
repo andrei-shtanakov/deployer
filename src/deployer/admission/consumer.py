@@ -28,6 +28,7 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
+from deployer.admission.decide import LINKED_STATES
 from deployer.admission.fsread import Unreadable, read_in_tree
 from deployer.admission.model import (
     ADMISSION_VERDICT_SCHEMA_VERSION,
@@ -145,7 +146,12 @@ def _validated(
         section = AdmissionSection.model_validate(dict(raw))
     except ValidationError as exc:
         return Refused(f"malformed admission section: {_errors(exc)}")
-    return _evidence_type_refusal(section) or _link_refusal(section) or section
+    return (
+        _evidence_type_refusal(section)
+        or _link_refusal(section)
+        or _document_refusal(document, section)
+        or section
+    )
 
 
 def _wire_problem(
@@ -160,6 +166,83 @@ def _wire_problem(
     if "unmet" not in raw:
         return "the unmet key is missing"
     return None
+
+
+def _document_refusal(
+    document: Mapping[str, object], section: AdmissionSection
+) -> Refused | None:
+    """Refusal (2) for a section the rest of the document contradicts: the
+    ``run`` it was decided for, R's binding, restoration and comparison."""
+    problem = _run_problem(document, section.binding) or (
+        _reproduction_problem(document, section)
+    )
+    if problem is None:
+        return None
+    return Refused(f"malformed admission section: {problem}")
+
+
+def _run_problem(document: Mapping[str, object], binding: Binding) -> str | None:
+    """``run.repo`` (case-insensitive) and ``run.head_sha`` are the binding's,
+    and R built the bound artifact."""
+    repo = _get(document, "run", "repo")
+    if not isinstance(repo, str) or repo.casefold() != binding.repo.casefold():
+        return f"run.repo {_show(repo)} is not binding.repo {_show(binding.repo)}"
+    head = _get(document, "run", "head_sha")
+    if head != binding.head_sha:
+        return f"run.head_sha {_show(head)} is not binding.head_sha"
+    dockerfile = _get(document, "reproduction", "binding", "dockerfile")
+    if dockerfile != binding.artifact_path:
+        return (
+            f"reproduction.binding.dockerfile {_show(dockerfile)} is not "
+            f"binding.artifact_path {_show(binding.artifact_path)}"
+        )
+    return None
+
+
+def _reproduction_problem(
+    document: Mapping[str, object], section: AdmissionSection
+) -> str | None:
+    """For ``admitted``: R restored ``head_sha`` exactly, its comparison is a
+    linked state, and each difference's value is R's (A §4.3)."""
+    if section.link is None:
+        return None
+    restoration = _get(document, "reproduction", "restoration", "state")
+    if restoration != "exact":
+        return f"reproduction.restoration.state {_show(restoration)} is not 'exact'"
+    restored = _get(document, "reproduction", "restoration", "sha")
+    if restored != section.binding.head_sha:
+        return f"reproduction.restoration.sha {_show(restored)} is not head_sha"
+    state = _get(document, "reproduction", "comparison", "state")
+    if not isinstance(state, str) or state not in LINKED_STATES:
+        return f"reproduction.comparison.state {_show(state)} is not linked"
+    return _dimensions_problem(document, section.link)
+
+
+def _dimensions_problem(document: Mapping[str, object], link: Link) -> str | None:
+    """The differences are exactly R's dimensions (required ones defaulting
+    to ``unknown``, as ``decide`` reads them), value for value."""
+    dimensions = _get(document, "reproduction", "comparison", "dimensions")
+    if not isinstance(dimensions, Mapping):
+        return "reproduction.comparison.dimensions is not a mapping"
+    expected = {name: "unknown" for name in REQUIRED_DIMENSIONS} | dict(dimensions)
+    decided = {d.name: d.value for d in link.differences}
+    for name in sorted(set(expected) | set(decided)):
+        if decided.get(name) != expected.get(name):
+            return (
+                f"difference {name} {_show(decided.get(name))} is not R's "
+                f"{_show(expected.get(name))}"
+            )
+    return None
+
+
+def _get(node: object, *keys: str) -> object:
+    """``node[k1][k2]…`` through Mappings only; ``None`` where one is absent
+    or not a Mapping."""
+    for key in keys:
+        if not isinstance(node, Mapping):
+            return None
+        node = node.get(key)
+    return node
 
 
 def _evidence_type_refusal(section: AdmissionSection) -> Refused | None:
@@ -274,7 +357,8 @@ def _verdict_refusal(section: AdmissionSection) -> Refused | None:
 
 def _binding_refusal(binding: Binding, target: Target) -> Refused | None:
     """Refusal (4): a ``null`` artifact hash means the binding differs from
-    any target, before any value is compared; then each field in turn."""
+    any target, before any value is compared; then each field in turn. The
+    repo is compared case-insensitively (GitHub owner/name are)."""
     if binding.artifact_sha256 is None:
         return Refused(
             "binding artifact_sha256 is null (the artifact's bytes at head_sha "
@@ -282,6 +366,8 @@ def _binding_refusal(binding: Binding, target: Target) -> Refused | None:
         )
     for field in BINDING_FIELDS:
         have, want = getattr(binding, field), getattr(target, field)
+        if field == "repo" and isinstance(want, str):
+            have, want = have.casefold(), want.casefold()
         if have != want:
             return Refused(
                 f"binding {field} {_show(have)} differs from target {_show(want)}"

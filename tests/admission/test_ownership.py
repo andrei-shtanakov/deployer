@@ -323,3 +323,55 @@ def test_an_unencodable_trust_path_is_step_0(admission_set: AdmissionSet) -> Non
     """The same for the trust directory."""
     facts = _verify_with(admission_set, trust_dir=Path("/tmp/x\ud800y"))
     assert facts.status == "not_confirmed" and facts.step == 0
+
+
+def test_repo_is_compared_case_insensitively(tmp_path: Path) -> None:
+    """GitHub owner/name ignore case: a set issued with origin ``Owner/Repo``
+    is confirmed for a run whose repo reads ``owner/repo``."""
+    issued = AdmissionSet(tmp_path, "git@github.com:Owner/Repo.git")
+    assert issued.load(RECORD_FILE)["repo"] == "Owner/Repo"
+    facts = verify_ownership(
+        issued.source,
+        repo="owner/repo",
+        artifact_path=ARTIFACT,
+        trust=issued.trust,
+        checked_roots=(issued.source,),
+    )
+    assert facts.status == "confirmed", facts.reason
+
+
+def test_a_different_repo_is_still_refused(tmp_path: Path) -> None:
+    """Case-folding does not widen the match to another repository."""
+    issued = AdmissionSet(tmp_path, "git@github.com:Owner/Repo.git")
+    facts = verify_ownership(
+        issued.source,
+        repo="owner/other",
+        artifact_path=ARTIFACT,
+        trust=issued.trust,
+        checked_roots=(issued.source,),
+    )
+    assert facts.status == "not_confirmed" and facts.step == 4, facts.reason
+
+
+def test_trust_inside_under_a_case_variant_spelling_is_step_0(
+    admission_set: AdmissionSet, tmp_path: Path
+) -> None:
+    """APFS: the checked tree respelled with another case is the same tree,
+    so a trust dir inside it is still refused at step 0."""
+    probe = tmp_path / "case-probe"
+    probe.write_text("")
+    if not (tmp_path / "CASE-PROBE").exists():
+        pytest.skip("case-sensitive filesystem")
+    inside = admission_set.source / "trust"
+    shutil.copytree(admission_set.trust, inside)
+    variant = Path(str(inside).replace("/source/", "/SOURCE/"))
+    assert str(variant) != str(inside)
+    facts = verify_ownership(
+        admission_set.source,
+        repo=REPO,
+        artifact_path=ARTIFACT,
+        trust=variant,
+        checked_roots=(admission_set.source,),
+    )
+    assert facts.status == "not_confirmed"
+    assert facts.step == 0, facts.reason

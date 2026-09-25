@@ -237,7 +237,7 @@ def _step4_artifact(
             f"artifact_sha256 {record.artifact_sha256} differs from "
             f"{artifact_path} at head ({actual})"
         )
-    if record.repo != repo:
+    if record.repo.casefold() != repo.casefold():  # GitHub owner/name ignore case
         return f"record repo {record.repo!r} is not the run's {repo!r}"
     if record.artifact_path != artifact_path:
         return (
