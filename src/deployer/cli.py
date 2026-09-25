@@ -5,6 +5,7 @@ import os
 import re
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 from pydantic import ValidationError
@@ -23,6 +24,9 @@ from deployer.bench import (
 )
 from deployer.diagnose import RunDiagnosis, diagnose_run, render_verdict
 from deployer.facts import TargetConfigError, analyze_project
+from deployer.fix.author import FixAbort, author_fix
+from deployer.fix.chooser import AnthropicChooser, SourceChooser
+from deployer.fix.document import FixDocument
 from deployer.forge import (
     DEFAULT_MAX_ARCHIVE_MB,
     AdapterRefusal,
@@ -895,6 +899,92 @@ def _cmd_trust(args: argparse.Namespace) -> int:
     return 0
 
 
+class _LazyAnthropicChooser:
+    """The §4.1 model, built only when asked: a FROM fix never needs it, so
+    a missing API key must not stop one."""
+
+    def choose(self, prompt: str) -> str:
+        """Build the Anthropic chooser and ask it once."""
+        return AnthropicChooser().choose(prompt)
+
+
+def _fix_chooser() -> SourceChooser:
+    """The chooser ``deployer fix`` asks (tests replace it with a fake)."""
+    return _LazyAnthropicChooser()
+
+
+_FIX_ACTIONS: dict[str, Callable[[argparse.Namespace], int]] = {}
+"""``deployer fix <action> …`` handlers, recognised only as the first argument
+after ``fix`` (Ruling C): ``publish`` (Task 14) and ``confirm`` (Task 19)."""
+_FIX_RESERVED = ("publish", "confirm")
+
+
+def _cmd_fix(args: argparse.Namespace) -> int:
+    """``deployer fix``: dispatch an action, else author a fix of a verdict."""
+    action = _FIX_ACTIONS.get(args.target)
+    if action is not None:
+        return action(args)
+    if args.target in _FIX_RESERVED:
+        print(f"error: deployer fix {args.target} is not available", file=sys.stderr)
+        return 2
+    return _cmd_fix_author(args)
+
+
+def _fix_author_error(args: argparse.Namespace) -> str | None:
+    """Flags ``deployer fix <verdict.json>`` needs, checked before any work."""
+    if args.rest:
+        return f"unexpected arguments: {' '.join(args.rest)}"
+    if args.clone is None:
+        return "--clone is required"
+    if args.build_timeout < 1:
+        return "--build-timeout must be >= 1"
+    return None
+
+
+def _cmd_fix_author(args: argparse.Namespace) -> int:
+    """§8.2: 0 locally confirmed, 1 stopped, 2 invocation or local I/O."""
+    error = _fix_author_error(args)
+    if error:
+        print(f"error: {error}", file=sys.stderr)
+        return 2
+    runtime = _resolve_runtime_or_error(args)
+    if isinstance(runtime, str):
+        print(f"error: {runtime}", file=sys.stderr)
+        return 2
+    _load_dotenv()
+    signing_key = Path(args.signing_key) if args.signing_key else None
+    try:
+        doc = author_fix(
+            Path(args.target),
+            Path(args.clone),
+            Path.cwd(),
+            os.environ,
+            signing_key,
+            _fix_chooser(),
+            runtime,
+            args.build_timeout,
+            on_document=lambda path: print(f"fix: {path}"),
+        )
+    except FixAbort as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    _print_fix(doc)
+    return 0 if doc.status == "locally_confirmed" else 1
+
+
+def _print_fix(doc: FixDocument) -> None:
+    """The outcome of ``deployer fix``: the stop, or the prepared commit."""
+    if doc.status == "stopped":
+        print(f"stopped: {doc.stop_reason}: {doc.stop_detail}")
+        return
+    print(f"status: {doc.status}")
+    publication = doc.publication
+    if publication is not None:
+        print(f"worktree: {publication.worktree}")
+        print(f"branch: {publication.branch}")
+        print(f"commit: {publication.fix_commit}")
+
+
 def main(argv: list[str] | None = None) -> int:
     """Entry point for the `deployer` CLI."""
     parser = argparse.ArgumentParser(prog="deployer")
@@ -925,6 +1015,38 @@ def main(argv: list[str] | None = None) -> int:
     _add_timeout_flags(p_author)
     _add_runtime_flags(p_author)
     p_author.set_defaults(func=_cmd_author)
+
+    p_fix = sub.add_parser(
+        "fix",
+        help="author a fix of an admitted defect and prove it locally",
+        description=(
+            "deployer fix <verdict.json> --clone PATH: author the fix and "
+            "commit it in a fix worktree"
+        ),
+    )
+    p_fix.add_argument(
+        "target", metavar="verdict.json", help="the admitted verdict document"
+    )
+    p_fix.add_argument("rest", nargs="*", help=argparse.SUPPRESS)
+    p_fix.add_argument(
+        "--clone", default=None, help="a clean local clone at the admitted head"
+    )
+    p_fix.add_argument(
+        "--signing-key",
+        default=os.environ.get("DEPLOYER_SIGNING_KEY"),
+        help=(
+            "ed25519 private key that signs the fix's provenance set "
+            "(default: DEPLOYER_SIGNING_KEY)"
+        ),
+    )
+    p_fix.add_argument(
+        "--build-timeout",
+        type=int,
+        default=DEFAULT_BUILD_TIMEOUT,
+        help="seconds allowed for the local proof's build",
+    )
+    _add_runtime_flags(p_fix)
+    p_fix.set_defaults(func=_cmd_fix)
 
     p_diagnose = sub.add_parser(
         "diagnose",

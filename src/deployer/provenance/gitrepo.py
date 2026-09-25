@@ -91,6 +91,12 @@ def head_commit(path: Path) -> str:
     return _git(path, "rev-parse", "HEAD").decode().strip()
 
 
+def blob_bytes(path: Path, commit: str, rel: str) -> bytes:
+    """The committed bytes of ``rel`` at ``commit`` (``git cat-file blob``):
+    the raw blob, no filter or end-of-line conversion applied."""
+    return _git(path, "cat-file", "blob", f"{commit}:{rel}")
+
+
 def tree_listing(path: Path, commit: str) -> list[TreeRow]:
     """The recursive tree of ``commit``, one ``TreeRow`` per entry."""
     out = _git(path, "ls-tree", "-r", "-t", "--full-tree", "-z", commit)

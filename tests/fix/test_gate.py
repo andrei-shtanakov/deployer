@@ -9,105 +9,29 @@ re-pointed at the clone's real ``HEAD``: every other byte of the admitted
 document and of R's records is A's and R's.
 """
 
-import copy
 import dataclasses
 import json
 import os
 import shutil
-import subprocess
-from dataclasses import asdict, dataclass
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from deployer import runtime as runtime_mod
-from deployer.admission import decide, prepare
-from deployer.diagnose import diagnose_run, render_verdict
 from deployer.fix import gate as gate_mod
 from deployer.fix.document import FixDocument, Input, Publication, StoredFile
 from deployer.fix.gate import Admitted, gate, recheck_admission
 from deployer.provenance import trust
 from deployer.provenance.model import sha256_hex
-from tests.admission.conftest import Replayed, replay_case
-from tests.admission.test_end_to_end import _issue_into_source
-from tests.provenance.conftest import make_key
+from tests.fix.conftest import Scenario, admitted_scenario
+from tests.fix.conftest import commit_all as _commit_all
+from tests.fix.conftest import git as _git
+from tests.fix.conftest import restored_at as _restored_at
 from tests.reproduce.conftest import FakeContainers
 
-ORIGIN = "git@github.com:example/project.git"
 FIX_ID = "0b6f9c1e-3d2a-4c5b-8e7f-1a2b3c4d5e6f"
-
-
-def _git(repo: Path, *args: str) -> str:
-    """Run ``git`` in ``repo``, raising on failure; its stdout, stripped."""
-    proc = subprocess.run(
-        ["git", "-C", str(repo), *args], check=True, capture_output=True, text=True
-    )
-    return proc.stdout.strip()
-
-
-def _commit_all(repo: Path, message: str) -> str:
-    """Stage everything, commit, and return the new ``HEAD``."""
-    _git(repo, "add", "-A")
-    _git(repo, "commit", "-q", "--allow-empty", "-m", message)
-    return _git(repo, "rev-parse", "HEAD")
-
-
-def _at_head(document: dict[str, Any], head: str) -> dict[str, Any]:
-    """``document`` with every ``head_sha`` A compares re-pointed at ``head``."""
-    moved = copy.deepcopy(document)
-    moved["run"]["head_sha"] = head
-    moved["admission"]["binding"]["head_sha"] = head
-    moved["reproduction"]["restoration"]["sha"] = head
-    return moved
-
-
-def _restored_at(attempt_dir: Path, head: str) -> None:
-    """Re-point R's ``source.json`` (the restored head) at ``head``."""
-    meta = attempt_dir / "source.json"
-    data = json.loads(meta.read_text())
-    data["head_sha"] = head
-    meta.chmod(0o644)
-    meta.write_text(json.dumps(data))
-
-
-@dataclass
-class Scenario:
-    """An admitted verdict, R's tree, a clean clone at the admitted head, the
-    trust dir and the planned fix dir."""
-
-    r: Replayed
-    original: dict[str, Any]
-    clone: Path
-    trust: Path
-    pub: str
-    fix_dir: Path
-
-    @property
-    def env(self) -> dict[str, str]:
-        """The environment naming the trust dir."""
-        return {"DEPLOYER_TRUST_DIR": str(self.trust)}
-
-    @property
-    def extra_roots(self) -> tuple[Path, Path]:
-        """The planned fix dir and its worktree."""
-        return (self.fix_dir, self.fix_dir / "worktree")
-
-    def document(self) -> dict[str, Any]:
-        """The verdict bound to the clone's current ``HEAD``."""
-        return _at_head(self.original, _git(self.clone, "rev-parse", "HEAD"))
-
-    def gate(
-        self, document: dict[str, Any] | None = None, clone: Path | None = None
-    ) -> Admitted | str:
-        """Run the gate over this scenario."""
-        return gate(
-            self.document() if document is None else document,
-            self.r.root,
-            self.clone if clone is None else clone,
-            self.env,
-            self.extra_roots,
-        )
 
 
 @pytest.fixture()
@@ -116,27 +40,7 @@ def scenario(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Scenario:
     signed, admitted, and cloned into a clean checkout."""
     fake = FakeContainers()
     monkeypatch.setattr(runtime_mod, "container_run", fake)
-    r = replay_case("run-1", tmp_path, fake)
-    keys = tmp_path / "keys"
-    keys.mkdir()
-    key, pub = make_key(keys)
-    trust_dir = tmp_path / "trust"
-    trust.add(trust_dir, pub)
-    env = {"DEPLOYER_TRUST_DIR": str(trust_dir)}
-    unsigned = prepare(r.run, r.section, r.root, env)
-    _issue_into_source(r, unsigned.head_listing, key)
-    section = decide(prepare(r.run, r.section, r.root, env))
-    assert section.verdict == "admitted", section.unmet
-    original = json.loads(render_verdict(diagnose_run(r.run), r.section, section))
-    clone = tmp_path / "clone"
-    shutil.copytree(r.source, clone)
-    _git(clone, "init", "-q")
-    _git(clone, "config", "user.email", "t@example.com")
-    _git(clone, "config", "user.name", "t")
-    _restored_at(r.attempt_dir, _commit_all(clone, "admitted tree"))
-    _git(clone, "remote", "add", "origin", ORIGIN)
-    fix_dir = tmp_path / "fixes" / "001"
-    return Scenario(r, original, clone, trust_dir, pub, fix_dir)
+    return admitted_scenario("run-1", tmp_path, fake)
 
 
 def _admitted(s: Scenario) -> Admitted:
