@@ -13,7 +13,7 @@ import os
 import shutil
 import stat
 import tempfile
-from collections.abc import Generator
+from collections.abc import Generator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -137,6 +137,33 @@ def _build(
     )
     rec_bytes = canonical_bytes(record)
     return snap_bytes, rec_bytes, sha256_hex(rec_bytes)
+
+
+def _set_paths(rec_sha: str) -> list[str]:
+    """The pointer path and the three set-file paths for the set named
+    ``rec_sha``, repo-relative."""
+    return [f"{SET_ROOT}/{POINTER}"] + [
+        f"{SET_ROOT}/{set_dir_name(rec_sha)}/{name}"
+        for name in (RECORD_FILE, SNAPSHOT_FILE, SIGNATURE_FILE)
+    ]
+
+
+@dataclass(frozen=True)
+class PlannedSet:
+    """The exact bytes and paths ``issue`` would publish for a Dockerfile,
+    computed in memory without writing anything."""
+
+    snapshot_bytes: bytes
+    record_bytes: bytes
+    record_sha256: str
+    paths: tuple[str, ...]
+
+
+def plan_set(pre: Preflight, dockerfile: bytes, deployer_version: str) -> PlannedSet:
+    """Build the snapshot, the record and the set paths for ``dockerfile``
+    without writing anything; ``issue`` publishes exactly this plan."""
+    snap_bytes, rec_bytes, rec_sha = _build(pre, dockerfile, deployer_version)
+    return PlannedSet(snap_bytes, rec_bytes, rec_sha, tuple(_set_paths(rec_sha)))
 
 
 class _PathRefusal(OSError):
@@ -328,8 +355,10 @@ def ensure_excluded(project: Path, paths: list[str]) -> str | None:
             return str(exc)
 
 
-def _ensure_excluded_at(project: Path, root_fd: int, paths: list[str]) -> str | None:
-    """``ensure_excluded`` with ignore-file writes anchored at ``root_fd``."""
+def _refusal_before_writes(project: Path, root_fd: int) -> str | None:
+    """A reason to refuse before any ignore-file write is attempted: a
+    symlinked ignore file, or an unsupported pattern already in the CI or
+    local (podman) ignore file."""
     ci_file = ignore.ci_ignore_file(project, _ARTIFACT_PATH)
     local_file = ignore.local_ignore_file(project, _ARTIFACT_PATH, "podman")
     ignore_files = tuple(
@@ -342,9 +371,13 @@ def _ensure_excluded_at(project: Path, root_fd: int, paths: list[str]) -> str | 
         reason = _refusal_for_unsupported(project, file)
         if reason is not None:
             return reason
-    _ensure_pattern(project, root_fd, ci_file, True)
-    if (project / ".containerignore").is_file():
-        _ensure_pattern(project, root_fd, ".containerignore", False)
+    return None
+
+
+def _prove_paths(project: Path, paths: Sequence[str]) -> str | None:
+    """The reason ``paths`` are not excluded by both the CI and the local
+    (podman) ignore file, or ``None`` once every path is; a missing file
+    excludes nothing. Never writes."""
     for file in (
         ignore.ci_ignore_file(project, _ARTIFACT_PATH),
         ignore.local_ignore_file(project, _ARTIFACT_PATH, "podman"),
@@ -356,6 +389,35 @@ def _ensure_excluded_at(project: Path, root_fd: int, paths: list[str]) -> str | 
             if ignore.excluded_by(rules, path) is None:
                 return f"exclusion not provable: {path} is not excluded by {file}"
     return None
+
+
+def _ensure_excluded_at(project: Path, root_fd: int, paths: list[str]) -> str | None:
+    """``ensure_excluded`` with ignore-file writes anchored at ``root_fd``."""
+    reason = _refusal_before_writes(project, root_fd)
+    if reason is not None:
+        return reason
+    ci_file = ignore.ci_ignore_file(project, _ARTIFACT_PATH)
+    _ensure_pattern(project, root_fd, ci_file, True)
+    if (project / ".containerignore").is_file():
+        _ensure_pattern(project, root_fd, ".containerignore", False)
+    return _prove_paths(project, paths)
+
+
+def exclusion_proven(project: Path, paths: Sequence[str]) -> str | None:
+    """Whether ``paths`` are already excluded from both build contexts,
+    without writing anything: ``_ensure_excluded_at`` minus its two
+    ignore-file edits.
+
+    A symlinked ignore file or an unsupported pattern still refuses; a
+    narrower existing rule that does not already cover ``paths`` is
+    reported as unproven rather than widened. ``None`` once every path is
+    proven excluded.
+    """
+    with _root_fd(project) as root_fd:
+        reason = _refusal_before_writes(project, root_fd)
+    if reason is not None:
+        return reason
+    return _prove_paths(project, paths)
 
 
 def _check_reuse(
@@ -574,7 +636,12 @@ def _publish_at(
 
 
 def issue(
-    pre: Preflight, signing_key: Path, deployer_version: str, dockerfile: bytes
+    pre: Preflight,
+    signing_key: Path,
+    deployer_version: str,
+    dockerfile: bytes,
+    *,
+    edit_ignore: bool = True,
 ) -> Issued:
     """Publish a signed, excluded, immutable provenance set for the
     Dockerfile authoring just wrote, then atomically repoint
@@ -584,15 +651,22 @@ def issue(
     is built from them, never from a re-read of the file, and publication
     refuses (under the lock) unless the file on disk still holds exactly
     these bytes: only this run's own output is ever signed.
+
+    ``edit_ignore`` picks how exclusion is established. The default,
+    ``True``, keeps today's authoring behaviour: it appends ``.deployer/``
+    to an ignore file when needed (``ensure_excluded``). ``False`` never
+    opens an ignore file for writing; it only proves the concrete set
+    paths are already excluded (``exclusion_proven``) and refuses
+    otherwise.
     """
     dockerfile_bytes = dockerfile
     snap_bytes, rec_bytes, rec_sha = _build(pre, dockerfile_bytes, deployer_version)
-    paths = [f"{SET_ROOT}/{POINTER}"] + [
-        f"{SET_ROOT}/{set_dir_name(rec_sha)}/{name}"
-        for name in (RECORD_FILE, SNAPSHOT_FILE, SIGNATURE_FILE)
-    ]
+    paths = _set_paths(rec_sha)
     try:
-        reason = ensure_excluded(pre.project, paths)
+        if edit_ignore:
+            reason = ensure_excluded(pre.project, paths)
+        else:
+            reason = exclusion_proven(pre.project, paths)
     except OSError as exc:
         reason = f"exclusion could not be written: {exc}"
     if reason is not None:
