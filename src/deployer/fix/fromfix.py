@@ -20,6 +20,7 @@ from typing import Literal
 
 from deployer.admission.prepare import _as_r_reads
 from deployer.fix.binding import Bound
+from deployer.fix.reading import comment_reason, join_reason, keyword_reason
 from deployer.reproduce.dockerfile import ParsedDockerfile, parse, unread_reason
 
 # The BuildKit ∩ Buildah stage-name grammar, matched against the raw token
@@ -125,21 +126,18 @@ def propose_from(
     unread = unread_reason(parsed)
     if unread is not None:
         return unread
-    join_reason = _join_reason(dockerfile)
-    if join_reason is not None:
-        return join_reason
-    keyword_reason = _keyword_reason(parsed)
-    if keyword_reason is not None:
-        return keyword_reason
+    for reason in (join_reason(dockerfile), keyword_reason(parsed.instructions)):
+        if reason is not None:
+            return reason
     if instruction.keyword != "FROM":
         return f"the bound instruction is not a FROM ({instruction.keyword})"
     if not 0 <= bound.ordinal < len(parsed.instructions) or (
         parsed.instructions[bound.ordinal] != instruction
     ):
         return "the bound instruction does not match the parsed Dockerfile"
-    comment_reason = _comment_reason(bound.original)
-    if comment_reason is not None:
-        return comment_reason
+    comment = comment_reason(bound.original)
+    if comment is not None:
+        return comment
     tokens = instruction.args.split()
     flags, rest = _split_flags(tokens)
     if isinstance(flags, str):
@@ -154,52 +152,6 @@ def propose_from(
     if token.upper() == "AS":
         return _f2(bound, tokens, conditions)
     return _f1(parsed, bound, tokens, token, build_args, conditions)
-
-
-def _keyword_reason(parsed: ParsedDockerfile) -> str | None:
-    """Refuse when R's keyword split disagrees with the builders'.
-
-    R splits keyword from arguments on the first space only, so
-    ``COPY<TAB>--from=x`` reads as one keyword; the builders split on any
-    blank. Such a Dockerfile's words are not trusted for reference checks.
-    """
-    for instruction in parsed.instructions:
-        if any(char.isspace() for char in instruction.keyword):
-            line = instruction.first_line
-            return f"keyword at line {line} is not separated by a space"
-    return None
-
-
-def _join_reason(dockerfile: bytes) -> str | None:
-    """Refuse any continuation R and the builders may join differently.
-
-    R joins continuation lines with a space; BuildKit joins them with no
-    separator, so ``img:1\\<newline>extra`` reads as ``img:1extra`` and
-    ``--from=ext\\<newline>ra`` as ``--from=extra`` there. Only
-    continuations after a space or tab read the same in both, so every
-    line of the whole Dockerfile is checked — a reference hidden in
-    another instruction matters as much as the bound FROM itself.
-    """
-    for number, line in enumerate(dockerfile.splitlines(), start=1):
-        content = line.rstrip(b" \t")
-        if content.endswith(b"\\") and content[-2:-1] not in (b" ", b"\t"):
-            return (
-                f"line {number}: a line continuation without a preceding "
-                "blank is not modelled"
-            )
-    return None
-
-
-def _comment_reason(original: bytes) -> str | None:
-    """Refuse a comment line inside the bound FROM's continuation.
-
-    Its bytes could hold the token, so locating the token would not be
-    unambiguous.
-    """
-    lines = original.splitlines()
-    if any(line.lstrip(b" \t").startswith(b"#") for line in lines[1:]):
-        return "a comment inside the instruction's continuation is not modelled"
-    return None
 
 
 def _is_domain(component: str) -> bool:
