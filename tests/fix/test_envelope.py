@@ -291,6 +291,7 @@ def test_zero_candidates() -> None:
     ("dockerfile", "fragment"),
     [
         (b"FROM x:1\nCOPY app.py\\\n /app/\n", "continuation"),
+        (b"FROM x:1\nCOPY app.py \\\x0c\n /app/\n", "other than space or tab"),
         (b"FROM x:1\nCOPY\tapp.py /app/\n", "not separated by a space"),
         (b'FROM x:1\nCOPY ["app.py", "/app/"]\n', "JSON"),
         (b'FROM x:1\nCOPY --chown="app" app.py /app/\n', "quote"),
@@ -304,6 +305,7 @@ def test_zero_candidates() -> None:
     ],
     ids=[
         "glued-continuation",
+        "formfeed-continuation",
         "tab-after-keyword",
         "json-form",
         "quote",

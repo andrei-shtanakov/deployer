@@ -353,6 +353,38 @@ def test_i2_copy_continuation_twin_refused() -> None:
     assert outcome.detail is not None and "continuation" in outcome.detail
 
 
+_N_SPLIT = {"n1": b"RUN true # x<<EOF", "n2": b"RUN true \\\x0c"}
+
+
+@pytest.mark.parametrize("case", ["n1", "n2"])
+def test_n_copy_divergent_line_refused(case: str) -> None:
+    """Re-review N1/N2 (real Podman 5.7.0): Buildah reads the line as a plain
+    RUN, R as a heredoc or a continuation that swallows the built COPY; the
+    whole-file reading check refuses before any output is read."""
+    dockerfile = (
+        b"FROM python:3.12-slim AS a\nCOPY docs/ab ./x\nFROM python:3.12-slim AS b\n"
+        + _N_SPLIT[case]
+        + b"\nCOPY docs/ab ./x\nRUN true\n"
+    )
+    stdout = "[2/2] STEP 2/3: COPY docs/ab ./x\n[2/2] STEP 3/3: RUN true\n"
+    outcome = _local_copy(stdout, text="COPY docs/ab ./x", dockerfile=dockerfile)
+    assert outcome.evidence == "binding_ambiguous"
+    assert outcome.detail is not None and outcome.detail.startswith("Dockerfile: ")
+
+
+@pytest.mark.parametrize("case", ["n1", "n2"])
+def test_n_from_divergent_line_refused(case: str) -> None:
+    """The FROM variants of N1/N2: R hides the second FROM, Buildah builds it."""
+    text = "FROM python:3.12-slim"
+    dockerfile = (
+        text.encode() + b"\n" + _N_SPLIT[case] + b"\n" + text.encode() + b"\nRUN true\n"
+    )
+    stdout = f"[2/2] STEP 1/2: {text}\n[2/2] STEP 2/2: RUN true\n"
+    outcome = match_local("from", text, stdout, "", dockerfile=dockerfile, tag=_TAG)
+    assert outcome.evidence == "binding_ambiguous"
+    assert outcome.detail is not None and outcome.detail.startswith("Dockerfile: ")
+
+
 @pytest.mark.parametrize(
     "other", ['COPY "docs/setup.md" /app/docs/setup.md', "COPY $SRC /app/docs/setup.md"]
 )

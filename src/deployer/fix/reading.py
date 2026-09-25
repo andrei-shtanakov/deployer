@@ -10,7 +10,7 @@ Shared by the FROM transformations (``fromfix``) and the COPY envelope
 
 from collections.abc import Iterable
 
-from deployer.reproduce.dockerfile import Instruction
+from deployer.reproduce.dockerfile import Instruction, opens_heredoc
 
 
 def join_reason(data: bytes) -> str | None:
@@ -21,6 +21,12 @@ def join_reason(data: bytes) -> str | None:
     ``--from=ext\\<newline>ra`` as ``--from=extra`` there. Only
     continuations after a space or tab read the same in both, so every
     physical line of ``data`` is checked.
+
+    Buildah ends a continuation only at ``\\[ \\t]*$``; R strips every
+    whitespace character, so a backslash followed by another blank (a form
+    feed, a vertical tab, …) continues the line in R and not in the
+    builders: refused too. Lines split on ``\\n``/``\\r``/``\\r\\n`` only,
+    so CRLF endings read as before.
     """
     for number, line in enumerate(data.splitlines(), start=1):
         content = line.rstrip(b" \t")
@@ -29,6 +35,28 @@ def join_reason(data: bytes) -> str | None:
                 f"line {number}: a line continuation without a preceding "
                 "blank is not modelled"
             )
+        text = line.decode("utf-8", errors="replace").rstrip()
+        if text.endswith("\\") and not content.endswith(b"\\"):
+            return (
+                f"line {number}: a line continuation followed by a blank other "
+                "than space or tab is not modelled"
+            )
+    return None
+
+
+def heredoc_reason(instructions: Iterable[Instruction]) -> str | None:
+    """Refuse a file in which any instruction opens a heredoc by R's rule.
+
+    R opens a heredoc on any unquoted ``<<WORD`` in RUN/COPY/ADD arguments
+    and reads the rest of the file up to the delimiter as its body; Buildah
+    needs a whole shell word matching ``^(\\d*)<<``, so ``RUN true # x<<EOF``
+    opens none there and the following instructions stay real. Independent
+    of the instruction's family: one heredoc can hide any later instruction.
+    """
+    for instruction in instructions:
+        if opens_heredoc(instruction.keyword, instruction.args):
+            line = instruction.first_line
+            return f"a heredoc at line {line} is not modelled"
     return None
 
 

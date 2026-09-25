@@ -350,6 +350,8 @@ def test_refusal_comment_inside_continuation() -> None:
         (b"FROM python:3.12-slim\\\nextra\n", "continuation"),
         (b"FROM img:1 extra\\\n\n", "continuation"),
         (b"FROM --platform=linux/amd64\\\nimg:1 extra\n", "continuation"),
+        # Review N2: a form feed after the backslash continues only in R.
+        (b"FROM img:1 extra \\\x0c\n\n", "other than space or tab"),
         # The token opening a continuation line is refused, not modelled.
         (b"FROM python:3.12-slim \\\nextra\n", "same line"),
         (b"FROM img:1 \\\r\n\textra\r\n", "same line"),

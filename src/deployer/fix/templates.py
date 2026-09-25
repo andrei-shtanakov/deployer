@@ -58,7 +58,12 @@ from typing import Literal
 
 from deployer.admission.prepare import _as_r_reads
 from deployer.admission.templates import split_lines
-from deployer.fix.reading import comment_reason, join_reason, keyword_reason
+from deployer.fix.reading import (
+    comment_reason,
+    heredoc_reason,
+    join_reason,
+    keyword_reason,
+)
 from deployer.reproduce.dockerfile import (
     Instruction,
     ParsedDockerfile,
@@ -246,6 +251,7 @@ def _reading_reason(dockerfile: bytes, parsed: ParsedDockerfile) -> str | None:
     return (
         join_reason(dockerfile)
         or keyword_reason(parsed.instructions)
+        or heredoc_reason(parsed.instructions)
         or next(filter(None, map(comment_reason, spans)), None)
     )
 
