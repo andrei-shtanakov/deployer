@@ -96,7 +96,7 @@ paragraph.
   and commit, `fix.json`, `deployer fix`/`fix publish` with templates disabled (PRs
   F1a–F1c, #90–#93), the derived run-1 fix-bundle data (F1d, #94, owner review), and
   reading CI runs, qualification and `deployer fix confirm` with templates disabled (F2,
-  this PR). Still open: every template row stays disabled until its recording lands
+  #95). Still open: every template row stays disabled until its recording lands
   (§9), so `locally_confirmed`, publication and `ci_confirmed` are unreachable in
   practice — see the gated follow-ups below — and stage 5's end-to-end acceptance has
   not run.
