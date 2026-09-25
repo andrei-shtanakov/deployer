@@ -111,10 +111,12 @@ paragraph.
   stage header), a run with a later independent failure, and a re-run. Without these a
   published proposal is never CI-confirmed — `deployer fix confirm` reports
   `ci_confirmation_insufficient: templates not enabled`.
-- [ ] End-to-end acceptance of `ci-fix-authoring` and closing the item (design §11 stage 5) @owner:repo:deployer @id:ci-fix-authoring-e2e-acceptance @blocked_by:todo://deployer/fix-l-recordings @blocked_by:todo://deployer/fix-c-recordings @epic:eco.dark-factory
+- [ ] End-to-end acceptance of `ci-fix-authoring` and closing the item (design §11 stage 5) @owner:repo:deployer @id:ci-fix-authoring-e2e-acceptance @blocked_by:todo://deployer/fix-l-recordings @epic:eco.dark-factory
   Needs both recording classes enabled first: a real local proof through the L-recording
   rows and a real CI confirmation through the C-recording rows, then the acceptance run
-  itself. `ci-fix-authoring` stays open until this closes it (design §11: "the item stays
+  itself. It is also blocked by `fix-c-recordings` (the C-recordings item above): Robin
+  keeps only one blocker tag per item, so the tag names the local stage, which comes
+  first. `ci-fix-authoring` stays open until this closes it (design §11: "the item stays
   open until stage 5").
 - [ ] `fix confirm` has no lock: two concurrent confirms can drop an appended attempt @id:fix-confirm-concurrent-lock @epic:eco.dark-factory
   `fix/confirm.py` loads `fix.json`, appends one attempt to `ci_attempts` and saves —

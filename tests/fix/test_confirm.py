@@ -22,7 +22,8 @@ from deployer.fix import ci_eval
 from deployer.fix import confirm as confirm_mod
 from deployer.fix.confirm import REFUSED, ConfirmAbort, confirm
 from deployer.fix.document import FixDocument, load, save
-from deployer.forge import AttemptRead, GhError
+from deployer.fix.qualify import Qualified
+from deployer.forge import AttemptRead, Evidence, FailedJob, GhError
 from tests.fix.conftest import enable_for_test
 from tests.fix.test_ci_eval import FROM_OK, FROM_RECUR
 from tests.fix.test_publish import _published
@@ -333,6 +334,16 @@ def test_seam_confirms(fix: Fix) -> None:
     assert fix.doc == doc
 
 
+def test_evidence_text_split_on_newline_only() -> None:
+    """A ``\\r`` inside an earlier line (job evidence keeps it verbatim) does
+    not shift the recorded text off the evidence line number (review M1)."""
+    job = FailedJob(101, "build", "success", [], [Evidence(101, "a\rb\nc\nd")])
+    q = Qualified(1, 1, "build", "qualified", None, job, None)
+    e = ci_eval.AttemptEvidence((1, 1, "build"), "qualified", True, False, None, (2,))
+    record = confirm_mod._record(e, q)
+    assert record["lines"] == [{"line": 2, "text": "c"}]
+
+
 def test_recheck_contradicts(fix: Fix) -> None:
     """A later recurrence → ``contradictory runs``, status back to
     ``fix_proposed``; the earlier positive attempt is kept."""
@@ -407,6 +418,15 @@ def test_incomplete_listing(fix: Fix) -> None:
     _insufficient(doc, ci_eval.UNDETERMINED)
     assert doc.last_operation is not None
     assert "incomplete" in _reason(doc)
+
+
+def test_duplicate_run_listing(fix: Fix) -> None:
+    """A run listed twice (final review M2) → incomplete, undetermined; even
+    a passing run is not confirmed from it."""
+    with enable_for_test(ROW):
+        doc = fix.run(fix.gh(fix.ok(), fix.ok()))
+    _insufficient(doc, ci_eval.UNDETERMINED)
+    assert "run 1 listed twice" in _reason(doc)
 
 
 def test_listing_gh_error(fix: Fix) -> None:

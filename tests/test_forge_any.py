@@ -188,6 +188,29 @@ def test_no_runs_is_an_empty_complete_listing() -> None:
     assert list_runs_for_sha("o/r", _SHA, fake) == []
 
 
+def test_a_run_listed_twice_is_a_reason_not_deduplicated() -> None:
+    """Final review M2: a page shift repeats run 7 and hides another run."""
+    fake = FakeGh(
+        run_pages=[
+            {"total_count": 2, "workflow_runs": [run_row(7)]},
+            {"total_count": 2, "workflow_runs": [run_row(7)]},
+        ]
+    )
+    assert list_runs_for_sha("o/r", _SHA, fake) == (
+        "runs listing incomplete: run 7 listed twice"
+    )
+
+
+def test_more_rows_than_total_count_is_a_reason() -> None:
+    """Final review M2: rows past ``total_count`` are not a complete listing."""
+    fake = FakeGh(
+        run_pages=[{"total_count": 1, "workflow_runs": [run_row(7), run_row(8)]}]
+    )
+    assert list_runs_for_sha("o/r", _SHA, fake) == (
+        "runs listing incomplete: 2 rows exceed total_count 1"
+    )
+
+
 def test_total_count_above_the_rows_delivered_is_a_reason_not_a_shorter_list() -> None:
     """Review Focus 5: count 3, two rows, then an empty page."""
     fake = FakeGh(

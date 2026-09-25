@@ -429,7 +429,9 @@ def list_runs_for_sha(repo: str, sha: str, runner: GhRunner) -> list[RunSummary]
     as the jobs listing: a short, malformed or inconsistent listing — and a
     row that is malformed or names another commit — is returned as a reason
     string, never as a shorter list (an absent run could hide a
-    contradiction, spec §7.4). A ``GhError`` of any kind and an unparseable
+    contradiction, spec §7.4). A ``run_id`` listed twice is a reason too
+    (a page shifted between reads can repeat one run and hide another), never
+    de-duplicated. A ``GhError`` of any kind and an unparseable
     response are reasons too: nothing but a programming error raises.
     """
     gh = _Gh(runner, repo)
@@ -449,6 +451,8 @@ def list_runs_for_sha(repo: str, sha: str, runner: GhRunner) -> list[RunSummary]
                 f"runs listing inconsistent: run {summary.run_id} "
                 f"has head_sha {summary.head_sha}, not {sha}"
             )
+        if any(r.run_id == summary.run_id for r in runs):
+            return f"runs listing incomplete: run {summary.run_id} listed twice"
         runs.append(summary)
     return runs
 
@@ -743,9 +747,10 @@ class _Gh:
         each page must be an object whose ``key`` is a list and whose
         ``total_count`` is an int (else ``malformed``); the count is fixed by
         the first page (a different one later is ``inconsistent``); meeting
-        the count ends the loop, and an empty page before it is met is
-        ``incomplete``. ``label`` names the listing in the message. ``base``
-        may carry its own query; the page parameters are appended to it.
+        the count ends the loop, and an empty page before it is met — or
+        more rows than the count — is ``incomplete``. ``label`` names the
+        listing in the message. ``base`` may carry its own query; the page
+        parameters are appended to it.
         """
         sep = "&" if "?" in base else "?"
         collected: list[Any] = []
@@ -774,7 +779,13 @@ class _Gh:
                     None,
                 )
             collected.extend(rows)
-            if len(collected) >= total:
+            if len(collected) > total:
+                raise GhError(
+                    f"{label} listing incomplete: {len(collected)} rows "
+                    f"exceed total_count {total}",
+                    None,
+                )
+            if len(collected) == total:
                 return collected
             if not rows:
                 raise GhError(

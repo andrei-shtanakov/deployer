@@ -35,6 +35,7 @@ from pathlib import Path
 from typing import Any
 
 from deployer.admission.model import DefectClass
+from deployer.admission.templates import split_lines
 from deployer.fix import ci_eval
 from deployer.fix.ci_eval import AttemptEvidence, Outcome
 from deployer.fix.document import (
@@ -192,9 +193,10 @@ def _evidence(inputs: _Inputs, q: Qualified, logs: dict[int, str]) -> AttemptEvi
 
 def _record(e: AttemptEvidence, q: Qualified) -> dict[str, Any]:
     """One qualified attempt's evidence: run, attempt, job, the template's
-    verdict, and the log lines (numbers and text, in the job text)."""
+    verdict, and the log lines (numbers and text, in the job text). The text
+    is split by :func:`split_lines`, the rule that numbered the lines."""
     assert q.job is not None
-    text = job_text(q.job).splitlines()
+    text = split_lines(job_text(q.job))
     return {
         "run_id": e.key[0],
         "attempt": e.key[1],
