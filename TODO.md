@@ -52,11 +52,6 @@ paragraph.
   Any other builder, version or message shape reads `insufficient_grounds` at (3) by
   design. A new row enters only with a real recording of it and an amendment of A §4.1;
   a new defect class is a new spec (A, Non-goals).
-- [ ] Owner question: should other failed reproduction findings veto admission? @owner:github:andrei-shtanakov @id:admission-other-findings-veto @epic:eco.dark-factory
-  Raised in #86: a failed `copy_sources` finding of another kind (excluded-by /
-  matches-nothing) or a failed `builder_check` does not veto an admission today — A §3.2
-  only makes the other syntax checks inadmissible. Left as the owner's call; changing it
-  is a spec change.
 - [ ] Strict `Snapshot.tree_complete` (parked in A3 review) @owner:repo:deployer @id:admission-strict-tree-complete @epic:eco.dark-factory
   Today a lax bool. The snapshot bytes are hashed and signed by a trusted key, so the
   coercion only reaches our own output; a hand-crafted signed snapshot with `"true"`
@@ -85,12 +80,13 @@ paragraph.
   and every successful reproduction reads `reproduced_with_differences` instead. Needs a
   source for the runner's actual architecture — a GitHub Actions runner-context field, an
   added probe step, or similar — before that dimension can ever read `same`.
-- [ ] Fix authoring from a diagnosis: artifact edit, L1/L2, confirm the diagnosed cause is gone @owner:repo:deployer @blocked_by:todo://deployer/ci-failure-diagnosis @id:ci-fix-authoring @epic:eco.dark-factory
+- [ ] Fix authoring from a diagnosis: artifact edit, L1/L2, confirm the diagnosed cause is gone @owner:repo:deployer @id:ci-fix-authoring @epic:eco.dark-factory
   — the other half of the founding doc's "generate/fix ... diagnose failed CI", split
   out with the owner 2026-09-21 so the diagnosis slice can be accepted on its own.
-  Unblocked in principle once `ci-failure-diagnosis` merges: its entry gate is
-  `accept_for_fix` over an `admitted` section (A §7). It still needs its own spec — the
-  admission proves a defect, not how a fix is authored or confirmed.
+  Unblocked 2026-09-25 (owner): `ci-failure-diagnosis` shipped; the entry gate is
+  `accept_for_fix` over an `admitted` section (A §7). Still open and still needs its own
+  spec — the admission proves one defect, not how a fix is authored or confirmed, and not
+  that fixing it clears every failure in the run.
   Depends on the diagnosis item: without a trustworthy cause a fix is authored against
   a guess. How a fix is confirmed is decided in its own design — L1/L2 alone are NOT
   enough to claim "the CI is fixed", because they verify the artifact this repo
@@ -213,6 +209,12 @@ them is the next thing to pick up.
 
 ## Shipped
 
+- [x] Owner question: should other failed reproduction findings veto admission? @owner:github:andrei-shtanakov @id:admission-other-findings-veto @epic:eco.dark-factory
+  Decided by the owner 2026-09-25: no general veto. Another failed finding blocks
+  admission only when it refutes the proof of the chosen defect (today: the other failed
+  syntax checks, A §3.2, and anything that breaks the form, absence or link proof of
+  A §3–§4). `admitted` proves one defect; it does not promise that fixing it clears
+  every failure in the run.
 - [x] CI-failure diagnosis: read a real failed GitHub run of our own authored ci.yml, establish why it failed, emit a verdict citing evidence @owner:repo:deployer @id:ci-failure-diagnosis @blocked_by:todo://deployer/ci-failure-reproduction @epic:eco.dark-factory
   Closed by the admission verdict (owner, 2026-09-24): "a defect of a deployer-authored
   artifact is proven", everything else `insufficient_grounds`. Shipped by the stack #84
