@@ -30,7 +30,7 @@ Design: `docs/superpowers/specs/2026-07-04-deployer-mvp-design.md`.
 ```sh
 uv run deployer author <project-path> [--target target.json] [--no-docker] \
     [--container-tool docker|podman] [--container-host ssh://user@host] \
-    [--build-timeout 600] [--health-timeout 30]
+    [--build-timeout 600] [--health-timeout 30] [--signing-key key]
 uv run deployer verify <project-path> [--target target.json] \
     [--container-tool docker|podman] [--container-host ssh://user@host] \
     [--build-timeout 600] [--health-timeout 30]
@@ -56,9 +56,31 @@ never reach the daemon, local or remote. Invalid runtime configuration
 (missing requested tool, non-ssh host) exits 2.
 
 Exit codes: `0` success; `1` verification/authoring failed (including a
-missing `Dockerfile` for `verify`); `2` invalid invocation (bad flag
-values, project path not a directory, unreadable or invalid `--target`,
-invalid runtime configuration).
+missing `Dockerfile` for `verify`, and an `author` run that could not
+remove the previous authoring set it was required to withdraw); `2`
+invalid invocation (bad flag values, project path not a directory,
+unreadable or invalid `--target`, invalid runtime configuration).
+
+`author --signing-key` (default `DEPLOYER_SIGNING_KEY`) takes an ed25519
+private key and publishes a signed authoring provenance set for the written
+Dockerfile under `.deployer/authoring/` (plus a `.deployer/` line in
+`.dockerignore`, and in `.containerignore` when present), which
+`diagnose --reproduce` later checks ownership against (see "Admission"
+below). It is issued only from a clean checkout at the
+repository root with an `origin` remote; otherwise authoring still runs and
+warns that ownership will not be confirmable. Authoring leaves the tree dirty
+(the Dockerfile and the set), so commit before the next signed run. Verifiers
+trust keys from a store outside every repository:
+
+```sh
+uv run deployer trust add <key.pub>
+uv run deployer trust revoke <key.pub>
+uv run deployer trust replace <old.pub> <new.pub>
+```
+
+The store is `DEPLOYER_TRUST_DIR`, default `~/.config/deployer`
+(`allowed_signers`, `revoked_keys`).
+
 `verify` writes its full report to `<project>/.deployer/verify-report.json`
 (latest run only). Alongside `hadolint_available`/`actionlint_available`/
 `docker_available`, the report carries `atp_available` (whether the `atp_smoke`
@@ -136,8 +158,9 @@ always empty, and every verdict's `kind` is `null` — see the Addendum of
 
 stdout carries the human-readable summary, stderr the diagnostics.
 `--output-file` writes the verdict document, which carries its own
-`verdict_schema_version` (`"1.1"`, or `"1.2"` once `--reproduce` adds a
-`reproduction` section — see below; independent of the report
+`verdict_schema_version` (`"1.1"`, `"1.2"` once `--reproduce` adds a
+`reproduction` section, `"1.3"` once an attempted reproduction adds an
+`admission` section — see below; independent of the report
 `schema_version` above); the run snapshot nested in it carries
 `snapshot_schema_version` (`"1.3"`). Verdict 1.1 is additive over 1.0: the
 keys are the same, `causes` is always `[]` and `kind` always `null`; 1.2 adds
@@ -224,6 +247,24 @@ tree, changing its permissions, writing its files) or whose stored
 endpoint), an unreadable tree, a missing container runtime, and every
 CI-vs-local comparison state live in the verdict document's `reproduction`
 section instead of changing the exit code.
+
+### Admission
+
+Every attempted reproduction adds an `admission` section (verdict 1.3,
+additive over 1.2): the one decision whether the failed run may enter fix
+authoring. `admitted` needs three things proven together — (1) ownership:
+the Dockerfile at `head_sha` equals, byte for byte, a record signed by a
+trusted key for this repository and path (the set `author --signing-key`
+published, committed with it); (2) a defect from a closed catalogue of two
+classes, `missing_copy_source` and `from_argument_count`; (3) a link: CI's and
+the local build's failures both match a recorded template row for that class
+at that instruction, over an `exact` restoration and a known dialect.
+Anything else is `insufficient_grounds`, with each unmet condition numbered
+and explained — not a claim that deployer is blameless. Admission never
+claims a cause beyond those two proven defect classes, and the exit codes
+above are unchanged: the verdict lives in the document only, and a consumer
+reads it from there (absent or malformed means not admitted). Design:
+`docs/superpowers/specs/2026-09-24-ci-failure-admission-design.md`.
 
 ## Bench
 
