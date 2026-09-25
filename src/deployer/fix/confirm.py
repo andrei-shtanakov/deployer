@@ -7,7 +7,8 @@ recorded in ``last_operation``, the status unchanged). The fix directory
 must be writable. Then every input comes from the document, never from the
 clone: the fix commit and worktree (``publication``), the workflow path and
 its SHA-256, R's workflow job key and build (``input``), the repository
-slug (``input.origin``), the class, corrected text and line span
+slug (``input.target["repo"]`` as ``fix publish`` reads it, which must
+agree with ``input.origin``), the class, corrected text and line span
 (``proposal``).
 
 The workflow is read at the fix commit in the fix worktree through
@@ -218,9 +219,9 @@ def _inputs(doc: FixDocument, doc_path: Path) -> _Inputs | str:
     fix_commit = publication.fix_commit
     if not _HEX40_RE.fullmatch(fix_commit):
         return f"the stored fix commit {fix_commit!r} is not a commit id"
-    repo = doc.input.origin
-    if not _SLUG_RE.fullmatch(repo):
-        return f"the stored origin {repo!r} is not an owner/name slug"
+    repo = _repo(doc)
+    if not _is_slug(repo):  # a reason (it has spaces), never a slug
+        return repo
     worktree = Path(publication.worktree)
     problem = _worktree_problem(worktree, doc_path, Path(doc.input.clone))
     if problem is not None:
@@ -246,6 +247,26 @@ def _inputs(doc: FixDocument, doc_path: Path) -> _Inputs | str:
         corrected=proposal.replacement.strip(),
         lines=(proposal.lines[0], proposal.lines[1]),
     )
+
+
+def _repo(doc: FixDocument) -> str:
+    """The repository slug as ``fix publish`` reads it (``input.target
+    ["repo"]``); when ``input.origin`` is recorded too, the two must agree
+    (ignoring case, as GitHub does). The slug, or why there is none."""
+    repo = doc.input.target.get("repo")
+    if not isinstance(repo, str) or not _is_slug(repo):
+        return f"the stored target repo {repo!r} is not an owner/name slug"
+    origin = doc.input.origin
+    if origin and origin.casefold() != repo.casefold():
+        return f"the stored target repo {repo} disagrees with the origin {origin}"
+    return repo
+
+
+def _is_slug(value: str) -> bool:
+    """``owner/name`` of safe characters, neither part ``.`` or ``..``."""
+    if not _SLUG_RE.fullmatch(value):
+        return False
+    return all(part not in (".", "..") for part in value.split("/"))
 
 
 def _worktree_problem(worktree: Path, doc_path: Path, clone: Path) -> str | None:

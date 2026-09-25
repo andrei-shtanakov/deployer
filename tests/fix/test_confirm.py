@@ -73,6 +73,8 @@ class Run:
     attempts: list[Attempt]
     event: str = "push"
     path: str = ".github/workflows/diagnosis-polygon.yml"
+    claimed: int | None = None
+    """``run_attempt`` the listing claims (default: ``len(attempts)``)."""
 
 
 @dataclass
@@ -108,7 +110,7 @@ class CiGh:
         rows = [
             {
                 "id": r.run_id,
-                "run_attempt": len(r.attempts),
+                "run_attempt": len(r.attempts) if r.claimed is None else r.claimed,
                 "event": r.event,
                 "head_sha": self.sha,
                 "path": r.path,
@@ -267,8 +269,17 @@ def test_unpublished_is_refused_unread(fix: Fix, status: str) -> None:
     extra = {"stop_reason": "no proposal"} if status == "stopped" else {}
     fix.rewrite(status=status, **extra)
     gh = fix.gh(fix.ok())
-    doc = fix.run(gh)
-    assert gh.paths == []
+    git_calls: list[object] = []
+
+    def spy(*args: Any, **kw: Any) -> Any:
+        git_calls.append(args)
+        raise AssertionError("git must not run")
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(confirm_mod, "_run", spy)
+        mp.setattr(confirm_mod, "_guards", spy)
+        doc = fix.run(gh)
+    assert gh.paths == [] and git_calls == []
     assert doc.status == status and doc.ci_attempts == []
     assert doc.last_operation is not None
     assert (doc.last_operation.result, doc.last_operation.at) == (REFUSED, AT)
@@ -432,6 +443,21 @@ def test_zero_attempts(fix: Fix) -> None:
     assert _considered(doc) == [(8, 0, None, "undetermined")]
 
 
+def test_too_many_attempts(fix: Fix) -> None:
+    """A run claiming more than ``MAX_ATTEMPTS`` attempts: one undetermined
+    entry, no attempt read, insufficient."""
+    run = Run(9, [], claimed=confirm_mod.MAX_ATTEMPTS + 1)
+    gh = fix.gh(fix.ok(), run)
+    with enable_for_test(ROW):
+        doc = fix.run(gh)
+    _insufficient(doc, ci_eval.UNDETERMINED)
+    assert _considered(doc) == [
+        (1, 1, "build", "qualified"),
+        (9, 0, None, "undetermined"),
+    ]
+    assert not any("/runs/9/" in p for p in gh.paths)
+
+
 def test_log_key_missing(fix: Fix) -> None:
     """A qualified attempt whose read carries no log text → undetermined."""
     real = confirm_mod.read_attempt
@@ -458,6 +484,44 @@ def test_workflow_unreadable(fix: Fix) -> None:
     doc = fix.run(gh)
     _insufficient(doc, ci_eval.UNDETERMINED)
     assert "workflow not read" in _reason(doc)
+    assert gh.paths == []
+
+
+def _set_input(fix: Fix, **fields: Any) -> None:
+    """Re-save the document with ``input`` fields replaced."""
+    fix.rewrite(input=fix.doc.input.model_copy(update=fields))
+
+
+def test_repo_disagrees(fix: Fix) -> None:
+    """``target.repo`` (publish's reader) and ``origin`` differ: neither is
+    chosen, nothing is listed."""
+    _set_input(fix, origin="example/other")
+    gh = fix.gh(fix.ok())
+    doc = fix.run(gh)
+    _insufficient(doc, ci_eval.UNDETERMINED)
+    assert "disagrees with the origin example/other" in _reason(doc)
+    assert gh.paths == []
+
+
+def test_repo_case_variant(fix: Fix) -> None:
+    """A case variant of the same slug agrees (GitHub ignores case)."""
+    _set_input(fix, origin="Example/Project")
+    with enable_for_test(ROW):
+        doc = fix.run(fix.gh(fix.ok()))
+    assert doc.status == "ci_confirmed"
+
+
+@pytest.mark.parametrize(
+    "slug", ["../project", "example/..", "./project"], ids=["up", "down", "dot"]
+)
+def test_repo_dot_segments(fix: Fix, slug: str) -> None:
+    """``.``/``..`` segments never reach a ``repos/{slug}`` API path."""
+    target = {**fix.doc.input.target, "repo": slug}
+    _set_input(fix, target=target, origin=slug)
+    gh = fix.gh(fix.ok())
+    doc = fix.run(gh)
+    _insufficient(doc, ci_eval.UNDETERMINED)
+    assert "is not an owner/name slug" in _reason(doc)
     assert gh.paths == []
 
 
