@@ -1,11 +1,12 @@
 # CI fix authoring — design ("remove exactly the admitted defect")
 
-**Status:** DRAFT rev 2. Designed with the owner on 2026-09-25 (six sections, each
+**Status:** DRAFT rev 2.1. Designed with the owner on 2026-09-25 (six sections, each
 approved with refinements); revised after the targeted consistency review of rev 1 at
 `648603d` (`../../../../_cowork_output/deployer-fix-authoring-spec-review-2026-09-25.md`,
-a dev-only workspace file; 7 must-fix, 19 should-fix, 7 minor — every point is resolved
-in this text, choices marked **[choice]** are the author's and await the owner's
-confirmation). Next: the owner's review, then a plan. No code exists for this design.
+a dev-only workspace file; 7 must-fix, 19 should-fix, 7 minor — every point resolved),
+then after the owner's review of rev 2 at `6c30885` (four mechanical gaps and two
+editorial contradictions, resolved in rev 2.1; the two choices of rev 2 are confirmed).
+Next: the owner checks the rev 2.1 diff, then a plan. No code exists for this design.
 **Item:** `todo://deployer/ci-fix-authoring`.
 **Base:** `master` @ `2417a9d` — the admission stack #84–#89. Cited specs:
 `docs/superpowers/specs/2026-09-24-ci-failure-admission-design.md` as **A** and
@@ -80,7 +81,7 @@ Transitions:
   directory (§5.1); the old one stays as evidence.
 - `locally_confirmed → fix_proposed` — only by `fix publish`. Any refusal of
   `fix publish` (§8.3) leaves the status unchanged and is recorded in `last_operation`.
-- `fix_proposed ↔ ci_confirmed` — only by `fix confirm`. **[choice]** The status mirrors
+- `fix_proposed ↔ ci_confirmed` — only by `fix confirm`. The status mirrors
   the latest attempt: a positive attempt sets `ci_confirmed`; any other outcome
   (insufficient, contradictory, defect recurred) sets `fix_proposed`. Earlier positive
   evidence stays in `ci_attempts[]` (§7.5); a later check may change the current
@@ -126,7 +127,9 @@ Input: the 1.3 verdict document, its try dir, and a local clone of the project.
 5. **Trust re-check.** `accept_for_fix` checks the document's shape and evidence, not the
    trust set. Ownership is therefore re-verified with A's `verify_ownership` over R's
    restored `source/`, with the **current** trust directory and `checked_roots` covering
-   the clone, the fix worktree and the fix directory. Not `confirmed` →
+   R's restored `source/` itself, the clone, the fix worktree and the fix directory
+   (`verify_ownership` does not add its `source_dir` to the roots on its own). Not
+   `confirmed` →
    `stopped: no admission`. The same two checks run again in `fix publish` (§8.3); a key
    revoked between admission and publication blocks it.
 
@@ -293,11 +296,19 @@ confirmation of the new bytes.
 - Its source is the **original `head_sha`**: A's `preflight` runs in the fresh worktree
   before the edit is written, fixing the snapshot and facts; the signature covers the
   exact bytes of the corrected Dockerfile.
-- **Exclusion is proved before anything is written.** A's `issue` appends `.deployer/` to
-  an ignore file when it is missing (`ensure_excluded` writes, then proves). This design
-  adds a **check-only** exclusion proof (a stage 1 code deliverable in `provenance`): if
-  proving exclusion would require any ignore-file edit → `stopped: commit blocked` and
-  nothing is written. When it passes, `issue` makes no ignore-file edit.
+- **No ignore-file edit, ever.** A's `issue` appends `.deployer/` when `.deployer` itself
+  is not excluded (`ensure_excluded` writes, then proves the concrete set paths) — so a set
+  excluded by a narrower rule would still get an appended line. This design adds to
+  `provenance` (stage 1 code deliverable):
+  - an issuing **mode that never edits ignore files**: it only proves exclusion of the
+    concrete set paths and refuses otherwise;
+  - a pure **plan** step that builds the snapshot, the record and its `<record_sha256>` in
+    memory from the preflight and the corrected bytes, yielding the exact set paths.
+
+  A **preliminary** exclusion check (§5.3 step 1) uses the pointer path and a placeholder
+  set path; it can only stop early. The **final** check runs on the real paths from the plan
+  (§5.3 step 4), before the corrected Dockerfile or any set file is written. Failure of
+  either → `stopped: commit blocked`, nothing written.
 - A missing signing key or any issuing failure → `stopped: commit blocked`.
 - The signature proves provenance, not the correctness of the fix, and does not
   guarantee a future `admitted`.
@@ -305,17 +316,20 @@ confirmation of the new bytes.
 ### 5.3 Order
 
 1. Cheap preconditions first: fix directory writable, worktree creatable, signing key
-   present and usable (A's `preflight` in the worktree), check-only exclusion proof.
+   present and usable (A's `preflight` in the worktree), the preliminary exclusion check.
 2. Proposal (§4).
 3. Local proof (§6) in the fix directory's own context.
-4. Write the corrected Dockerfile into the worktree; issue the new set.
-5. Check the **full** diff against §3 (paths and change types).
-6. One commit containing both the corrected Dockerfile and the new set →
+4. Plan the set in memory (§5.2) and run the final exclusion check on its real paths.
+5. Write the corrected Dockerfile into the worktree; issue the planned set in the
+   no-ignore-edit mode (it re-verifies the bytes on disk and must reproduce the planned
+   `<record_sha256>`).
+6. Check the **full** diff against §3 (paths and change types).
+7. One commit containing both the corrected Dockerfile and the new set →
    `locally_confirmed`.
 
 The corrected bytes are produced **once**, in memory: the same bytes are written to the
-proof context (step 3) and the worktree (step 4), passed to `issue(…, dockerfile=<bytes>)`,
-and their SHA-256 recorded once (§6.5).
+proof context (step 3) and the worktree (step 5), passed to the plan and to `issue`, and
+their SHA-256 recorded once (§6.5).
 
 A failure after the worktree exists keeps the worktree, and after the commit keeps the
 branch and the commit; nothing is deleted automatically. The result and the reason are
@@ -341,32 +355,47 @@ templates are Podman-only in this slice; any other backend →
 included), since both the templates and the local effective ignore file
 (`.containerignore` is read only for Podman) depend on it.
 
-### 6.2 Offline checks, per instruction and condition
+### 6.2 Offline checks, per instruction, subject and condition
 
-R's checks do not report per instruction: `copy_sources` returns one aggregate `passed`
-without a location, a matching glob returns nothing, skips carry the instruction only in a
-free-text reason, and the four syntax checks emit one file-level `passed` each. This design
-therefore adds a **per-instruction projection** over R's check output (a stage 1 code
-deliverable in `fix`, with its own tests), mapping each `(check_id, instruction span)` to:
+R's check results cannot be projected per instruction after the fact: `copy_sources`
+returns one aggregate `passed` without a location, a single failure suppresses the passed
+results of every other source, a matching glob returns nothing, skips carry the
+instruction only in free text, the four syntax checks emit one file-level `passed` each,
+and the count of checked instructions is a local variable, not part of the result.
+Reconstructing "passed" from the absence of a finding is therefore not allowed.
 
-- `failed` or `observation` — a located entry for that span;
-- `skipped` — the instruction named in a skip reason (R's reason format is part of the
-  projection's tests);
-- `passed` — neither of the above, and the check ran (`checked > 0` / its rule applied).
+This design adds a **structured detailed result**, produced **while the checks run**
+(a stage 1 code deliverable). R's offline checks gain a detailed entry point — the same
+logic, emitting one record per unit checked; R's existing aggregate output is derived
+from those records and stays byte-identical (R's own tests guard this). A record is:
 
-Statuses are R's (`passed | failed | skipped | observation | inconclusive`). The
-comparison covers R's **offline** checks (`copy_sources` and the four syntax checks); the
-builder checks (`builder_check`, `builder_syntax`, `builder_lint`) are skipped by a local
-Podman run on both sides and are not part of it.
+- `check_id` — `copy_sources` or one of the four syntax checks;
+- `instruction` — the instruction's span `(first_line, last_line)` and ordinal;
+- `subject` — for `copy_sources` the normalised source path (one record **per source**,
+  so several sources of one instruction are distinct); for a syntax check the rule's
+  condition on that instruction (e.g. `from_args`);
+- `status` — R's (`passed | failed | skipped | observation | inconclusive`);
+- `reason` — for every status but `passed`.
 
-- The defect's check passes **for the corrected instruction and its specific
-  condition**: for `missing_copy_source`, `copy_sources` confirms the new source of that
-  instruction present and not excluded; for `from_argument_count`, `syntax_from_args`
-  passes on it.
-- **No regressions:** the offline checks run **fresh** on `source/` (original bytes) and
-  on the fix context (corrected bytes) — not read from R's recorded manifest, whose checks
-  are merged with builder results — and are compared through the projection. Any change
-  from `passed` to `failed`, `skipped`, `observation` or `inconclusive` fails the rule.
+A skip that R applies file-wide (e.g. an unread Dockerfile, an unmodelled ignore file)
+**propagates** to a `skipped` record for every affected `(check_id, instruction,
+subject)`; a check that did not run for a unit emits `skipped`, never nothing.
+
+The comparison covers R's **offline** checks (`copy_sources` and the four syntax checks);
+the builder checks (`builder_check`, `builder_syntax`, `builder_lint`) are skipped by a
+local Podman run on both sides and are not part of it.
+
+- The defect's check passes **for the corrected instruction and its specific subject**:
+  for `missing_copy_source`, a `copy_sources` record `passed` for the **new source** of the
+  bound instruction; for `from_argument_count`, the `syntax_from_args` record of the bound
+  instruction `passed`.
+- **No regressions:** the offline checks run **fresh** with the detailed entry point on
+  `source/` (original bytes) and on the fix context (corrected bytes) — not read from R's
+  recorded manifest, whose checks are merged with builder results. Records are matched by
+  `(check_id, instruction ordinal, subject)`; the corrected source's record is matched to
+  the absent source's. Any record `passed` before and `failed`, `skipped`, `observation` or
+  `inconclusive` after fails the rule; a record present before and missing after fails it
+  too.
 
 ### 6.3 Local positive evidence — closed, recording-backed
 
@@ -388,10 +417,13 @@ templates not enabled`.
   frontend is not such evidence. Parsing and pulling the image are distinct: a later
   image-pull failure of the same FROM does not refute the parse result, is recorded
   explicitly, and is not called "a failure of another instruction".
-- If the builder drops `AS` or normalises the reference so that the closed template
-  cannot bind the line to the instruction unambiguously → `binding ambiguous`. No support
-  for such forms is promised before recordings; the matcher is not widened by
-  assumption.
+- The FROM parse evidence is file-wide and needs **no** binding of a step line to the
+  corrected FROM. Text binding matters only for the optional image-pull record: if the
+  builder drops `AS` or normalises the reference so that a pull line cannot be bound to
+  the corrected FROM unambiguously, the pull result is not recorded — this never affects
+  the parse evidence. For COPY/ADD, a step line the closed template cannot bind to the
+  instruction unambiguously → `binding ambiguous`. No support for such forms is promised
+  before recordings; the matcher is not widened by assumption.
 
 ### 6.4 Later failures
 
@@ -428,8 +460,17 @@ deliverable with their own tests.
 
 ### 7.2 Which runs qualify
 
-Runs are listed by `head_sha` = the **exact fix commit**. A run's attempt qualifies only
-when:
+Runs are listed by `head_sha` = the **exact fix commit**. Every completed attempt of every
+listed run gets one of three qualification results:
+
+- `qualified` — every condition below is established from data that was read;
+- `excluded` — a condition is **proven** false from data that was read (e.g. the event is
+  `pull_request`, the workflow path differs), with that reason;
+- `undetermined` — a condition could not be established because data is missing (an
+  unavailable log or job listing needed for the checkout or the build binding, an
+  incomplete API response).
+
+The conditions:
 
 - its event is `push` or `workflow_dispatch` (`pull_request` excluded in this slice);
 - its workflow path equals the one R bound in the original run, and the workflow bytes at
@@ -442,6 +483,9 @@ when:
 - the checkout was at the fix commit, by R's checkout-SHA rule.
 
 A merge or squash commit does not confirm the fix commit: it is a different object.
+An attempt that could not be read far enough to be excluded is `undetermined`, never
+silently dropped: dropping it would let a positive attempt elsewhere hide a possible
+contradiction.
 
 ### 7.3 CI positive evidence — closed, recording-backed (hypotheses until recorded)
 
@@ -471,8 +515,10 @@ result.
 - A recurrence and no positive evidence → insufficient: `defect recurred`.
 - Failures inside a qualifying run (network, skipped or unreached steps, earlier jobs) are
   not contradictions, but confirm nothing on their own.
-- An incomplete listing or an unavailable log of a qualifying attempt (deployer's own
-  reads) means the absence of contradictions cannot be claimed → insufficient.
+- Any `undetermined` attempt (§7.2), or an incomplete run listing, means the absence of
+  contradictions cannot be claimed → insufficient: `qualification undetermined`, even
+  when another attempt is positive. `excluded` attempts are listed with their reasons and
+  take no further part.
 
 A later independent failure in the same run does not cancel proven passage of the
 corrected place. Ambiguous binding → no positive evidence.
@@ -483,7 +529,8 @@ Each attempt records the check time and the exact list of `run_id` / attempt / j
 considered, the outcome, the reason and the evidence (run, attempt, job, log lines).
 Reasons for `ci_confirmation_insufficient`: no qualifying run; CI failed before the build;
 build step not reached; unknown format; binding ambiguous; templates not enabled;
-contradictory runs; defect recurred; incomplete listing or unavailable log.
+contradictory runs; defect recurred; qualification undetermined (incomplete listing or
+unavailable log).
 
 ## 8. The fix document and the CLI
 
@@ -497,7 +544,7 @@ Fields:
 - `proposal` — `class`, `file`, `lines`, `transformation` (`copy-source` | `F1` | `F2`),
   `original`, `replacement`, internal `ordinal`, `rationale` (model or deterministic),
   `envelope` (each condition and its result);
-- `local_proof` — configuration, checks before/after through the projection, evidence
+- `local_proof` — configuration, checks before/after as detailed records (§6.2), evidence
   files and lines, `later_failure` (separately: image pull of the same FROM / another
   instruction);
 - `publication` — worktree path, branch, fix commit, the full-diff check, `base` branch,
@@ -519,7 +566,7 @@ local proof, after the commit, after publication, after each confirmation attemp
   - `2`: invalid invocation (incl. a fix directory inside the clone) or a local I/O
     failure (reading the verdict, saving `fix.json`).
 - `deployer fix publish <fix.json> --base <branch>` — the explicit permission to push and
-  create the PR; no interactive confirmation inside. **[choice]** The PR's base branch is a
+  create the PR; no interactive confirmation inside. The PR's base branch is a
   required flag: the failed-run snapshot does not record the run's branch, and inferring
   one is a guess.
   - `0`: pushed and a PR created or found (also on an already `fix_proposed` or
@@ -539,9 +586,15 @@ Exit codes of existing commands are unchanged.
 
 Before pushing, `fix publish`:
 
+- records the chosen `--base` in `fix.json` (atomic save) **before any network action**;
+  a later `fix publish` with a different base is refused;
 - re-runs the gate's admission and trust checks (§2 steps 4–5) with the **stored**
   target and the **current** trust directory — a ready branch does not preserve the
   permission to publish;
+- checks the **future PR's diff**, not only the fix commit against its parent: the base
+  branch tip (fetched) must have `head_sha` as an ancestor, so that the merge base of the
+  base and the fix commit is `head_sha` and the PR contains exactly the fix commit;
+  otherwise the PR would carry unrelated changes of the original branch → refused;
 - verifies that the fix branch's tip is the stored fix commit, and re-checks that
   commit's full diff (§3) and the stored evidence hashes; any change → refused. The user's
   own clone `HEAD` is not checked here (the worktree is independent of it);
@@ -549,7 +602,9 @@ Before pushing, `fix publish`:
   neither publishes a changed commit nor creates a duplicate PR (a PR is looked up by the
   branch before creation).
 
-A push or PR-creation failure leaves `locally_confirmed` and the local evidence intact.
+A push or PR-creation failure leaves the status as it was (`locally_confirmed` on the
+first publication; `fix_proposed` or `ci_confirmed` on a repeat, §1) and the local
+evidence intact; the failure is recorded in `last_operation`.
 
 ### 8.4 Errors
 
@@ -594,12 +649,15 @@ no production row is enabled without a recording (§9) guards the seam.
     an unknown `ProjectFacts` field); exactly one call, no retry;
   - §4.2/§4.3: F1/F2, each no-proposal branch, a name used by a build arg; the stage-name
     grammar tests;
-  - §6.2: the projection over R's output (located failure, skip reason, aggregate
-    passed) and the regression rule per instruction and condition;
+  - §6.2: the detailed records (one per source of a multi-source instruction; passed
+    records of other sources present when one fails; a file-wide skip propagated to every
+    unit; R's aggregate output byte-identical) and the regression rule per
+    `(check_id, instruction, subject)`, incl. a record that disappears;
   - §6.3/§7.3 matchers on synthetic lines: negatives only until recordings, incl.
     `#k CACHED` not accepted and a missing or repeated `k` → `binding ambiguous`; a
     timeout never confirms; the narrow PR claim after a proven pass and a later failure;
-  - §7.4: positive, contradictory, recurred, incomplete listing, unavailable log;
+  - §7.2/§7.4: `qualified`, `excluded` and `undetermined` attempts; a positive attempt
+    plus an `undetermined` one → insufficient; contradictory, recurred;
   - status transitions and the exit-code table of each command (§1, §8.2).
 - **P (pipeline):** from the committed A4 bundles `admit-run-1` / `admit-run-5`, with the
   container runtime, the model and GitHub faked, and **real** local Git (worktree, commit);
@@ -616,16 +674,22 @@ no production row is enabled without a recording (§9) guards the seam.
   extra changed file is refused by the full-diff check; a fix directory inside the clone
   exits `2`; the fix-branch tip changed before `publish` is refused.
 - **Gate (§2):** clone not at the repository root; no `origin`; untracked-only dirt;
-  `HEAD` ≠ `head_sha`; Dockerfile bytes ≠ `artifact_sha256`; a revoked key → each
-  `no admission`.
-- **Commit (§5.2–§5.3):** exclusion needing an ignore-file edit (nothing written), no
-  signing key, an `issue` failure → `commit blocked`; the configuration and SHA-256
+  `HEAD` ≠ `head_sha`; Dockerfile bytes ≠ `artifact_sha256`; a revoked key; a trust
+  directory inside R's restored `source/` → each `no admission` (at `fix` and at
+  `publish`).
+- **Commit (§5.2–§5.3):** exclusion needing an ignore-file edit — at the preliminary
+  check and, separately, at the final check on the planned paths (e.g. a rule excluding
+  `.deployer` but not the concrete set directory) — with nothing written; the issuing mode
+  never touching ignore files; `issue` reproducing the planned `<record_sha256>`; no
+  signing key; an `issue` failure → `commit blocked`; the configuration and SHA-256
   recorded (§6.5).
 - **Document and errors (§8):** writability checked first; atomic checkpoint saves; a save
   failure after the commit (exit `2`, identifiers named); an injected exception becomes a
   reason, never a traceback; a crashed `in_progress` document is not resumed.
 - **Publication and confirmation boundaries:** trust revoked before `publish`; a stored
-  commit or diff tampered with; a repeat after a network timeout; no duplicate PR;
+  commit or diff tampered with; the base recorded before any network action and a
+  different `--base` refused on repeat; a base that does not contain `head_sha` refused;
+  a push failure on a repeat publish leaving `fix_proposed`; a repeat after a network timeout; no duplicate PR;
   `publish` on an already published document; `confirm` on an unpublished one; positive and
   contradicting attempts; an incomplete API listing; an unavailable log; the transition
   `ci_confirmed → fix_proposed`.
@@ -640,8 +704,8 @@ Stages; code is split into PRs by the review kit's limits, data stays separate a
 owner's review:
 
 1. **Fix authoring:** gate, binding, proposal and envelopes, the stage-name grammar with
-   its pinned-source note (§4.3), the check-only exclusion proof in `provenance` (§5.2),
-   the per-instruction check projection (§6.2), local proof with templates disabled, fix
+   its pinned-source note (§4.3), the set plan and the no-ignore-edit issuing mode in
+   `provenance` (§5.2), the detailed check results in `reproduce` (§6.2), local proof with templates disabled, fix
    directory and worktree, `fix.json`, `fix publish`.
    **1b (data):** the derived run-1 case — tree, listings and signed data updated
    consistently; its `PROVENANCE.md` separates the original failure record from the test
@@ -674,5 +738,6 @@ claiming the agreed scope complete.
    stored apart.
 8. Delivery order as §11; recordings each need separate permission.
 
-Author's choices in rev 2 awaiting the owner's confirmation: the status mirrors the latest
-confirmation attempt (§1); the PR base branch is a required `--base` flag (§8.2).
+9. (rev 2, confirmed) The status mirrors the latest completed CI evaluation; the history
+   of positive evidence is kept (§1). The PR base branch is a required `--base` flag,
+   recorded before any network action (§8.2–§8.3).
