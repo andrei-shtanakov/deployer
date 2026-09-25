@@ -407,31 +407,63 @@ local Podman run on both sides and are not part of it.
 
 ### 6.3 Local positive evidence — closed, recording-backed
 
-A closed table of local "passed" templates (Podman). Until real recordings back a row,
-the row is a **hypothesis** and is disabled; a disabled row yields `no local confirmation:
-templates not enabled`.
+A closed table of local "passed" templates (Podman). A row is enabled only with the
+recording that backs it (§9); a disabled row yields `no local confirmation: templates not
+enabled`. Both local rows are backed by the L-recordings
+(`tests/fixtures/recordings/local`, Podman 5.7.0 / Buildah 1.42.0) and by the pinned
+Buildah reading in `docs/fix-buildah-from-parse.md`, and are enabled (owner, 2026-09-25).
 
-- **COPY/ADD (hypothesis):** the step line carrying the corrected instruction's exact
-  text, exactly once. A `STEP` line only proves the step **started**. Passing it needs the
-  next step of the **same stage and sequence**, or the build's completion, bound
-  unambiguously; the stage boundary is not guessed from `k/n`. An error bound to the step
-  itself → not confirmed.
-- **FROM (hypothesis):** evidence that the Dockerfile was **parsed** — a build-stage step
-  exists and no parse error — removes the diagnosed argument-count error. This rests on the
-  builder parsing the whole instruction list before building stages: established for
-  BuildKit (its instruction parse precedes stage construction); for Podman it is settled
-  in stage 3 by reading Buildah's parse path at the pinned version **and** by recordings
-  that include a bad FROM in a later stage. Loading the Dockerfile, the context or a
-  frontend is not such evidence. Parsing and pulling the image are distinct: a later
-  image-pull failure of the same FROM does not refute the parse result, is recorded
-  explicitly, and is not called "a failure of another instruction".
-- The FROM parse evidence is file-wide and needs **no** binding of a step line to the
-  corrected FROM. Text binding matters only for the optional image-pull record: if the
-  builder drops `AS` or normalises the reference so that a pull line cannot be bound to
-  the corrected FROM unambiguously, the pull result is not recorded — this never affects
-  the parse evidence. For COPY/ADD, a step line the closed template cannot bind to the
-  instruction unambiguously → `binding ambiguous`. No support for such forms is promised
-  before recordings; the matcher is not widened by assumption.
+What the recordings and the reading show, and every rule below relies on:
+
+- Podman prints a step line only **after** Buildah's check for that step passed, and
+  checks each stage's FROM when the stage starts, not in a whole-file pass (note step 5–6;
+  `l8`).
+- A stage nothing depends on is **skipped**: none of its instructions runs and none of
+  its step lines is printed (`l5`, `l9`). A skipped stage's instruction is therefore
+  never confirmed: its step line is absent → not confirmed.
+- In a file with more than one stage every step line carries an `[i/n] ` prefix
+  (`[2/2] STEP 3/4: COPY …`, `[2/2] COMMIT <tag>`); `n` counts every stage, skipped ones
+  included (`l5`, `l7`). The matchers read the prefixed form and the unprefixed one.
+- **Uniqueness in the Dockerfile, first.** The corrected instruction's text must occur
+  exactly once among the corrected Dockerfile's instructions, compared as the rest of the
+  fix compares them (A's `_as_r_reads`, R's `dockerfile.parse`, `Instruction.text`);
+  otherwise → `binding ambiguous`, decided before any output is read. A skipped identical
+  instruction prints nothing, so it must never make the one printed line look unique:
+  `l5` has the identical COPY in a skipped and a built stage and prints one step line;
+  `l7` builds both and prints two.
+
+- **COPY/ADD:** the step line carrying the corrected instruction's exact text, prefixed
+  or not, exactly once across all stages (else `binding ambiguous`). A `STEP` line only
+  proves the step **started**. It passes only if the next marker is the **same stage's**
+  `STEP k+1/m`. After the last step (`k == m`) of the **final** stage, the build's
+  completion counts, and only bound to the build's own tag (the one the build was given,
+  `localhost/deployer-fix-<fix_id>`): `COMMIT <tag>` with the stage's prefix, or
+  `Successfully tagged <tag>` — `<tag>:latest` when the tag has no explicit tag part. A
+  completion naming another tag does not count (`l2` prints one) → `binding ambiguous`.
+  The last step of a **non-final** stage stays `binding ambiguous`: the next stage's
+  start does not prove it. An error bound to the step itself
+  (`Error: building at STEP "<text>"`) → not confirmed.
+- **FROM:** the evidence is the corrected FROM's **own** step line,
+  `STEP 1/m: <corrected FROM text>` (prefixed or not), exactly once. It needs no next
+  marker: Buildah prints it only after the stage's FROM check passed (note step 6). Any
+  Podman parse error in either stream, or an error bound to that step, → not confirmed.
+  The earlier file-wide rule ("a build-stage step exists and no parse error") is
+  withdrawn for Podman: `l9` exits 0 with the bad FROM still in the file, in a skipped
+  stage; `l8` builds an earlier stage and then fails the bad FROM when its stage starts.
+  Loading the Dockerfile or the context is not evidence. Parsing and pulling the image are
+  distinct: a later image-pull failure of the same FROM does not refute the step line, is
+  recorded explicitly, and is not called "a failure of another instruction". The optional
+  image-pull record needs a pull line bound to the corrected FROM unambiguously; if the
+  builder normalises the reference so that none binds, the pull result is not recorded —
+  this never affects the FROM evidence.
+- A step line the closed template cannot bind to the instruction unambiguously →
+  `binding ambiguous`. Forms the recordings do not show are not supported; the matcher is
+  not widened by assumption.
+
+BuildKit (§7.3) is unchanged: its FROM evidence stays file-wide. The C-recording
+`c8-from-bad-in-skipped-stage` (the C-recordings data, commit `4eef25d`) confirmed
+BuildKit's whole-file parse: a bad FROM in a stage nothing depends on fails before any
+stage, unlike Podman's `l9`.
 
 ### 6.4 Later failures
 
