@@ -591,10 +591,12 @@ Before pushing, `fix publish`:
 - re-runs the gate's admission and trust checks (§2 steps 4–5) with the **stored**
   target and the **current** trust directory — a ready branch does not preserve the
   permission to publish;
-- checks the **future PR's diff**, not only the fix commit against its parent: the base
-  branch tip (fetched) must have `head_sha` as an ancestor, so that the merge base of the
-  base and the fix commit is `head_sha` and the PR contains exactly the fix commit;
-  otherwise the PR would carry unrelated changes of the original branch → refused;
+- checks the **future PR's diff**, not only the fix commit against its parent: for a new
+  publication it computes the actual `merge-base(base_tip, fix_commit)` on the fetched
+  base and requires it to **equal `head_sha`** (ancestry alone is not enough: a base that
+  already contains the fix commit gives another merge base and an empty PR), then
+  requires the resulting `merge-base..fix_commit` diff to match the allowed change (§3)
+  exactly; otherwise the PR would be empty or carry unrelated changes → refused;
 - verifies that the fix branch's tip is the stored fix commit, and re-checks that
   commit's full diff (§3) and the stored evidence hashes; any change → refused. The user's
   own clone `HEAD` is not checked here (the worktree is independent of it);
@@ -688,7 +690,9 @@ no production row is enabled without a recording (§9) guards the seam.
   reason, never a traceback; a crashed `in_progress` document is not resumed.
 - **Publication and confirmation boundaries:** trust revoked before `publish`; a stored
   commit or diff tampered with; the base recorded before any network action and a
-  different `--base` refused on repeat; a base that does not contain `head_sha` refused;
+  different `--base` refused on repeat; a base whose merge base with the fix commit is not
+  `head_sha` refused (incl. a base that already contains the fix commit); a PR diff that
+  differs from the allowed change refused;
   a push failure on a repeat publish leaving `fix_proposed`; a repeat after a network timeout; no duplicate PR;
   `publish` on an already published document; `confirm` on an unpublished one; positive and
   contradicting attempts; an incomplete API listing; an unavailable log; the transition
