@@ -292,6 +292,13 @@ def _family_reason(kind: Kind, parsed: ParsedDockerfile) -> str | None:
             )
         if kind == "from" and _from_name(args).isdigit():
             return f"FROM at line {line} has a numeric stage name Podman drops"
+        if kind == "from" and any(
+            word.startswith("--") and not word.startswith("--platform=")
+            for word in args.split()
+        ):
+            # The pinned Buildah reading shows only ``--platform=`` in the
+            # displayed FROM; any other flag's display is unrecorded.
+            return f"FROM at line {line} has a flag other than --platform="
     return None
 
 

@@ -550,6 +550,22 @@ def test_from_numeric_stage_name_refused() -> None:
     assert outcome.evidence == "binding_ambiguous"
 
 
+def test_from_flag_other_than_platform_refused() -> None:
+    """Only ``--platform=`` has a recorded display; any other FROM flag makes
+    uniqueness unprovable (#99 review)."""
+    dockerfile = f"{_FROM}\nRUN x\nFROM --foo=bar python:3.12-slim\n".encode()
+    outcome = _local_from(f"STEP 1/2: {_FROM}\n", dockerfile=dockerfile)
+    assert outcome.evidence == "binding_ambiguous"
+    assert "--platform=" in (outcome.detail or "")
+
+
+def test_from_platform_flag_still_read() -> None:
+    """``--platform=`` on another FROM is modelled: no refusal on that ground."""
+    dockerfile = f"{_FROM}\nRUN x\nFROM --platform=linux/amd64 busybox:1\n".encode()
+    outcome = _local_from(f"STEP 1/2: {_FROM}\n", dockerfile=dockerfile)
+    assert "flag other than" not in (outcome.detail or "")
+
+
 def test_podman_from_dockerfile_duplicate() -> None:
     """Two identical FROMs: ambiguous before the output is read."""
     dockerfile = f"{_FROM}\nRUN x\n{_FROM}\nRUN y\n".encode()
