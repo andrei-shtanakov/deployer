@@ -6,8 +6,11 @@ adding a row widens automatic admission and needs a spec change and review.
 The matchers read untrusted CI or local text and never raise: each returns a
 match, ``None`` (the row's diagnostic is absent) or ``"ambiguous"`` (it is
 present but does not bind to exactly one instruction and object). Text is
-split on ``\\n`` with a trailing ``\\r`` dropped, so CRLF reads like LF; every
-line is stripped and matched whole (``re.fullmatch``), never by substring.
+split on ``\\n`` only and each line is stripped of whitespace at both ends
+(which drops CRLF's ``\\r``, so CRLF reads like LF); each stripped line is
+matched whole (``re.fullmatch``), never by substring. Digit groups are ASCII
+``[0-9]`` bounded to nine digits, so no number read here can overflow
+``int()``.
 ``evidence_lines`` are 1-based line numbers in the text as given. CI text is
 expected as R produces it (``shape.job_text``: ANSI codes and timestamps
 already stripped by ``forge``).
@@ -105,12 +108,12 @@ class _Block:
 
 
 _CHECKSUM = "failed to calculate checksum of ref"
-_BLOCK_HEAD_RE = re.compile(r"[^\s:]+:\d+")
+_BLOCK_HEAD_RE = re.compile(r"[^\s:]+:[0-9]{1,9}")
 _FENCE_RE = re.compile(r"-{3,}")
-_MARKED_RE = re.compile(r"\s*(\d+) \| >>> ?(.*)")
-_HEADER_RE = re.compile(r"#(?P<k>\d+) \[[^\]]*\] (?P<instr>.+)")
+_MARKED_RE = re.compile(r"\s*([0-9]{1,9}) \| >>> ?(.*)")
+_HEADER_RE = re.compile(r"#(?P<k>[0-9]{1,9}) \[[^\]]*\] (?P<instr>.+)")
 _STEP_BOUND_RE = re.compile(
-    r"#(?P<k>\d+) ERROR: failed to calculate checksum of ref (?P<ref>\S+): "
+    r"#(?P<k>[0-9]{1,9}) ERROR: failed to calculate checksum of ref (?P<ref>\S+): "
     r'"/(?P<p>[^"]+)": not found'
 )
 _SUMMARY_RE = re.compile(
@@ -122,11 +125,11 @@ _PODMAN_COPY_RE = re.compile(
     r'under "[^"]*": copier: stat: "/(?P<p>[^"]+)": no such file or directory'
 )
 _FROM_CI_RE = re.compile(
-    r"(?:.*: )?dockerfile parse error on line (?P<n>\d+): "
+    r"ERROR: (?:.*: )?dockerfile parse error on line (?P<n>[0-9]{1,9}): "
     r"FROM requires either one or three arguments"
 )
 _FROM_PODMAN_RE = re.compile(r"Error: FROM requires either one argument, or three: .*")
-_STEP_LINE_RE = re.compile(r"(?:\[\d+/\d+\] )?STEP .*")
+_STEP_LINE_RE = re.compile(r"(?:\[[0-9]{1,9}/[0-9]{1,9}\] )?STEP .*")
 
 
 def match_copy_ci(text: str) -> CopyMatch | None | Ambiguous:
@@ -229,13 +232,24 @@ def _lines(text: str) -> list[str]:
 
 def _copy_block(lines: list[str]) -> _Block | None:
     """Step 1: R's single ``Dockerfile:<N>`` block, a COPY or ADD."""
-    spans = _error_blocks(lines)
+    spans = _r_blocks(lines)
+    if spans is None:
+        return None
     blocks = _locate_blocks(lines)
     if len(spans) != 1 or [b.span for b in blocks] != spans:
         return None
     block = blocks[0]
     keyword = block.text.partition(" ")[0].upper()
     return block if keyword in ("COPY", "ADD") else None
+
+
+def _r_blocks(lines: list[str]) -> list[tuple[int, int]] | None:
+    """R's ``_error_blocks``, or ``None`` when its own ``int()`` fails on an
+    over-long ``>>>`` line number (it reads ``\\d+`` unbounded)."""
+    try:
+        return _error_blocks(lines)
+    except ValueError:
+        return None
 
 
 def _locate_blocks(lines: list[str]) -> list[_Block]:

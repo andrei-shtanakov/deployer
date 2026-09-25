@@ -301,3 +301,34 @@ def test_matchers_handle_huge_text() -> None:
         assert match_copy_local(text) is None
         assert match_from_ci(text) is None
         assert match_from_local(text, text) is None
+
+
+def test_huge_line_number_in_from_parse_error_does_not_raise() -> None:
+    """5000 digits exceed int()'s limit: the bounded group refuses the line."""
+    line = FROM_CI.replace("line 1:", f"line {'9' * 5000}:")
+    assert match_from_ci(line) is None
+
+
+def test_huge_marked_row_number_does_not_raise() -> None:
+    """A 5000-digit ``>>>`` row makes R's own int() fail; that refuses too."""
+    text = _ci_copy().replace("  11 | >>>", f"  {'1' * 5000} | >>>")
+    assert match_copy_ci(text) == "ambiguous"
+
+
+def test_from_ci_needs_the_error_prefix() -> None:
+    """A RUN step echoing the message is program output, not the parser."""
+    echoed = (
+        "#9 0.12 x: dockerfile parse error on line 3: "
+        "FROM requires either one or three arguments"
+    )
+    assert match_from_ci(echoed) is None
+
+
+def test_non_ascii_digits_do_not_match() -> None:
+    """Arabic-Indic digits are not line, step or row numbers."""
+    one, two = "١", "٢"
+    assert match_from_ci(FROM_CI.replace("line 1:", f"line {one}:")) is None
+    header = HEADER.replace("#12 ", f"#{one}{two} ")
+    assert match_copy_ci(_ci_copy(header=header)) == "ambiguous"
+    text = _ci_copy().replace("  11 | >>>", f"  {one}{one} | >>>")
+    assert match_copy_ci(text) == "ambiguous"
