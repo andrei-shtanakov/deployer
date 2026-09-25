@@ -27,6 +27,12 @@ from deployer.facts import TargetConfigError, analyze_project
 from deployer.fix.author import FixAbort, author_fix
 from deployer.fix.chooser import AnthropicChooser, SourceChooser
 from deployer.fix.document import FixDocument
+from deployer.fix.publish import (
+    PUBLISHED,
+    PublishAbort,
+    SubprocessGitRemote,
+    publish,
+)
 from deployer.forge import (
     DEFAULT_MAX_ARCHIVE_MB,
     AdapterRefusal,
@@ -913,7 +919,64 @@ def _fix_chooser() -> SourceChooser:
     return _LazyAnthropicChooser()
 
 
-_FIX_ACTIONS: dict[str, Callable[[argparse.Namespace], int]] = {}
+def _cmd_fix_publish(args: argparse.Namespace) -> int:
+    """§8.2 ``deployer fix publish <fix.json> --base B``: 0 pushed and a PR
+    created or found, 1 refused, 2 invocation or local I/O."""
+    error = _fix_publish_error(args)
+    if error:
+        print(f"error: {error}", file=sys.stderr)
+        return 2
+    try:
+        doc = publish(
+            Path(args.rest[0]),
+            args.base,
+            os.environ,
+            SubprocessGitRemote(),
+            SubprocessGh(),
+        )
+    except PublishAbort as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    except Exception as exc:  # noqa: BLE001 — the last safety net (F §8.4)
+        print(
+            "error: deployer fix publish failed unexpectedly: "
+            f"{type(exc).__name__}: {exc}",
+            file=sys.stderr,
+        )
+        return 2
+    return _print_publish(doc)
+
+
+def _fix_publish_error(args: argparse.Namespace) -> str | None:
+    """Arguments ``deployer fix publish`` needs, checked before any work."""
+    if len(args.rest) != 1:
+        return "deployer fix publish takes exactly one fix.json"
+    if args.base is None:
+        return "--base is required"
+    if args.clone is not None:
+        return "--clone is not an argument of deployer fix publish"
+    return None
+
+
+def _print_publish(doc: FixDocument) -> int:
+    """The outcome of ``deployer fix publish``, and its exit code."""
+    last = doc.last_operation
+    publication = doc.publication
+    if last is None or last.result != PUBLISHED or publication is None:
+        reason = last.reason if last is not None else None
+        print(f"refused: {reason}")
+        print(f"status: {doc.status}")
+        return 1
+    print(f"status: {doc.status}")
+    print(f"branch: {publication.branch}")
+    print(f"base: {publication.base}")
+    print(f"pr: {publication.pr_url}")
+    return 0
+
+
+_FIX_ACTIONS: dict[str, Callable[[argparse.Namespace], int]] = {
+    "publish": _cmd_fix_publish,
+}
 """``deployer fix <action> …`` handlers, recognised only as the first argument
 after ``fix`` (Ruling C): ``publish`` (Task 14) and ``confirm`` (Task 19)."""
 _FIX_RESERVED = ("publish", "confirm")
@@ -1027,7 +1090,8 @@ def main(argv: list[str] | None = None) -> int:
         help="author a fix of an admitted defect and prove it locally",
         description=(
             "deployer fix <verdict.json> --clone PATH: author the fix and "
-            "commit it in a fix worktree"
+            "commit it in a fix worktree; deployer fix publish <fix.json> "
+            "--base BRANCH: push it and open (or find) its PR"
         ),
     )
     p_fix.add_argument(
@@ -1044,6 +1108,11 @@ def main(argv: list[str] | None = None) -> int:
             "ed25519 private key that signs the fix's provenance set "
             "(default: DEPLOYER_SIGNING_KEY)"
         ),
+    )
+    p_fix.add_argument(
+        "--base",
+        default=None,
+        help="fix publish: the branch the PR is opened against (required)",
     )
     p_fix.add_argument(
         "--build-timeout",

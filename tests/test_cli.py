@@ -2316,8 +2316,9 @@ def test_fix_passes_flags_and_the_signing_key_env(
 def test_fix_invalid_invocations_exit_2(
     fix_calls: list[dict[str, object]], argv: list[str]
 ) -> None:
-    """Missing ``--clone``, stray arguments, a bad timeout and the actions
-    not wired yet (Tasks 14/19) → 2, ``author_fix`` never called."""
+    """Missing ``--clone``, stray arguments, a bad timeout, ``publish``
+    without ``--base`` and ``confirm`` (Task 19) → 2, ``author_fix`` never
+    called."""
     assert main(argv) == 2
     assert fix_calls == []
 
@@ -2359,3 +2360,106 @@ def test_fix_deeply_nested_verdict_exits_2(
     deep.write_text("[" * 100_000 + "]" * 100_000)
     assert main(["fix", str(deep), "--clone", str(tmp_path)]) == 2
     assert "is not JSON" in capsys.readouterr().err
+
+
+# --- deployer fix publish ------------------------------------------------------
+
+
+def _published_doc(tmp_path: Path, result: str) -> FixDocument:
+    """A document whose last operation is a publish with ``result``."""
+    from deployer.fix.document import LastOperation
+
+    doc = _fix_doc(tmp_path, "locally_confirmed")
+    last = LastOperation(
+        command="publish", at="2026-09-25T00:00:00+00:00", result=result, reason="r"
+    )
+    return doc.model_copy(update={"last_operation": last})
+
+
+@pytest.fixture()
+def publish_calls(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, object]]:
+    """Replace ``publish`` with a recorder; tests script its outcome by
+    appending ``{"result": FixDocument | Exception}`` first."""
+    calls: list[dict[str, object]] = []
+
+    def fake(*args: object) -> object:
+        names = ("path", "base", "env", "git", "gh")
+        calls.append(dict(zip(names, args, strict=True)))
+        result = calls[0]["result"]
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    monkeypatch.setattr(cli, "publish", fake)
+    return calls
+
+
+@pytest.mark.parametrize(("result", "code"), [("published", 0), ("refused", 1)])
+def test_fix_publish_exit_codes(
+    tmp_path: Path,
+    publish_calls: list[dict[str, object]],
+    result: str,
+    code: int,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """0 pushed and a PR created or found, 1 refused (§8.2)."""
+    publish_calls.append({"result": _published_doc(tmp_path, result)})
+    assert main(["fix", "publish", "fix.json", "--base", "main"]) == code
+    out = capsys.readouterr().out
+    assert ("refused: r" in out) == (code == 1)
+    call = publish_calls[-1]
+    assert call["path"] == Path("fix.json") and call["base"] == "main"
+    from deployer.fix.publish import SubprocessGitRemote
+    from deployer.forge import SubprocessGh
+
+    assert isinstance(call["git"], SubprocessGitRemote)
+    assert isinstance(call["gh"], SubprocessGh)
+
+
+@pytest.mark.parametrize(
+    ("error", "message"),
+    [
+        ("abort", "cannot save fix.json; pushed: branch b"),
+        ("crash", "failed unexpectedly: RuntimeError: surprise"),
+    ],
+)
+def test_fix_publish_local_failures_exit_2(
+    publish_calls: list[dict[str, object]],
+    error: str,
+    message: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``PublishAbort`` and the last safety net → 2, no traceback."""
+    from deployer.fix.publish import PublishAbort
+
+    exc = PublishAbort(message) if error == "abort" else RuntimeError("surprise")
+    publish_calls.append({"result": exc})
+    assert main(["fix", "publish", "fix.json", "--base", "main"]) == 2
+    err = capsys.readouterr().err
+    assert message in err and "Traceback" not in err
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["fix", "publish", "fix.json"],
+        ["fix", "publish", "--base", "main"],
+        ["fix", "publish", "a.json", "b.json", "--base", "main"],
+        ["fix", "publish", "fix.json", "--base", "main", "--clone", "c"],
+    ],
+)
+def test_fix_publish_invalid_invocations_exit_2(
+    publish_calls: list[dict[str, object]], argv: list[str]
+) -> None:
+    """Missing ``--base`` or ``fix.json``, extra arguments, ``--clone``."""
+    assert main(argv) == 2
+    assert publish_calls == []
+
+
+def test_fix_publish_unreadable_document_exits_2(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The real ``publish``: a ``fix.json`` that cannot be read → 2."""
+    argv = ["fix", "publish", str(tmp_path / "absent.json"), "--base", "main"]
+    assert main(argv) == 2
+    assert "cannot read" in capsys.readouterr().err
