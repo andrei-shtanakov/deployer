@@ -501,14 +501,35 @@ D_CASES: list[tuple[str, str, Mutation, int, str]] = [
         3,
         "difference restoration=unknown not allowed",
     ),
+    # fix round 1: an empty (or foreign) head listing proves no absence
+    (
+        "empty_head_listing",
+        "run-1",
+        _set(head_listing=[]),
+        2,
+        "head listing lacks Dockerfile; absence at head_sha not provable",
+    ),
+    # fix round 1: "absent on both sides" means all four values are None
+    (
+        "ignore_hash_without_path",
+        "run-1",
+        _set(ignore_hashes=((None, SHA_A), (None, None))),
+        3,
+        "difference ignore_file=same not allowed",
+    ),
 ]
 
 
-def _assert_refused(section: AdmissionSection, condition: int, reason: str) -> None:
+def _assert_refused(
+    section: AdmissionSection, condition: int, reason: str, *, only: bool = True
+) -> None:
+    """Refused on ``condition`` with ``reason``; with ``only``, on it alone."""
     assert section.verdict == "insufficient_grounds"
     assert section.defect is None and section.link is None
     by_condition = {u.condition: u.reason for u in section.unmet}
     assert condition in by_condition, section.unmet
+    if only:
+        assert set(by_condition) == {condition}, section.unmet
     assert reason in by_condition[condition], section.unmet
     _roundtrip(section)
 
@@ -676,8 +697,9 @@ def test_reproduction_not_attempted() -> None:
     section = ReproductionSection(status="refused", refusal="no build step")
     facts = _facts_of(_facts("run-1"), reproduction=section)
     out = decide(facts)
-    _assert_refused(out, 2, "reproduction refused")
-    _assert_refused(out, 3, "reproduction refused")
+    _assert_refused(out, 2, "reproduction refused", only=False)
+    _assert_refused(out, 3, "reproduction refused", only=False)
+    assert {u.condition for u in out.unmet} == {2, 3}
 
 
 def test_both_ignore_files_same_path_and_hash_are_allowed() -> None:
@@ -688,3 +710,27 @@ def test_both_ignore_files_same_path_and_hash_are_allowed() -> None:
 def test_host_arch_differs_is_not_tolerated() -> None:
     mutate = _dimension("host_arch", "differs")
     _assert_refused(decide(mutate(_facts("run-1"))), 3, "host_arch=differs")
+
+
+def test_foreign_head_listing_is_refused() -> None:
+    """Fix round 1: a listing without the artifact is not ``head_sha``'s."""
+    facts = _facts("run-1")
+    foreign = [r for r in facts.head_listing if r.path != "Dockerfile"]
+    section = decide(_set(head_listing=foreign)(facts))
+    _assert_refused(section, 2, "head listing lacks Dockerfile")
+
+
+def test_inconsistent_ownership_facts_are_refused_not_raised() -> None:
+    """Fix round 1: ``decide`` is total over facts the model rejects."""
+    facts = _facts("run-1")
+    broken = dataclasses.replace(facts.ownership, key_fingerprint=None)
+    section = decide(_facts_of(facts, ownership=broken))
+    _assert_refused(section, 1, "ownership facts inconsistent")
+    assert section.ownership.status == "not_confirmed"
+
+
+def test_ci_block_text_must_be_the_defect_instruction() -> None:
+    """Fix round 1: the CI side binds by span *and* by instruction text."""
+    old, new = "COPY docs/setup.md ./setup.md", "COPY docs/setup.md ./other.md"
+    section = decide(_text("ci_text", old, new)(_facts("run-1")))
+    _assert_refused(section, 3, "CI block COPY docs/setup.md ./other.md is not")

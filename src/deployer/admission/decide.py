@@ -22,6 +22,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
 
+from pydantic import ValidationError
+
 from deployer.admission import templates
 from deployer.admission.model import (
     AdmissionSection,
@@ -30,6 +32,7 @@ from deployer.admission.model import (
     DefectClass,
     DifferenceDecision,
     Link,
+    Ownership,
     SideLink,
     Unmet,
     ownership_from_facts,
@@ -134,12 +137,13 @@ def decide(facts: VerifiedFacts) -> AdmissionSection:
 
     Pure: the same facts always give the same section.
     """
-    unmet: dict[Condition, list[str]] = {1: _ownership_unmet(facts.ownership)}
+    ownership, owner_reasons = _ownership(facts.ownership)
+    unmet: dict[Condition, list[str]] = {1: owner_reasons}
     repro = facts.reproduction
     if repro.status != "attempted" or repro.comparison is None:
         unmet[2] = [f"reproduction {repro.status}: no defect evidence"]
         unmet[3] = [f"reproduction {repro.status}: no link evidence"]
-        return _section(facts, unmet, None, None)
+        return _section(facts.binding, ownership, unmet, None, None)
     candidate, unmet[2] = _candidate(repro.checks)
     subject, reasons = _subject(facts.parsed, candidate)
     if subject is not None:
@@ -151,11 +155,12 @@ def decide(facts: VerifiedFacts) -> AdmissionSection:
     cls = candidate.cls if candidate is not None else None
     link, unmet[3] = _link(facts, cls, proven)
     defect = _defect(proven) if proven is not None else None
-    return _section(facts, unmet, defect, link)
+    return _section(facts.binding, ownership, unmet, defect, link)
 
 
 def _section(
-    facts: VerifiedFacts,
+    binding: Binding,
+    ownership: Ownership,
     unmet: dict[Condition, list[str]],
     defect: Defect | None,
     link: Link | None,
@@ -166,11 +171,10 @@ def _section(
         for condition, reasons in sorted(unmet.items())
         if reasons
     ]
-    ownership = ownership_from_facts(facts.ownership)
     if not entries and defect is not None and link is not None:
         return AdmissionSection(
             verdict="admitted",
-            binding=facts.binding,
+            binding=binding,
             ownership=ownership,
             defect=defect,
             link=link,
@@ -179,7 +183,7 @@ def _section(
         entries = [Unmet(condition=3, reason="link not established")]
     return AdmissionSection(
         verdict="insufficient_grounds",
-        binding=facts.binding,
+        binding=binding,
         ownership=ownership,
         unmet=entries,
     )
@@ -188,11 +192,20 @@ def _section(
 # --- condition (1) --------------------------------------------------------
 
 
-def _ownership_unmet(ownership: OwnershipFacts) -> list[str]:
-    """(1) A §2.4: the first failing step and its reason."""
-    if ownership.status == "confirmed":
-        return []
-    return [f"ownership not confirmed: step {ownership.step}: {ownership.reason}"]
+def _ownership(facts: OwnershipFacts) -> tuple[Ownership, list[str]]:
+    """(1) A §2.4: the section's ownership and its unmet reasons.
+
+    Total: facts the ``Ownership`` model rejects (e.g. ``confirmed`` without a
+    fingerprint) are refused as inconsistent rather than raised.
+    """
+    try:
+        ownership = ownership_from_facts(facts)
+    except ValidationError as error:
+        reason = f"ownership facts inconsistent: {error.errors()[0]['msg']}"
+        return Ownership(status="not_confirmed", reason=reason), [reason]
+    if facts.status == "confirmed":
+        return ownership, []
+    return ownership, [f"ownership not confirmed: step {facts.step}: {facts.reason}"]
 
 
 # --- condition (2) --------------------------------------------------------
@@ -270,8 +283,17 @@ def _defect_reasons(facts: VerifiedFacts, subject: _Subject) -> list[str]:
         reasons.append("absence not proven: source snapshot listing incomplete")
     else:
         reasons += _absence(path, snapshot.tree, "source snapshot")
-    reasons += _absence(path, facts.head_listing, "head_sha listing")
+    reasons += _head_absence(path, facts)
     return reasons
+
+
+def _head_absence(path: str, facts: VerifiedFacts) -> list[str]:
+    """(2) Absence at ``head_sha``: only provable from a listing that holds the
+    artifact itself as a blob (an empty or foreign listing proves nothing)."""
+    artifact = facts.binding.artifact_path
+    if not any(r.path == artifact and r.type == "blob" for r in facts.head_listing):
+        return [f"head listing lacks {artifact}; absence at head_sha not provable"]
+    return _absence(path, facts.head_listing, "head_sha listing")
 
 
 def _from_form(instruction: Instruction) -> list[str]:
@@ -490,7 +512,7 @@ def _ignore_same(hashes: Hashes) -> bool:
     both sides."""
     (ci_path, ci_sha), (local_path, local_sha) = hashes
     if ci_path is None and local_path is None:
-        return True
+        return ci_sha is None and local_sha is None  # a hash needs a path
     return ci_path == local_path and ci_sha is not None and ci_sha == local_sha
 
 
@@ -567,6 +589,9 @@ def _bind_ci(
             reasons.append(f"CI span {found.lines} is not R's CI instruction")
         if found.lines != lines:
             reasons.append(f"CI span {found.lines} is not the defect at {lines}")
+        key = _instruction_key(found.step_text or "")
+        if key != subject.instruction.text:
+            reasons.append(f"CI block {key} is not the defect instruction")
         obj, why = _bind_object(found.path, subject, "CI")
         reasons += why
         return (_Side(row, found, obj) if not reasons else None), reasons
