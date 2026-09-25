@@ -180,6 +180,22 @@ runs, and a matcher separately binds a real diagnostic to the corrected instruct
 
 ## 4. The proposal
 
+**Strict form, file-wide, first** (stage 3 ruling, 2026-09-25). Our Dockerfile reader
+and Buildah split instructions differently on some inputs; review rounds of stage 3
+reproduced such divergences on real Podman builds (a heredoc opener, a form feed or a
+lone `\r` after a line-ending `\`, quoted heredoc delimiters, a BOM before
+`# escape=`), and each let an instruction hide from our reader. Rather than patching
+divergences one by one, one allow-list gate (`fix/reading.py::strict_form_reason`) runs
+on the whole Dockerfile before anything else in the COPY envelope (§4.1), the FROM
+transformations (§4.2) and the local matchers (§6.3). It refuses: a BOM; bytes that are
+not UTF-8; line endings other than `\n` / `\r\n` (any other `\r`); control characters
+other than tab and vertical whitespace (`\x0b`, `\x0c`, `\x1c`–`\x1f`, `\x85`,
+U+2028, U+2029); `<<` anywhere, comments and quotes included; any parser directive
+(`# <word>=` before the first instruction, `# syntax=` included); and anything but
+spaces or tabs after a line-ending `\`. A refusal is `fix method not established` in
+§4.1, no proposal in §4.2 and `binding ambiguous` in §6.3. This narrows coverage on
+purpose; a rule is loosened only with a recording that shows both readers agree.
+
 ### 4.1 `missing_copy_source` — the model proposes, a closed envelope admits
 
 **Envelope** (deterministic; any failure → `stopped: fix method not established` with
@@ -435,7 +451,7 @@ What the recordings and the reading show, and every rule below relies on:
   by its rebuilt display form); otherwise → `binding ambiguous`, decided before any output
   is read. That comparison is sound only in the modelled form, so it is refused
   (`binding ambiguous`) when the whole corrected Dockerfile fails the fix-wide reading
-  checks (`fix/reading.py`: a continuation without a preceding blank, a keyword not
+  checks (`fix/reading.py`: the strict form of §4, a continuation without a preceding blank, a keyword not
   separated by a space, a comment inside a continuation, an unmodelled escape
   directive), or when any instruction of the kind's family (FROM; COPY and ADD) holds
   `$`, a quote or a backslash, is a COPY/ADD heredoc or JSON form, or is a FROM with a

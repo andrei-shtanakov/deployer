@@ -505,6 +505,26 @@ def test_no_container_runtime_is_no_local_confirmation(run5: Case) -> None:
         "no local confirmation",
         "no container runtime found",
     )
+    _assert_no_commit(doc)
+
+
+def test_unmatched_build_output_commits_nothing(run5: Case) -> None:
+    """The build ran but the enabled row does not confirm: no fix commit,
+    and the worktree stays clean at ``input.head``."""
+    run5.set_build("STEP 1/1: FROM other:1\n")
+    doc = run5.run()
+    assert doc.stop_reason == "no local confirmation"
+    assert doc.local_proof is not None
+    assert doc.local_proof.evidence[0]["evidence"] != "passed"
+    _assert_no_commit(doc)
+
+
+def _assert_no_commit(doc: FixDocument) -> None:
+    """A stop before the commit leaves no fix commit and a clean worktree."""
+    assert doc.publication is not None and doc.publication.fix_commit is None
+    worktree = Path(doc.publication.worktree)
+    assert _status(worktree) == ""
+    assert git(worktree, "rev-parse", "HEAD") == doc.input.head
 
 
 def test_a_docker_backend_is_no_local_confirmation(run5: Case) -> None:
