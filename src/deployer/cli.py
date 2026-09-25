@@ -9,6 +9,7 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
+from deployer.admission import AdmissionSection, decide, prepare
 from deployer.author import author_dockerfile, deployer_version
 from deployer.bench import (
     CloneError,
@@ -569,6 +570,13 @@ def _print_reproduction(section: ReproductionSection) -> None:
         print(f"  try: {section.try_dir}")
 
 
+def _print_admission(admission: AdmissionSection) -> None:
+    """The admission verdict and each unmet condition (A §6.2)."""
+    print(f"admission: {admission.verdict}")
+    for item in admission.unmet:
+        print(f"  unmet ({item.condition}): {item.reason}")
+
+
 def _cmd_diagnose(args: argparse.Namespace) -> int:
     error = _diagnose_flag_error(args)
     if error:
@@ -596,6 +604,7 @@ def _cmd_diagnose(args: argparse.Namespace) -> int:
     diagnosis = diagnose_run(result)
     _print_diagnosis(diagnosis)
     section: ReproductionSection | None = None
+    admission: AdmissionSection | None = None
     if args.reproduce:
         try:
             rt = resolve_runtime(args.container_tool, None)
@@ -613,13 +622,18 @@ def _cmd_diagnose(args: argparse.Namespace) -> int:
                 build_timeout=args.build_timeout,
                 max_archive_mb=args.max_archive_mb,
             )
+            _print_reproduction(section)
+            if section.status == "attempted":
+                admission = decide(prepare(result, section, Path.cwd(), os.environ))
+                _print_admission(admission)
         except TryDirError as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 2
-        _print_reproduction(section)
     if args.output_file is not None:
         try:
-            Path(args.output_file).write_text(render_verdict(diagnosis, section))
+            Path(args.output_file).write_text(
+                render_verdict(diagnosis, section, admission)
+            )
         except OSError as exc:
             print(f"error: cannot write {args.output_file}: {exc}", file=sys.stderr)
             return 2

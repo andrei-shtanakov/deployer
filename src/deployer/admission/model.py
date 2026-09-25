@@ -18,13 +18,19 @@ DefectClass = Literal["missing_copy_source", "from_argument_count"]
 
 
 class Binding(BaseModel):
-    """The state the admission holds for (A §6.2): always present."""
+    """The state the admission holds for (A §6.2): always present.
+
+    ``artifact_sha256`` is ``None`` only when the artifact's bytes at
+    ``head_sha`` could not be read (missing, or behind a symlink): a hash of a
+    file that cannot be read is not obtained, so it is absent (A §1). An
+    ``admitted`` section always carries it.
+    """
 
     model_config = ConfigDict(extra="forbid")
     repo: str
     head_sha: str
     artifact_path: str
-    artifact_sha256: str
+    artifact_sha256: str | None
 
 
 class Ownership(BaseModel):
@@ -170,6 +176,8 @@ class AdmissionSection(BaseModel):
                 raise ValueError("admitted requires a defect and a link")
             if self.unmet:
                 raise ValueError("admitted requires an empty unmet list")
+            if self.binding.artifact_sha256 is None:
+                raise ValueError("admitted requires the binding's artifact_sha256")
         if self.verdict == "insufficient_grounds":
             if not self.unmet:
                 raise ValueError("insufficient_grounds requires a non-empty unmet list")

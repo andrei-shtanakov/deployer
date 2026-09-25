@@ -35,8 +35,8 @@ from deployer.reproduce.model import (
 )
 from deployer.reproduce.run import reproduce_run
 from deployer.reproduce.shape import job_text
+from tests.reproduce.bundles import BUNDLES, BundleGh, _containers
 from tests.reproduce.conftest import FakeContainers
-from tests.reproduce.test_acceptance import BUNDLES, BundleGh, _containers
 
 COPY_LINE = 11
 """``COPY docs/setup.md ./setup.md`` in ``run-1/tree/Dockerfile``."""

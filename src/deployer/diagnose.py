@@ -38,6 +38,7 @@ from pydantic import TypeAdapter
 if TYPE_CHECKING:
     from deployer.reproduce.model import ReproductionSection
 
+from deployer.admission.model import ADMISSION_VERDICT_SCHEMA_VERSION, AdmissionSection
 from deployer.forge import (
     Completeness,
     Evidence,
@@ -459,7 +460,9 @@ _diagnosis_adapter: TypeAdapter[RunDiagnosis] = TypeAdapter(RunDiagnosis)
 
 
 def render_verdict(
-    diagnosis: RunDiagnosis, reproduction: "ReproductionSection | None" = None
+    diagnosis: RunDiagnosis,
+    reproduction: "ReproductionSection | None" = None,
+    admission: AdmissionSection | None = None,
 ) -> str:
     """Serialize a verdict document as versioned JSON (``deployer diagnose``).
 
@@ -470,14 +473,25 @@ def render_verdict(
     reads schema 1.2 (additive); without it, the verdict's own keys are
     unchanged from 1.1 — the nested ``run`` snapshot is schema 1.3 either
     way, so the document as a whole is not byte-identical to a 1.1 one.
+    With ``admission`` also given (A §6.2), it gains an ``admission`` key and
+    reads schema 1.3, additive over 1.2; an admission needs a reproduction.
     """
     payload = _diagnosis_adapter.dump_python(diagnosis, mode="json")
     if reproduction is None:
-        document = {"verdict_schema_version": VERDICT_SCHEMA_VERSION, **payload}
-    else:
-        document = {
-            "verdict_schema_version": REPRODUCTION_VERDICT_SCHEMA_VERSION,
-            **payload,
-            "reproduction": reproduction.model_dump(mode="json"),
-        }
+        if admission is not None:
+            raise ValueError("an admission section needs a reproduction section")
+        return _dump({"verdict_schema_version": VERDICT_SCHEMA_VERSION, **payload})
+    document = {
+        "verdict_schema_version": REPRODUCTION_VERDICT_SCHEMA_VERSION,
+        **payload,
+        "reproduction": reproduction.model_dump(mode="json"),
+    }
+    if admission is not None:
+        document["verdict_schema_version"] = ADMISSION_VERDICT_SCHEMA_VERSION
+        document["admission"] = admission.model_dump(mode="json")
+    return _dump(document)
+
+
+def _dump(document: dict[str, object]) -> str:
+    """The document as indented JSON with a trailing newline."""
     return json.dumps(document, indent=2) + "\n"

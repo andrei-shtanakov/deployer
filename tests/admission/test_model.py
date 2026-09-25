@@ -345,3 +345,13 @@ def test_step4_refusal_serialises_with_its_fingerprint(
     restored = AdmissionSection.model_validate_json(section.model_dump_json())
     assert restored == section
     assert restored.ownership.key_fingerprint == facts.key_fingerprint
+
+
+def test_artifact_hash_not_obtained_is_absent_and_never_admitted() -> None:
+    """A §1: the hash of an unreadable artifact is absent, not invented; a
+    section without it cannot be ``admitted``."""
+    unread = _BINDING.model_copy(update={"artifact_sha256": None})
+    refused = AdmissionSection.model_validate(_refused(binding=unread))
+    assert refused.model_dump(mode="json")["binding"]["artifact_sha256"] is None
+    with pytest.raises(ValidationError, match="artifact_sha256"):
+        AdmissionSection.model_validate(_admitted(binding=unread))

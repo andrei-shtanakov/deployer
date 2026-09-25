@@ -7,17 +7,16 @@ no-follow walk: a committed symlink anywhere on the path, or a non-regular
 file at its end, is refused rather than followed out of the tree.
 """
 
-import errno
 import json
 import os
 import re
-import stat
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
 from pydantic import ValidationError
 
+from deployer.admission.fsread import read_in_tree
 from deployer.provenance import sshsig
 from deployer.provenance.model import (
     FORMAT_VERSION,
@@ -36,8 +35,6 @@ from deployer.provenance.sshsig import SshSigError
 from deployer.provenance.trust import ALLOWED_FILE, REVOKED_FILE, outside
 
 _POINTER_RE = re.compile(rf"{SET_PARENT}/([0-9a-f]{{64}})\n?")
-_DIR_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-_FILE_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
 _SMALL = 1024 * 1024  # cap for the pointer, the record and the signature
 
 
@@ -159,14 +156,14 @@ def _step1_parse(source_dir: Path) -> _SetFiles | str:
     three files; the record validates and the snapshot is a JSON object of
     a supported ``format_version`` (its structure is step 6's)."""
     try:
-        pointer = _read_in_tree(source_dir, f"{SET_ROOT}/{POINTER}", _SMALL)
+        pointer = read_in_tree(source_dir, f"{SET_ROOT}/{POINTER}", _SMALL)
         match = _POINTER_RE.fullmatch(pointer.decode("utf-8", errors="replace"))
         if match is None:
             return f"{POINTER} does not name {SET_PARENT}/<sha256>"
         base = f"{SET_ROOT}/{set_dir_name(match.group(1))}"
-        rec_bytes = _read_in_tree(source_dir, f"{base}/{RECORD_FILE}", _SMALL)
-        snap_bytes = _read_in_tree(source_dir, f"{base}/{SNAPSHOT_FILE}")
-        sig = _read_in_tree(source_dir, f"{base}/{SIGNATURE_FILE}", _SMALL)
+        rec_bytes = read_in_tree(source_dir, f"{base}/{RECORD_FILE}", _SMALL)
+        snap_bytes = read_in_tree(source_dir, f"{base}/{SNAPSHOT_FILE}")
+        sig = read_in_tree(source_dir, f"{base}/{SIGNATURE_FILE}", _SMALL)
         _supported_object(RECORD_FILE, rec_bytes)
         _supported_object(SNAPSHOT_FILE, snap_bytes)
         record = Record.model_validate_json(rec_bytes)
@@ -231,7 +228,7 @@ def _step4_artifact(
     """The record covers exactly the artifact bytes at ``head_sha``, for the
     run's repository and path."""
     try:
-        artifact = _read_in_tree(source_dir, artifact_path)
+        artifact = read_in_tree(source_dir, artifact_path)
     except (OSError, ValueError) as exc:  # ValueError: not encodable for the OS
         return f"artifact {exc}"
     actual = sha256_hex(artifact)
@@ -279,56 +276,3 @@ def _step6_snapshot(files: _SetFiles) -> Snapshot | str:
             f"snapshot {snapshot.source_commit}"
         )
     return snapshot
-
-
-class _Unreadable(OSError):
-    """A path in the checked tree that is not read: missing, not a plain
-    relative path, behind a symlink, or not a regular file."""
-
-
-def _read_in_tree(root: Path, rel: str, max_bytes: int | None = None) -> bytes:
-    """The bytes of regular file ``rel`` under ``root``, opened one
-    component at a time without following any symlink; a file longer than
-    ``max_bytes`` is refused."""
-    if "\x00" in rel:
-        raise _Unreadable(f"{rel!r} contains a NUL byte")
-    parts = rel.split("/")
-    if any(part in ("", ".", "..") for part in parts):
-        raise _Unreadable(f"{rel} is not a plain relative path")
-    dir_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
-    try:
-        for depth, name in enumerate(parts[:-1], start=1):
-            sub = "/".join(parts[:depth])
-            next_fd = _open_at(dir_fd, name, _DIR_FLAGS, sub, "a directory")
-            os.close(dir_fd)
-            dir_fd = next_fd
-        fd = _open_at(dir_fd, parts[-1], _FILE_FLAGS, rel, "a regular file")
-    finally:
-        os.close(dir_fd)
-    try:
-        regular = stat.S_ISREG(os.fstat(fd).st_mode)
-    except OSError:
-        os.close(fd)
-        raise
-    if not regular:
-        os.close(fd)
-        raise _Unreadable(f"{rel} is not a regular file; not read")
-    with os.fdopen(fd, "rb") as f:
-        data = f.read() if max_bytes is None else f.read(max_bytes + 1)
-    if max_bytes is not None and len(data) > max_bytes:
-        raise _Unreadable(f"{rel} exceeds {max_bytes} bytes; not read")
-    return data
-
-
-def _open_at(dir_fd: int, name: str, flags: int, rel: str, kind: str) -> int:
-    """``openat`` with no-follow flags, mapping refusals to ``_Unreadable``."""
-    try:
-        return os.open(name, flags, dir_fd=dir_fd)
-    except FileNotFoundError:
-        raise _Unreadable(f"{rel} is missing") from None
-    except OSError as exc:
-        if exc.errno in (errno.ELOOP, errno.ENOTDIR):
-            raise _Unreadable(
-                f"{rel} is a symlink or not {kind}; not followed"
-            ) from None
-        raise
