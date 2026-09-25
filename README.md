@@ -300,9 +300,10 @@ The earlier refusals are still possible and behave as designed — `no admission
 method not established`, `no proposal` and `commit blocked` all still fire on the inputs
 that trigger them; only the recording-backed proof past them is unreachable. CI
 confirmation is gated the same way, one stage later (design §11 stages 3–4):
-`deployer fix confirm` reports `ci_confirmation_insufficient: templates not enabled` and
-never reaches `ci_confirmed` while its own templates are disabled — `fix confirm` never
-confirms while its templates are disabled.
+`deployer fix confirm` never reaches `ci_confirmed` while its templates are disabled.
+It still reports the other insufficient reasons (`no qualifying run`, `defect recurred`,
+`qualification undetermined`, …) where they apply; when a qualifying attempt is otherwise
+clean, the reason is `templates not enabled`.
 
 Exit codes: `fix` — `0` `locally_confirmed`, `1` `stopped`, `2` invalid invocation or
 local I/O; `fix publish` — `0` pushed and a PR created or found, `1` refused, `2` local
