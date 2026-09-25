@@ -116,6 +116,7 @@ def _base(case: str) -> VerifiedFacts:
         reproduction=_replay(case),
         parsed=parse(dockerfile.decode()),
         head_listing=listing,
+        head_listing_complete=True,
         ci_text=job_text(run.jobs[0]),
         ci_evidence_file="ci.log",
         local_stdout=(bundle / "local.stdout").read_text(),
@@ -508,6 +509,15 @@ D_CASES: list[tuple[str, str, Mutation, int, str]] = [
         _set(head_listing=[]),
         2,
         "head listing lacks Dockerfile; absence at head_sha not provable",
+    ),
+    # T11 fix round 1: a listing R marked truncated proves no absence, even
+    # with every other fact exact
+    (
+        "incomplete_head_listing",
+        "run-1",
+        _set(head_listing_complete=False),
+        2,
+        "head_sha listing incomplete; absence not provable",
     ),
     # fix round 1: "absent on both sides" means all four values are None
     (

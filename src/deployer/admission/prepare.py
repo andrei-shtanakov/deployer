@@ -7,8 +7,8 @@ R left for the same attempt and nothing else:
   (A §2.4), the artifact's bytes and the ignore files' content hashes (A
   §4.3), all read through the no-follow reader;
 - R's ``source.json`` — the ``head_sha`` listing, passed through as R stored
-  it (a truncated listing is not replaced; R already marked the restoration
-  an approximation for it);
+  it, with its completeness (a truncated listing is not replaced; the
+  decision refuses absence over it);
 - R's reproduction section — the job it compared, the effective ignore paths
   it compared (``values["ignore_file"]``), the local backend's ``# syntax=``
   directive and the build output files;
@@ -37,6 +37,9 @@ from deployer.reproduce import dockerfile, shape
 from deployer.reproduce.model import ReproductionSection
 from deployer.reproduce.run import TryDirError, _write_text
 
+FRONTEND_ARG = "BUILDKIT_SYNTAX"
+"""The build arg that switches BuildKit to another frontend (a dialect)."""
+BUILD_ARG_FLAG = "--build-arg"
 CI_LOG = "ci.log"
 """The CI job text's file in the try directory, next to ``build.stdout``."""
 
@@ -65,6 +68,7 @@ def prepare(
     _write_text(try_dir / CI_LOG, ci_text)
     artifact = _tree_bytes(source_dir, artifact_path)
     stdout, stderr = _build_output(try_dir, section)
+    listing, complete = _head_listing(attempt_dir, snapshot.head_sha)
     environment = section.environment
     return VerifiedFacts(
         binding=Binding(
@@ -82,19 +86,42 @@ def prepare(
         ),
         reproduction=section,
         parsed=dockerfile.parse(_as_r_reads(artifact or b"")),
-        head_listing=_head_listing(attempt_dir, snapshot.head_sha),
+        head_listing=listing,
+        head_listing_complete=complete,
         ci_text=ci_text,
         ci_evidence_file=CI_LOG,
         local_stdout=stdout,
         local_stderr=stderr,
         ignore_hashes=_ignore_hashes(source_dir, section),
-        # R records no CI-side directive (it reads only the Dockerfile, whose
-        # own directive ``parsed`` carries); the local one is its environment's.
-        syntax_directive_ci=None,
+        syntax_directive_ci=_ci_frontend(section),
         syntax_directive_local=(
             environment.syntax_directive if environment is not None else None
         ),
     )
+
+
+def _ci_frontend(section: ReproductionSection) -> str | None:
+    """CI's frontend switch: ``BUILDKIT_SYNTAX`` among the build args of CI's
+    build line, which R replays into its recorded ``build.argv`` (both
+    ``--build-arg K=V`` and ``--build-arg=K=V`` normalise to the first form).
+    BuildKit honours it, Podman does not: a dialect R's local side cannot
+    see. The Dockerfile's own ``# syntax=`` is ``parsed``'s; the last such
+    argument wins, as for any build arg."""
+    if section.build is None:
+        return None
+    argv = section.build.argv
+    found: list[str] = []
+    for index, token in enumerate(argv):
+        if token == BUILD_ARG_FLAG and index + 1 < len(argv):
+            value = argv[index + 1]
+        elif token.startswith(f"{BUILD_ARG_FLAG}="):
+            value = token.removeprefix(f"{BUILD_ARG_FLAG}=")
+        else:
+            continue
+        key, sep, frontend = value.partition("=")
+        if key == FRONTEND_ARG and sep:
+            found.append(frontend)
+    return found[-1] if found else None
 
 
 def _job(snapshot: FailedRun, job_id: int) -> FailedJob:
@@ -134,18 +161,18 @@ def _build_output(try_dir: Path, section: ReproductionSection) -> tuple[str, str
 
 
 def _read_record(path: Path) -> str:
-    """A text file R wrote, newlines untranslated; unreadable → TryDirError."""
+    """A text file R wrote (UTF-8, newlines untranslated); unreadable →
+    TryDirError."""
     try:
-        with path.open(newline="") as f:
+        with path.open(encoding="utf-8", newline="") as f:
             return f.read()
     except (OSError, UnicodeDecodeError) as exc:
         raise TryDirError(f"cannot read {path}: {exc}") from exc
 
 
-def _head_listing(attempt_dir: Path, head_sha: str) -> list[TreeRow]:
+def _head_listing(attempt_dir: Path, head_sha: str) -> tuple[list[TreeRow], bool]:
     """The ``head_sha`` listing R stored in ``source.json`` for this attempt,
-    as stored (a truncated one included: its flag already made R's
-    restoration an approximation)."""
+    as stored, and whether it is complete (R's ``truncated`` flag negated)."""
     meta = attempt_dir / "source.json"
     try:
         data = json.loads(meta.read_text())
@@ -155,7 +182,11 @@ def _head_listing(attempt_dir: Path, head_sha: str) -> list[TreeRow]:
             raise TryDirError(
                 f"{meta} names {data.get('head_sha')}, the run is at {head_sha}"
             )
-        return [TreeRow(**entry) for entry in data["listing"]["entries"]]
+        listing = data["listing"]
+        truncated = listing["truncated"]
+        if not isinstance(truncated, bool):
+            raise TryDirError(f"cannot read {meta}: truncated is not a boolean")
+        return [TreeRow(**entry) for entry in listing["entries"]], not truncated
     except TryDirError:
         raise
     except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:

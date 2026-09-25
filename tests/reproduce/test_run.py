@@ -347,3 +347,39 @@ def test_a_well_formed_but_wrong_source_json_is_a_try_dir_error(
     source.write_text(content)
     with pytest.raises(TryDirError, match="cannot read"):
         _go(tmp_path, tree, fake_containers)
+
+
+def test_write_text_is_utf8_with_untranslated_newlines(tmp_path: Path) -> None:
+    """T11 fix round 1: the shared writer does not depend on the locale (a
+    Latin-1 locale cannot carry ``€``) and keeps ``\\r\\n`` as written. Run in
+    a child under a Latin-1 locale: the file encoding is fixed at startup."""
+    import os
+    import subprocess
+    import sys
+
+    path = tmp_path / "ci.log"
+    code = (
+        "import locale, sys\n"
+        "from pathlib import Path\n"
+        "from deployer.reproduce.run import _write_text\n"
+        "if locale.getencoding().upper().replace('-', '') != 'ISO88591':\n"
+        "    sys.exit(77)\n"
+        "_write_text(Path(sys.argv[1]), 'ł € ok\\r\\nnext')\n"
+    )
+    env = {**os.environ, "LC_ALL": "en_US.ISO8859-1", "PYTHONUTF8": "0"}
+    done = subprocess.run(
+        [sys.executable, "-c", code, str(path)], env=env, capture_output=True
+    )
+    if done.returncode == 77:
+        pytest.skip("no Latin-1 locale on this host")
+    assert done.returncode == 0, done.stderr.decode(errors="replace")
+    assert path.read_bytes() == "ł € ok\r\nnext".encode()
+
+
+def test_unencodable_text_is_a_try_dir_error(tmp_path: Path) -> None:
+    """T11 fix round 1: a lone surrogate cannot be encoded even as UTF-8; it
+    is a try-directory write failure (exit 2), not a traceback."""
+    from deployer.reproduce.run import _write_text
+
+    with pytest.raises(TryDirError, match="cannot write"):
+        _write_text(tmp_path / "ci.log", "bad \udc80 byte")

@@ -6,7 +6,14 @@ from pathlib import Path
 
 import pytest
 
-from deployer.admission.model import AdmissionSection, Ownership, Unmet
+from deployer.admission.model import (
+    AdmissionSection,
+    Defect,
+    Link,
+    Ownership,
+    SideLink,
+    Unmet,
+)
 from deployer.admission.model import Binding as AdmissionBinding
 from deployer.diagnose import diagnose_run, render_verdict
 from deployer.forge import FailedRun, load_snapshot
@@ -68,3 +75,34 @@ def test_admission_without_reproduction_is_rejected(
 ) -> None:
     with pytest.raises(ValueError, match="reproduction"):
         render_verdict(diagnose_run(authoring_snapshot), None, _admission())
+
+
+def test_admitted_defect_renders_class_on_the_wire(
+    authoring_snapshot: FailedRun,
+) -> None:
+    """A §6.2: the rendered document names the defect's ``class``, never
+    the Python attribute ``cls``."""
+    side = SideLink(
+        row="copy-missing/buildkit",
+        object="src",
+        evidence_file="ci.log",
+        evidence_lines=[1],
+    )
+    admitted = AdmissionSection(
+        verdict="admitted",
+        binding=_admission().binding,
+        ownership=Ownership(
+            status="confirmed",
+            key_fingerprint="SHA256:k",
+            record_sha256="c" * 64,
+            snapshot_sha256="d" * 64,
+        ),
+        defect=Defect(
+            cls="missing_copy_source", file="Dockerfile", lines=(2, 2), object="src"
+        ),
+        link=Link(ci=side, local=side, differences=[]),
+    )
+    section = ReproductionSection(status="refused", refusal="x", try_dir="t")
+    text = render_verdict(diagnose_run(authoring_snapshot), section, admitted)
+    defect = json.loads(text)["admission"]["defect"]
+    assert defect["class"] == "missing_copy_source" and "cls" not in defect

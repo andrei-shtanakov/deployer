@@ -88,7 +88,8 @@ class VerifiedFacts:
 
     ``ignore_hashes`` is ``((ci_path, ci_sha256), (local_path,
     local_sha256))`` of the effective ignore files; ``head_listing`` is the
-    ``head_sha`` tree listing R stored in ``source.json``.
+    ``head_sha`` tree listing R stored in ``source.json``, and
+    ``head_listing_complete`` is ``False`` when R marked it truncated.
     """
 
     binding: Binding
@@ -96,6 +97,7 @@ class VerifiedFacts:
     reproduction: ReproductionSection
     parsed: ParsedDockerfile
     head_listing: list[TreeRow]
+    head_listing_complete: bool
     ci_text: str
     ci_evidence_file: str
     local_stdout: str
@@ -288,8 +290,11 @@ def _defect_reasons(facts: VerifiedFacts, subject: _Subject) -> list[str]:
 
 
 def _head_absence(path: str, facts: VerifiedFacts) -> list[str]:
-    """(2) Absence at ``head_sha``: only provable from a listing that holds the
-    artifact itself as a blob (an empty or foreign listing proves nothing)."""
+    """(2) Absence at ``head_sha``: only provable from a complete listing that
+    holds the artifact itself as a blob (a truncated, empty or foreign
+    listing proves nothing)."""
+    if not facts.head_listing_complete:
+        return ["head_sha listing incomplete; absence not provable"]
     artifact = facts.binding.artifact_path
     if not any(r.path == artifact and r.type == "blob" for r in facts.head_listing):
         return [f"head listing lacks {artifact}; absence at head_sha not provable"]

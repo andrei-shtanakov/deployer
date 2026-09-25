@@ -360,16 +360,19 @@ def _write(try_dir: Path, section: ReproductionSection) -> ReproductionSection:
 
 
 def _write_text(path: Path, text: str) -> None:
-    """``path.write_text(text)``, an ``OSError`` raised as a :class:`TryDirError`.
+    """``text`` written as UTF-8, newlines untranslated; an ``OSError`` or a
+    ``UnicodeError`` raised as a :class:`TryDirError`.
 
     Every write here happens after the try directory already exists (the
-    manifest, ``build.std{out,err}``, ``check.std{out,err}``); a disk-full or
-    permission failure at that point must exit 2 like the other §6
-    try-directory failures, not surface as an uncaught traceback.
+    manifest, ``build.std{out,err}``, ``check.std{out,err}``, admission's
+    ``ci.log``); a disk-full or permission failure — or text the encoding
+    cannot carry (a lone surrogate) — must exit 2 like the other §6
+    try-directory failures, not surface as an uncaught traceback. UTF-8, not
+    the locale's encoding, so a CI log never fails on a Latin-1 locale.
     """
     try:
-        path.write_text(text)
-    except OSError as exc:
+        path.write_text(text, encoding="utf-8", newline="")
+    except (OSError, UnicodeError) as exc:
         raise TryDirError(f"cannot write {path}: {exc}") from exc
 
 

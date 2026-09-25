@@ -16,13 +16,17 @@ from deployer import runtime as runtime_mod
 from deployer.admission import decide, prepare
 from deployer.admission.ownership import verify_ownership
 from deployer.forge import FailedRun, load_snapshot
+from deployer.models import ContainerRuntime
 from deployer.provenance.model import TreeRow
+from deployer.reproduce import shape as shape_mod
+from deployer.reproduce.build import run_build
+from deployer.reproduce.buildline import BuildConfig, parse_build_line
 from deployer.reproduce.model import ReproductionSection
 from deployer.reproduce.run import TryDirError, _make_writable, reproduce_run
 from deployer.reproduce.shape import job_text
 from tests.admission.conftest import REPO, AdmissionSet
 from tests.reproduce.bundles import BUNDLES, BundleGh, _containers
-from tests.reproduce.conftest import FakeContainers
+from tests.reproduce.conftest import FakeContainers, proc
 
 
 @dataclass(frozen=True)
@@ -106,6 +110,7 @@ def test_run_1_facts_are_rs_own(
     assert facts.head_listing == stored
     bundle_listing = json.loads((r.bundle / "tree-listing.json").read_text())
     assert facts.head_listing == [TreeRow(**e) for e in bundle_listing["tree"]]
+    assert facts.head_listing_complete is True
     # (3) ci_text is the job R compared; ci.log is exactly that text
     assert r.section.binding is not None
     job = next(j for j in r.run.jobs if j.job_id == r.section.binding.job_id)
@@ -181,8 +186,9 @@ def test_symlinked_ignore_file_has_no_hash(
 def test_truncated_listing_passes_through_and_is_not_admitted(
     tmp_path: Path, fake_containers: FakeContainers
 ) -> None:
-    """Ruling 1: R's listing, marked truncated, is used as stored; the
-    decision then refuses (R marked the restoration an approximation)."""
+    """Ruling 1: R's listing, marked truncated, is used as stored and
+    reported incomplete; the decision refuses absence over it (2), besides
+    R's approximate restoration (3)."""
     bundle = tmp_path / "bundle-src"
     shutil.copytree(BUNDLES / "run-1", bundle)
     listing = json.loads((bundle / "tree-listing.json").read_text())
@@ -202,10 +208,12 @@ def test_truncated_listing_passes_through_and_is_not_admitted(
     )
     facts = prepare(run, section, root, _env(tmp_path))
     assert facts.head_listing == [TreeRow(**e) for e in listing["tree"]]
+    assert facts.head_listing_complete is False
     admission = decide(facts)
     assert admission.verdict == "insufficient_grounds"
-    link = next(u for u in admission.unmet if u.condition == 3)
-    assert "restoration approximation, not exact" in link.reason
+    reasons = {u.condition: u.reason for u in admission.unmet}
+    assert "head_sha listing incomplete; absence not provable" in reasons[2]
+    assert "restoration approximation, not exact" in reasons[3]
 
 
 def test_source_json_of_another_sha_is_a_try_dir_error(
@@ -297,3 +305,70 @@ def test_end_to_end_issued_set_is_confirmed(
     assert facts.binding.artifact_sha256 == _sha(artifact)
     record = facts.ownership.record
     assert record is not None and record.artifact_sha256 == _sha(artifact)
+
+
+@pytest.mark.parametrize(
+    "build_arg",
+    [
+        ["--build-arg", "BUILDKIT_SYNTAX=docker/dockerfile:1.7"],
+        ["--build-arg=BUILDKIT_SYNTAX=docker/dockerfile:1.7"],
+    ],
+)
+def test_ci_frontend_build_arg_is_a_ci_dialect(
+    tmp_path: Path, fake_containers: FakeContainers, build_arg: list[str]
+) -> None:
+    """T11 fix round 1: ``BUILDKIT_SYNTAX`` switches CI's frontend (Podman
+    ignores it), so it is CI's dialect and the link is refused at (3)."""
+    r = _replay("run-1", tmp_path, fake_containers)
+    assert r.section.build is not None
+    argv = r.section.build.argv
+    build = r.section.build.model_copy(
+        update={"argv": [*argv[:2], *build_arg, *argv[2:]]}
+    )
+    section = r.section.model_copy(update={"build": build})
+    facts = prepare(r.run, section, r.root, _env(tmp_path))
+    assert facts.syntax_directive_ci == "docker/dockerfile:1.7"
+    reasons = {u.condition: u.reason for u in decide(facts).unmet}
+    assert "unknown dialect: # syntax=docker/dockerfile:1.7 (CI)" in reasons[3]
+
+
+def test_rs_argv_carries_both_build_arg_forms_as_pairs(
+    tmp_path: Path, fake_containers: FakeContainers
+) -> None:
+    """R's parser accepts ``--build-arg=K=V`` and ``--build-arg K=V``; the
+    argv R records carries each as the pair ``prepare`` reads."""
+    config = parse_build_line(
+        "docker build --build-arg=BUILDKIT_SYNTAX=a --build-arg BUILDKIT_SYNTAX=b ."
+    )
+    assert isinstance(config, BuildConfig)
+    fake_containers.responses[("build",)] = proc(0)
+    run = run_build(
+        ContainerRuntime(tool="podman"), tmp_path, config, "localhost/t", 60
+    )
+    assert ["--build-arg", "BUILDKIT_SYNTAX=a"] == run.argv[4:6]
+    assert ["--build-arg", "BUILDKIT_SYNTAX=b"] == run.argv[6:8]
+
+
+def test_no_frontend_build_arg_means_no_ci_dialect(
+    tmp_path: Path, fake_containers: FakeContainers
+) -> None:
+    """Another build arg (or a key merely prefixed alike) is not a switch."""
+    r = _replay("run-1", tmp_path, fake_containers)
+    assert r.section.build is not None
+    argv = r.section.build.argv
+    extra = ["--build-arg", "BUILDKIT_SYNTAXX=x", "--build-arg", "V=1"]
+    build = r.section.build.model_copy(update={"argv": [*argv[:2], *extra]})
+    section = r.section.model_copy(update={"build": build})
+    facts = prepare(r.run, section, r.root, _env(tmp_path))
+    assert facts.syntax_directive_ci is None
+
+
+def test_unencodable_ci_text_is_a_try_dir_error(
+    tmp_path: Path, fake_containers: FakeContainers, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """T11 fix round 1: ``ci.log`` that cannot be encoded is R's try-dir
+    exit 2, not a traceback out of ``diagnose``."""
+    r = _replay("run-1", tmp_path, fake_containers)
+    monkeypatch.setattr(shape_mod, "job_text", lambda job: "bad \udc80 byte")
+    with pytest.raises(TryDirError, match="cannot write"):
+        prepare(r.run, r.section, r.root, _env(tmp_path))
