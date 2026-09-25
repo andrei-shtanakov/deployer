@@ -1,0 +1,215 @@
+"""CI evidence of one attempt, recurrence, and the evaluation (design §7.3–§7.4).
+
+:func:`attempt_evidence` reads the log of the job an attempt was qualified
+on: positive evidence is :func:`deployer.fix.templates.match_ci` returning
+``passed``; recurrence is the admitted class's admission matcher
+(:mod:`deployer.admission.templates`) binding to the corrected instruction's
+line span, whatever its object. A non-qualified attempt becomes evidence
+through :func:`from_qualification`, so nothing is dropped between
+qualification and evaluation.
+
+:func:`evaluate` is order-independent and turns every attempt's evidence
+into ``ci_confirmed`` or ``ci_confirmation_insufficient`` with one reason
+from the closed §7.5 list. Neither function raises.
+"""
+
+from dataclasses import dataclass
+from typing import Any, Literal
+
+from deployer.admission.model import DefectClass
+from deployer.admission.templates import (
+    CopyMatch,
+    FromMatch,
+    match_copy_ci,
+    match_from_ci,
+)
+from deployer.fix import templates
+from deployer.fix.qualify import Qualification, Qualified
+from deployer.forge import Completeness, FailedJob, _build_job
+from deployer.reproduce.shape import job_text
+
+Outcome = Literal["ci_confirmed", "ci_confirmation_insufficient"]
+
+UNDETERMINED = "qualification undetermined"
+CONTRADICTORY = "contradictory runs"
+RECURRED = "defect recurred"
+NO_QUALIFYING = "no qualifying run"
+NOT_ENABLED = "templates not enabled"
+NOT_REACHED = "build step not reached"
+UNKNOWN_FORMAT = "unknown format"
+AMBIGUOUS = "binding ambiguous"
+
+_KINDS: dict[str, templates.Kind] = {
+    "missing_copy_source": "copy",
+    "from_argument_count": "from",
+}
+# The most specific reason first, when no attempt is positive or recurred.
+_SPECIFIC: tuple[tuple[templates.Evidence, str], ...] = (
+    ("binding_ambiguous", AMBIGUOUS),
+    ("not_confirmed", NOT_REACHED),
+    ("unknown_format", UNKNOWN_FORMAT),
+    ("not_enabled", NOT_ENABLED),
+)
+
+
+@dataclass(frozen=True)
+class AttemptEvidence:
+    """What one attempt says about the fix.
+
+    ``key`` is ``(run_id, attempt, job key or "")``; ``qualification`` is the
+    attempt's, or ``undetermined`` when a qualified attempt's job text could
+    not be read here. ``lines`` are the template's evidence lines, plus the
+    admission match's when the defect recurred (1-based, in the job text).
+    ``template`` is the CI template's verdict (``None`` when not read).
+    """
+
+    key: tuple[int, int, str]
+    qualification: Qualification
+    positive: bool
+    recurred: bool
+    detail: str | None
+    lines: tuple[int, ...]
+    template: templates.Evidence | None = None
+
+
+def from_qualification(q: Qualified) -> AttemptEvidence:
+    """Evidence of an attempt that was not read for evidence: its
+    qualification and reason, neither positive nor recurred."""
+    return AttemptEvidence(_key(q), q.status, False, False, q.reason, ())
+
+
+def attempt_evidence(
+    q: Qualified,
+    cls: DefectClass,
+    corrected_text: str,
+    lines: tuple[int, int],
+    log: str,
+) -> AttemptEvidence:
+    """Positive evidence and recurrence of one attempt (§7.3).
+
+    ``log`` is the bound job's log as GitHub returns it (``_Gh.logs``);
+    ``lines`` the corrected instruction's Dockerfile span. A non-qualified
+    attempt is :func:`from_qualification`. When the job text cannot be
+    rebuilt from ``log`` — blank, not the text the attempt was qualified on,
+    or any failure — the evidence is ``undetermined`` with the reason.
+    """
+    if q.status != "qualified":
+        return from_qualification(q)
+    try:
+        return _read(q, cls, corrected_text, lines, log)
+    except Exception as exc:  # noqa: BLE001 — totality: never raise
+        return _undetermined(q, f"evidence failed: {type(exc).__name__}: {exc}")
+
+
+def evaluate(
+    evidence: list[AttemptEvidence], listing_complete: bool
+) -> tuple[Outcome, str | None]:
+    """The §7.4 outcome and reason over every attempt's evidence.
+
+    Order-independent. An incomplete listing or any ``undetermined``
+    attempt blocks the claim first; ``excluded`` attempts count toward
+    nothing. Any failure here is ``qualification undetermined``.
+    """
+    try:
+        return _evaluate(evidence, listing_complete)
+    except Exception:  # noqa: BLE001 — totality: never raise
+        return "ci_confirmation_insufficient", UNDETERMINED
+
+
+def _evaluate(
+    evidence: list[AttemptEvidence], listing_complete: bool
+) -> tuple[Outcome, str | None]:
+    """:func:`evaluate` without the totality guard."""
+    if not listing_complete or any(e.qualification == "undetermined" for e in evidence):
+        return "ci_confirmation_insufficient", UNDETERMINED
+    qualified = [e for e in evidence if e.qualification == "qualified"]
+    positive = any(e.positive for e in qualified)
+    recurred = any(e.recurred for e in qualified)
+    if positive and recurred:
+        return "ci_confirmation_insufficient", CONTRADICTORY
+    if recurred:
+        return "ci_confirmation_insufficient", RECURRED
+    if positive:
+        return "ci_confirmed", None
+    if not qualified:
+        return "ci_confirmation_insufficient", NO_QUALIFYING
+    seen = {e.template for e in qualified}
+    reason = next((r for t, r in _SPECIFIC if t in seen), NOT_REACHED)
+    return "ci_confirmation_insufficient", reason
+
+
+def _read(
+    q: Qualified,
+    cls: DefectClass,
+    corrected_text: str,
+    lines: tuple[int, int],
+    log: str,
+) -> AttemptEvidence:
+    """The job text from ``log``, then the template and the recurrence."""
+    job = q.job
+    if job is None or job.all_steps is None:
+        return _undetermined(q, "qualified job has no steps to read its log")
+    if not log.strip():
+        return _undetermined(q, f"log of job {job.job_id} is empty")
+    text = job_text(_rebuilt(job, log))
+    if text != job_text(job):
+        return _undetermined(
+            q, f"log of job {job.job_id} is not the one it was qualified on"
+        )
+    outcome = templates.match_ci(_KINDS[cls], corrected_text, text)
+    recurrence = _recurrence(cls, text, lines)
+    detail = outcome.detail
+    evidence_lines = set(outcome.lines)
+    if recurrence is not None:
+        detail = f"defect recurred at lines {lines[0]}-{lines[1]}"
+        evidence_lines.update(recurrence)
+    return AttemptEvidence(
+        key=_key(q),
+        qualification="qualified",
+        positive=outcome.evidence == "passed",
+        recurred=recurrence is not None,
+        detail=detail,
+        lines=tuple(sorted(evidence_lines)),
+        template=outcome.evidence,
+    )
+
+
+def _recurrence(
+    cls: DefectClass, text: str, lines: tuple[int, int]
+) -> tuple[int, ...] | None:
+    """The admission match's evidence lines when it binds to ``lines``.
+
+    Span: a ``CopyMatch``'s ``lines`` (R's ``>>>`` block span); a
+    ``FromMatch``'s single parse-error line ``N`` read as ``(N, N)``.
+    ``None`` or ``"ambiguous"`` is no recurrence.
+    """
+    match = match_copy_ci(text) if cls == "missing_copy_source" else match_from_ci(text)
+    if isinstance(match, CopyMatch) and match.lines == lines:
+        return match.evidence_lines
+    if isinstance(match, FromMatch) and match.line is not None:
+        if (match.line, match.line) == lines:
+            return match.evidence_lines
+    return None
+
+
+def _rebuilt(job: FailedJob, log: str) -> FailedJob:
+    """``job`` rebuilt from ``log`` by forge's own reading of a job."""
+    record: dict[str, Any] = {
+        "name": job.name,
+        "conclusion": job.conclusion,
+        "steps": [
+            {"number": s.number, "name": s.name, "conclusion": s.conclusion}
+            for s in job.all_steps or []
+        ],
+    }
+    return _build_job(record, job.job_id, log, [], Completeness("present", "absent"))
+
+
+def _undetermined(q: Qualified, reason: str) -> AttemptEvidence:
+    """A qualified attempt whose evidence could not be read."""
+    return AttemptEvidence(_key(q), "undetermined", False, False, reason, ())
+
+
+def _key(q: Qualified) -> tuple[int, int, str]:
+    """``(run_id, attempt, job key or "")``."""
+    return q.run_id, q.attempt, q.job_key or ""
