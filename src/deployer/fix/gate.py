@@ -15,7 +15,7 @@ reason string; neither raises.
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from deployer.admission.consumer import Accepted, Target, accept_for_fix
 from deployer.admission.fsread import read_in_tree
@@ -202,7 +202,9 @@ def _recheck(doc: FixDocument, env: Mapping[str, str]) -> str | None:
 
 def _stored_shape_problem(stored: Input, worktree: str) -> str | None:
     """The stored path shape T13 writes: absolute ``root``, ``clone`` and
-    ``worktree``; ``try_dir`` and ``source_dir`` plain, relative to ``root``."""
+    ``worktree``; ``try_dir`` and ``source_dir`` plain, relative to ``root``,
+    and ``source_dir`` the try dir's attempt ``source/``, as :func:`gate`
+    derives it."""
     absolute = (
         ("root", stored.root),
         ("clone", stored.clone),
@@ -215,6 +217,12 @@ def _stored_shape_problem(stored: Input, worktree: str) -> str | None:
         problem = _plain_relative_problem(rel)
         if problem is not None:
             return f"the stored {name} {problem}"
+    expected = PurePosixPath(stored.try_dir).parent.parent / "source"
+    if PurePosixPath(stored.source_dir) != expected:
+        return (
+            f"the stored source_dir {stored.source_dir!r} is not the try dir's "
+            f"attempt source {str(expected)!r}"
+        )
     return None
 
 

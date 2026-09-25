@@ -10,6 +10,7 @@ runs no command.
 """
 
 import contextlib
+import hashlib
 import os
 import uuid
 from pathlib import Path
@@ -25,9 +26,9 @@ from pydantic import (
 )
 
 from deployer.admission.model import DefectClass
-from deployer.provenance.model import sha256_hex
 
 FIX_SCHEMA_VERSION = "1.0"
+_HASH_CHUNK = 1024 * 1024
 
 Status = Literal[
     "in_progress",
@@ -286,12 +287,22 @@ def verify_inputs(doc: FixDocument) -> str | None:
 
 def _verify_stored_file(stored: StoredFile) -> str | None:
     """``None`` if ``stored`` still matches the file on disk, else why not,
-    naming ``stored.path``."""
+    naming ``stored.path``. The file is hashed in chunks, never held in
+    memory whole."""
     try:
-        data = Path(stored.path).read_bytes()
+        digest = _file_sha256(Path(stored.path))
     except OSError as exc:
         return f"{stored.path} could not be read: {exc}"
-    digest = sha256_hex(data)
     if digest != stored.sha256:
         return f"{stored.path} has changed: recorded {stored.sha256}, now {digest}"
     return None
+
+
+def _file_sha256(path: Path) -> str:
+    """The SHA-256 hex digest of ``path``'s bytes, streamed in
+    :data:`_HASH_CHUNK`-byte chunks."""
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while chunk := handle.read(_HASH_CHUNK):
+            digest.update(chunk)
+    return digest.hexdigest()

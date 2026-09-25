@@ -664,3 +664,22 @@ def test_recheck_refuses_an_absolute_stored_try_dir(scenario: Scenario) -> None:
     doc = _with_input(doc, try_dir=str(scenario.r.try_dir))
     reason = recheck_admission(doc, scenario.env)
     assert reason is not None and "is absolute" in reason
+
+
+@pytest.mark.parametrize(
+    "source_dir",
+    [
+        "elsewhere/source",
+        ".deployer-runs/35680991093/reproduction/attempt-2/source",
+        ".deployer-runs/35680991093/reproduction/attempt-1/tries/source",
+    ],
+)
+def test_recheck_refuses_a_source_dir_not_of_the_try_dirs_attempt(
+    scenario: Scenario, source_dir: str
+) -> None:
+    """``source_dir`` is the try dir's attempt ``source/``, as ``gate``
+    derives it; any other stored ``source_dir`` is refused."""
+    doc = _fix_document(scenario, _admitted(scenario))
+    assert doc.input.source_dir == str(Path(doc.input.try_dir).parent.parent / "source")
+    reason = recheck_admission(_with_input(doc, source_dir=source_dir), scenario.env)
+    assert reason is not None and "not the try dir's attempt source" in reason
