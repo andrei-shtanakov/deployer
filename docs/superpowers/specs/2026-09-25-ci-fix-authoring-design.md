@@ -461,7 +461,7 @@ What the recordings and the reading show, and every rule below relies on:
   not widened by assumption.
 
 BuildKit (§7.3) is unchanged: its FROM evidence stays file-wide. The C-recording
-`c8-from-bad-in-skipped-stage` (the C-recordings data, commit `4eef25d`) confirmed
+`c8-from-bad-in-skipped-stage` (PR #98, C-recordings) confirmed
 BuildKit's whole-file parse: a bad FROM in a stage nothing depends on fails before any
 stage, unlike Podman's `l9`.
 
@@ -675,10 +675,11 @@ C-recordings a published proposal is never CI-confirmed.
 
 ## 10. Acceptance — offline
 
-**Test seam.** Until recordings exist no production row is enabled, so the happy path is
-unreachable in production. Tests reach it by injecting an **enabled synthetic row**
-through a test-only registry (not reachable from the CLI or configuration); the test that
-no production row is enabled without a recording (§9) guards the seam.
+**Test seam.** A production row is enabled only with its recording (§9): the two local
+rows are, on the L-recordings; the CI rows are not, so the CI happy path is unreachable in
+production. Tests reach a disabled row by injecting an **enabled synthetic row** through a
+test-only registry (not reachable from the CLI or configuration); the test that no
+production row is enabled without a recording (§9) guards the seam.
 
 - **D (decision):** pure parts with hand-built inputs, one targeted mutation per case:
   - §3.1 binding: zero/several instruction matches; a failed cross-check; the link
@@ -709,8 +710,12 @@ no production row is enabled without a recording (§9) guards the seam.
     `docs/setup.md` (data, §11 stage 1b); and a case with two same-basename candidates →
     `fix method not established`.
 
-  Without the seam, P tests end at the expected refusals `no local confirmation:
-  templates not enabled` and `templates not enabled` — asserted outcomes, not skips.
+  Without the seam, the local side runs on the enabled, recording-backed rows: P tests
+  whose faked build prints the passing local template (the corrected instruction's step
+  line, then the same stage's next step) end at `locally_confirmed`, and those whose
+  output does not end at `no local confirmation: <the matcher's reason>`. The CI side
+  still ends at the expected refusal `templates not enabled` — asserted outcomes, not
+  skips.
 - **G (real local Git, offline — no model, no container builds):** the worktree leaves the
   user's checkout untouched; the commit contains exactly the §3 paths and change types; an
   extra changed file is refused by the full-diff check; a fix directory inside the clone
