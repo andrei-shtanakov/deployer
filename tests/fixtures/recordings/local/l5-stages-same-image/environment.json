@@ -1,0 +1,8 @@
+{
+  "buildah": "1.42.0",
+  "client": "Darwin/arm64",
+  "podman": "5.7.0",
+  "recorded_at": "2026-09-25T14:18:24Z",
+  "vm_kernel": "6.16.10-200.fc42.aarch64",
+  "vm_os": "linux/arm64"
+}

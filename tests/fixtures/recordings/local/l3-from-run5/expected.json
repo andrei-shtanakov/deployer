@@ -1,0 +1,16 @@
+{
+  "checks": [
+    {
+      "agrees": true,
+      "corrected": "FROM python:3.12-slim AS extra",
+      "detail": null,
+      "evidence": "passed",
+      "hypothesis": "passed",
+      "kind": "from",
+      "lines": [
+        1
+      ]
+    }
+  ],
+  "observed_with": "deployer.fix.templates hypothesis matchers at the recording commit"
+}

@@ -1,0 +1,18 @@
+[1/2] STEP 1/3: FROM python:3.12-slim AS a
+[1/2] STEP 2/3: WORKDIR /app
+--> Using cache 4455941a76bf964a2740254da06bb9b28838b8c4f4269e30958de00bf303863b
+--> 4455941a76bf
+[1/2] STEP 3/3: COPY docs/guide/setup.md ./setup.md
+--> 92eceed07bb6
+[2/2] STEP 1/4: FROM python:3.12-slim AS b
+[2/2] STEP 2/4: WORKDIR /app
+--> Using cache 4455941a76bf964a2740254da06bb9b28838b8c4f4269e30958de00bf303863b
+--> 4455941a76bf
+[2/2] STEP 3/4: COPY docs/guide/setup.md ./setup.md
+--> Using cache 92eceed07bb62894e4312e3dc237623fdabbcd4e76b8f631c74e0c66a8ab8f6f
+--> 92eceed07bb6
+[2/2] STEP 4/4: COPY --from=a /app/setup.md ./from-a.md
+[2/2] COMMIT localhost/deployer-lrec-l7-stages-both-built
+--> 48cf4df2f653
+Successfully tagged localhost/deployer-lrec-l7-stages-both-built:latest
+48cf4df2f653b85147e3398d401b5c4528d783ccbbb1942c999d378b90d12215

@@ -1,0 +1,23 @@
+{
+  "checks": [
+    {
+      "agrees": false,
+      "corrected": "COPY docs/guide/setup.md ./setup.md",
+      "detail": "corrected step line absent",
+      "evidence": "not_confirmed",
+      "hypothesis": "binding_ambiguous",
+      "kind": "copy",
+      "lines": []
+    },
+    {
+      "agrees": false,
+      "corrected": "FROM python:3.12-slim AS b",
+      "detail": "no build-stage step",
+      "evidence": "not_confirmed",
+      "hypothesis": "passed",
+      "kind": "from",
+      "lines": []
+    }
+  ],
+  "observed_with": "deployer.fix.templates hypothesis matchers at the recording commit"
+}

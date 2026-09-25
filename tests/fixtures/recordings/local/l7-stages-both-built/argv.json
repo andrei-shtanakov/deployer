@@ -1,0 +1,13 @@
+{
+  "argv": [
+    "podman",
+    "build",
+    "--file",
+    "<context>/Dockerfile",
+    "--tag",
+    "localhost/deployer-lrec-l7-stages-both-built",
+    "--force-rm",
+    "<context>"
+  ],
+  "launch_error": null
+}

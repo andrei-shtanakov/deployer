@@ -1,0 +1,17 @@
+{
+  "checks": [
+    {
+      "agrees": true,
+      "corrected": "COPY docs/guide/setup.md ./setup.md",
+      "detail": null,
+      "evidence": "passed",
+      "hypothesis": "passed",
+      "kind": "copy",
+      "lines": [
+        17,
+        20
+      ]
+    }
+  ],
+  "observed_with": "deployer.fix.templates hypothesis matchers at the recording commit"
+}

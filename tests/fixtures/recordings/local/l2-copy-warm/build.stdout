@@ -1,0 +1,38 @@
+STEP 1/12: FROM python:3.12-slim
+STEP 2/12: COPY --from=ghcr.io/astral-sh/uv:0.5.11 /uv /uvx /bin/
+--> Using cache d8c446501aadece08be939c72af0f8817149f46b4938f1c12dfa62896bf6b830
+--> d8c446501aad
+STEP 3/12: WORKDIR /app
+--> Using cache f74db17f56a1b70951967a1aa9ab1efed0fc424101f277c79307ac0bfd40e480
+--> f74db17f56a1
+STEP 4/12: COPY pyproject.toml uv.lock ./
+--> Using cache 8ca80038acba6b43a8defe2d4abb49911d156cc5e99ba23c7bb4e121e2d2d512
+--> 8ca80038acba
+STEP 5/12: RUN uv sync --frozen --no-install-project
+--> Using cache b6da093df886a9ccdd4f208eec4f9193e6de3ad9f920e16b9cf2e25beb19b556
+--> b6da093df886
+STEP 6/12: COPY src/ci_build ./src/ci_build
+--> Using cache ace3d21a38457fd243cbab7954c466af68c882f6d4b29dded43a4679f9f05c2b
+--> ace3d21a3845
+STEP 7/12: COPY docs/guide/setup.md ./setup.md
+--> Using cache 9e29ec1cb391902403ba16c9b27e1bbbbdfe766145f85e840988bfd521cd144d
+--> 9e29ec1cb391
+STEP 8/12: RUN uv sync --frozen
+--> Using cache b54c9b54b01319a7eb38c6235d350239970b11756acd81e9356fc10c07e9f949
+--> b54c9b54b013
+STEP 9/12: RUN useradd --create-home appuser
+--> Using cache d942298eb422e938f777fdadabed9ce91a2aedaea8a666c762c0d0f09c1ce112
+--> d942298eb422
+STEP 10/12: USER appuser
+--> Using cache 04699c6af28a8aa56bf07d3fc4f533a3da9d00cec44244d89c50a4456ae5efbc
+--> 04699c6af28a
+STEP 11/12: ENV PATH="/app/.venv/bin:$PATH"
+--> Using cache e1205481f811b464a7efa555777da240421eb998aca61a77b4b83737f80eb05e
+--> e1205481f811
+STEP 12/12: CMD ["python"]
+--> Using cache 3f49da7384888de0e4eb31e2c598dc346ea3f4f091a6ec738b0412272f8eb184
+COMMIT localhost/deployer-lrec-l2-copy-warm
+--> 3f49da738488
+Successfully tagged localhost/deployer-lrec-l2-copy-warm:latest
+Successfully tagged localhost/deployer-lrec-l1-copy-cold:latest
+3f49da7384888de0e4eb31e2c598dc346ea3f4f091a6ec738b0412272f8eb184

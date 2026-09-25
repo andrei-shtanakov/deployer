@@ -1,0 +1,13 @@
+{
+  "argv": [
+    "podman",
+    "build",
+    "--file",
+    "<context>/Dockerfile",
+    "--tag",
+    "localhost/deployer-lrec-l5-stages-same-image",
+    "--force-rm",
+    "<context>"
+  ],
+  "launch_error": null
+}

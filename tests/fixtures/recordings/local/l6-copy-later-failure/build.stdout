@@ -1,0 +1,19 @@
+STEP 1/13: FROM python:3.12-slim
+STEP 2/13: COPY --from=ghcr.io/astral-sh/uv:0.5.11 /uv /uvx /bin/
+--> Using cache d8c446501aadece08be939c72af0f8817149f46b4938f1c12dfa62896bf6b830
+--> d8c446501aad
+STEP 3/13: WORKDIR /app
+--> Using cache f74db17f56a1b70951967a1aa9ab1efed0fc424101f277c79307ac0bfd40e480
+--> f74db17f56a1
+STEP 4/13: COPY pyproject.toml uv.lock ./
+--> Using cache 8ca80038acba6b43a8defe2d4abb49911d156cc5e99ba23c7bb4e121e2d2d512
+--> 8ca80038acba
+STEP 5/13: RUN uv sync --frozen --no-install-project
+--> Using cache b6da093df886a9ccdd4f208eec4f9193e6de3ad9f920e16b9cf2e25beb19b556
+--> b6da093df886
+STEP 6/13: COPY src/ci_build ./src/ci_build
+--> Using cache ace3d21a38457fd243cbab7954c466af68c882f6d4b29dded43a4679f9f05c2b
+--> ace3d21a3845
+STEP 7/13: COPY docs/guide/setup.md ./setup.md
+--> b3bae489373e
+STEP 8/13: RUN false

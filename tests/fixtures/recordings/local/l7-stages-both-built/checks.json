@@ -1,0 +1,10 @@
+[
+  {
+    "corrected": "COPY docs/guide/setup.md ./setup.md",
+    "kind": "copy"
+  },
+  {
+    "corrected": "FROM python:3.12-slim AS b",
+    "kind": "from"
+  }
+]
