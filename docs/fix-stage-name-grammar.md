@@ -99,6 +99,7 @@ The Podman installed on the development machine (5.7.0) pins `buildah v1.42.0` a
 imagebuilder `v1.2.19` (commit `812868a1428365cb2418a5ea851e59c699f4c6ab`) has the same
 `extractNameFromNode` (lines 435–448), the same `ProcessWord(name, …)` stage naming
 (lines 351–373) and the same exact `ByName` (line 215), so the rule holds there too.
+When Buildah v1.42.0 checks FROM (per stage, not file-wide): `docs/fix-buildah-from-parse.md`.
 
 ## The intersection
 
