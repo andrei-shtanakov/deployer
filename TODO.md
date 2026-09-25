@@ -46,25 +46,25 @@ contract was wrong only after it has users. The order below is deliberate — ea
 tagged with what blocks it, so the sequencing survives without anyone re-reading this
 paragraph.
 
-- [ ] More admission template rows: each new CI/local builder shape needs a real recording and a spec change @id:admission-more-template-rows @epic:eco.dark-factory
+- [ ] More admission template rows: each new CI/local builder shape needs a real recording and a spec change @owner:repo:deployer @id:admission-more-template-rows @epic:eco.dark-factory
   The shipped link table (A §4.1) holds only the rows the run-1/run-5 recordings pin
   (BuildKit and Podman 5.7.0 output for `missing_copy_source` / `from_argument_count`).
   Any other builder, version or message shape reads `insufficient_grounds` at (3) by
   design. A new row enters only with a real recording of it and an amendment of A §4.1;
   a new defect class is a new spec (A, Non-goals).
-- [ ] Owner question: should other failed reproduction findings veto admission? @id:admission-other-findings-veto @epic:eco.dark-factory
+- [ ] Owner question: should other failed reproduction findings veto admission? @owner:github:andrei-shtanakov @id:admission-other-findings-veto @epic:eco.dark-factory
   Raised in #86: a failed `copy_sources` finding of another kind (excluded-by /
   matches-nothing) or a failed `builder_check` does not veto an admission today — A §3.2
   only makes the other syntax checks inadmissible. Left as the owner's call; changing it
   is a spec change.
-- [ ] Strict `Snapshot.tree_complete` (parked in A3 review) @id:admission-strict-tree-complete @epic:eco.dark-factory
+- [ ] Strict `Snapshot.tree_complete` (parked in A3 review) @owner:repo:deployer @id:admission-strict-tree-complete @epic:eco.dark-factory
   Today a lax bool. The snapshot bytes are hashed and signed by a trusted key, so the
   coercion only reaches our own output; a hand-crafted signed snapshot with `"true"`
   would need a trusted key.
-- [ ] Lift the duplicated `_norm` / `_instruction_key` helpers into one shared helper (parked in A3 review) @id:admission-shared-instruction-key @epic:eco.dark-factory
+- [ ] Lift the duplicated `_norm` / `_instruction_key` helpers into one shared helper (parked in A3 review) @owner:repo:deployer @id:admission-shared-instruction-key @epic:eco.dark-factory
   `admission/decide.py` carries its own copies of `reproduce/checks.py:_norm` and
   `admission/templates.py:_instruction_key`; one shared helper keeps them from drifting.
-- [ ] Optionally refuse a trust root inside the git toplevel of the working directory (parked in A3 review) @id:admission-trust-root-git-toplevel @epic:eco.dark-factory
+- [ ] Optionally refuse a trust root inside the git toplevel of the working directory (parked in A3 review) @owner:repo:deployer @id:admission-trust-root-git-toplevel @epic:eco.dark-factory
   Hardening beyond the spec's checked roots (A §2.3), not a known defect.
 - [ ] Real `docker build --check` recordings for the two synthetic reader fixtures @owner:repo:deployer @id:repro-check-output-real-recordings @epic:eco.dark-factory
   `tests/fixtures/reproduction/check-outputs/builder-unreachable.txt` and
