@@ -188,6 +188,13 @@ def test_class_round_trips_through_document_json(tmp_path: Path) -> None:
     assert '"cls"' not in text
 
 
+def test_class_is_restricted_to_the_closed_defect_catalogue() -> None:
+    """``cls``/``class`` accepts only a known ``DefectClass``, the same
+    closed catalogue as ``admission.model.Defect``."""
+    with pytest.raises(ValidationError):
+        _proposal(cls="not_a_real_defect_class")
+
+
 # --- invariants ----------------------------------------------------------
 
 
@@ -371,6 +378,19 @@ def test_verify_inputs_missing_evidence_file(tmp_path: Path) -> None:
     assert str(evidence_path) in reason
 
 
+def test_verify_inputs_stored_path_is_a_directory(tmp_path: Path) -> None:
+    """A stored path that is now a directory returns a reason, not an
+    exception (``Path.read_bytes`` raises ``IsADirectoryError``, an
+    ``OSError``)."""
+    doc = _document(tmp_path)
+    evidence_path = Path(doc.input.evidence[0].path)
+    evidence_path.unlink()
+    evidence_path.mkdir()
+    reason = verify_inputs(doc)
+    assert reason is not None
+    assert str(evidence_path) in reason
+
+
 # --- save/load --------------------------------------------------------
 
 
@@ -423,14 +443,78 @@ def test_save_leaves_old_file_intact_on_replace_failure(
     assert not list(tmp_path.glob("fix.json.tmp-*"))
 
 
+def test_save_revalidates_and_refuses_a_model_copy_mutation(
+    tmp_path: Path,
+) -> None:
+    """Validators run only at construction; ``model_copy(update=...)`` (this
+    repo's usual update idiom) skips them. ``save`` must catch a document
+    that mutation left invalid before writing anything."""
+    good = _document(
+        tmp_path,
+        status="locally_confirmed",
+        proposal=_proposal(),
+        local_proof=_local_proof(),
+        publication=_publication(pr_url=None),
+    )
+    path = tmp_path / "fix.json"
+    save(good, path)
+    original_bytes = path.read_bytes()
+
+    # locally_confirmed's publication has no pr_url, so fix_proposed (which
+    # requires one) is now an invalid combination construction would refuse.
+    broken = good.model_copy(update={"status": "fix_proposed"})
+    with pytest.raises(ValidationError, match="requires a publication pr_url"):
+        save(broken, path)
+
+    assert path.read_bytes() == original_bytes
+    assert not list(tmp_path.glob("fix.json.tmp-*"))
+
+
+def test_save_revalidates_and_refuses_a_nested_attribute_mutation(
+    tmp_path: Path,
+) -> None:
+    """A nested mutation (plain attribute assignment on ``publication``, not
+    even ``model_copy``) is caught too: pydantic never revalidates a
+    mutated sub-model on its own."""
+    doc = _document(
+        tmp_path,
+        status="fix_proposed",
+        proposal=_proposal(),
+        local_proof=_local_proof(),
+        publication=_publication(),
+        ci_attempts=[_ci_attempt(outcome="ci_confirmation_insufficient")],
+    )
+    path = tmp_path / "fix.json"
+    save(doc, path)
+    original_bytes = path.read_bytes()
+
+    assert doc.publication is not None
+    doc.publication.pr_url = None
+    with pytest.raises(ValidationError, match="requires a publication pr_url"):
+        save(doc, path)
+
+    assert path.read_bytes() == original_bytes
+    assert not list(tmp_path.glob("fix.json.tmp-*"))
+
+
 def test_load_missing_file_raises_oserror(tmp_path: Path) -> None:
     with pytest.raises(OSError):
         load(tmp_path / "does-not-exist.json")
 
 
-def test_load_invalid_json_raises_validation_error(tmp_path: Path) -> None:
+def test_load_incomplete_json_raises_validation_error(tmp_path: Path) -> None:
+    """Syntactically valid JSON that doesn't match the schema."""
     path = tmp_path / "fix.json"
     path.write_text("{}")
+    with pytest.raises(ValidationError):
+        load(path)
+
+
+def test_load_malformed_json_raises_validation_error(tmp_path: Path) -> None:
+    """Syntactically invalid JSON is also a ``ValidationError``, not a
+    ``json.JSONDecodeError``: ``model_validate_json`` parses it itself."""
+    path = tmp_path / "fix.json"
+    path.write_text("{")
     with pytest.raises(ValidationError):
         load(path)
 

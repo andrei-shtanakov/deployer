@@ -24,6 +24,7 @@ from pydantic import (
     model_validator,
 )
 
+from deployer.admission.model import DefectClass
 from deployer.provenance.model import sha256_hex
 
 FIX_SCHEMA_VERSION = "1.0"
@@ -121,7 +122,7 @@ class Proposal(BaseModel):
         validate_by_alias=True,
         serialize_by_alias=True,
     )
-    cls: str = Field(alias="class")
+    cls: DefectClass = Field(alias="class")
     file: str
     lines: tuple[int, int]
     transformation: Literal["copy-source", "F1", "F2"]
@@ -216,12 +217,22 @@ class FixDocument(BaseModel):
 def save(doc: FixDocument, path: Path) -> None:
     """Write ``doc`` to ``path`` atomically.
 
-    A temp file named ``<path.name>.tmp-<pid>`` is written in ``path``'s own
-    directory, flushed and ``fsync``-ed, then moved onto ``path`` with
-    ``os.replace``. If anything fails, the temp file is removed on a
-    best-effort basis and the exception is re-raised; ``path`` itself is
-    left untouched.
+    The model's validators run only at construction; attribute assignment
+    and ``model_copy(update=...)`` (this repo's usual update idiom) both
+    skip them, so a caller can hold a ``FixDocument`` whose invariants no
+    longer hold. Before writing anything, ``save`` re-validates by
+    round-tripping ``doc`` through ``model_dump``/``model_validate``: a
+    ``pydantic.ValidationError`` there propagates before any file is
+    touched, so the old file at ``path`` stays byte-identical and no temp
+    file is ever created.
+
+    Once re-validated, a temp file named ``<path.name>.tmp-<pid>`` is
+    written in ``path``'s own directory, flushed and ``fsync``-ed, then
+    moved onto ``path`` with ``os.replace``. If anything fails from there,
+    the temp file is removed on a best-effort basis and the exception is
+    re-raised; ``path`` itself is left untouched.
     """
+    FixDocument.model_validate(doc.model_dump(by_alias=True))
     tmp_path = path.parent / f"{path.name}.tmp-{os.getpid()}"
     data = doc.model_dump_json(indent=2).encode() + b"\n"
     try:
