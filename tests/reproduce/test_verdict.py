@@ -93,7 +93,7 @@ def test_admitted_defect_renders_class_on_the_wire(
         binding=_admission().binding,
         ownership=Ownership(
             status="confirmed",
-            key_fingerprint="SHA256:k",
+            key_fingerprint="SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
             record_sha256="c" * 64,
             snapshot_sha256="d" * 64,
         ),

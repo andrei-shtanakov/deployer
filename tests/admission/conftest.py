@@ -60,7 +60,7 @@ def confirmed_ownership(head_sha: str, tree: list[TreeRow]) -> OwnershipFacts:
         status="confirmed",
         step=None,
         reason=None,
-        key_fingerprint="SHA256:test-key",
+        key_fingerprint="SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
         record_sha256="a" * 64,
         snapshot_sha256="b" * 64,
         record=record,

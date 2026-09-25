@@ -25,7 +25,7 @@ _BINDING = Binding(
 )
 _CONFIRMED = Ownership(
     status="confirmed",
-    key_fingerprint="SHA256:abc",
+    key_fingerprint="SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
     record_sha256="c" * 64,
     snapshot_sha256="d" * 64,
 )
@@ -117,7 +117,7 @@ class TestOwnershipInvariants:
             Ownership(
                 status="confirmed",
                 reason="should not be here",
-                key_fingerprint="SHA256:abc",
+                key_fingerprint="SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
                 record_sha256="c" * 64,
                 snapshot_sha256="d" * 64,
             )
@@ -136,7 +136,7 @@ class TestOwnershipInvariants:
         with pytest.raises(ValidationError, match="needs a record_sha256"):
             Ownership(
                 status="confirmed",
-                key_fingerprint="SHA256:abc",
+                key_fingerprint="SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
                 snapshot_sha256="d" * 64,
             )
 
@@ -145,7 +145,7 @@ class TestOwnershipInvariants:
         with pytest.raises(ValidationError, match="needs a snapshot_sha256"):
             Ownership(
                 status="confirmed",
-                key_fingerprint="SHA256:abc",
+                key_fingerprint="SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
                 record_sha256="c" * 64,
             )
 
@@ -165,11 +165,14 @@ class TestOwnershipInvariants:
         ownership = Ownership(
             status="not_confirmed",
             reason="step 4: artifact_sha256 differs",
-            key_fingerprint="SHA256:abc",
+            key_fingerprint="SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
             record_sha256="c" * 64,
             snapshot_sha256="d" * 64,
         )
-        assert ownership.key_fingerprint == "SHA256:abc"
+        assert (
+            ownership.key_fingerprint
+            == "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        )
 
 
 class TestDefectInvariants:
@@ -355,3 +358,27 @@ def test_artifact_hash_not_obtained_is_absent_and_never_admitted() -> None:
     assert refused.model_dump(mode="json")["binding"]["artifact_sha256"] is None
     with pytest.raises(ValidationError, match="artifact_sha256"):
         AdmissionSection.model_validate(_admitted(binding=unread))
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("key_fingerprint", ""),
+        ("key_fingerprint", "SHA256:short"),
+        ("record_sha256", ""),
+        ("record_sha256", "A" * 64),
+        ("snapshot_sha256", "b" * 63),
+    ],
+)
+def test_confirmed_ownership_values_must_be_well_formed(field: str, value: str) -> None:
+    """An empty or malformed hash or fingerprint is not an obtained value."""
+    data = _CONFIRMED.model_dump() | {field: value}
+    with pytest.raises(ValidationError):
+        Ownership.model_validate(data)
+
+
+@pytest.mark.parametrize("head_sha", ["", "abc", "g" * 40, "a" * 41])
+def test_binding_head_sha_must_be_a_full_object_name(head_sha: str) -> None:
+    data = _BINDING.model_dump() | {"head_sha": head_sha}
+    with pytest.raises(ValidationError):
+        Binding.model_validate(data)

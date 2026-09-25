@@ -6,7 +6,7 @@ facts of conditions (1)-(3) (A §2, §3, §4). No I/O, no causal class.
 schema 1.2 (A §6.2); it is unrelated to the snapshot schema's own "1".
 """
 
-from typing import Literal, Self
+from typing import Annotated, Literal, Self
 
 from pydantic import (
     BaseModel,
@@ -14,6 +14,7 @@ from pydantic import (
     Field,
     StrictInt,
     StrictStr,
+    StringConstraints,
     model_validator,
 )
 
@@ -22,6 +23,17 @@ from deployer.admission.ownership import OwnershipFacts
 ADMISSION_VERDICT_SCHEMA_VERSION = "1.3"
 
 DefectClass = Literal["missing_copy_source", "from_argument_count"]
+
+Sha256 = Annotated[StrictStr, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
+"""A lowercase hex SHA-256 digest; an empty or partial one is malformed."""
+CommitSha = Annotated[
+    StrictStr, StringConstraints(pattern=r"^[0-9a-f]{40}(?:[0-9a-f]{24})?$")
+]
+"""A full Git object name (SHA-1 or SHA-256 repository)."""
+KeyFingerprint = Annotated[
+    StrictStr, StringConstraints(pattern=r"^SHA256:[A-Za-z0-9+/]{43}$")
+]
+"""An OpenSSH ``SHA256:`` key fingerprint (unpadded base64 of 32 bytes)."""
 
 
 class Binding(BaseModel):
@@ -35,9 +47,9 @@ class Binding(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
     repo: StrictStr
-    head_sha: StrictStr
+    head_sha: CommitSha
     artifact_path: StrictStr
-    artifact_sha256: StrictStr | None
+    artifact_sha256: Sha256 | None
 
 
 class Ownership(BaseModel):
@@ -51,9 +63,9 @@ class Ownership(BaseModel):
     model_config = ConfigDict(extra="forbid")
     status: Literal["confirmed", "not_confirmed"]
     reason: str | None = None
-    key_fingerprint: str | None = None
-    record_sha256: str | None = None
-    snapshot_sha256: str | None = None
+    key_fingerprint: KeyFingerprint | None = None
+    record_sha256: Sha256 | None = None
+    snapshot_sha256: Sha256 | None = None
 
     @model_validator(mode="after")
     def _invariants(self) -> Self:

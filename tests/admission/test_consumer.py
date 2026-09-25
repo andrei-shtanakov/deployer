@@ -67,7 +67,7 @@ def _section(**overrides: object) -> dict[str, Any]:
         "ownership": {
             "status": "confirmed",
             "reason": None,
-            "key_fingerprint": "SHA256:abc",
+            "key_fingerprint": "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
             "record_sha256": "c" * 64,
             "snapshot_sha256": "d" * 64,
         },
