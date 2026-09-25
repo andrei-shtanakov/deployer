@@ -12,6 +12,7 @@ span.
 from dataclasses import dataclass
 
 from deployer.admission.model import Defect
+from deployer.admission.prepare import _as_r_reads
 from deployer.reproduce.checks import _norm, _sources
 from deployer.reproduce.dockerfile import Instruction, parse
 
@@ -29,15 +30,17 @@ class Bound:
 def bind_instruction(dockerfile: bytes, defect: Defect) -> Bound | str:
     """Bind ``defect`` to exactly one instruction of ``dockerfile`` (§3.1).
 
-    ``dockerfile`` is decoded ``"utf-8"``, ``errors="replace"`` — the same
-    rule admission's ``prepare._as_r_reads`` applies before R's
-    ``dockerfile.parse``, so line numbers agree with R's. Exactly one
-    instruction must span ``defect.lines``; it is then cross-checked against
-    ``defect.object`` (``missing_copy_source``: one of its normalised
-    sources; ``from_argument_count``: its normalised text). Any failure
-    returns the reason (``fix method not established``, per the caller).
+    ``dockerfile`` is decoded with admission's own ``prepare._as_r_reads``
+    (the locale encoding, universal newlines, ``errors="replace"``) before
+    R's ``dockerfile.parse``, so line numbers — and, for non-ASCII bytes,
+    the decoded characters themselves — agree with what R actually read,
+    not with a hardcoded assumption. Exactly one instruction must span
+    ``defect.lines``; it is then cross-checked against ``defect.object``
+    (``missing_copy_source``: one of its normalised sources;
+    ``from_argument_count``: its normalised text). Any failure returns the
+    reason (``fix method not established``, per the caller).
     """
-    text = dockerfile.decode("utf-8", errors="replace")
+    text = _as_r_reads(dockerfile)
     parsed = parse(text)
     matches = [
         (ordinal, instruction)
@@ -64,6 +67,11 @@ def bind_instruction(dockerfile: bytes, defect: Defect) -> Bound | str:
 def _cross_check(defect: Defect, instruction: Instruction) -> str | None:
     """The §3.1 cross-check for ``defect.cls``, or ``None`` if it holds."""
     if defect.cls == "missing_copy_source":
+        # R's own `copy_sources` absence finding is derived from exactly
+        # this instruction's `_sources`/`_norm` (checks.py): reusing them
+        # here, rather than re-deriving the source list independently,
+        # keeps the cross-check tied to the same notion of "source" that
+        # produced the defect in the first place.
         sources, why = _sources(instruction)
         if why is not None:
             return f"cross-check failed: sources not readable ({why})"
@@ -94,16 +102,26 @@ def splice(dockerfile: bytes, bound: Bound, replacement: bytes) -> bytes:
 def link_problem(original: bytes, corrected: bytes, bound: Bound) -> str | None:
     """Whether ``corrected`` still admits only the change §3.1 allows.
 
-    Re-parses both sides and checks, in order: the instruction count is
-    unchanged; every other instruction's ``text`` and span are unchanged;
-    the bytes outside the bound span are identical; the bound span's line
-    range is unchanged. The first violated check's reason is returned, or
-    ``None`` once ``corrected`` passes them all.
+    Checks, in order: ``bound.original`` still matches ``original``'s own
+    bytes at ``bound.lines`` (a stale or mismatched ``Bound`` is refused,
+    never silently reused); the instruction count is unchanged; every other
+    instruction's ``text`` and span are unchanged; the bytes outside the
+    bound span are identical; the replaced middle has exactly as many lines
+    as ``bound.original`` and the same final line ending (including no
+    ending at EOF); the bound span's own line range is unchanged. The first
+    violated check's reason is returned, or ``None`` once ``corrected``
+    passes them all.
     """
-    before = parse(original.decode("utf-8", errors="replace"))
-    after = parse(corrected.decode("utf-8", errors="replace"))
+    before = parse(_as_r_reads(original))
+    after = parse(_as_r_reads(corrected))
     if not 0 <= bound.ordinal < len(before.instructions):
         return "bound ordinal is out of range for the original Dockerfile"
+    first, last = bound.lines
+    lines = original.splitlines(keepends=True)
+    prefix = b"".join(lines[: first - 1])
+    suffix = b"".join(lines[last:])
+    if b"".join(lines[first - 1 : last]) != bound.original:
+        return "bound.original does not match the original Dockerfile's bytes"
     if len(before.instructions) != len(after.instructions):
         return (
             "instruction count changed: "
@@ -118,17 +136,37 @@ def link_problem(original: bytes, corrected: bytes, bound: Bound) -> str | None:
         after_span = (after_inst.first_line, after_inst.last_line)
         if before_inst.text != after_inst.text or before_span != after_span:
             return f"instruction {ordinal} changed outside the bound span"
-    first, last = bound.lines
-    lines = original.splitlines(keepends=True)
-    prefix = b"".join(lines[: first - 1])
-    suffix = b"".join(lines[last:])
     if (
         not corrected.startswith(prefix)
         or not corrected.endswith(suffix)
         or len(corrected) < len(prefix) + len(suffix)
     ):
         return "bytes outside the bound span changed"
+    middle = corrected[len(prefix) : len(corrected) - len(suffix)]
+    middle_lines = middle.splitlines(keepends=True)
+    original_span_lines = bound.original.splitlines(keepends=True)
+    if len(middle_lines) != len(original_span_lines):
+        return (
+            "replacement line count changed: "
+            f"{len(original_span_lines)} -> {len(middle_lines)}"
+        )
+    if _line_ending(middle_lines[-1]) != _line_ending(original_span_lines[-1]):
+        return "the replacement's final line ending changed"
     changed = after.instructions[bound.ordinal]
     if (changed.first_line, changed.last_line) != bound.lines:
         return "the bound instruction's line range changed"
     return None
+
+
+def _line_ending(line: bytes) -> bytes:
+    """The line terminator ``line`` ends with.
+
+    ``b"\\r\\n"``, ``b"\\r"`` or ``b"\\n"`` for the three R treats as a
+    break, or ``b""`` for none — the last line of a file with no trailing
+    separator.
+    """
+    if line.endswith(b"\r\n"):
+        return b"\r\n"
+    if line.endswith((b"\r", b"\n")):
+        return line[-1:]
+    return b""

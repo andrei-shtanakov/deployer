@@ -2,12 +2,18 @@
 exact-byte extraction, splicing and the post-edit link check."""
 
 import dataclasses
+import os
+import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 
 from deployer.admission.model import Defect, DefectClass
 from deployer.fix.binding import Bound, bind_instruction, link_problem, splice
 from deployer.reproduce.dockerfile import Instruction, ParsedDockerfile, parse
+
+_LOCALE_UNAVAILABLE = 3
 
 _DOCKERFILE = (
     b"FROM python:3.12-slim extra\n"
@@ -81,6 +87,33 @@ def test_cross_check_failure_from_argument_count() -> None:
     result = bind_instruction(_DOCKERFILE, defect)
     assert isinstance(result, str)
     assert "cross-check failed" in result
+
+
+def test_binds_under_a_real_non_utf8_locale(tmp_path: Path) -> None:
+    """``bind_instruction`` decodes the way R does (``_as_r_reads``'s locale
+    encoding), never a hardcoded UTF-8.
+
+    Run in a child process under ``LC_ALL=en_US.ISO8859-1`` so the locale
+    actually takes effect (a running interpreter's own locale can't
+    change). The Dockerfile's non-ASCII byte goes through a file; the
+    child's own command line is pure ASCII, since non-ASCII argv is not
+    reliable across CI locales. Skipped if the host has no such locale.
+    """
+    dockerfile_path = tmp_path / "Dockerfile"
+    dockerfile_path.write_bytes(b"FROM x\nCOPY caf\xe9.txt /d\n")
+    script_path = Path(__file__).with_name("_locale_child.py")
+    env = dict(os.environ, LC_ALL="en_US.ISO8859-1", LANG="en_US.ISO8859-1")
+    result = subprocess.run(
+        [sys.executable, str(script_path), str(dockerfile_path)],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if result.returncode == _LOCALE_UNAVAILABLE:
+        pytest.skip(f"non-UTF-8 locale unavailable: {result.stdout.strip()}")
+    assert result.returncode == 0, f"{result.stdout}\n{result.stderr}"
+    assert result.stdout.strip() == "BOUND"
 
 
 def test_crlf_dockerfile_binds_and_splices() -> None:
@@ -157,7 +190,55 @@ def test_link_problem_reports_a_change_outside_the_span() -> None:
     corrected = splice(original, bound, b"COPY z b\n")
     tampered = corrected.replace(b"RUN c\n", b"RUN cX\n")
     reason = link_problem(original, tampered, bound)
-    assert reason is not None
+    assert reason == "instruction 2 changed outside the bound span"
+
+
+def test_link_problem_rejects_trailing_lines_after_last_instruction() -> None:
+    """Blank/comment lines appended after the last (bound) instruction, with
+    nothing following it to reveal a shift, must still be refused."""
+    original = b"FROM x\nCOPY a b\n"
+    defect = _defect("missing_copy_source", (2, 2), "a")
+    bound = bind_instruction(original, defect)
+    assert isinstance(bound, Bound)
+    corrected = splice(original, bound, b"COPY z b\n\n# injected\n\n")
+    reason = link_problem(original, corrected, bound)
+    assert reason == "replacement line count changed: 1 -> 4"
+
+
+def test_link_problem_rejects_extra_lines_before_a_trailing_comment() -> None:
+    """An unmoved trailing comment must not mask an added line before it."""
+    original = b"FROM x\nCOPY a b\n# tail\n"
+    defect = _defect("missing_copy_source", (2, 2), "a")
+    bound = bind_instruction(original, defect)
+    assert isinstance(bound, Bound)
+    corrected = splice(original, bound, b"COPY z b\n# injected\n")
+    reason = link_problem(original, corrected, bound)
+    assert reason == "replacement line count changed: 1 -> 2"
+
+
+def test_link_problem_rejects_a_changed_final_line_ending() -> None:
+    """The replacement's own final line ending must match the original's,
+    including no ending at EOF."""
+    original = b"FROM x\nCOPY a b\r\n"
+    defect = _defect("missing_copy_source", (2, 2), "a")
+    bound = bind_instruction(original, defect)
+    assert isinstance(bound, Bound)
+    corrected = splice(original, bound, b"COPY z b")
+    reason = link_problem(original, corrected, bound)
+    assert reason == "the replacement's final line ending changed"
+
+
+def test_link_problem_rejects_a_bound_stale_against_the_original() -> None:
+    """A ``Bound`` whose ``original`` no longer matches ``original``'s own
+    bytes at its span is refused, not silently reused."""
+    original = _dockerfile_abc()
+    defect = _defect("missing_copy_source", (2, 2), "a")
+    bound = bind_instruction(original, defect)
+    assert isinstance(bound, Bound)
+    stale_bound = dataclasses.replace(bound, original=b"COPY other b\n")
+    corrected = splice(original, bound, b"COPY z b\n")
+    reason = link_problem(original, corrected, stale_bound)
+    assert reason == "bound.original does not match the original Dockerfile's bytes"
 
 
 def _dockerfile_abc() -> bytes:
