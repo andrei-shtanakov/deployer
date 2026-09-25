@@ -4,12 +4,15 @@ R replays run-1, a real ``ssh-keygen`` key signs a set into R's restored
 ``source/``, and A's ``prepare`` → ``decide`` → ``render_verdict`` yields an
 ``admitted`` verdict. The user's clone is a real Git checkout of that tree.
 A bundle's ``head_sha`` cannot be a fresh commit's SHA, so the verdict's
-``head_sha`` fields (run, binding, restoration) are re-pointed at the clone's
-real ``HEAD``: every other byte of the admitted document is A's.
+``head_sha`` fields (run, binding, restoration) and R's ``source.json`` are
+re-pointed at the clone's real ``HEAD``: every other byte of the admitted
+document and of R's records is A's and R's.
 """
 
 import copy
+import dataclasses
 import json
+import os
 import shutil
 import subprocess
 from dataclasses import asdict, dataclass
@@ -21,6 +24,7 @@ import pytest
 from deployer import runtime as runtime_mod
 from deployer.admission import decide, prepare
 from deployer.diagnose import diagnose_run, render_verdict
+from deployer.fix import gate as gate_mod
 from deployer.fix.document import FixDocument, Input, Publication, StoredFile
 from deployer.fix.gate import Admitted, gate, recheck_admission
 from deployer.provenance import trust
@@ -56,6 +60,15 @@ def _at_head(document: dict[str, Any], head: str) -> dict[str, Any]:
     moved["admission"]["binding"]["head_sha"] = head
     moved["reproduction"]["restoration"]["sha"] = head
     return moved
+
+
+def _restored_at(attempt_dir: Path, head: str) -> None:
+    """Re-point R's ``source.json`` (the restored head) at ``head``."""
+    meta = attempt_dir / "source.json"
+    data = json.loads(meta.read_text())
+    data["head_sha"] = head
+    meta.chmod(0o644)
+    meta.write_text(json.dumps(data))
 
 
 @dataclass
@@ -120,7 +133,7 @@ def scenario(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Scenario:
     _git(clone, "init", "-q")
     _git(clone, "config", "user.email", "t@example.com")
     _git(clone, "config", "user.name", "t")
-    _commit_all(clone, "admitted tree")
+    _restored_at(r.attempt_dir, _commit_all(clone, "admitted tree"))
     _git(clone, "remote", "add", "origin", ORIGIN)
     fix_dir = tmp_path / "fixes" / "001"
     return Scenario(r, original, clone, trust_dir, pub, fix_dir)
@@ -439,3 +452,215 @@ def test_recheck_turns_a_non_json_verdict_into_a_reason(scenario: Scenario) -> N
     )
     reason = recheck_admission(doc, scenario.env)
     assert reason is not None and "UnicodeDecodeError" in reason
+
+
+# --- fix round 1: regressions from the task review's probes ----------------
+
+
+def _with_input(doc: FixDocument, **changes: Any) -> FixDocument:
+    """``doc`` with ``input`` fields replaced (no re-validation, as T14 may)."""
+    return doc.model_copy(update={"input": doc.input.model_copy(update=changes)})
+
+
+def test_gate_refuses_a_forged_binding_over_an_unsigned_edit(
+    scenario: Scenario,
+) -> None:
+    """The review's false admission: an unsigned Dockerfile edit committed in
+    the clone, the verdict's artifact hash forged to match. Refused."""
+    dockerfile = scenario.clone / "Dockerfile"
+    dockerfile.write_bytes(dockerfile.read_bytes() + b"RUN echo unsigned\n")
+    _commit_all(scenario.clone, "unsigned edit")
+    document = scenario.document()
+    forged = sha256_hex(dockerfile.read_bytes())
+    document["admission"]["binding"]["artifact_sha256"] = forged
+    assert isinstance(scenario.gate(document), str)
+
+
+def test_gate_refuses_when_r_restored_another_head(scenario: Scenario) -> None:
+    """Clause 3: R's ``source.json`` must record the target's ``head_sha``;
+    a verdict re-pointed at a later commit (same bytes) is refused."""
+    _commit_all(scenario.clone, "later, same Dockerfile")
+    reason = scenario.gate()
+    assert isinstance(reason, str)
+    assert "R's restoration is not the target's" in reason
+
+
+def test_gate_refuses_bytes_other_than_r_restored(scenario: Scenario) -> None:
+    """Clause 2: R's restored ``source/<artifact_path>`` must hash to the
+    target's bytes, even when R's head and the forged binding agree."""
+    dockerfile = scenario.clone / "Dockerfile"
+    dockerfile.write_bytes(dockerfile.read_bytes() + b"RUN echo unsigned\n")
+    head = _commit_all(scenario.clone, "unsigned edit")
+    _restored_at(scenario.r.attempt_dir, head)
+    document = scenario.document()
+    forged = sha256_hex(dockerfile.read_bytes())
+    document["admission"]["binding"]["artifact_sha256"] = forged
+    reason = scenario.gate(document)
+    assert isinstance(reason, str)
+    assert "R's restored Dockerfile" in reason and "is not the target's" in reason
+
+
+def test_gate_refuses_a_record_signing_other_bytes(
+    scenario: Scenario, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Clause 1: the signed record's ``artifact_sha256`` must be the
+    target's. Unreachable past ownership step 4 without a stand-in, so the
+    confirmed facts are replayed with another record hash."""
+    real = gate_mod.verify_ownership
+
+    def other_record(source_dir: Path, **kwargs: Any) -> Any:
+        facts = real(source_dir, **kwargs)
+        assert facts.record is not None
+        record = facts.record.model_copy(update={"artifact_sha256": "0" * 64})
+        return dataclasses.replace(facts, record=record)
+
+    monkeypatch.setattr(gate_mod, "verify_ownership", other_record)
+    reason = scenario.gate()
+    assert isinstance(reason, str)
+    assert "signed record's artifact_sha256" in reason
+
+
+def test_recheck_refuses_bytes_other_than_r_restored(scenario: Scenario) -> None:
+    """The R-state binding protects publication too."""
+    doc = _fix_document(scenario, _admitted(scenario))
+    (scenario.r.source / "Dockerfile").write_text("FROM scratch\n")
+    reason = recheck_admission(doc, scenario.env)
+    assert reason is not None and "R's restored Dockerfile" in reason
+
+
+@pytest.mark.parametrize("document", [[], None, "x"])
+def test_gate_refuses_a_non_mapping_document(scenario: Scenario, document: Any) -> None:
+    """Totality: a JSON array, ``null`` or string verdict is a reason."""
+    reason = gate(
+        document, scenario.r.root, scenario.clone, scenario.env, scenario.extra_roots
+    )
+    assert isinstance(reason, str) and "not a JSON object" in reason
+
+
+def test_gate_refuses_a_try_dir_climbing_out_of_root(scenario: Scenario) -> None:
+    """``..`` in ``reproduction.try_dir`` is refused, even when it lands back
+    on the same directory."""
+    document = scenario.document()
+    rel = document["reproduction"]["try_dir"]
+    document["reproduction"]["try_dir"] = f"../{scenario.r.root.name}/{rel}"
+    reason = scenario.gate(document)
+    assert isinstance(reason, str) and "'..' component" in reason
+
+
+def test_gate_refuses_an_origin_of_another_repository(scenario: Scenario) -> None:
+    """An ``origin`` naming another repository does not bind."""
+    url = "git@github.com:evil/project.git"
+    _git(scenario.clone, "remote", "set-url", "origin", url)
+    reason = scenario.gate()
+    assert isinstance(reason, str) and "binding repo" in reason
+
+
+def test_gate_admits_a_clone_with_only_ignored_files(scenario: Scenario) -> None:
+    """Ignored files are not dirt (as A's provenance preflight reads it)."""
+    (scenario.clone / ".gitignore").write_text("*.log\n")
+    head = _commit_all(scenario.clone, "ignore logs")
+    _restored_at(scenario.r.attempt_dir, head)
+    (scenario.clone / "x.log").write_text("x")
+    _admitted(scenario)
+
+
+@pytest.mark.parametrize("where", ["source", "clone"])
+def test_gate_refuses_a_trust_symlink_into_a_checked_root(
+    scenario: Scenario, tmp_path: Path, where: str
+) -> None:
+    """A trust dir reached through a symlink is judged by its real path."""
+    base = scenario.r.source if where == "source" else scenario.clone / ".git"
+    inside = base / "trust2"
+    shutil.copytree(scenario.trust, inside)
+    link = tmp_path / "trustlink"
+    link.symlink_to(inside)
+    scenario.trust = link
+    reason = scenario.gate()
+    assert isinstance(reason, str)
+    assert "ownership not confirmed at step 0" in reason
+
+
+def test_gate_turns_an_unreadable_try_dir_into_a_reason(scenario: Scenario) -> None:
+    """Totality: a try dir without permissions is a reason, not a raise."""
+    os.chmod(scenario.r.try_dir, 0)
+    try:
+        reason = scenario.gate()
+    finally:
+        os.chmod(scenario.r.try_dir, 0o755)
+    assert isinstance(reason, str)
+
+
+@pytest.mark.parametrize("data", [b"[1,2]", b"null", b"[" * 200_000 + b"]" * 200_000])
+def test_recheck_refuses_a_non_object_verdict(scenario: Scenario, data: bytes) -> None:
+    """Totality: an array, ``null`` or a pathologically nested verdict is a
+    reason, not a raise."""
+    doc = _fix_document(scenario, _admitted(scenario))
+    path = Path(doc.input.verdict.path)
+    path.write_bytes(data)
+    reason = recheck_admission(_with_input(doc, verdict=_stored(path)), scenario.env)
+    assert reason is not None
+
+
+def test_recheck_refuses_a_verdict_over_the_size_cap(
+    scenario: Scenario, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A stored verdict above :data:`MAX_VERDICT_BYTES` is not read."""
+    doc = _fix_document(scenario, _admitted(scenario))
+    monkeypatch.setattr(gate_mod, "MAX_VERDICT_BYTES", 16)
+    reason = recheck_admission(doc, scenario.env)
+    assert reason is not None and "exceeds 16 bytes" in reason
+
+
+@pytest.mark.parametrize("field", ["source_dir", "try_dir"])
+def test_recheck_refuses_a_missing_stored_directory(
+    scenario: Scenario, field: str
+) -> None:
+    """A stored directory that does not exist is a reason."""
+    doc = _fix_document(scenario, _admitted(scenario))
+    reason = recheck_admission(_with_input(doc, **{field: "nope/x"}), scenario.env)
+    assert reason is not None
+
+
+def test_recheck_refuses_evidence_it_did_not_hash(scenario: Scenario) -> None:
+    """The evidence ``accept_for_fix`` reads must be among the re-hashed
+    inputs: with none stored, a tampered ``ci.log`` is caught."""
+    doc = _with_input(_fix_document(scenario, _admitted(scenario)), evidence=[])
+    ci_log = scenario.r.try_dir / "ci.log"
+    ci_log.write_bytes(ci_log.read_bytes() + b"tampered\n")
+    reason = recheck_admission(doc, scenario.env)
+    assert reason is not None and "not among the stored hashed inputs" in reason
+
+
+@pytest.mark.parametrize("field", ["try_dir", "source_dir"])
+@pytest.mark.parametrize("prefix", ["../work/", "./", "a/../"])
+def test_recheck_refuses_dot_components(
+    scenario: Scenario, field: str, prefix: str
+) -> None:
+    """Stored ``try_dir``/``source_dir`` have no ``.`` or ``..`` component."""
+    doc = _fix_document(scenario, _admitted(scenario))
+    value = prefix + getattr(doc.input, field)
+    reason = recheck_admission(_with_input(doc, **{field: value}), scenario.env)
+    assert reason is not None and "component" in reason
+
+
+@pytest.mark.parametrize("field", ["root", "clone", "worktree"])
+def test_recheck_refuses_a_relative_anchor(scenario: Scenario, field: str) -> None:
+    """``root``, ``clone`` and the worktree are stored absolute."""
+    doc = _fix_document(scenario, _admitted(scenario))
+    if field == "worktree":
+        assert doc.publication is not None
+        publication = doc.publication.model_copy(update={"worktree": "rel/wt"})
+        doc = doc.model_copy(update={"publication": publication})
+    else:
+        doc = _with_input(doc, **{field: "rel/path"})
+    reason = recheck_admission(doc, scenario.env)
+    assert reason is not None and f"stored {field}" in reason
+    assert "is not absolute" in reason
+
+
+def test_recheck_refuses_an_absolute_stored_try_dir(scenario: Scenario) -> None:
+    """``try_dir`` is relative to ``root``; an absolute one is refused."""
+    doc = _fix_document(scenario, _admitted(scenario))
+    doc = _with_input(doc, try_dir=str(scenario.r.try_dir))
+    reason = recheck_admission(doc, scenario.env)
+    assert reason is not None and "is absolute" in reason
