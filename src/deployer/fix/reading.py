@@ -8,9 +8,66 @@ Shared by the FROM transformations (``fromfix``) and the COPY envelope
 (``envelope``) so the rules have one implementation.
 """
 
+import re
 from collections.abc import Iterable
 
 from deployer.reproduce.dockerfile import Instruction, opens_heredoc
+
+_BOM = b"\xef\xbb\xbf"
+# Any CR not part of a CRLF line ending.
+_LONE_CR_RE = re.compile(rb"\r(?!\n)")
+# C0 controls other than tab, LF and CR; the C1 NEL; Unicode line and
+# paragraph separators. Each is a line break or blank to some reader.
+_CONTROL_RE = re.compile("[\x00-\x08\x0b-\x0c\x0e-\x1f\x85\u2028\u2029]")
+# A parser-directive-shaped comment (``# escape=``, ``# syntax=``, …).
+_DIRECTIVE_RE = re.compile(r"[ \t]*#\s*[A-Za-z][A-Za-z0-9_-]*\s*=")
+
+
+def strict_form_reason(dockerfile: bytes) -> str | None:
+    """Refuse a Dockerfile outside the strict form R and the builders share.
+
+    One whitelist gate, applied file-wide before any other reading check
+    (Ruling O): rather than patching each divergence between R's reading
+    and Buildah's/BuildKit's, only a plain form is read at all. The file
+    must have no BOM, be valid UTF-8, end lines with LF or CRLF only, hold
+    no control character but tab (nor NEL, U+2028, U+2029), hold no ``<<``
+    anywhere, have no parser-directive-shaped comment before the first
+    instruction, and put only spaces or tabs after a continuation
+    backslash. Total: returns the first failing rule, or ``None``.
+    """
+    if dockerfile.startswith(_BOM):
+        return "a byte-order mark is not modelled"
+    try:
+        text = dockerfile.decode("utf-8")
+    except UnicodeDecodeError as error:
+        return f"invalid UTF-8 at byte {error.start} is not modelled"
+    if _LONE_CR_RE.search(dockerfile) is not None:
+        return "a carriage return outside a CRLF line ending is not modelled"
+    control = _CONTROL_RE.search(text)
+    if control is not None:
+        return f"control character {control.group()!r} is not modelled"
+    if "<<" in text:
+        return "'<<' (a possible heredoc) is not modelled"
+    return _lines_reason(text.split("\n"))
+
+
+def _lines_reason(lines: list[str]) -> str | None:
+    """The directive and continuation rules of ``strict_form_reason``."""
+    in_preamble = True
+    for number, raw in enumerate(lines, start=1):
+        line = raw.removesuffix("\r")
+        body = line.strip(" \t")
+        if in_preamble and body and not body.startswith("#"):
+            in_preamble = False
+        if in_preamble and _DIRECTIVE_RE.match(line) is not None:
+            return f"line {number}: a parser directive is not modelled"
+        content = line.rstrip()
+        if content.endswith("\\") and line.rstrip(" \t") != content:
+            return (
+                f"line {number}: a line continuation followed by a blank other "
+                "than space or tab is not modelled"
+            )
+    return None
 
 
 def join_reason(data: bytes) -> str | None:

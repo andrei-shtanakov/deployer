@@ -385,6 +385,74 @@ def test_n_from_divergent_line_refused(case: str) -> None:
     assert outcome.detail is not None and outcome.detail.startswith("Dockerfile: ")
 
 
+# Ruling O: the round-4 re-review repros (real Podman 5.7.0 builds). Buildah
+# reads the COPY/FROM in the second stage; R hides it (a lone CR taken as a
+# newline, a heredoc R does not open, a BOM hiding ``# escape=``). The other
+# delimiters Buildah opens and R does not (``<<"EOF"``, ``<<'EOF'``,
+# ``<<-"EOF"``, ``<<1EOF``) are in ``test_reading``'s gate cases.
+_O_COPY_SPLIT = {
+    "cr": b"RUN true \\\r \n",
+    "hd-space": b'RUN cat <<" "\nx \\\n \n',
+}
+_O_COPY_PREAMBLE = {
+    "bom-escape": b"\xef\xbb\xbf# escape=`\n",
+    "unknown-escape": b"# foo=bar\n# escape=`\n",
+}
+_O_COPY_IDS = [*_O_COPY_SPLIT, *_O_COPY_PREAMBLE]
+
+
+def _o_copy_dockerfile(case: str) -> bytes:
+    """The two-stage COPY repro for ``case``: stage ``a`` skipped."""
+    preamble = _O_COPY_PREAMBLE.get(case, b"")
+    split = _O_COPY_SPLIT.get(case, b"RUN true \\\n")
+    return (
+        preamble
+        + b"FROM python:3.12-slim AS a\nCOPY docs/ab ./x\nFROM python:3.12-slim AS b\n"
+        + split
+        + b"COPY docs/ab ./x\nRUN true\n"
+    )
+
+
+@pytest.mark.parametrize("case", _O_COPY_IDS, ids=_O_COPY_IDS)
+def test_o_copy_repro_refused(case: str) -> None:
+    """The strict-form gate refuses before any output is read."""
+    stdout = "[2/2] STEP 3/4: COPY docs/ab ./x\n[2/2] STEP 4/4: RUN true\n"
+    dockerfile = _o_copy_dockerfile(case)
+    outcome = _local_copy(stdout, text="COPY docs/ab ./x", dockerfile=dockerfile)
+    assert outcome.evidence == "binding_ambiguous"
+    assert outcome.detail is not None and outcome.detail.startswith("Dockerfile: ")
+    assert outcome.lines == ()
+
+
+_O_FROM = {
+    "cr": b"FROM python:3.12-slim\nRUN true \\\r \nFROM python:3.12-slim\nRUN true\n",
+    "hd-space": (
+        b'FROM python:3.12-slim\nRUN cat <<" "\nx \\\n \n'
+        b"FROM python:3.12-slim\nRUN true\n"
+    ),
+    "bom": (
+        b"\xef\xbb\xbfFROM python:3.12-slim\nRUN true\nFROM python:3.12-slim\n"
+        b"RUN true\nFROM python:3.13-slim\nCOPY --from=0 /etc/hostname /h\n"
+    ),
+}
+
+
+@pytest.mark.parametrize("case", list(_O_FROM), ids=list(_O_FROM))
+def test_o_from_repro_refused(case: str) -> None:
+    """The FROM variants: R sees one ``FROM python:3.12-slim``, Buildah two."""
+    text = "FROM python:3.12-slim"
+    stdout = f"[1/3] STEP 1/2: {text}\n[1/3] STEP 2/2: RUN true\n"
+    outcome = match_local("from", text, stdout, "", dockerfile=_O_FROM[case], tag=_TAG)
+    assert outcome.evidence == "binding_ambiguous"
+    assert outcome.detail is not None and outcome.detail.startswith("Dockerfile: ")
+
+
+def test_o_crlf_dockerfile_still_matches() -> None:
+    """CRLF endings pass the gate: the synthetic COPY shape still passes."""
+    dockerfile = _DOCKERFILE.replace(b"\n", b"\r\n")
+    assert _local_copy(_PODMAN_COPY_OK, dockerfile=dockerfile).evidence == "passed"
+
+
 @pytest.mark.parametrize(
     "other", ['COPY "docs/setup.md" /app/docs/setup.md', "COPY $SRC /app/docs/setup.md"]
 )

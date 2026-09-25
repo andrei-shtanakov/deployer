@@ -63,6 +63,7 @@ from deployer.fix.reading import (
     heredoc_reason,
     join_reason,
     keyword_reason,
+    strict_form_reason,
 )
 from deployer.reproduce.dockerfile import (
     Instruction,
@@ -155,6 +156,9 @@ def match_local(
     when it names it)."""
     if not _enabled("local", kind):
         return _NOT_ENABLED
+    strict = strict_form_reason(dockerfile)
+    if strict is not None:
+        return _outcome("binding_ambiguous", (), f"Dockerfile: {strict}")
     if _overlong(stdout) or _overlong(stderr) or len(corrected_text) > MAX_LINE:
         return _outcome("unknown_format", (), "a line exceeds the read bound")
     if not _bindable(corrected_text):
