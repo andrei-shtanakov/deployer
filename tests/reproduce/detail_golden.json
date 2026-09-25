@@ -1,0 +1,5178 @@
+{
+ "synthetic:arg_only": {
+  "copy_sources": [],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [
+     {
+      "kind": "log_excerpt",
+      "listing": null,
+      "path": null,
+      "text": "empty Dockerfile"
+     }
+    ],
+    "finding": "syntax error at line 1: the first instruction is not FROM",
+    "location": {
+     "file": "Dockerfile",
+     "lines": [
+      1,
+      1
+     ]
+    },
+    "reason": null,
+    "status": "failed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "synthetic:arg_then_from": {
+  "copy_sources": [],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "synthetic:bracket_source": {
+  "copy_sources": [
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "COPY at line 2: source pattern not modelled: a[b].txt",
+    "status": "skipped"
+   }
+  ],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "synthetic:empty": {
+  "copy_sources": [],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [
+     {
+      "kind": "log_excerpt",
+      "listing": null,
+      "path": null,
+      "text": "empty Dockerfile"
+     }
+    ],
+    "finding": "syntax error at line 1: the first instruction is not FROM",
+    "location": {
+     "file": "Dockerfile",
+     "lines": [
+      1,
+      1
+     ]
+    },
+    "reason": null,
+    "status": "failed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "synthetic:escape_directive": {
+  "copy_sources": [
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "Dockerfile not fully read (escape directive not modelled: `)",
+    "status": "skipped"
+   }
+  ],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "escape directive not modelled: `",
+    "status": "skipped"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "escape directive not modelled: `",
+    "status": "skipped"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "escape directive not modelled: `",
+    "status": "skipped"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "escape directive not modelled: `",
+    "status": "skipped"
+   }
+  ]
+ },
+ "synthetic:escape_with_sources": {
+  "copy_sources": [
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "Dockerfile not fully read (escape directive not modelled: `)",
+    "status": "skipped"
+   }
+  ],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "escape directive not modelled: `",
+    "status": "skipped"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "escape directive not modelled: `",
+    "status": "skipped"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "escape directive not modelled: `",
+    "status": "skipped"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "escape directive not modelled: `",
+    "status": "skipped"
+   }
+  ]
+ },
+ "synthetic:excluded_source": {
+  "copy_sources": [
+   {
+    "check_id": "copy_sources",
+    "evidence": [
+     {
+      "kind": "ignore_file",
+      "listing": null,
+      "path": ".dockerignore",
+      "text": "line 1"
+     }
+    ],
+    "finding": "source present.txt excluded by .dockerignore line 1",
+    "location": {
+     "file": "Dockerfile",
+     "lines": [
+      2,
+      2
+     ]
+    },
+    "reason": null,
+    "status": "failed"
+   }
+  ],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "synthetic:first_not_from": {
+  "copy_sources": [],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [
+     {
+      "kind": "log_excerpt",
+      "listing": null,
+      "path": null,
+      "text": "RUN x"
+     }
+    ],
+    "finding": "syntax error at line 1: the first instruction is not FROM",
+    "location": {
+     "file": "Dockerfile",
+     "lines": [
+      1,
+      1
+     ]
+    },
+    "reason": null,
+    "status": "failed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "synthetic:from_flag": {
+  "copy_sources": [
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "COPY at line 3: --from source is checked in its stage or image, not the context",
+    "status": "skipped"
+   }
+  ],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "synthetic:glob_match": {
+  "copy_sources": [
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "synthetic:glob_no_match": {
+  "copy_sources": [
+   {
+    "check_id": "copy_sources",
+    "evidence": [
+     {
+      "kind": "path_absent",
+      "listing": "../../source.json#tree",
+      "path": "*.md",
+      "text": null
+     },
+     {
+      "kind": "ignore_file",
+      "listing": null,
+      "path": ".dockerignore",
+      "text": null
+     }
+    ],
+    "finding": "source *.md matches nothing in the context",
+    "location": {
+     "file": "Dockerfile",
+     "lines": [
+      2,
+      2
+     ]
+    },
+    "reason": null,
+    "status": "failed"
+   }
+  ],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "synthetic:heredoc": {
+  "copy_sources": [
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "COPY at line 2: heredoc source not modelled",
+    "status": "skipped"
+   }
+  ],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "synthetic:json_bad": {
+  "copy_sources": [
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "COPY at line 2: unparseable JSON form",
+    "status": "skipped"
+   }
+  ],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "synthetic:json_escape": {
+  "copy_sources": [
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "COPY at line 2: escape in JSON form not modelled",
+    "status": "skipped"
+   }
+  ],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "synthetic:json_form": {
+  "copy_sources": [
+   {
+    "check_id": "copy_sources",
+    "evidence": [
+     {
+      "kind": "path_absent",
+      "listing": "../../source.json#tree",
+      "path": "gone.txt",
+      "text": null
+     },
+     {
+      "kind": "ignore_file",
+      "listing": null,
+      "path": ".dockerignore",
+      "text": null
+     }
+    ],
+    "finding": "source gone.txt absent from the context",
+    "location": {
+     "file": "Dockerfile",
+     "lines": [
+      2,
+      2
+     ]
+    },
+    "reason": null,
+    "status": "failed"
+   }
+  ],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "synthetic:mixed_skips_and_failures": {
+  "copy_sources": [
+   {
+    "check_id": "copy_sources",
+    "evidence": [
+     {
+      "kind": "path_absent",
+      "listing": "../../source.json#tree",
+      "path": "missing.txt",
+      "text": null
+     },
+     {
+      "kind": "ignore_file",
+      "listing": null,
+      "path": ".dockerignore",
+      "text": null
+     }
+    ],
+    "finding": "source missing.txt absent from the context",
+    "location": {
+     "file": "Dockerfile",
+     "lines": [
+      3,
+      3
+     ]
+    },
+    "reason": null,
+    "status": "failed"
+   },
+   {
+    "check_id": "copy_sources",
+    "evidence": [
+     {
+      "kind": "path_absent",
+      "listing": "../../source.json#tree",
+      "path": "*.md",
+      "text": null
+     },
+     {
+      "kind": "ignore_file",
+      "listing": null,
+      "path": ".dockerignore",
+      "text": null
+     }
+    ],
+    "finding": "source *.md matches nothing in the context",
+    "location": {
+     "file": "Dockerfile",
+     "lines": [
+      5,
+      5
+     ]
+    },
+    "reason": null,
+    "status": "failed"
+   },
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "ADD at line 2: remote ADD source https://x/y",
+    "status": "skipped"
+   },
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "COPY at line 4: source pattern not modelled: $Y",
+    "status": "skipped"
+   }
+  ],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "synthetic:multi_source_one_missing": {
+  "copy_sources": [
+   {
+    "check_id": "copy_sources",
+    "evidence": [
+     {
+      "kind": "path_absent",
+      "listing": "../../source.json#tree",
+      "path": "missing.txt",
+      "text": null
+     },
+     {
+      "kind": "ignore_file",
+      "listing": null,
+      "path": ".dockerignore",
+      "text": null
+     }
+    ],
+    "finding": "source missing.txt absent from the context",
+    "location": {
+     "file": "Dockerfile",
+     "lines": [
+      2,
+      2
+     ]
+    },
+    "reason": null,
+    "status": "failed"
+   }
+  ],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "synthetic:no_copy": {
+  "copy_sources": [],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "synthetic:no_copy_unsupported_ignore": {
+  "copy_sources": [
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "ignore pattern not modelled: [ab]",
+    "status": "skipped"
+   }
+  ],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "synthetic:no_pair": {
+  "copy_sources": [
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "COPY at line 2: no source/destination pair",
+    "status": "skipped"
+   }
+  ],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "synthetic:platform_from": {
+  "copy_sources": [],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [
+     {
+      "kind": "log_excerpt",
+      "listing": null,
+      "path": null,
+      "text": "FROM --platform=x a b"
+     }
+    ],
+    "finding": "syntax error at line 2: FROM takes one or three arguments",
+    "location": {
+     "file": "Dockerfile",
+     "lines": [
+      2,
+      2
+     ]
+    },
+    "reason": null,
+    "status": "failed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "synthetic:remote_add": {
+  "copy_sources": [
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "ADD at line 2: remote ADD source https://x/y",
+    "status": "skipped"
+   }
+  ],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "synthetic:root_source": {
+  "copy_sources": [
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "synthetic:syntax_directive_all": {
+  "copy_sources": [],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [
+     {
+      "kind": "log_excerpt",
+      "listing": null,
+      "path": null,
+      "text": "RUNN x"
+     }
+    ],
+    "finding": "syntax error at line 2: the first instruction is not FROM",
+    "location": {
+     "file": "Dockerfile",
+     "lines": [
+      2,
+      2
+     ]
+    },
+    "reason": null,
+    "status": "observation"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [
+     {
+      "kind": "log_excerpt",
+      "listing": null,
+      "path": null,
+      "text": "FROM a b"
+     }
+    ],
+    "finding": "syntax error at line 3: FROM takes one or three arguments",
+    "location": {
+     "file": "Dockerfile",
+     "lines": [
+      3,
+      3
+     ]
+    },
+    "reason": null,
+    "status": "observation"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [
+     {
+      "kind": "log_excerpt",
+      "listing": null,
+      "path": null,
+      "text": "RUNN x"
+     }
+    ],
+    "finding": "syntax error at line 2: unknown instruction RUNN",
+    "location": {
+     "file": "Dockerfile",
+     "lines": [
+      2,
+      2
+     ]
+    },
+    "reason": null,
+    "status": "observation"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [
+     {
+      "kind": "log_excerpt",
+      "listing": null,
+      "path": null,
+      "text": "FROM a b"
+     }
+    ],
+    "finding": "syntax error at line 3: line continuation ends the file",
+    "location": {
+     "file": "Dockerfile",
+     "lines": [
+      3,
+      3
+     ]
+    },
+    "reason": null,
+    "status": "observation"
+   }
+  ]
+ },
+ "synthetic:syntax_directive_bad_from": {
+  "copy_sources": [],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [
+     {
+      "kind": "log_excerpt",
+      "listing": null,
+      "path": null,
+      "text": "FROM a b"
+     }
+    ],
+    "finding": "syntax error at line 2: FROM takes one or three arguments",
+    "location": {
+     "file": "Dockerfile",
+     "lines": [
+      2,
+      2
+     ]
+    },
+    "reason": null,
+    "status": "observation"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "synthetic:two_bad_froms": {
+  "copy_sources": [],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [
+     {
+      "kind": "log_excerpt",
+      "listing": null,
+      "path": null,
+      "text": "FROM a b"
+     }
+    ],
+    "finding": "syntax error at line 1: FROM takes one or three arguments",
+    "location": {
+     "file": "Dockerfile",
+     "lines": [
+      1,
+      1
+     ]
+    },
+    "reason": null,
+    "status": "failed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [
+     {
+      "kind": "log_excerpt",
+      "listing": null,
+      "path": null,
+      "text": "FROM d e f g"
+     }
+    ],
+    "finding": "syntax error at line 3: FROM takes one or three arguments",
+    "location": {
+     "file": "Dockerfile",
+     "lines": [
+      3,
+      3
+     ]
+    },
+    "reason": null,
+    "status": "failed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "synthetic:unknown_keyword_dangling": {
+  "copy_sources": [],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [
+     {
+      "kind": "log_excerpt",
+      "listing": null,
+      "path": null,
+      "text": "RUNN x"
+     }
+    ],
+    "finding": "syntax error at line 2: unknown instruction RUNN",
+    "location": {
+     "file": "Dockerfile",
+     "lines": [
+      2,
+      2
+     ]
+    },
+    "reason": null,
+    "status": "failed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [
+     {
+      "kind": "log_excerpt",
+      "listing": null,
+      "path": null,
+      "text": "RUN y"
+     }
+    ],
+    "finding": "syntax error at line 3: line continuation ends the file",
+    "location": {
+     "file": "Dockerfile",
+     "lines": [
+      3,
+      3
+     ]
+    },
+    "reason": null,
+    "status": "failed"
+   }
+  ]
+ },
+ "synthetic:unmodelled": {
+  "copy_sources": [
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "COPY at line 2: source pattern not modelled: $X",
+    "status": "skipped"
+   }
+  ],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "synthetic:unmodelled_flag": {
+  "copy_sources": [
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "COPY at line 2: flag not modelled: --parents",
+    "status": "skipped"
+   }
+  ],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "synthetic:unsupported_ignore_with_copy": {
+  "copy_sources": [
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "ignore pattern not modelled: [ab]",
+    "status": "skipped"
+   }
+  ],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "tests/fixtures/admission/admit-run-1/tree/Dockerfile": {
+  "copy_sources": [
+   {
+    "check_id": "copy_sources",
+    "evidence": [
+     {
+      "kind": "path_absent",
+      "listing": "../../source.json#tree",
+      "path": "docs/setup.md",
+      "text": null
+     },
+     {
+      "kind": "ignore_file",
+      "listing": null,
+      "path": ".dockerignore",
+      "text": null
+     }
+    ],
+    "finding": "source docs/setup.md absent from the context",
+    "location": {
+     "file": "Dockerfile",
+     "lines": [
+      11,
+      11
+     ]
+    },
+    "reason": null,
+    "status": "failed"
+   },
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "COPY at line 3: --from source is checked in its stage or image, not the context",
+    "status": "skipped"
+   }
+  ],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "tests/fixtures/admission/admit-run-5/tree/Dockerfile": {
+  "copy_sources": [
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "COPY at line 3: --from source is checked in its stage or image, not the context",
+    "status": "skipped"
+   }
+  ],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [
+     {
+      "kind": "log_excerpt",
+      "listing": null,
+      "path": null,
+      "text": "FROM python:3.12-slim extra"
+     }
+    ],
+    "finding": "syntax error at line 1: FROM takes one or three arguments",
+    "location": {
+     "file": "Dockerfile",
+     "lines": [
+      1,
+      1
+     ]
+    },
+    "reason": null,
+    "status": "failed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "tests/fixtures/admission/bad-signature/tree/Dockerfile": {
+  "copy_sources": [
+   {
+    "check_id": "copy_sources",
+    "evidence": [
+     {
+      "kind": "path_absent",
+      "listing": "../../source.json#tree",
+      "path": "docs/setup.md",
+      "text": null
+     },
+     {
+      "kind": "ignore_file",
+      "listing": null,
+      "path": ".dockerignore",
+      "text": null
+     }
+    ],
+    "finding": "source docs/setup.md absent from the context",
+    "location": {
+     "file": "Dockerfile",
+     "lines": [
+      11,
+      11
+     ]
+    },
+    "reason": null,
+    "status": "failed"
+   },
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "COPY at line 3: --from source is checked in its stage or image, not the context",
+    "status": "skipped"
+   }
+  ],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "tests/fixtures/admission/dir-not-hash/tree/Dockerfile": {
+  "copy_sources": [
+   {
+    "check_id": "copy_sources",
+    "evidence": [
+     {
+      "kind": "path_absent",
+      "listing": "../../source.json#tree",
+      "path": "docs/setup.md",
+      "text": null
+     },
+     {
+      "kind": "ignore_file",
+      "listing": null,
+      "path": ".dockerignore",
+      "text": null
+     }
+    ],
+    "finding": "source docs/setup.md absent from the context",
+    "location": {
+     "file": "Dockerfile",
+     "lines": [
+      11,
+      11
+     ]
+    },
+    "reason": null,
+    "status": "failed"
+   },
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "COPY at line 3: --from source is checked in its stage or image, not the context",
+    "status": "skipped"
+   }
+  ],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "tests/fixtures/admission/dollar-var/tree/Dockerfile": {
+  "copy_sources": [
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "COPY at line 3: --from source is checked in its stage or image, not the context",
+    "status": "skipped"
+   },
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "COPY at line 11: source pattern not modelled: $VAR",
+    "status": "skipped"
+   }
+  ],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "tests/fixtures/admission/duplicate-path/tree/Dockerfile": {
+  "copy_sources": [
+   {
+    "check_id": "copy_sources",
+    "evidence": [
+     {
+      "kind": "path_absent",
+      "listing": "../../source.json#tree",
+      "path": "docs/setup.md",
+      "text": null
+     },
+     {
+      "kind": "ignore_file",
+      "listing": null,
+      "path": ".dockerignore",
+      "text": null
+     }
+    ],
+    "finding": "source docs/setup.md absent from the context",
+    "location": {
+     "file": "Dockerfile",
+     "lines": [
+      11,
+      11
+     ]
+    },
+    "reason": null,
+    "status": "failed"
+   },
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "COPY at line 3: --from source is checked in its stage or image, not the context",
+    "status": "skipped"
+   }
+  ],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "tests/fixtures/admission/foreign-path/tree/Dockerfile": {
+  "copy_sources": [
+   {
+    "check_id": "copy_sources",
+    "evidence": [
+     {
+      "kind": "path_absent",
+      "listing": "../../source.json#tree",
+      "path": "docs/setup.md",
+      "text": null
+     },
+     {
+      "kind": "ignore_file",
+      "listing": null,
+      "path": ".dockerignore",
+      "text": null
+     }
+    ],
+    "finding": "source docs/setup.md absent from the context",
+    "location": {
+     "file": "Dockerfile",
+     "lines": [
+      11,
+      11
+     ]
+    },
+    "reason": null,
+    "status": "failed"
+   },
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "COPY at line 3: --from source is checked in its stage or image, not the context",
+    "status": "skipped"
+   }
+  ],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "tests/fixtures/admission/foreign-repo/tree/Dockerfile": {
+  "copy_sources": [
+   {
+    "check_id": "copy_sources",
+    "evidence": [
+     {
+      "kind": "path_absent",
+      "listing": "../../source.json#tree",
+      "path": "docs/setup.md",
+      "text": null
+     },
+     {
+      "kind": "ignore_file",
+      "listing": null,
+      "path": ".dockerignore",
+      "text": null
+     }
+    ],
+    "finding": "source docs/setup.md absent from the context",
+    "location": {
+     "file": "Dockerfile",
+     "lines": [
+      11,
+      11
+     ]
+    },
+    "reason": null,
+    "status": "failed"
+   },
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "COPY at line 3: --from source is checked in its stage or image, not the context",
+    "status": "skipped"
+   }
+  ],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "tests/fixtures/admission/hand-edit/tree/Dockerfile": {
+  "copy_sources": [
+   {
+    "check_id": "copy_sources",
+    "evidence": [
+     {
+      "kind": "path_absent",
+      "listing": "../../source.json#tree",
+      "path": "docs/setup.md",
+      "text": null
+     },
+     {
+      "kind": "ignore_file",
+      "listing": null,
+      "path": ".dockerignore",
+      "text": null
+     }
+    ],
+    "finding": "source docs/setup.md absent from the context",
+    "location": {
+     "file": "Dockerfile",
+     "lines": [
+      11,
+      11
+     ]
+    },
+    "reason": null,
+    "status": "failed"
+   },
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "COPY at line 3: --from source is checked in its stage or image, not the context",
+    "status": "skipped"
+   }
+  ],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "tests/fixtures/admission/no-set/tree/Dockerfile": {
+  "copy_sources": [
+   {
+    "check_id": "copy_sources",
+    "evidence": [
+     {
+      "kind": "path_absent",
+      "listing": "../../source.json#tree",
+      "path": "docs/setup.md",
+      "text": null
+     },
+     {
+      "kind": "ignore_file",
+      "listing": null,
+      "path": ".dockerignore",
+      "text": null
+     }
+    ],
+    "finding": "source docs/setup.md absent from the context",
+    "location": {
+     "file": "Dockerfile",
+     "lines": [
+      11,
+      11
+     ]
+    },
+    "reason": null,
+    "status": "failed"
+   },
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "COPY at line 3: --from source is checked in its stage or image, not the context",
+    "status": "skipped"
+   }
+  ],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "tests/fixtures/admission/pointer-missing-dir/tree/Dockerfile": {
+  "copy_sources": [
+   {
+    "check_id": "copy_sources",
+    "evidence": [
+     {
+      "kind": "path_absent",
+      "listing": "../../source.json#tree",
+      "path": "docs/setup.md",
+      "text": null
+     },
+     {
+      "kind": "ignore_file",
+      "listing": null,
+      "path": ".dockerignore",
+      "text": null
+     }
+    ],
+    "finding": "source docs/setup.md absent from the context",
+    "location": {
+     "file": "Dockerfile",
+     "lines": [
+      11,
+      11
+     ]
+    },
+    "reason": null,
+    "status": "failed"
+   },
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "COPY at line 3: --from source is checked in its stage or image, not the context",
+    "status": "skipped"
+   }
+  ],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "tests/fixtures/admission/record-format/tree/Dockerfile": {
+  "copy_sources": [
+   {
+    "check_id": "copy_sources",
+    "evidence": [
+     {
+      "kind": "path_absent",
+      "listing": "../../source.json#tree",
+      "path": "docs/setup.md",
+      "text": null
+     },
+     {
+      "kind": "ignore_file",
+      "listing": null,
+      "path": ".dockerignore",
+      "text": null
+     }
+    ],
+    "finding": "source docs/setup.md absent from the context",
+    "location": {
+     "file": "Dockerfile",
+     "lines": [
+      11,
+      11
+     ]
+    },
+    "reason": null,
+    "status": "failed"
+   },
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "COPY at line 3: --from source is checked in its stage or image, not the context",
+    "status": "skipped"
+   }
+  ],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "tests/fixtures/admission/revoked-key/tree/Dockerfile": {
+  "copy_sources": [
+   {
+    "check_id": "copy_sources",
+    "evidence": [
+     {
+      "kind": "path_absent",
+      "listing": "../../source.json#tree",
+      "path": "docs/setup.md",
+      "text": null
+     },
+     {
+      "kind": "ignore_file",
+      "listing": null,
+      "path": ".dockerignore",
+      "text": null
+     }
+    ],
+    "finding": "source docs/setup.md absent from the context",
+    "location": {
+     "file": "Dockerfile",
+     "lines": [
+      11,
+      11
+     ]
+    },
+    "reason": null,
+    "status": "failed"
+   },
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "COPY at line 3: --from source is checked in its stage or image, not the context",
+    "status": "skipped"
+   }
+  ],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "tests/fixtures/admission/row-missing-field/tree/Dockerfile": {
+  "copy_sources": [
+   {
+    "check_id": "copy_sources",
+    "evidence": [
+     {
+      "kind": "path_absent",
+      "listing": "../../source.json#tree",
+      "path": "docs/setup.md",
+      "text": null
+     },
+     {
+      "kind": "ignore_file",
+      "listing": null,
+      "path": ".dockerignore",
+      "text": null
+     }
+    ],
+    "finding": "source docs/setup.md absent from the context",
+    "location": {
+     "file": "Dockerfile",
+     "lines": [
+      11,
+      11
+     ]
+    },
+    "reason": null,
+    "status": "failed"
+   },
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "COPY at line 3: --from source is checked in its stage or image, not the context",
+    "status": "skipped"
+   }
+  ],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "tests/fixtures/admission/row-non-string/tree/Dockerfile": {
+  "copy_sources": [
+   {
+    "check_id": "copy_sources",
+    "evidence": [
+     {
+      "kind": "path_absent",
+      "listing": "../../source.json#tree",
+      "path": "docs/setup.md",
+      "text": null
+     },
+     {
+      "kind": "ignore_file",
+      "listing": null,
+      "path": ".dockerignore",
+      "text": null
+     }
+    ],
+    "finding": "source docs/setup.md absent from the context",
+    "location": {
+     "file": "Dockerfile",
+     "lines": [
+      11,
+      11
+     ]
+    },
+    "reason": null,
+    "status": "failed"
+   },
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "COPY at line 3: --from source is checked in its stage or image, not the context",
+    "status": "skipped"
+   }
+  ],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "tests/fixtures/admission/snapshot-edited/tree/Dockerfile": {
+  "copy_sources": [
+   {
+    "check_id": "copy_sources",
+    "evidence": [
+     {
+      "kind": "path_absent",
+      "listing": "../../source.json#tree",
+      "path": "docs/setup.md",
+      "text": null
+     },
+     {
+      "kind": "ignore_file",
+      "listing": null,
+      "path": ".dockerignore",
+      "text": null
+     }
+    ],
+    "finding": "source docs/setup.md absent from the context",
+    "location": {
+     "file": "Dockerfile",
+     "lines": [
+      11,
+      11
+     ]
+    },
+    "reason": null,
+    "status": "failed"
+   },
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "COPY at line 3: --from source is checked in its stage or image, not the context",
+    "status": "skipped"
+   }
+  ],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "tests/fixtures/admission/snapshot-format/tree/Dockerfile": {
+  "copy_sources": [
+   {
+    "check_id": "copy_sources",
+    "evidence": [
+     {
+      "kind": "path_absent",
+      "listing": "../../source.json#tree",
+      "path": "docs/setup.md",
+      "text": null
+     },
+     {
+      "kind": "ignore_file",
+      "listing": null,
+      "path": ".dockerignore",
+      "text": null
+     }
+    ],
+    "finding": "source docs/setup.md absent from the context",
+    "location": {
+     "file": "Dockerfile",
+     "lines": [
+      11,
+      11
+     ]
+    },
+    "reason": null,
+    "status": "failed"
+   },
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "COPY at line 3: --from source is checked in its stage or image, not the context",
+    "status": "skipped"
+   }
+  ],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "tests/fixtures/admission/source-commit-differs/tree/Dockerfile": {
+  "copy_sources": [
+   {
+    "check_id": "copy_sources",
+    "evidence": [
+     {
+      "kind": "path_absent",
+      "listing": "../../source.json#tree",
+      "path": "docs/setup.md",
+      "text": null
+     },
+     {
+      "kind": "ignore_file",
+      "listing": null,
+      "path": ".dockerignore",
+      "text": null
+     }
+    ],
+    "finding": "source docs/setup.md absent from the context",
+    "location": {
+     "file": "Dockerfile",
+     "lines": [
+      11,
+      11
+     ]
+    },
+    "reason": null,
+    "status": "failed"
+   },
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "COPY at line 3: --from source is checked in its stage or image, not the context",
+    "status": "skipped"
+   }
+  ],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "tests/fixtures/admission/syntax-directive/tree/Dockerfile": {
+  "copy_sources": [
+   {
+    "check_id": "copy_sources",
+    "evidence": [
+     {
+      "kind": "path_absent",
+      "listing": "../../source.json#tree",
+      "path": "docs/setup.md",
+      "text": null
+     },
+     {
+      "kind": "ignore_file",
+      "listing": null,
+      "path": ".dockerignore",
+      "text": null
+     }
+    ],
+    "finding": "source docs/setup.md absent from the context",
+    "location": {
+     "file": "Dockerfile",
+     "lines": [
+      11,
+      11
+     ]
+    },
+    "reason": null,
+    "status": "failed"
+   },
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "COPY at line 3: --from source is checked in its stage or image, not the context",
+    "status": "skipped"
+   }
+  ],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "tests/fixtures/admission/tree-incomplete/tree/Dockerfile": {
+  "copy_sources": [
+   {
+    "check_id": "copy_sources",
+    "evidence": [
+     {
+      "kind": "path_absent",
+      "listing": "../../source.json#tree",
+      "path": "docs/setup.md",
+      "text": null
+     },
+     {
+      "kind": "ignore_file",
+      "listing": null,
+      "path": ".dockerignore",
+      "text": null
+     }
+    ],
+    "finding": "source docs/setup.md absent from the context",
+    "location": {
+     "file": "Dockerfile",
+     "lines": [
+      11,
+      11
+     ]
+    },
+    "reason": null,
+    "status": "failed"
+   },
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "COPY at line 3: --from source is checked in its stage or image, not the context",
+    "status": "skipped"
+   }
+  ],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "tests/fixtures/admission/trust-inside/tree/Dockerfile": {
+  "copy_sources": [
+   {
+    "check_id": "copy_sources",
+    "evidence": [
+     {
+      "kind": "path_absent",
+      "listing": "../../source.json#tree",
+      "path": "docs/setup.md",
+      "text": null
+     },
+     {
+      "kind": "ignore_file",
+      "listing": null,
+      "path": ".dockerignore",
+      "text": null
+     }
+    ],
+    "finding": "source docs/setup.md absent from the context",
+    "location": {
+     "file": "Dockerfile",
+     "lines": [
+      11,
+      11
+     ]
+    },
+    "reason": null,
+    "status": "failed"
+   },
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "COPY at line 3: --from source is checked in its stage or image, not the context",
+    "status": "skipped"
+   }
+  ],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "tests/fixtures/admission/trust-symlink/tree/Dockerfile": {
+  "copy_sources": [
+   {
+    "check_id": "copy_sources",
+    "evidence": [
+     {
+      "kind": "path_absent",
+      "listing": "../../source.json#tree",
+      "path": "docs/setup.md",
+      "text": null
+     },
+     {
+      "kind": "ignore_file",
+      "listing": null,
+      "path": ".dockerignore",
+      "text": null
+     }
+    ],
+    "finding": "source docs/setup.md absent from the context",
+    "location": {
+     "file": "Dockerfile",
+     "lines": [
+      11,
+      11
+     ]
+    },
+    "reason": null,
+    "status": "failed"
+   },
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "COPY at line 3: --from source is checked in its stage or image, not the context",
+    "status": "skipped"
+   }
+  ],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "tests/fixtures/admission/unknown-key/tree/Dockerfile": {
+  "copy_sources": [
+   {
+    "check_id": "copy_sources",
+    "evidence": [
+     {
+      "kind": "path_absent",
+      "listing": "../../source.json#tree",
+      "path": "docs/setup.md",
+      "text": null
+     },
+     {
+      "kind": "ignore_file",
+      "listing": null,
+      "path": ".dockerignore",
+      "text": null
+     }
+    ],
+    "finding": "source docs/setup.md absent from the context",
+    "location": {
+     "file": "Dockerfile",
+     "lines": [
+      11,
+      11
+     ]
+    },
+    "reason": null,
+    "status": "failed"
+   },
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "COPY at line 3: --from source is checked in its stage or image, not the context",
+    "status": "skipped"
+   }
+  ],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "tests/fixtures/reproduction/archive-mismatch/tree/Dockerfile": {
+  "copy_sources": [
+   {
+    "check_id": "copy_sources",
+    "evidence": [
+     {
+      "kind": "path_absent",
+      "listing": "../../source.json#tree",
+      "path": "docs/setup.md",
+      "text": null
+     },
+     {
+      "kind": "ignore_file",
+      "listing": null,
+      "path": null,
+      "text": null
+     }
+    ],
+    "finding": "source docs/setup.md absent from the context",
+    "location": {
+     "file": "Dockerfile",
+     "lines": [
+      11,
+      11
+     ]
+    },
+    "reason": null,
+    "status": "failed"
+   },
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "COPY at line 3: --from source is checked in its stage or image, not the context",
+    "status": "skipped"
+   }
+  ],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "tests/fixtures/reproduction/backend-down/tree/Dockerfile": {
+  "copy_sources": [
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "COPY at line 3: --from source is checked in its stage or image, not the context",
+    "status": "skipped"
+   }
+  ],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [
+     {
+      "kind": "log_excerpt",
+      "listing": null,
+      "path": null,
+      "text": "FROM python:3.12-slim extra"
+     }
+    ],
+    "finding": "syntax error at line 1: FROM takes one or three arguments",
+    "location": {
+     "file": "Dockerfile",
+     "lines": [
+      1,
+      1
+     ]
+    },
+    "reason": null,
+    "status": "failed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "tests/fixtures/reproduction/checkout-ref/tree/Dockerfile": {
+  "copy_sources": [
+   {
+    "check_id": "copy_sources",
+    "evidence": [
+     {
+      "kind": "path_absent",
+      "listing": "../../source.json#tree",
+      "path": "docs/setup.md",
+      "text": null
+     },
+     {
+      "kind": "ignore_file",
+      "listing": null,
+      "path": null,
+      "text": null
+     }
+    ],
+    "finding": "source docs/setup.md absent from the context",
+    "location": {
+     "file": "Dockerfile",
+     "lines": [
+      11,
+      11
+     ]
+    },
+    "reason": null,
+    "status": "failed"
+   },
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "COPY at line 3: --from source is checked in its stage or image, not the context",
+    "status": "skipped"
+   }
+  ],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "tests/fixtures/reproduction/checkout-sha-missing/tree/Dockerfile": {
+  "copy_sources": [
+   {
+    "check_id": "copy_sources",
+    "evidence": [
+     {
+      "kind": "path_absent",
+      "listing": "../../source.json#tree",
+      "path": "docs/setup.md",
+      "text": null
+     },
+     {
+      "kind": "ignore_file",
+      "listing": null,
+      "path": null,
+      "text": null
+     }
+    ],
+    "finding": "source docs/setup.md absent from the context",
+    "location": {
+     "file": "Dockerfile",
+     "lines": [
+      11,
+      11
+     ]
+    },
+    "reason": null,
+    "status": "failed"
+   },
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "COPY at line 3: --from source is checked in its stage or image, not the context",
+    "status": "skipped"
+   }
+  ],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "tests/fixtures/reproduction/checkout-sha-other/tree/Dockerfile": {
+  "copy_sources": [
+   {
+    "check_id": "copy_sources",
+    "evidence": [
+     {
+      "kind": "path_absent",
+      "listing": "../../source.json#tree",
+      "path": "docs/setup.md",
+      "text": null
+     },
+     {
+      "kind": "ignore_file",
+      "listing": null,
+      "path": null,
+      "text": null
+     }
+    ],
+    "finding": "source docs/setup.md absent from the context",
+    "location": {
+     "file": "Dockerfile",
+     "lines": [
+      11,
+      11
+     ]
+    },
+    "reason": null,
+    "status": "failed"
+   },
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "COPY at line 3: --from source is checked in its stage or image, not the context",
+    "status": "skipped"
+   }
+  ],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "tests/fixtures/reproduction/containerignore/tree/Dockerfile": {
+  "copy_sources": [
+   {
+    "check_id": "copy_sources",
+    "evidence": [
+     {
+      "kind": "path_absent",
+      "listing": "../../source.json#tree",
+      "path": "docs/setup.md",
+      "text": null
+     },
+     {
+      "kind": "ignore_file",
+      "listing": null,
+      "path": ".dockerignore",
+      "text": null
+     }
+    ],
+    "finding": "source docs/setup.md absent from the context",
+    "location": {
+     "file": "Dockerfile",
+     "lines": [
+      11,
+      11
+     ]
+    },
+    "reason": null,
+    "status": "failed"
+   },
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "COPY at line 3: --from source is checked in its stage or image, not the context",
+    "status": "skipped"
+   }
+  ],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "tests/fixtures/reproduction/context-subdir/tree/Dockerfile": {
+  "copy_sources": [
+   {
+    "check_id": "copy_sources",
+    "evidence": [
+     {
+      "kind": "path_absent",
+      "listing": "../../source.json#tree",
+      "path": "docs/setup.md",
+      "text": null
+     },
+     {
+      "kind": "ignore_file",
+      "listing": null,
+      "path": null,
+      "text": null
+     }
+    ],
+    "finding": "source docs/setup.md absent from the context",
+    "location": {
+     "file": "Dockerfile",
+     "lines": [
+      11,
+      11
+     ]
+    },
+    "reason": null,
+    "status": "failed"
+   },
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "COPY at line 3: --from source is checked in its stage or image, not the context",
+    "status": "skipped"
+   }
+  ],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "tests/fixtures/reproduction/copy-git/tree/Dockerfile": {
+  "copy_sources": [
+   {
+    "check_id": "copy_sources",
+    "evidence": [
+     {
+      "kind": "path_absent",
+      "listing": "../../source.json#tree",
+      "path": "docs/setup.md",
+      "text": null
+     },
+     {
+      "kind": "ignore_file",
+      "listing": null,
+      "path": null,
+      "text": null
+     }
+    ],
+    "finding": "source docs/setup.md absent from the context",
+    "location": {
+     "file": "Dockerfile",
+     "lines": [
+      11,
+      11
+     ]
+    },
+    "reason": null,
+    "status": "failed"
+   },
+   {
+    "check_id": "copy_sources",
+    "evidence": [
+     {
+      "kind": "path_absent",
+      "listing": "../../source.json#tree",
+      "path": ".git/HEAD",
+      "text": null
+     },
+     {
+      "kind": "ignore_file",
+      "listing": null,
+      "path": null,
+      "text": null
+     }
+    ],
+    "finding": "source .git/HEAD absent from the context",
+    "location": {
+     "file": "Dockerfile",
+     "lines": [
+      21,
+      21
+     ]
+    },
+    "reason": null,
+    "status": "failed"
+   },
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "COPY at line 3: --from source is checked in its stage or image, not the context",
+    "status": "skipped"
+   }
+  ],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "tests/fixtures/reproduction/endpoint-env/tree/Dockerfile": {
+  "copy_sources": [
+   {
+    "check_id": "copy_sources",
+    "evidence": [
+     {
+      "kind": "path_absent",
+      "listing": "../../source.json#tree",
+      "path": "docs/setup.md",
+      "text": null
+     },
+     {
+      "kind": "ignore_file",
+      "listing": null,
+      "path": null,
+      "text": null
+     }
+    ],
+    "finding": "source docs/setup.md absent from the context",
+    "location": {
+     "file": "Dockerfile",
+     "lines": [
+      11,
+      11
+     ]
+    },
+    "reason": null,
+    "status": "failed"
+   },
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "COPY at line 3: --from source is checked in its stage or image, not the context",
+    "status": "skipped"
+   }
+  ],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "tests/fixtures/reproduction/endpoint-remote/tree/Dockerfile": {
+  "copy_sources": [
+   {
+    "check_id": "copy_sources",
+    "evidence": [
+     {
+      "kind": "path_absent",
+      "listing": "../../source.json#tree",
+      "path": "docs/setup.md",
+      "text": null
+     },
+     {
+      "kind": "ignore_file",
+      "listing": null,
+      "path": null,
+      "text": null
+     }
+    ],
+    "finding": "source docs/setup.md absent from the context",
+    "location": {
+     "file": "Dockerfile",
+     "lines": [
+      11,
+      11
+     ]
+    },
+    "reason": null,
+    "status": "failed"
+   },
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "COPY at line 3: --from source is checked in its stage or image, not the context",
+    "status": "skipped"
+   }
+  ],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "tests/fixtures/reproduction/event-pr/tree/Dockerfile": {
+  "copy_sources": [
+   {
+    "check_id": "copy_sources",
+    "evidence": [
+     {
+      "kind": "path_absent",
+      "listing": "../../source.json#tree",
+      "path": "docs/setup.md",
+      "text": null
+     },
+     {
+      "kind": "ignore_file",
+      "listing": null,
+      "path": null,
+      "text": null
+     }
+    ],
+    "finding": "source docs/setup.md absent from the context",
+    "location": {
+     "file": "Dockerfile",
+     "lines": [
+      11,
+      11
+     ]
+    },
+    "reason": null,
+    "status": "failed"
+   },
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "COPY at line 3: --from source is checked in its stage or image, not the context",
+    "status": "skipped"
+   }
+  ],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "tests/fixtures/reproduction/generating-step/tree/Dockerfile": {
+  "copy_sources": [
+   {
+    "check_id": "copy_sources",
+    "evidence": [
+     {
+      "kind": "path_absent",
+      "listing": "../../source.json#tree",
+      "path": "docs/setup.md",
+      "text": null
+     },
+     {
+      "kind": "ignore_file",
+      "listing": null,
+      "path": null,
+      "text": null
+     }
+    ],
+    "finding": "source docs/setup.md absent from the context",
+    "location": {
+     "file": "Dockerfile",
+     "lines": [
+      11,
+      11
+     ]
+    },
+    "reason": null,
+    "status": "failed"
+   },
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "COPY at line 3: --from source is checked in its stage or image, not the context",
+    "status": "skipped"
+   }
+  ],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "tests/fixtures/reproduction/gitattributes/tree/Dockerfile": {
+  "copy_sources": [
+   {
+    "check_id": "copy_sources",
+    "evidence": [
+     {
+      "kind": "path_absent",
+      "listing": "../../source.json#tree",
+      "path": "docs/setup.md",
+      "text": null
+     },
+     {
+      "kind": "ignore_file",
+      "listing": null,
+      "path": null,
+      "text": null
+     }
+    ],
+    "finding": "source docs/setup.md absent from the context",
+    "location": {
+     "file": "Dockerfile",
+     "lines": [
+      11,
+      11
+     ]
+    },
+    "reason": null,
+    "status": "failed"
+   },
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "COPY at line 3: --from source is checked in its stage or image, not the context",
+    "status": "skipped"
+   }
+  ],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "tests/fixtures/reproduction/local-success/tree/Dockerfile": {
+  "copy_sources": [
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "COPY at line 3: --from source is checked in its stage or image, not the context",
+    "status": "skipped"
+   }
+  ],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "tests/fixtures/reproduction/matrix/tree/Dockerfile": {
+  "copy_sources": [
+   {
+    "check_id": "copy_sources",
+    "evidence": [
+     {
+      "kind": "path_absent",
+      "listing": "../../source.json#tree",
+      "path": "docs/setup.md",
+      "text": null
+     },
+     {
+      "kind": "ignore_file",
+      "listing": null,
+      "path": null,
+      "text": null
+     }
+    ],
+    "finding": "source docs/setup.md absent from the context",
+    "location": {
+     "file": "Dockerfile",
+     "lines": [
+      11,
+      11
+     ]
+    },
+    "reason": null,
+    "status": "failed"
+   },
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "COPY at line 3: --from source is checked in its stage or image, not the context",
+    "status": "skipped"
+   }
+  ],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "tests/fixtures/reproduction/other-line/tree/Dockerfile": {
+  "copy_sources": [
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "COPY at line 3: --from source is checked in its stage or image, not the context",
+    "status": "skipped"
+   }
+  ],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "tests/fixtures/reproduction/other-output/tree/Dockerfile": {
+  "copy_sources": [
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "COPY at line 3: --from source is checked in its stage or image, not the context",
+    "status": "skipped"
+   }
+  ],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "tests/fixtures/reproduction/run-1/tree/Dockerfile": {
+  "copy_sources": [
+   {
+    "check_id": "copy_sources",
+    "evidence": [
+     {
+      "kind": "path_absent",
+      "listing": "../../source.json#tree",
+      "path": "docs/setup.md",
+      "text": null
+     },
+     {
+      "kind": "ignore_file",
+      "listing": null,
+      "path": null,
+      "text": null
+     }
+    ],
+    "finding": "source docs/setup.md absent from the context",
+    "location": {
+     "file": "Dockerfile",
+     "lines": [
+      11,
+      11
+     ]
+    },
+    "reason": null,
+    "status": "failed"
+   },
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "COPY at line 3: --from source is checked in its stage or image, not the context",
+    "status": "skipped"
+   }
+  ],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "tests/fixtures/reproduction/run-2/tree/Dockerfile": {
+  "copy_sources": [
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "COPY at line 3: --from source is checked in its stage or image, not the context",
+    "status": "skipped"
+   }
+  ],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "tests/fixtures/reproduction/run-3/tree/Dockerfile": {
+  "copy_sources": [
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "COPY at line 3: --from source is checked in its stage or image, not the context",
+    "status": "skipped"
+   }
+  ],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "tests/fixtures/reproduction/run-5/tree/Dockerfile": {
+  "copy_sources": [
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "COPY at line 3: --from source is checked in its stage or image, not the context",
+    "status": "skipped"
+   }
+  ],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [
+     {
+      "kind": "log_excerpt",
+      "listing": null,
+      "path": null,
+      "text": "FROM python:3.12-slim extra"
+     }
+    ],
+    "finding": "syntax error at line 1: FROM takes one or three arguments",
+    "location": {
+     "file": "Dockerfile",
+     "lines": [
+      1,
+      1
+     ]
+    },
+    "reason": null,
+    "status": "failed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "tests/fixtures/reproduction/run-mount/tree/Dockerfile": {
+  "copy_sources": [
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "COPY at line 3: --from source is checked in its stage or image, not the context",
+    "status": "skipped"
+   }
+  ],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "tests/fixtures/reproduction/several-failed-jobs/tree/Dockerfile": {
+  "copy_sources": [
+   {
+    "check_id": "copy_sources",
+    "evidence": [
+     {
+      "kind": "path_absent",
+      "listing": "../../source.json#tree",
+      "path": "docs/setup.md",
+      "text": null
+     },
+     {
+      "kind": "ignore_file",
+      "listing": null,
+      "path": null,
+      "text": null
+     }
+    ],
+    "finding": "source docs/setup.md absent from the context",
+    "location": {
+     "file": "Dockerfile",
+     "lines": [
+      11,
+      11
+     ]
+    },
+    "reason": null,
+    "status": "failed"
+   },
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "COPY at line 3: --from source is checked in its stage or image, not the context",
+    "status": "skipped"
+   }
+  ],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "tests/fixtures/reproduction/shell-chain/tree/Dockerfile": {
+  "copy_sources": [
+   {
+    "check_id": "copy_sources",
+    "evidence": [
+     {
+      "kind": "path_absent",
+      "listing": "../../source.json#tree",
+      "path": "docs/setup.md",
+      "text": null
+     },
+     {
+      "kind": "ignore_file",
+      "listing": null,
+      "path": null,
+      "text": null
+     }
+    ],
+    "finding": "source docs/setup.md absent from the context",
+    "location": {
+     "file": "Dockerfile",
+     "lines": [
+      11,
+      11
+     ]
+    },
+    "reason": null,
+    "status": "failed"
+   },
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "COPY at line 3: --from source is checked in its stage or image, not the context",
+    "status": "skipped"
+   }
+  ],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "tests/fixtures/reproduction/signature-missing/tree/Dockerfile": {
+  "copy_sources": [
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "COPY at line 3: --from source is checked in its stage or image, not the context",
+    "status": "skipped"
+   }
+  ],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "tests/fixtures/reproduction/snapshot-1.2/tree/Dockerfile": {
+  "copy_sources": [
+   {
+    "check_id": "copy_sources",
+    "evidence": [
+     {
+      "kind": "path_absent",
+      "listing": "../../source.json#tree",
+      "path": "docs/setup.md",
+      "text": null
+     },
+     {
+      "kind": "ignore_file",
+      "listing": null,
+      "path": null,
+      "text": null
+     }
+    ],
+    "finding": "source docs/setup.md absent from the context",
+    "location": {
+     "file": "Dockerfile",
+     "lines": [
+      11,
+      11
+     ]
+    },
+    "reason": null,
+    "status": "failed"
+   },
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "COPY at line 3: --from source is checked in its stage or image, not the context",
+    "status": "skipped"
+   }
+  ],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "tests/fixtures/reproduction/timeout/tree/Dockerfile": {
+  "copy_sources": [
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "COPY at line 3: --from source is checked in its stage or image, not the context",
+    "status": "skipped"
+   }
+  ],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ },
+ "tests/fixtures/reproduction/unbound-ci/tree/Dockerfile": {
+  "copy_sources": [
+   {
+    "check_id": "copy_sources",
+    "evidence": [
+     {
+      "kind": "path_absent",
+      "listing": "../../source.json#tree",
+      "path": "docs/setup.md",
+      "text": null
+     },
+     {
+      "kind": "ignore_file",
+      "listing": null,
+      "path": null,
+      "text": null
+     }
+    ],
+    "finding": "source docs/setup.md absent from the context",
+    "location": {
+     "file": "Dockerfile",
+     "lines": [
+      11,
+      11
+     ]
+    },
+    "reason": null,
+    "status": "failed"
+   },
+   {
+    "check_id": "copy_sources",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": "COPY at line 3: --from source is checked in its stage or image, not the context",
+    "status": "skipped"
+   }
+  ],
+  "syntax": [
+   {
+    "check_id": "syntax_first_from",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_from_args",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_keyword",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   },
+   {
+    "check_id": "syntax_continuation",
+    "evidence": [],
+    "finding": null,
+    "location": null,
+    "reason": null,
+    "status": "passed"
+   }
+  ]
+ }
+}
