@@ -5,6 +5,7 @@ and the build's stdout/stderr are synthetic where a test needs a "passed"
 template (enabled only through ``enable_for_test``).
 """
 
+import dataclasses
 import hashlib
 import os
 import subprocess
@@ -12,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+from pydantic import TypeAdapter
 
 from deployer import runtime as runtime_mod
 from deployer.admission.model import Defect, DefectClass
@@ -25,6 +27,7 @@ from deployer.fix.localproof import (
 from deployer.fix.workspace import new_fix_dir
 from deployer.models import ContainerRuntime
 from deployer.reproduce.buildline import BuildConfig
+from deployer.reproduce.run import _make_writable
 from tests.admission.conftest import Replayed, replay_case
 from tests.fix.conftest import enable_for_test
 from tests.reproduce.conftest import FakeContainers, proc
@@ -59,6 +62,7 @@ class Case:
         corrected: bytes | None = None,
         fix_dir: Path | None = None,
         fix_id: str = FIX_ID,
+        build: BuildConfig | None = None,
     ) -> LocalResult:
         """Run the local proof with this case's defaults."""
         return local_proof(
@@ -72,7 +76,7 @@ class Case:
             self.new_source,
             rt,
             env or {},
-            BuildConfig("Dockerfile", (), None, CI_TAG),
+            build or BuildConfig("Dockerfile", (), None, CI_TAG),
             fix_id,
             60,
         )
@@ -401,3 +405,116 @@ def test_build_config_from_stored_input() -> None:
     )
     assert isinstance(build_config({"dockerfile": ""}), str)
     assert isinstance(build_config({"dockerfile": "D", "build_args": [["A"]]}), str)
+
+
+def _link_dockerfile(case: Case, outside: Path) -> None:
+    """Replace R's ``source/Dockerfile`` by an absolute symlink to
+    ``outside``, which holds the original bytes."""
+    source = case.r.source
+    _make_writable(source)
+    outside.write_bytes((source / "Dockerfile").read_bytes())
+    (source / "Dockerfile").unlink()
+    (source / "Dockerfile").symlink_to(outside)
+
+
+def test_symlinked_dockerfile_refused_outside_untouched(
+    copy_case: Case, tmp_path: Path
+) -> None:
+    """An absolute-symlink Dockerfile: not ok, no build, the outside file
+    keeps its bytes, and "before" read the original bytes."""
+    outside = tmp_path / "outside_target"
+    _link_dockerfile(copy_case, outside)
+    original = outside.read_bytes()
+    copy_case.set_build(0, stdout=_copy_stdout())
+    with enable_for_test("copy-passed/podman"):
+        result = copy_case.run()
+    assert not result.ok
+    assert result.reason == (
+        "no local confirmation: dockerfile 'Dockerfile' is not a regular file"
+    )
+    assert outside.read_bytes() == original
+    assert copy_case.builds() == []
+    copy_run = result.proof.records_before[0]
+    subjects = [record["subject"] for record in copy_run["records"]]
+    assert ABSENT in subjects and NEW not in subjects
+
+
+def test_symlinked_ancestor_refused(copy_case: Case, tmp_path: Path) -> None:
+    """``docker/Dockerfile`` whose ``docker/`` is a symlink to an outside
+    directory: refused, the outside file untouched."""
+    outside_dir = tmp_path / "outside_dir"
+    outside_dir.mkdir()
+    target = outside_dir / "Dockerfile"
+    target.write_bytes((copy_case.r.source / "Dockerfile").read_bytes())
+    original = target.read_bytes()
+    _make_writable(copy_case.r.source)
+    (copy_case.r.source / "docker").symlink_to(outside_dir)
+    copy_case.set_build(0, stdout=_copy_stdout())
+    build = BuildConfig("docker/Dockerfile", (), None, None)
+    with enable_for_test("copy-passed/podman"):
+        result = copy_case.run(build=build)
+    assert result.reason == (
+        "no local confirmation: dockerfile ancestor 'docker' is not a real directory"
+    )
+    assert target.read_bytes() == original
+    assert copy_case.builds() == []
+
+
+def test_escaping_dockerfile_path_refused(copy_case: Case) -> None:
+    """``../../x`` is refused by ``build_config`` and by the proof itself."""
+    assert build_config({"dockerfile": "../../x"}) == (
+        "dockerfile path '../../x' leaves the context"
+    )
+    assert build_config({"dockerfile": "/etc/x"}) == (
+        "dockerfile path '/etc/x' leaves the context"
+    )
+    result = copy_case.run(build=BuildConfig("../../x", (), None, None))
+    assert result.reason == (
+        "no local confirmation: dockerfile path '../../x' leaves the context"
+    )
+    assert not (copy_case.fix_dir / "context").exists()
+
+
+def test_r_backend_docker_refused(copy_case: Case) -> None:
+    """R recorded ``docker``, the local backend is Podman: refused."""
+    section = copy_case.r.section
+    assert section.environment is not None
+    environment = section.environment.model_copy(update={"backend": "docker"})
+    copy_case.r = dataclasses.replace(
+        copy_case.r, section=section.model_copy(update={"environment": environment})
+    )
+    copy_case.set_build(0, stdout=_copy_stdout())
+    with enable_for_test("copy-passed/podman"):
+        result = copy_case.run()
+    assert result.reason == "no local confirmation: local backend differs from R's"
+    assert copy_case.fake.calls == []
+
+
+def test_rmi_failure_does_not_block_ok(copy_case: Case) -> None:
+    """Seam on, ``rmi`` raising: still ok, cleanup recorded as failed."""
+    copy_case.set_build(0, stdout=_copy_stdout())
+    copy_case.fake.responses[("rmi",)] = OSError("boom")
+    with enable_for_test("copy-passed/podman"):
+        result = copy_case.run()
+    assert result.ok
+    assert result.proof.build["image_cleanup"] == "failed"
+
+
+def test_build_config_refuses_other_context() -> None:
+    """A stored context other than ``.`` is refused, never dropped."""
+    assert build_config({"dockerfile": "Dockerfile", "context": "app"}) == (
+        "stored build context 'app' is not '.'"
+    )
+    assert isinstance(
+        build_config({"dockerfile": "Dockerfile", "context": "."}), BuildConfig
+    )
+
+
+def test_build_config_round_trip() -> None:
+    """``BuildConfig`` dumped as ``Input.build`` stores it, then rebuilt."""
+    config = BuildConfig(
+        "docker/Dockerfile", (("A", "1"), ("B", "x=y")), "linux/arm64", CI_TAG
+    )
+    stored = TypeAdapter(BuildConfig).dump_python(config, mode="json")
+    assert stored["build_args"] == [["A", "1"], ["B", "x=y"]]
+    assert build_config(stored) == dataclasses.replace(config, tag=None)

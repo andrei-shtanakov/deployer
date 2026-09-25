@@ -16,7 +16,10 @@ not-ok :class:`LocalResult` whose ``reason`` starts with
 """
 
 import hashlib
+import os
+import posixpath
 import shutil
+import stat
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -32,6 +35,9 @@ from deployer.reproduce import dockerfile, endpoint, ignore
 from deployer.reproduce.buildline import BuildConfig
 from deployer.reproduce.detail import RecordRun, copy_source_records, syntax_records
 from deployer.reproduce.model import ReproductionSection
+
+# TODO: _make_writable, _relative_argv and _write_text should become public in
+# reproduce.run; they are imported here, not copied.
 from deployer.reproduce.run import _make_writable, _relative_argv, _write_text
 from deployer.reproduce.shape import Refusal
 from deployer.runtime import probe_runtime_versions
@@ -93,13 +99,20 @@ def fix_tag(fix_id: str) -> str:
 
 def build_config(stored: Mapping[str, Any]) -> BuildConfig | str:
     """R's bound ``BuildConfig`` from ``FixDocument.input.build``: its
-    ``dockerfile``, ``build_args`` and ``platform`` (the tag is dropped).
-    A malformed record returns the reason."""
+    ``dockerfile``, ``build_args`` (``[name, value]`` pairs, as pydantic
+    dumps the dataclass) and ``platform``; the tag is dropped. A context
+    other than ``.``, a Dockerfile path that is absolute or leaves the
+    context, or any malformed field returns the reason."""
     name = stored.get("dockerfile")
     platform = stored.get("platform")
     raw_args = stored.get("build_args", [])
+    if stored.get("context", ".") != ".":
+        return f"stored build context {stored.get('context')!r} is not '.'"
     if not isinstance(name, str) or not name:
         return "stored build config has no dockerfile"
+    path_reason = _dockerfile_reason(name)
+    if path_reason is not None:
+        return path_reason
     if platform is not None and not isinstance(platform, str):
         return "stored build config platform is not a string"
     if not isinstance(raw_args, list | tuple):
@@ -197,17 +210,22 @@ def _prove(
     if isinstance(confirmed, Refusal):
         return confirmed.reason
     draft.build.update(endpoint=confirmed.uri, endpoint_source=confirmed.source)
+    path_reason = _dockerfile_reason(build.dockerfile)
+    if path_reason is not None:
+        return path_reason
+    before = _records(source_dir, build.dockerfile)
+    draft.records_before = [_run_record(run) for run in before]
     context = fix_dir / "context"
     shutil.copytree(source_dir, context, symlinks=True)
     _make_writable(context)
-    (context / build.dockerfile).write_bytes(corrected)
+    write_reason = _write_corrected(context, build.dockerfile, corrected)
+    if write_reason is not None:
+        return write_reason
     draft.build.update(
         ci_ignore_file=ignore.ci_ignore_file(context, build.dockerfile),
         local_ignore_file=ignore.local_ignore_file(context, build.dockerfile, rt.tool),
     )
-    before = _records(source_dir, build.dockerfile)
     after = _records(context, build.dockerfile)
-    draft.records_before = [_run_record(run) for run in before]
     draft.records_after = [_run_record(run) for run in after]
     offline = _offline_reason(
         before, after, cls, bound.ordinal, replaced_position, new_source
@@ -234,6 +252,45 @@ def _backend_reason(section: ReproductionSection, rt: ContainerRuntime) -> str |
         return "R recorded no environment"
     if rt.tool != section.environment.backend or rt.tool != "podman":
         return "local backend differs from R's"
+    return None
+
+
+def _dockerfile_reason(name: str) -> str | None:
+    """A Dockerfile path must stay inside the context (as ``buildline`` binds
+    it): not absolute, no ``..`` component."""
+    if name.startswith("/") or ".." in posixpath.normpath(name).split("/"):
+        return f"dockerfile path {name!r} leaves the context"
+    return None
+
+
+def _write_corrected(context: Path, name: str, corrected: bytes) -> str | None:
+    """Write ``corrected`` at ``context/<name>`` without following a link.
+
+    Every ancestor under ``context`` must be a real directory and the target
+    a regular file (an lstat walk); the target is unlinked and recreated with
+    ``O_CREAT|O_EXCL|O_NOFOLLOW``, so no write ever lands outside."""
+    parts = posixpath.normpath(name).split("/")
+    current = context
+    for part in parts[:-1]:
+        current = current / part
+        try:
+            mode = os.lstat(current).st_mode
+        except FileNotFoundError:
+            return f"dockerfile ancestor {part!r} is absent from the context"
+        if stat.S_ISLNK(mode) or not stat.S_ISDIR(mode):
+            return f"dockerfile ancestor {part!r} is not a real directory"
+    target = current / parts[-1]
+    try:
+        mode = os.lstat(target).st_mode
+    except FileNotFoundError:
+        return f"dockerfile {name!r} is absent from the context"
+    if not stat.S_ISREG(mode):
+        return f"dockerfile {name!r} is not a regular file"
+    target.unlink()
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+    fd = os.open(target, flags, 0o644)
+    with os.fdopen(fd, "wb") as handle:
+        handle.write(corrected)
     return None
 
 
