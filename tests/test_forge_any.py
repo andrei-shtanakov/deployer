@@ -436,6 +436,36 @@ def test_unparseable_attempt_metadata_is_recorded_as_error() -> None:
     assert read.error.startswith("attempt metadata unparseable:")
 
 
+def test_logs_carry_the_fetched_text_and_omit_unread_jobs() -> None:
+    """``logs`` holds the exact text ``gh.logs`` returned, keyed by job id;
+    an unread log (410, another status, blank) has no key at all."""
+    raw = "2026-09-25T10:00:00.1Z \x1b[1m" + _LOG
+    fake = FakeGh(
+        jobs=[job(1), job(2), job(3), job(4)],
+        logs={
+            1: raw,
+            2: GhError("gone (HTTP 410)", 410),
+            3: GhError("boom (HTTP 500)", 500),
+            4: "  \n",
+        },
+    )
+    read = read_attempt("o/r", summary(), 1, fake)
+    assert read.logs == {1: raw}
+    assert read.logs_state == {
+        1: "present",
+        2: "unavailable",
+        3: "error",
+        4: "unavailable",
+    }
+
+
+def test_an_attempt_not_read_has_no_logs() -> None:
+    unfinished = FakeGh(attempt={"status": "in_progress", "conclusion": None})
+    assert read_attempt("o/r", summary(), 2, unfinished).logs == {}
+    broken = FakeGh(jobs_error=GhError("boom (HTTP 500)", 500))
+    assert read_attempt("o/r", summary(), 1, broken).logs == {}
+
+
 def test_an_unfinished_attempt_records_its_status_and_reads_no_jobs() -> None:
     """Only completed attempts count; qualification marks this undetermined."""
     fake = FakeGh(attempt={"status": "in_progress", "conclusion": None})

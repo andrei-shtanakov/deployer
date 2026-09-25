@@ -11,7 +11,7 @@ import json
 import os
 import re
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol, TypeGuard
 
 from pydantic import TypeAdapter
@@ -198,7 +198,11 @@ class AttemptRead:
     it is ``None`` when the attempt is not ``completed`` (nothing was read
     past its metadata) or when ``error`` is set. ``logs_state`` is per job
     id. ``error`` records any ``GhError`` — HTTP status or none — and any
-    malformed or unparseable response; it is never raised.
+    malformed or unparseable response; it is never raised. ``logs`` maps a
+    job id to the exact log text read for it (the text ``_build_job`` was
+    given); a job whose log was not read (``logs_state`` other than
+    ``"present"``) has no key, so a consumer never mistakes an absent log
+    for an empty one.
 
     Annotations are not read: each job's ``completeness.annotations`` is
     ``"absent"`` by construction and says nothing about GitHub.
@@ -211,6 +215,7 @@ class AttemptRead:
     jobs: list[FailedJob] | None
     logs_state: dict[int, LogsState]
     error: str | None
+    logs: dict[int, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -519,14 +524,14 @@ def read_attempt(
     if status != "completed":
         return AttemptRead(run, attempt, status, conclusion, None, {}, None)
     try:
-        jobs, logs_state = _read_all_jobs(gh, run.run_id, attempt)
+        jobs, logs_state, logs = _read_all_jobs(gh, run.run_id, attempt)
     except GhError as exc:
         return _attempt_error(run, attempt, status, conclusion, str(exc))
     except ValueError as exc:
         return _attempt_error(
             run, attempt, status, conclusion, f"jobs listing unparseable: {exc}"
         )
-    return AttemptRead(run, attempt, status, conclusion, jobs, logs_state, None)
+    return AttemptRead(run, attempt, status, conclusion, jobs, logs_state, None, logs)
 
 
 def _attempt_identity_error(meta: object, run: RunSummary, attempt: int) -> str | None:
@@ -566,23 +571,27 @@ def _attempt_error(
 
 def _read_all_jobs(
     gh: "_Gh", run_id: int, attempt: int
-) -> tuple[list[FailedJob], dict[int, LogsState]]:
-    """Every job of the attempt with its log; raises ``GhError`` on failure.
+) -> tuple[list[FailedJob], dict[int, LogsState], dict[int, str]]:
+    """Every job of the attempt with its log state and, when read, its log
+    text; raises ``GhError`` on failure.
 
     A malformed job record (no int ``id``, a step without an int ``number``)
     is raised as a status-less ``GhError`` before its log is fetched.
     """
     jobs: list[FailedJob] = []
     states: dict[int, LogsState] = {}
+    texts: dict[int, str] = {}
     for record in gh.jobs(run_id, attempt):
         _check_job_record(record)
         job_id = int(record["id"])
         log_text, state = gh.logs(job_id)
         states[job_id] = state
+        if state == "present":
+            texts[job_id] = log_text
         jobs.append(
             _build_job(record, job_id, log_text, [], Completeness(state, "absent"))
         )
-    return jobs, states
+    return jobs, states, texts
 
 
 def _check_job_record(record: object) -> None:
