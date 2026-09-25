@@ -129,7 +129,6 @@ _FROM_CI_RE = re.compile(
     r"FROM requires either one or three arguments"
 )
 _FROM_PODMAN_RE = re.compile(r"Error: FROM requires either one argument, or three: .*")
-_STEP_LINE_RE = re.compile(r"(?:\[[0-9]{1,9}/[0-9]{1,9}\] )?STEP .*")
 
 
 def match_copy_ci(text: str) -> CopyMatch | None | Ambiguous:
@@ -210,7 +209,9 @@ def match_from_local(stdout: str, stderr: str) -> FromMatch | None | Ambiguous:
     """``from-args/podman``: one ``Error: FROM requires either one argument,
     or three: …`` stderr line and no ``STEP`` line in stdout. Evidence lines
     are numbered in ``stderr``."""
-    if any(_STEP_LINE_RE.fullmatch(line) for line in _lines(stdout)):
+    # Fail closed: any line mentioning a STEP means the build got past the
+    # parse, so this row does not apply however the step prefix is printed.
+    if any("STEP " in line for line in _lines(stdout)):
         return None
     hits = [
         number

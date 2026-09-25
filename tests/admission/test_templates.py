@@ -332,3 +332,10 @@ def test_non_ascii_digits_do_not_match() -> None:
     assert match_copy_ci(_ci_copy(header=header)) == "ambiguous"
     text = _ci_copy().replace("  11 | >>>", f"  {one}{one} | >>>")
     assert match_copy_ci(text) == "ambiguous"
+
+
+def test_from_local_refuses_any_step_line_however_prefixed() -> None:
+    """The no-STEP condition fails closed: an odd step prefix still counts."""
+    stderr = "Error: FROM requires either one argument, or three: x\n"
+    for stdout in ("[\u0661/2] STEP 1/2: FROM x\n", "[1234567890/2] STEP 1\n"):
+        assert match_from_local(stdout, stderr) is None
