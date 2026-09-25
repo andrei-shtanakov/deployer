@@ -130,6 +130,17 @@ class Vetted:
 
 
 @dataclass(frozen=True)
+class Committed:
+    """The fix commit: its ``sha`` (the branch already points at it), and
+    whether the worktree's own index was synced to it afterwards, with the
+    reason in ``detail`` when it was not."""
+
+    sha: str
+    index_synced: bool
+    detail: str | None
+
+
+@dataclass(frozen=True)
 class _Result:
     """One git invocation's outcome; ``code`` is ``None`` if it could not run."""
 
@@ -324,8 +335,8 @@ def allowed_diff_problem(
     return Vetted(head=head.stdout.decode().strip(), changes=tuple(changes))
 
 
-def commit(worktree: Path, message: str, vetted: Vetted) -> str:
-    """Commit exactly ``vetted``'s blobs with plumbing; the new commit's sha.
+def commit(worktree: Path, message: str, vetted: Vetted) -> Committed:
+    """Commit exactly ``vetted``'s blobs with plumbing; the new commit.
 
     Re-reads ``HEAD`` (unchanged) and the status (its path set must equal
     ``vetted``'s). Then builds the commit without any porcelain command, so
@@ -342,14 +353,19 @@ def commit(worktree: Path, message: str, vetted: Vetted) -> str:
     3. ``commit-tree -p HEAD --no-gpg-sign`` with the message on stdin;
     4. ``update-ref`` of the worktree's branch from ``HEAD`` to the new
        commit (compare-and-swap: refused if the branch moved);
-    5. ``read-tree`` of the new commit into the worktree's own index, so its
-       status is clean; the working files are not touched.
+    5. best effort, once the branch already points at the vetted commit:
+       ``read-tree`` of the new commit into the worktree's own index, so its
+       status is clean (the working files are not touched). Its failure
+       (e.g. a held ``index.lock``) does not undo the commit; it is reported
+       in :class:`Committed` instead.
 
     Author and committer are always ``deployer <deployer@localhost>``,
     passed explicitly for both roles, whatever the clone's configuration or
     the environment says. The commit is never GPG/SSH-signed: an agent
     commit must not depend on an interactive signer; the provenance set
-    carries its own signature. Raises :class:`CommitError`.
+    carries its own signature. Raises :class:`CommitError` for every failure
+    before the branch moves, including an ``OSError`` around the temporary
+    index.
     """
     guards = _guards(worktree)
     if isinstance(guards, str):
@@ -358,9 +374,12 @@ def commit(worktree: Path, message: str, vetted: Vetted) -> str:
     branch = _run(worktree, "symbolic-ref", "-q", "HEAD", g=guards)
     _must(branch, "symbolic-ref")
     ref = branch.stdout.decode().strip()
-    with tempfile.TemporaryDirectory(dir=worktree.parent, prefix=".index-") as tmp:
-        index = {"GIT_INDEX_FILE": str(Path(tmp).resolve() / "index")}
-        tree = _build_tree(worktree, vetted, guards, index)
+    try:
+        with tempfile.TemporaryDirectory(dir=worktree.parent, prefix=".index-") as tmp:
+            index = {"GIT_INDEX_FILE": str(Path(tmp).resolve() / "index")}
+            tree = _build_tree(worktree, vetted, guards, index)
+    except OSError as exc:
+        raise CommitError(f"cannot use a temporary index: {exc}") from exc
     made = _run(
         worktree,
         "commit-tree",
@@ -378,8 +397,10 @@ def commit(worktree: Path, message: str, vetted: Vetted) -> str:
         worktree, "update-ref", "-m", "deployer fix", ref, new, vetted.head, g=guards
     )
     _must(moved, "update-ref")
-    _must(_run(worktree, "read-tree", new, g=guards), "read-tree")
-    return new
+    synced = _run(worktree, "read-tree", new, g=guards)
+    if synced.code != 0:
+        return Committed(sha=new, index_synced=False, detail=synced.error)
+    return Committed(sha=new, index_synced=True, detail=None)
 
 
 def _build_tree(

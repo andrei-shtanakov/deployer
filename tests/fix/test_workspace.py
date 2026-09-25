@@ -37,6 +37,7 @@ _SET_DIR = ".deployer/authoring/Dockerfile"
 _POINTER = ".deployer/authoring/Dockerfile.current"
 _SET_FILES = ("record.json", "record.json.sig", "snapshot.json")
 _OLD_SETS = (hashlib.sha256(b"a").hexdigest(), hashlib.sha256(b"b").hexdigest())
+_TIMEOUT_S = 60
 _NEW_SET = hashlib.sha256(b"new").hexdigest()
 _POINTER_BYTES = f"Dockerfile/{_NEW_SET}\n".encode()
 
@@ -56,7 +57,10 @@ def _hermetic_git(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 def _git(repo: Path, *args: str) -> str:
     """Run git against ``repo``; its stdout, raising on failure."""
     proc = subprocess.run(
-        ["git", "-C", str(repo), *args], check=True, capture_output=True
+        ["git", "-C", str(repo), *args],
+        check=True,
+        capture_output=True,
+        timeout=_TIMEOUT_S,
     )
     return proc.stdout.decode()
 
@@ -95,6 +99,7 @@ def _make_clone(
         ["git", "-C", str(clone), "commit", "-q", "-m", "init"],
         check=True,
         capture_output=True,
+        timeout=_TIMEOUT_S,
         env=env,
     )
     return clone
@@ -553,7 +558,11 @@ def test_the_whole_flow_commits_and_leaves_the_clone_untouched(
     assert add_worktree(clone, fix.worktree, branch, head) is None
     _apply_fix(fix.worktree)
     vetted = _vetted(fix.worktree)
-    sha = commit(fix.worktree, "fix(deployer): remove the admitted defect", vetted)
+    committed = commit(
+        fix.worktree, "fix(deployer): remove the admitted defect", vetted
+    )
+    assert committed.index_synced and committed.detail is None
+    sha = committed.sha
     assert _git(clone, "rev-parse", f"refs/heads/{branch}").strip() == sha
     assert _git(fix.worktree, "rev-parse", "HEAD^").strip() == head
     assert _git(fix.worktree, "status", "--porcelain").strip() == ""
@@ -579,7 +588,7 @@ def test_commit_is_always_the_deployer_identity(
     vetted = _vetted(fix.worktree)
     monkeypatch.setenv("GIT_AUTHOR_NAME", "Env User")
     monkeypatch.setenv("GIT_COMMITTER_EMAIL", "env@example.com")
-    sha = commit(fix.worktree, "m", vetted)
+    sha = commit(fix.worktree, "m", vetted).sha
     who = _git(fix.worktree, "log", "-1", "--format=%an <%ae>|%cn <%ce>", sha)
     ident = f"{DEPLOYER_NAME} <{DEPLOYER_EMAIL}>"
     assert who.strip() == f"{ident}|{ident}"
@@ -593,7 +602,7 @@ def test_commit_without_any_configured_identity(tmp_path: Path) -> None:
     branch = branch_name("from_argument_count", head, fix.seq)
     assert add_worktree(clone, fix.worktree, branch, head) is None
     _apply_fix(fix.worktree)
-    sha = commit(fix.worktree, "m", _vetted(fix.worktree))
+    sha = commit(fix.worktree, "m", _vetted(fix.worktree)).sha
     who = _git(fix.worktree, "log", "-1", "--format=%an <%ae>", sha)
     assert who.strip() == f"{DEPLOYER_NAME} <{DEPLOYER_EMAIL}>"
 
@@ -632,10 +641,14 @@ def test_commit_never_runs_user_programs(tmp_path: Path) -> None:
     clone = _make_clone(tmp_path / "work")
     head = _git(clone, "rev-parse", "HEAD").strip()
     marker = tmp_path / "marker"
+    # Every spy terminates on its own: clean/smudge read stdin to EOF, the
+    # process spy exits at once (it would otherwise wait for a handshake).
     spy = f"sh -c 'echo ran >> \"{marker}\"; tr a-z A-Z'"
+    process_spy = f"sh -c 'echo ran >> \"{marker}\"; exit 1'"
     for name in ("spy", "a.b"):
-        for key in ("clean", "smudge", "process"):
+        for key in ("clean", "smudge"):
             _git(clone, "config", f"filter.{name}.{key}", spy)
+        _git(clone, "config", f"filter.{name}.process", process_spy)
         _git(clone, "config", f"filter.{name}.required", "true")
     monitor = tmp_path / "fsmonitor.sh"
     monitor.write_text(f"#!/bin/sh\necho ran >> '{marker}'\nexit 1\n")
@@ -653,12 +666,13 @@ def test_commit_never_runs_user_programs(tmp_path: Path) -> None:
     _apply_fix(fix.worktree)
     vetted = _vetted(fix.worktree)
     assert not marker.exists()
-    sha = commit(fix.worktree, "m", vetted)
+    sha = commit(fix.worktree, "m", vetted).sha
     assert not marker.exists()
     blob = subprocess.run(
         ["git", "-C", str(clone), "cat-file", "blob", f"{sha}:Dockerfile"],
         check=True,
         capture_output=True,
+        timeout=_TIMEOUT_S,
     ).stdout
     assert blob == _CORRECTED
 
@@ -697,7 +711,7 @@ def test_hooks_do_not_run(tmp_path: Path) -> None:
     branch = branch_name("missing_copy_source", head, fix.seq)
     assert add_worktree(clone, fix.worktree, branch, head) is None
     _apply_fix(fix.worktree)
-    sha = commit(fix.worktree, "m", _vetted(fix.worktree))
+    sha = commit(fix.worktree, "m", _vetted(fix.worktree)).sha
     assert len(sha) == 40
     assert not marker.exists()
     # The spy itself works: plain git runs it.
@@ -724,7 +738,7 @@ def test_a_prepare_commit_msg_config_hook_cannot_tamper(tmp_path: Path) -> None:
     branch = branch_name("missing_copy_source", head, fix.seq)
     assert add_worktree(clone, fix.worktree, branch, head) is None
     _apply_fix(fix.worktree)
-    sha = commit(fix.worktree, "the real message", _vetted(fix.worktree))
+    sha = commit(fix.worktree, "the real message", _vetted(fix.worktree)).sha
     assert _git(fix.worktree, "log", "-1", "--format=%B", sha).strip() == (
         "the real message"
     )
@@ -752,7 +766,7 @@ def test_a_post_commit_config_hook_cannot_amend(tmp_path: Path) -> None:
     branch = branch_name("missing_copy_source", head, fix.seq)
     assert add_worktree(clone, fix.worktree, branch, head) is None
     _apply_fix(fix.worktree)
-    sha = commit(fix.worktree, "msg", _vetted(fix.worktree))
+    sha = commit(fix.worktree, "msg", _vetted(fix.worktree)).sha
     assert _git(clone, "rev-parse", f"refs/heads/{branch}").strip() == sha
     assert "evil.txt" not in _git(fix.worktree, "ls-tree", "-r", "--name-only", sha)
     ident = f"{DEPLOYER_NAME} <{DEPLOYER_EMAIL}>"
@@ -787,7 +801,7 @@ def test_an_onbranch_filter_and_hook_never_run(tmp_path: Path) -> None:
     assert not marker.exists()
     assert (fix.worktree / "Dockerfile").read_bytes() == _DOCKERFILE
     _apply_fix(fix.worktree)
-    sha = commit(fix.worktree, "m", _vetted(fix.worktree))
+    sha = commit(fix.worktree, "m", _vetted(fix.worktree)).sha
     assert not marker.exists()
     assert _git(fix.worktree, "show", f"{sha}:Dockerfile").encode() == _CORRECTED
 
@@ -815,6 +829,7 @@ def test_commit_refuses_a_branch_that_moved(
             input=b"elsewhere",
             check=True,
             capture_output=True,
+            timeout=_TIMEOUT_S,
             env=_identity_env(),
         )
         .stdout.decode()
@@ -831,7 +846,7 @@ def test_commit_leaves_no_temporary_index(tmp_path: Path) -> None:
     worktree's own index ends in sync with the new commit."""
     _, fix, _ = _prepared(tmp_path)
     _apply_fix(fix.worktree)
-    sha = commit(fix.worktree, "m", _vetted(fix.worktree))
+    sha = commit(fix.worktree, "m", _vetted(fix.worktree)).sha
     assert [p.name for p in fix.path.iterdir()] == ["worktree"]
     assert _git(fix.worktree, "diff", "--cached", "--name-only", sha) == ""
 
@@ -866,6 +881,7 @@ def test_a_tree_with_an_unvetted_entry_is_refused(
             input=b"evil\n",
             check=True,
             capture_output=True,
+            timeout=_TIMEOUT_S,
         )
         .stdout.decode()
         .strip()
@@ -881,3 +897,39 @@ def test_a_tree_with_an_unvetted_entry_is_refused(
     with pytest.raises(CommitError, match="built tree differs"):
         commit(fix.worktree, "m", vetted)
     assert _git(fix.worktree, "rev-parse", f"refs/heads/{branch}") == before
+
+
+def test_an_unusable_fix_dir_is_a_commit_error(tmp_path: Path) -> None:
+    """An ``OSError`` creating the temporary index is a ``CommitError``,
+    and the branch does not move."""
+    _, fix, branch = _prepared(tmp_path)
+    _apply_fix(fix.worktree)
+    vetted = _vetted(fix.worktree)
+    before = _git(fix.worktree, "rev-parse", f"refs/heads/{branch}")
+    fix.path.chmod(0o555)
+    try:
+        with pytest.raises(CommitError, match="cannot use a temporary index"):
+            commit(fix.worktree, "m", vetted)
+    finally:
+        fix.path.chmod(0o755)
+    assert _git(fix.worktree, "rev-parse", f"refs/heads/{branch}") == before
+
+
+def test_a_failed_index_sync_still_returns_the_commit(tmp_path: Path) -> None:
+    """Once the branch points at the vetted commit, a held ``index.lock``
+    only makes the sync fail: reported, not raised."""
+    _, fix, branch = _prepared(tmp_path)
+    _apply_fix(fix.worktree)
+    vetted = _vetted(fix.worktree)
+    lock = Path(_git(fix.worktree, "rev-parse", "--git-path", "index.lock").strip())
+    lock = lock if lock.is_absolute() else fix.worktree / lock
+    lock.write_text("")
+    try:
+        committed = commit(fix.worktree, "m", vetted)
+    finally:
+        lock.unlink()
+    assert not committed.index_synced
+    assert committed.detail is not None and "index.lock" in committed.detail
+    tip = _git(fix.worktree, "rev-parse", f"refs/heads/{branch}").strip()
+    assert tip == committed.sha
+    assert _git(fix.worktree, "rev-parse", "HEAD^").strip() == vetted.head
