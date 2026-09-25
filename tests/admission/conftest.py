@@ -161,9 +161,17 @@ def _unknown_key(s: AdmissionSet) -> None:
     s.resign(s.load(RECORD_FILE), key=s.other_key)
 
 
-def _revoked_key(s: AdmissionSet) -> None:
-    """The signing key is revoked in the trust set."""
+def _revoked_and_removed(s: AdmissionSet) -> None:
+    """``deployer trust revoke``: the key leaves allowed_signers and is
+    listed as revoked."""
     trust.revoke(s.trust, s.pub)
+
+
+def _revoked_only(s: AdmissionSet) -> None:
+    """The key stays allowed but is listed in revoked_keys: only ``-r``
+    refuses it."""
+    body = " ".join(s.pub.split()[:2])
+    (s.trust / trust.REVOKED_FILE).write_text(f"{body}\n")
 
 
 def _hand_edit_dockerfile(s: AdmissionSet) -> None:
@@ -220,7 +228,8 @@ _MUTATIONS: dict[str, Callable[[AdmissionSet], None]] = {
     "rename_dir": _rename_dir,
     "bad_signature": _bad_signature,
     "unknown_key": _unknown_key,
-    "revoked_key": _revoked_key,
+    "revoked_and_removed_key": _revoked_and_removed,
+    "revoked_only_key": _revoked_only,
     "hand_edit_dockerfile": _hand_edit_dockerfile,
     "foreign_repo_resigned": _foreign_repo_resigned,
     "foreign_path_resigned": _foreign_path_resigned,

@@ -6,46 +6,51 @@ from pathlib import Path
 
 import pytest
 
-from deployer.admission.ownership import verify_ownership
+from deployer.admission.ownership import OwnershipFacts, verify_ownership
 from deployer.provenance import sshsig
 from deployer.provenance.model import (
     POINTER,
     RECORD_FILE,
+    SIGNATURE_FILE,
     SNAPSHOT_FILE,
     Record,
     Snapshot,
     sha256_hex,
 )
+from deployer.provenance.trust import ALLOWED_FILE, REVOKED_FILE
 from tests.admission.conftest import ARTIFACT, REPO, AdmissionSet
 
 
 @pytest.mark.parametrize(
-    ("step", "mutate"),
+    ("step", "mutate", "fragment"),
     [
-        (1, "remove_pointer"),
-        (1, "pointer_to_missing_dir"),
-        (1, "record_unknown_format"),
-        (1, "snapshot_unknown_format"),
-        (2, "rename_dir"),
-        (3, "bad_signature"),
-        (3, "unknown_key"),
-        (3, "revoked_key"),
-        (4, "hand_edit_dockerfile"),  # Review Focus 1
-        (4, "foreign_repo_resigned"),
-        (4, "foreign_path_resigned"),
-        (5, "snapshot_edited"),
-        (6, "source_commit_differs_resigned"),
-        (6, "tree_incomplete_resigned"),
-        (6, "row_missing_field_resigned"),
-        (6, "row_non_string_field_resigned"),
-        (6, "duplicate_path_resigned"),
+        (1, "remove_pointer", "Dockerfile.current is missing"),
+        (1, "pointer_to_missing_dir", "0000000000 is missing"),
+        (1, "record_unknown_format", "record.json format_version '2'"),
+        (1, "snapshot_unknown_format", "snapshot.json format_version '2'"),
+        (2, "rename_dir", "is not the record's hash"),
+        (3, "bad_signature", "signature not verified"),
+        (3, "unknown_key", "signature not verified"),
+        (3, "revoked_and_removed_key", "signature not verified"),
+        (3, "revoked_only_key", "signature not verified"),
+        (4, "hand_edit_dockerfile", "artifact_sha256"),  # Review Focus 1
+        (4, "foreign_repo_resigned", "record repo 'x/y'"),
+        (4, "foreign_path_resigned", "record artifact_path 'docker/Dockerfile'"),
+        (5, "snapshot_edited", "snapshot_sha256"),
+        (6, "source_commit_differs_resigned", "source_commit differs"),
+        (6, "tree_incomplete_resigned", "tree listing is not complete"),
+        (6, "row_missing_field_resigned", "tree.0.mode: Field required"),
+        (6, "row_non_string_field_resigned", "tree.0.mode: Input should be"),
+        (6, "duplicate_path_resigned", "duplicate paths"),
     ],
 )
-def test_each_step_refuses(step: int, mutate: str, admission_set: AdmissionSet) -> None:
-    """One targeted mutation stops the check at its step, with a reason."""
+def test_each_step_refuses(
+    step: int, mutate: str, fragment: str, admission_set: AdmissionSet
+) -> None:
+    """One targeted mutation stops the check at its step, with its reason."""
     facts = admission_set.apply(mutate)
     assert facts.status == "not_confirmed" and facts.step == step
-    assert facts.reason
+    assert fragment in (facts.reason or "")
     assert (facts.key_fingerprint is None) == (step <= 3)
     assert facts.snapshot is None
 
@@ -222,3 +227,99 @@ def test_a_deeply_nested_record_is_step_1(admission_set: AdmissionSet) -> None:
     (admission_set.set_dir / RECORD_FILE).write_bytes(b"[" * 200_000)
     facts = admission_set.verify()
     assert facts.status == "not_confirmed" and facts.step == 1
+
+
+def _verify_with(
+    admission_set: AdmissionSet,
+    *,
+    artifact_path: str = ARTIFACT,
+    trust_dir: Path | None = None,
+    roots: tuple[Path, ...] | None = None,
+) -> OwnershipFacts:
+    """``verify_ownership`` over the set with one argument overridden."""
+    return verify_ownership(
+        admission_set.source,
+        repo=REPO,
+        artifact_path=artifact_path,
+        trust=trust_dir or admission_set.trust,
+        checked_roots=(admission_set.source,) if roots is None else roots,
+    )
+
+
+def test_a_nul_in_the_artifact_path_is_step_4(admission_set: AdmissionSet) -> None:
+    """A NUL byte in the run's path is a refusal, never a ValueError."""
+    facts = _verify_with(admission_set, artifact_path="Dock\x00erfile")
+    assert facts.status == "not_confirmed" and facts.step == 4
+    assert "NUL" in (facts.reason or "")
+
+
+def test_a_nul_in_the_trust_path_is_step_0(admission_set: AdmissionSet) -> None:
+    """A NUL byte in the trust path is a refusal, never a ValueError."""
+    facts = _verify_with(admission_set, trust_dir=Path("/tmp/x\x00y"))
+    assert facts.status == "not_confirmed" and facts.step == 0
+
+
+def test_no_checked_roots_is_step_0(admission_set: AdmissionSet) -> None:
+    """Without a root to check against, the trust set cannot be placed."""
+    facts = _verify_with(admission_set, roots=())
+    assert facts.status == "not_confirmed" and facts.step == 0
+    assert "no checked roots" in (facts.reason or "")
+
+
+@pytest.mark.parametrize("name", [ALLOWED_FILE, REVOKED_FILE])
+def test_a_trust_file_linked_into_the_tree_is_step_0(
+    name: str, admission_set: AdmissionSet
+) -> None:
+    """A trust file that resolves into the checked tree lets the repo pick
+    its own signers: refused, even though the trust dir itself is outside."""
+    planted = admission_set.source / "planted"
+    planted.write_text((admission_set.trust / ALLOWED_FILE).read_text())
+    link = admission_set.trust / name
+    link.unlink(missing_ok=True)
+    link.symlink_to(planted)
+    facts = admission_set.verify()
+    assert facts.status == "not_confirmed" and facts.step == 0
+    assert "inside" in (facts.reason or "")
+
+
+@pytest.mark.parametrize(("kind", "step"), [("dangling", 3), ("loop", 0)])
+def test_a_broken_revoked_link_fails_closed(
+    kind: str, step: int, admission_set: AdmissionSet, tmp_path: Path
+) -> None:
+    """A broken revoked_keys link is not skipped as if absent: a loop cannot
+    be placed (step 0), a dangling link makes ssh-keygen refuse (step 3)."""
+    link = admission_set.trust / REVOKED_FILE
+    target = tmp_path / "nowhere" if kind == "dangling" else link
+    link.symlink_to(target)
+    facts = admission_set.verify()
+    assert facts.status == "not_confirmed" and facts.step == step
+    assert facts.key_fingerprint is None
+
+
+@pytest.mark.parametrize("which", ["pointer", RECORD_FILE, SIGNATURE_FILE])
+def test_an_oversize_set_file_is_step_1(
+    which: str, admission_set: AdmissionSet
+) -> None:
+    """Pointer, record and signature are read with a 1 MiB cap."""
+    path = (
+        admission_set.auth / POINTER
+        if which == "pointer"
+        else admission_set.set_dir / which
+    )
+    with path.open("ab") as f:
+        f.write(b" " * (1024 * 1024 + 1))
+    facts = admission_set.verify()
+    assert facts.status == "not_confirmed" and facts.step == 1
+    assert "exceeds" in (facts.reason or "")
+
+
+def test_an_unencodable_artifact_path_is_step_4(admission_set: AdmissionSet) -> None:
+    """A lone surrogate cannot be encoded for the OS: a refusal, not a raise."""
+    facts = _verify_with(admission_set, artifact_path="Dock\ud800erfile")
+    assert facts.status == "not_confirmed" and facts.step == 4
+
+
+def test_an_unencodable_trust_path_is_step_0(admission_set: AdmissionSet) -> None:
+    """The same for the trust directory."""
+    facts = _verify_with(admission_set, trust_dir=Path("/tmp/x\ud800y"))
+    assert facts.status == "not_confirmed" and facts.step == 0

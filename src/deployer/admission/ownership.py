@@ -38,6 +38,7 @@ from deployer.provenance.trust import ALLOWED_FILE, REVOKED_FILE, outside
 _POINTER_RE = re.compile(rf"{SET_PARENT}/([0-9a-f]{{64}})\n?")
 _DIR_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
 _FILE_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+_SMALL = 1024 * 1024  # cap for the pointer, the record and the signature
 
 
 @dataclass(frozen=True)
@@ -128,17 +129,29 @@ def _refused(
 
 
 def _step0_trust(trust: Path, checked_roots: tuple[Path, ...]) -> str | None:
-    """The trust dir's real path lies outside every checked root and holds
-    an allowed_signers file."""
+    """The trust dir and each trust file ssh-keygen will read resolve
+    outside every checked root, and an allowed_signers file exists."""
+    if not checked_roots:
+        return "no checked roots to place the trust directory against"
     try:
-        reason = outside(trust, *checked_roots)
-        if reason is not None:
-            return reason
+        for path in _trust_paths(trust):
+            reason = outside(path, *checked_roots)
+            if reason is not None:
+                return reason
         if not (trust / ALLOWED_FILE).is_file():
             return f"no {ALLOWED_FILE} file in trust directory {trust}"
-    except (OSError, RuntimeError) as exc:
+    except (OSError, RuntimeError, ValueError) as exc:  # ValueError: a NUL
         return f"trust directory {trust} could not be resolved: {exc}"
     return None
+
+
+def _trust_paths(trust: Path) -> list[Path]:
+    """The trust dir and the files ssh-keygen follows links through: the
+    allowed signers, and the revocation list whenever an entry exists."""
+    paths = [trust, trust / ALLOWED_FILE]
+    if os.path.lexists(trust / REVOKED_FILE):
+        paths.append(trust / REVOKED_FILE)
+    return paths
 
 
 def _step1_parse(source_dir: Path) -> _SetFiles | str:
@@ -146,14 +159,14 @@ def _step1_parse(source_dir: Path) -> _SetFiles | str:
     three files; the record validates and the snapshot is a JSON object of
     a supported ``format_version`` (its structure is step 6's)."""
     try:
-        pointer = _read_in_tree(source_dir, f"{SET_ROOT}/{POINTER}")
+        pointer = _read_in_tree(source_dir, f"{SET_ROOT}/{POINTER}", _SMALL)
         match = _POINTER_RE.fullmatch(pointer.decode("utf-8", errors="replace"))
         if match is None:
             return f"{POINTER} does not name {SET_PARENT}/<sha256>"
         base = f"{SET_ROOT}/{set_dir_name(match.group(1))}"
-        rec_bytes = _read_in_tree(source_dir, f"{base}/{RECORD_FILE}")
+        rec_bytes = _read_in_tree(source_dir, f"{base}/{RECORD_FILE}", _SMALL)
         snap_bytes = _read_in_tree(source_dir, f"{base}/{SNAPSHOT_FILE}")
-        sig = _read_in_tree(source_dir, f"{base}/{SIGNATURE_FILE}")
+        sig = _read_in_tree(source_dir, f"{base}/{SIGNATURE_FILE}", _SMALL)
         _supported_object(RECORD_FILE, rec_bytes)
         _supported_object(SNAPSHOT_FILE, snap_bytes)
         record = Record.model_validate_json(rec_bytes)
@@ -206,9 +219,9 @@ def _step3_signature(files: _SetFiles, trust: Path) -> sshsig.Verified:
             files.record_bytes,
             files.signature,
             trust / ALLOWED_FILE,
-            revoked if revoked.exists() else None,
+            revoked if os.path.lexists(revoked) else None,
         )
-    except (OSError, SshSigError) as exc:
+    except (OSError, ValueError, SshSigError) as exc:
         return sshsig.Verified(False, None, f"signature not verified: {exc}")
 
 
@@ -219,7 +232,7 @@ def _step4_artifact(
     run's repository and path."""
     try:
         artifact = _read_in_tree(source_dir, artifact_path)
-    except OSError as exc:
+    except (OSError, ValueError) as exc:  # ValueError: not encodable for the OS
         return f"artifact {exc}"
     actual = sha256_hex(artifact)
     if record.artifact_sha256 != actual:
@@ -273,9 +286,12 @@ class _Unreadable(OSError):
     relative path, behind a symlink, or not a regular file."""
 
 
-def _read_in_tree(root: Path, rel: str) -> bytes:
+def _read_in_tree(root: Path, rel: str, max_bytes: int | None = None) -> bytes:
     """The bytes of regular file ``rel`` under ``root``, opened one
-    component at a time without following any symlink."""
+    component at a time without following any symlink; a file longer than
+    ``max_bytes`` is refused."""
+    if "\x00" in rel:
+        raise _Unreadable(f"{rel!r} contains a NUL byte")
     parts = rel.split("/")
     if any(part in ("", ".", "..") for part in parts):
         raise _Unreadable(f"{rel} is not a plain relative path")
@@ -298,7 +314,10 @@ def _read_in_tree(root: Path, rel: str) -> bytes:
         os.close(fd)
         raise _Unreadable(f"{rel} is not a regular file; not read")
     with os.fdopen(fd, "rb") as f:
-        return f.read()
+        data = f.read() if max_bytes is None else f.read(max_bytes + 1)
+    if max_bytes is not None and len(data) > max_bytes:
+        raise _Unreadable(f"{rel} exceeds {max_bytes} bytes; not read")
+    return data
 
 
 def _open_at(dir_fd: int, name: str, flags: int, rel: str, kind: str) -> int:
