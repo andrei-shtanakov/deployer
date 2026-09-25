@@ -331,7 +331,12 @@ def _apply_provenance(
                 file=sys.stderr,
             )
         else:
-            out = issue.issue(pre, signing_key, version, dockerfile)
+            try:
+                out = issue.issue(pre, signing_key, version, dockerfile)
+            except OSError as exc:
+                out = issue.Issued(
+                    False, f"provenance could not be written: {exc}", None
+                )
             if out.published:
                 return True
             print(

@@ -591,7 +591,10 @@ def issue(
         f"{SET_ROOT}/{set_dir_name(rec_sha)}/{name}"
         for name in (RECORD_FILE, SNAPSHOT_FILE, SIGNATURE_FILE)
     ]
-    reason = ensure_excluded(pre.project, paths)
+    try:
+        reason = ensure_excluded(pre.project, paths)
+    except OSError as exc:
+        reason = f"exclusion could not be written: {exc}"
     if reason is not None:
         return Issued(False, reason, None)
     try:

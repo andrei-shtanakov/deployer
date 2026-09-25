@@ -716,6 +716,32 @@ def test_author_fails_when_the_previous_set_cannot_be_removed(
     assert "error: previous authoring set could not be removed" in err
 
 
+def test_author_survives_a_provenance_write_error(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """An OSError while issuing warns, withdraws and keeps the exit code."""
+    repo = make_repo_with_origin(tmp_path)
+    key, _pub = make_key(tmp_path)
+    monkeypatch.setattr(
+        "deployer.cli.author_dockerfile", _fake_author_dockerfile(_SIGNED_DOCKERFILE)
+    )
+    monkeypatch.setattr("deployer.cli.AnthropicAuthor", lambda: object())
+
+    def broken(*_args: object) -> object:
+        raise PermissionError("read-only")
+
+    monkeypatch.setattr("deployer.cli.issue.issue", broken)
+
+    exit_code = cli.main(
+        ["author", str(repo), "--no-docker", "--signing-key", str(key)]
+    )
+
+    assert exit_code == 0
+    err = capsys.readouterr().err
+    assert "provenance could not be written: read-only" in err
+    assert (repo / ".deployer" / "authoring-run.json").is_file()
+
+
 def test_author_without_signing_key_warns_and_issues_nothing(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
