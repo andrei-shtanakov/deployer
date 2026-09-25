@@ -1,0 +1,9 @@
+{
+  "branch": "polygon/fix-c-c8-from-bad-in-skipped-stage",
+  "recorded_at": "2026-09-25T14:43:53Z",
+  "repo": "andrei-shtanakov/deployer",
+  "run_id": 36149389171,
+  "run_url": "https://github.com/andrei-shtanakov/deployer/actions/runs/36149389171",
+  "sha": "2ea143c477799b5f64e94bc620467e18d34bcf73",
+  "workflow_path": ".github/workflows/diagnosis-polygon.yml"
+}

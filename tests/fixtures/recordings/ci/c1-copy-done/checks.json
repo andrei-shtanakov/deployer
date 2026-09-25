@@ -1,0 +1,10 @@
+[
+  {
+    "corrected": "COPY docs/guide/setup.md ./setup.md",
+    "kind": "copy",
+    "lines": [
+      11,
+      11
+    ]
+  }
+]

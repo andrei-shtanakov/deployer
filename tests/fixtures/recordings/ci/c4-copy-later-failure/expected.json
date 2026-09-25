@@ -1,0 +1,26 @@
+{
+  "attempts": [
+    {
+      "attempt": 1,
+      "conclusion": "failure",
+      "jobs": [
+        {
+          "checks": [
+            {
+              "agrees": false,
+              "detail": "corrected step header absent",
+              "evidence": "not_confirmed",
+              "hypothesis": "passed",
+              "kind": "copy",
+              "lines": []
+            }
+          ],
+          "name": "build"
+        }
+      ],
+      "read_error": null,
+      "run_id": 36148351176
+    }
+  ],
+  "observed_with": "deployer.fix.templates hypothesis matchers at the recording commit, over forge's own reading of gh-calls.json"
+}

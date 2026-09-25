@@ -1,0 +1,9 @@
+{
+  "branch": "polygon/fix-c-c4-copy-later-failure",
+  "recorded_at": "2026-09-25T14:34:49Z",
+  "repo": "andrei-shtanakov/deployer",
+  "run_id": 36148351176,
+  "run_url": "https://github.com/andrei-shtanakov/deployer/actions/runs/36148351176",
+  "sha": "42dc2d9b6bad8c10cbd3694b21217a32216b22e9",
+  "workflow_path": ".github/workflows/diagnosis-polygon.yml"
+}

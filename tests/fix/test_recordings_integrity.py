@@ -1,4 +1,4 @@
-"""Integrity of the committed L-recordings (F §9, §11 stage 3).
+"""Integrity of the committed L- and C-recordings (F §9, §11 stages 3–4).
 
 The case set is exactly the recorded one; every file matches
 ``CHECKSUMS.sha256``, written when the recordings were made, so an edit to a
@@ -16,6 +16,7 @@ import pytest
 
 RECORDINGS = Path(__file__).parent.parent / "fixtures" / "recordings"
 LOCAL = RECORDINGS / "local"
+CI = RECORDINGS / "ci"
 CHECKSUMS = RECORDINGS / "CHECKSUMS.sha256"
 NOT_CHECKSUMMED = {"CHECKSUMS.sha256", "record_local.py", "record_ci.py"}
 LOCAL_CASES = [
@@ -29,6 +30,26 @@ LOCAL_CASES = [
     "l8-from-bad-after-built-stage",
     "l9-from-bad-in-skipped-stage",
 ]
+CI_CASES = [
+    "c1-copy-done",
+    "c2-copy-rerun",
+    "c2b-copy-rerun-reread",
+    "c3-from-parsed",
+    "c4-copy-later-failure",
+    "c5-copy-recurred",
+    "c6-copy-cached",
+    "c7-copy-done-padded",
+    "c8-from-bad-in-skipped-stage",
+    "c9-copy-done-padded-run",
+]
+CI_CASE_FILES = (
+    "checks.json",
+    "environment.json",
+    "expected.json",
+    "gh-calls.json",
+    "tree/Dockerfile",
+    "tree/.github/workflows/diagnosis-polygon.yml",
+)
 CASE_FILES = (
     "argv.json",
     "build.exit",
@@ -63,6 +84,25 @@ def _files() -> list[str]:
 
 def test_the_local_cases_are_exactly_the_recorded_ones() -> None:
     assert sorted(p.name for p in LOCAL.iterdir() if p.is_dir()) == LOCAL_CASES
+
+
+def test_the_ci_cases_are_exactly_the_recorded_ones() -> None:
+    assert sorted(p.name for p in CI.iterdir() if p.is_dir()) == CI_CASES
+
+
+@pytest.mark.parametrize("case", CI_CASES)
+def test_ci_case_has_its_files(case: str) -> None:
+    missing = [name for name in CI_CASE_FILES if not (CI / case / name).is_file()]
+    assert missing == []
+
+
+@pytest.mark.parametrize("case", CI_CASES)
+def test_ci_calls_are_recorded_verbatim_shapes(case: str) -> None:
+    """Every recorded call has an argv and exactly one of stdout / error."""
+    calls = json.loads((CI / case / "gh-calls.json").read_text())
+    assert calls
+    assert all(isinstance(c["argv"], list) for c in calls)
+    assert all(("stdout" in c) != ("error" in c) for c in calls)
 
 
 def test_checksums_cover_exactly_the_files() -> None:

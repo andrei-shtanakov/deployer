@@ -1,0 +1,28 @@
+{
+  "attempts": [
+    {
+      "attempt": 1,
+      "conclusion": "failure",
+      "jobs": [
+        {
+          "checks": [
+            {
+              "agrees": true,
+              "detail": "dockerfile parse error",
+              "evidence": "not_confirmed",
+              "hypothesis": "not_confirmed",
+              "kind": "from",
+              "lines": [
+                104
+              ]
+            }
+          ],
+          "name": "build"
+        }
+      ],
+      "read_error": null,
+      "run_id": 36149389171
+    }
+  ],
+  "observed_with": "deployer.fix.templates hypothesis matchers at the recording commit, over forge's own reading of gh-calls.json"
+}
