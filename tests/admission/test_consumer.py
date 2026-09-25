@@ -8,7 +8,7 @@ Two sources of documents:
   would reject them;
 - pipeline documents: the committed ``run-1`` / ``run-5`` bundles replayed
   through R, then :func:`prepare` and :func:`decide`, with a hand-built
-  confirmed ownership (the signed ``admit-run-*`` bundles are Task 13's data),
+  confirmed ownership (the signed ``admit-run-*`` bundles are Task 13's data)
   for the acceptance cases and evidence mutations on R's real files.
 """
 
@@ -25,7 +25,7 @@ from typing import Any
 import pytest
 
 from deployer import runtime as runtime_mod
-from deployer.admission import consumer, decide, prepare
+from deployer.admission import consumer, decide, prepare, templates
 from deployer.admission.consumer import (
     Accepted,
     Refused,
@@ -35,7 +35,7 @@ from deployer.admission.consumer import (
 from deployer.admission.model import AdmissionSection, Binding
 from deployer.forge import load_snapshot
 from deployer.reproduce.run import reproduce_run
-from tests.admission.test_decide import _ownership
+from tests.admission.conftest import confirmed_ownership
 from tests.reproduce.bundles import BUNDLES, BundleGh, _containers
 from tests.reproduce.conftest import FakeContainers
 
@@ -90,7 +90,13 @@ def _section(**overrides: object) -> dict[str, Any]:
                 "evidence_file": "build.stderr",
                 "evidence_lines": [1],
             },
-            "differences": [{"name": "restoration", "value": "exact", "allowed": True}],
+            "differences": [
+                {"name": "backend", "value": "differs", "allowed": True},
+                {"name": "host_arch", "value": "unknown", "allowed": True},
+                {"name": "base_image_digests", "value": "unknown", "allowed": True},
+                {"name": "ignore_file", "value": "same", "allowed": True},
+                {"name": "restoration", "value": "same", "allowed": True},
+            ],
         },
         "unmet": [],
     }
@@ -102,6 +108,7 @@ def _document(section: object = None, **overrides: object) -> dict[str, Any]:
     """A 1.3 verdict document around ``section`` (the valid one by default)."""
     base: dict[str, Any] = {
         "verdict_schema_version": "1.3",
+        "reproduction": {"status": "attempted"},
         "admission": _section() if section is None else section,
     }
     base.update(overrides)
@@ -480,8 +487,8 @@ def test_no_evidence_lines_is_refused(try_dir: Path) -> None:
 
 
 def test_line_count_matches_how_lines_were_written(try_dir: Path) -> None:
-    """Ruling 2: UTF-8, newlines untranslated, ``str.splitlines``: a CRLF
-    file of three lines has three lines, the last one unterminated."""
+    """UTF-8, newlines untranslated, split on ``\\n`` (the producer's rule):
+    a CRLF file of three lines has three lines, the last one unterminated."""
     (try_dir / "ci.log").write_bytes("é 1\r\nline 2\r\nline 3".encode())
     assert consumer._line_count("ci", "ci.log", try_dir) == 3
     document = _document(_with("link.ci.evidence_lines", [3]))
@@ -611,11 +618,12 @@ def _pipeline(case: str, root: Path) -> Pipeline:
     (root / "trust").mkdir()
     trust = {"DEPLOYER_TRUST_DIR": str(root / "trust")}
     facts = prepare(run, section, root / "work", trust)
-    ownership = _ownership(run.head_sha, facts.head_listing)
+    ownership = confirmed_ownership(run.head_sha, facts.head_listing)
     admission = decide(dataclasses.replace(facts, ownership=ownership))
     assert admission.verdict == "admitted", admission.unmet
     document = {
         "verdict_schema_version": "1.3",
+        "reproduction": json.loads(section.model_dump_json()),
         "admission": json.loads(admission.model_dump_json()),
     }
     b = facts.binding
@@ -694,3 +702,194 @@ def test_pipeline_truncated_local_evidence_is_out_of_range(
         "local evidence",
         "out of range",
     )
+
+
+# --- fix round 1: the link agrees with the table, the defect, the binding ------
+
+
+def _mutated(mutate: Callable[[dict[str, Any]], object]) -> dict[str, Any]:
+    """The valid document with ``mutate`` applied to its section."""
+    section = _section()
+    mutate(section)
+    return _document(section)
+
+
+def _ci(key: str, value: object) -> Callable[[dict[str, Any]], object]:
+    """Set ``link.ci.<key>``."""
+    return lambda s: s["link"]["ci"].__setitem__(key, value)
+
+
+def _drop_difference(name: str) -> Callable[[dict[str, Any]], object]:
+    """Remove the ``name`` difference."""
+
+    def apply(s: dict[str, Any]) -> None:
+        diffs = s["link"]["differences"]
+        s["link"]["differences"] = [d for d in diffs if d["name"] != name]
+
+    return apply
+
+
+def _set_rows(ci: str, local: str) -> Callable[[dict[str, Any]], object]:
+    """Set both sides' row ids."""
+
+    def apply(s: dict[str, Any]) -> None:
+        s["link"]["ci"]["row"] = ci
+        s["link"]["local"]["row"] = local
+
+    return apply
+
+
+def _objects(ci: object, local: object) -> Callable[[dict[str, Any]], object]:
+    """Set both sides' objects."""
+
+    def apply(s: dict[str, Any]) -> None:
+        s["link"]["ci"]["object"] = ci
+        s["link"]["local"]["object"] = local
+
+    return apply
+
+
+def _from_args(s: dict[str, Any]) -> None:
+    """A consistent ``from_argument_count`` section."""
+    s["defect"].update({"class": "from_argument_count", "object": "FROM a b"})
+    _set_rows("from-args/buildkit", "from-args/podman")(s)
+    _objects(None, None)(s)
+
+
+_REFUSED_DIFF = {"name": "backend", "value": "differs", "allowed": False}
+
+
+@pytest.mark.parametrize(
+    ("mutate", "problem"),
+    [
+        (
+            lambda s: s["link"]["differences"].__setitem__(0, _REFUSED_DIFF),
+            "not allowed in an admitted section",
+        ),
+        (lambda s: s["link"].__setitem__("differences", []), "are missing"),
+        (_drop_difference("restoration"), "['restoration'] are missing"),
+        (_drop_difference("host_arch"), "['host_arch'] are missing"),
+        (
+            lambda s: s["link"]["differences"].append(
+                {"name": "restoration", "value": "same", "allowed": True}
+            ),
+            "['restoration'] appear more than once",
+        ),
+        (_ci("row", "anything"), "ci row 'anything' is not in the template table"),
+        (_ci("row", "copy-missing/podman"), "ci row copy-missing/podman is a local"),
+        (
+            _set_rows("from-args/buildkit", "from-args/podman"),
+            "is not of class missing_copy_source",
+        ),
+        (_objects("other", "x"), "ci object 'other' disagrees"),
+        (_objects("src", "x"), "local object 'x' disagrees"),
+        (
+            lambda s: s["defect"].__setitem__("class", "from_argument_count"),
+            "is not of class from_argument_count",
+        ),
+        (
+            lambda s: (_from_args(s), _objects("src", None)(s)),
+            "ci object 'src' disagrees with the from_argument_count defect",
+        ),
+        (
+            lambda s: s["defect"].__setitem__("file", "other/Dockerfile"),
+            "defect file 'other/Dockerfile' is not the binding's artifact_path",
+        ),
+        (_ci("evidence_lines", [3, 1]), "not strictly increasing"),
+        (_ci("evidence_lines", [1, 1]), "not strictly increasing"),
+        (_ci("evidence_lines", [True]), "link.ci.evidence_lines.0"),
+        (_ci("evidence_lines", ["1"]), "link.ci.evidence_lines.0"),
+        (_ci("evidence_lines", [1.0]), "link.ci.evidence_lines.0"),
+        (lambda s: s["binding"].__setitem__("repo", b"o/r"), "binding.repo"),
+        (lambda s: s.pop("unmet"), "the unmet key is missing"),
+    ],
+    ids=[
+        "difference-not-allowed",
+        "differences-empty",
+        "restoration-missing",
+        "required-dimension-missing",
+        "difference-duplicated",
+        "row-not-in-table",
+        "row-of-the-other-side",
+        "rows-of-another-class",
+        "ci-object-disagrees",
+        "local-object-disagrees",
+        "class-without-its-rows",
+        "from-args-with-an-object",
+        "defect-file-not-artifact",
+        "lines-unsorted",
+        "lines-duplicated",
+        "lines-bool",
+        "lines-str",
+        "lines-float",
+        "repo-bytes",
+        "unmet-missing",
+    ],
+)
+def test_malformed_link_or_wire_is_refused(
+    try_dir: Path, mutate: Callable[[dict[str, Any]], object], problem: str
+) -> None:
+    """Each probe once accepted; now a step-2 "malformed" refusal."""
+    result = accept_for_fix(_mutated(mutate), try_dir, _target())
+    _refused(result, "malformed", problem)
+
+
+def test_consistent_from_args_section_is_accepted(try_dir: Path) -> None:
+    """The class-specific object rule has an accepting side too."""
+    result = accept_for_fix(_mutated(_from_args), try_dir, _target())
+    assert isinstance(result, Accepted), result
+
+
+@pytest.mark.parametrize(
+    "reproduction",
+    [{"status": "not_attempted"}, {}, None, "attempted", {"status": None}],
+)
+def test_admission_without_an_attempted_reproduction_is_refused(
+    try_dir: Path, reproduction: object
+) -> None:
+    """A §6.2: the section exists only for an ``attempted`` reproduction."""
+    document = _document(reproduction=reproduction)
+    _refused(
+        accept_for_fix(document, try_dir, _target()),
+        "malformed",
+        "is not 'attempted'",
+    )
+
+
+def test_missing_reproduction_is_refused(try_dir: Path) -> None:
+    """No ``reproduction`` key at all contradicts an admission too."""
+    document = _document()
+    del document["reproduction"]
+    _refused(accept_for_fix(document, try_dir, _target()), "is not 'attempted'")
+
+
+@pytest.mark.parametrize(("lines", "accepted"), [([3], False), ([1], True)])
+def test_carriage_returns_do_not_make_lines(
+    try_dir: Path, lines: list[int], accepted: bool
+) -> None:
+    """The producer's rule, ``\\n`` only: ``a\\rb\\rc\\rd\\n`` is one line."""
+    (try_dir / "ci.log").write_bytes(b"a\rb\rc\rd\n")
+    document = _document(_with("link.ci.evidence_lines", lines))
+    result = accept_for_fix(document, try_dir, _target())
+    assert isinstance(result, Accepted) is accepted, result
+    if not accepted:
+        _refused(result, "ci evidence", "out of range", "1 lines")
+
+
+@pytest.mark.parametrize(
+    ("text", "count"),
+    [("", 0), ("a", 1), ("a\n", 1), ("a\n\n", 2), ("a\nb", 2), ("\n", 1)],
+)
+def test_line_count_drops_only_the_final_empty_element(
+    try_dir: Path, text: str, count: int
+) -> None:
+    """``split("\\n")`` less the empty element after a final ``\\n``."""
+    (try_dir / "ci.log").write_text(text, encoding="utf-8", newline="")
+    assert consumer._line_count("ci", "ci.log", try_dir) == count
+
+
+def test_split_lines_is_the_templates_numbering() -> None:
+    """One rule: the matchers' line ``i`` is ``split_lines`` element ``i``."""
+    text = "x\r\n  y \x0cz\n\u2028w"
+    assert templates.split_lines(text) == text.split("\n")
+    assert templates._lines(text) == [p.strip() for p in text.split("\n")]

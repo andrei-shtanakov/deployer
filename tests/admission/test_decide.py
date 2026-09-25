@@ -21,9 +21,8 @@ from deployer.admission import templates
 from deployer.admission.decide import VerifiedFacts, decide
 from deployer.admission.model import AdmissionSection, Binding
 from deployer.admission.ownership import OwnershipFacts
-from deployer.facts import ProjectFacts
 from deployer.forge import load_snapshot
-from deployer.provenance.model import Record, Snapshot, TreeRow
+from deployer.provenance.model import TreeRow
 from deployer.reproduce.dockerfile import Instruction, parse
 from deployer.reproduce.model import (
     InstructionRef,
@@ -35,6 +34,7 @@ from deployer.reproduce.model import (
 )
 from deployer.reproduce.run import reproduce_run
 from deployer.reproduce.shape import job_text
+from tests.admission.conftest import confirmed_ownership
 from tests.reproduce.bundles import BUNDLES, BundleGh, _containers
 from tests.reproduce.conftest import FakeContainers
 
@@ -69,36 +69,6 @@ def _listing(case: str) -> list[TreeRow]:
     return [TreeRow(**entry) for entry in body["tree"]]
 
 
-def _ownership(head_sha: str, tree: list[TreeRow]) -> OwnershipFacts:
-    """A hand-built confirmed ownership whose snapshot lists ``tree``."""
-    record = Record(
-        format_version="1",
-        repo="example/project",
-        artifact_path="Dockerfile",
-        artifact_sha256=SHA_A,
-        source_commit=head_sha,
-        snapshot_sha256=SHA_B,
-        deployer_version="0.1",
-    )
-    snapshot = Snapshot(
-        format_version="1",
-        source_commit=head_sha,
-        tree=tree,
-        tree_complete=True,
-        facts=ProjectFacts(),
-    )
-    return OwnershipFacts(
-        status="confirmed",
-        step=None,
-        reason=None,
-        key_fingerprint="SHA256:test-key",
-        record_sha256=SHA_A,
-        snapshot_sha256=SHA_B,
-        record=record,
-        snapshot=snapshot,
-    )
-
-
 def _base(case: str) -> VerifiedFacts:
     """The admitted shape of a committed bundle."""
     bundle = BUNDLES / case
@@ -112,7 +82,7 @@ def _base(case: str) -> VerifiedFacts:
             artifact_path="Dockerfile",
             artifact_sha256=hashlib.sha256(dockerfile).hexdigest(),
         ),
-        ownership=_ownership(run.head_sha, listing),
+        ownership=confirmed_ownership(run.head_sha, listing),
         reproduction=_replay(case),
         parsed=parse(dockerfile.decode()),
         head_listing=listing,

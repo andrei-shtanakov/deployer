@@ -8,7 +8,14 @@ schema 1.2 (A §6.2); it is unrelated to the snapshot schema's own "1".
 
 from typing import Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictInt,
+    StrictStr,
+    model_validator,
+)
 
 from deployer.admission.ownership import OwnershipFacts
 
@@ -27,10 +34,10 @@ class Binding(BaseModel):
     """
 
     model_config = ConfigDict(extra="forbid")
-    repo: str
-    head_sha: str
-    artifact_path: str
-    artifact_sha256: str | None
+    repo: StrictStr
+    head_sha: StrictStr
+    artifact_path: StrictStr
+    artifact_sha256: StrictStr | None
 
 
 class Ownership(BaseModel):
@@ -124,7 +131,7 @@ class SideLink(BaseModel):
     row: str
     object: str | None
     evidence_file: str
-    evidence_lines: list[int]
+    evidence_lines: list[StrictInt]
 
 
 class DifferenceDecision(BaseModel):

@@ -225,10 +225,17 @@ def match_from_local(stdout: str, stderr: str) -> FromMatch | None | Ambiguous:
     return FromMatch(row="from-args/podman", line=None, evidence_lines=(hits[0],))
 
 
+def split_lines(text: str) -> list[str]:
+    """The one line rule of admission evidence: ``text`` split on ``\\n``
+    only, so element ``i`` is text line ``i + 1`` whatever other break
+    characters (``\\r``, form feed, ``\\u2028`` …) the text holds. The
+    consumer gate (A §7) counts evidence lines with this same rule."""
+    return text.split("\n")
+
+
 def _lines(text: str) -> list[str]:
-    """Stripped lines, split on ``\\n`` only, so line ``i`` is text line
-    ``i + 1`` whatever other break characters the text holds."""
-    return [line.strip() for line in text.split("\n")]
+    """Stripped lines numbered by :func:`split_lines`."""
+    return [line.strip() for line in split_lines(text)]
 
 
 def _copy_block(lines: list[str]) -> _Block | None:

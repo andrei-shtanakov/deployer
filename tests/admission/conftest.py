@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 
 from deployer.admission.ownership import OwnershipFacts, verify_ownership
+from deployer.facts import ProjectFacts
 from deployer.provenance import issue, sshsig, trust
 from deployer.provenance.model import (
     POINTER,
@@ -18,6 +19,9 @@ from deployer.provenance.model import (
     SET_ROOT,
     SIGNATURE_FILE,
     SNAPSHOT_FILE,
+    Record,
+    Snapshot,
+    TreeRow,
     set_dir_name,
     sha256_hex,
 )
@@ -32,6 +36,36 @@ def _json_bytes(data: dict[str, Any]) -> bytes:
     """Sorted, compact JSON plus a newline, the canonical shape."""
     text = json.dumps(data, sort_keys=True, separators=(",", ":"))
     return text.encode() + b"\n"
+
+
+def confirmed_ownership(head_sha: str, tree: list[TreeRow]) -> OwnershipFacts:
+    """A hand-built confirmed ownership whose snapshot lists ``tree``."""
+    record = Record(
+        format_version="1",
+        repo="example/project",
+        artifact_path="Dockerfile",
+        artifact_sha256="a" * 64,
+        source_commit=head_sha,
+        snapshot_sha256="b" * 64,
+        deployer_version="0.1",
+    )
+    snapshot = Snapshot(
+        format_version="1",
+        source_commit=head_sha,
+        tree=tree,
+        tree_complete=True,
+        facts=ProjectFacts(),
+    )
+    return OwnershipFacts(
+        status="confirmed",
+        step=None,
+        reason=None,
+        key_fingerprint="SHA256:test-key",
+        record_sha256="a" * 64,
+        snapshot_sha256="b" * 64,
+        record=record,
+        snapshot=snapshot,
+    )
 
 
 class AdmissionSet:
