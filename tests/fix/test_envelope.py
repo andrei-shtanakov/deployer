@@ -96,6 +96,34 @@ def test_eligible_through_bind_instruction() -> None:
         "5 basename floor",
     ]
     assert all(entry["ok"] is True and entry["detail"] for entry in result.conditions)
+    assert result.position == 0
+
+
+# --- position: the absent token's index among the instruction's sources ------
+
+
+def test_position_is_the_absent_source_index() -> None:
+    """``position`` is the absent source's index in ``_sources`` order.
+
+    Task 8's ``regressions``/``defect_check_passes`` key a fresh
+    ``copy_sources`` re-check by this index, not by subject text, so it
+    must name the absent source's own slot among the instruction's
+    sources — not always 0, and not affected by which source is absent.
+    """
+    first = _eligible(_MULTI, "app.py", [_file("lib/util.py"), _file("src/app.py")])
+    assert isinstance(first, Candidates)
+    assert first.position == 0
+
+    second = eligible_sources(
+        _bound(_MULTI),
+        "lib/util.py",
+        [_file("app.py"), _file("tools/util.py")],
+        _NO_RULES,
+        _NO_RULES,
+        dockerfile=_MULTI,
+    )
+    assert isinstance(second, Candidates)
+    assert second.position == 1
 
 
 # --- condition 2: regular files only ----------------------------------------

@@ -48,17 +48,25 @@ class Candidates:
 
     ``eligible`` holds context-relative listing paths, sorted. Each entry of
     ``conditions`` is ``{"condition": str, "ok": bool, "detail": str}``.
+    ``position`` is the absent raw token's index among the bound
+    instruction's sources, in ``_sources`` order — the envelope requires
+    that token to occur exactly once as a whole token, so the index is
+    unambiguous. It identifies the record a fresh ``copy_sources`` re-check
+    must judge for this defect (design §6.2), since a one-token replacement
+    keeps the source count and order and so keeps positions stable.
     """
 
     eligible: tuple[str, ...]
     conditions: list[dict]
+    position: int
 
 
 @dataclass(frozen=True)
 class _Located:
-    """The absent source as written, and the instruction's other sources."""
+    """The absent source as written, its position, and the other sources."""
 
     raw: str
+    position: int
     others: list[str]
     span: tuple[int, int]
 
@@ -137,7 +145,9 @@ def eligible_sources(
             f"{', '.join(same_name)}"
         )
     conditions.append(_ok(_FLOOR, f"{len(same_name)} eligible file(s) named {name!r}"))
-    return Candidates(eligible=tuple(eligible), conditions=conditions)
+    return Candidates(
+        eligible=tuple(eligible), conditions=conditions, position=located.position
+    )
 
 
 def apply_source(bound: Bound, absent: str, new: str) -> bytes | str:
@@ -250,7 +260,7 @@ def _locate(bound: Bound, absent: str) -> _Located | str:
         return span
     at = sources.index(raw)
     others = sources[:at] + sources[at + 1 :]
-    return _Located(raw=raw, others=others, span=span)
+    return _Located(raw=raw, position=at, others=others, span=span)
 
 
 def _token_span(original: bytes, raw: str) -> tuple[int, int] | str:

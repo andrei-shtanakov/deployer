@@ -6,88 +6,93 @@ fresh on the original bytes and on the fix context and reports every record
 that got worse. Both take :class:`~deployer.reproduce.detail.RecordRun`
 lists — R's own detailed entry point — never R's folded aggregate output,
 which loses the per-record identity this rule needs.
+
+``copy_sources`` records are keyed by **position**, not by subject: R emits
+one record per source of an instruction, in source order, and a one-token
+replacement keeps the source count and order, so an index into that order
+is stable across the fix even when two sources share a subject. Keying by
+``(subject, occurrence)`` instead — the first cut of this module — reads as
+plausible but breaks on two real Dockerfile shapes: a replacement that
+collides with a sibling's *subject* (``COPY old sibling`` -> ``COPY sibling
+sibling``) silently swallows a real regression on the sibling, because the
+sibling's occurrence-0 key now resolves to the freshly-written record
+instead of its own; and an absent source written twice (``COPY old old``)
+falsely regresses the untouched occurrence, because both occurrences of the
+old subject get remapped to the new one although only one was replaced.
+Position sidesteps both: the untouched sibling keeps its own slot whatever
+its text, and only the one replaced slot is ever judged against the fix.
 """
 
 from collections import Counter
 
 from deployer.admission.model import DefectClass
+from deployer.reproduce.checks import _norm
 from deployer.reproduce.detail import COPY_SOURCES, CheckRecord, RecordRun
 
 _FROM_ARGS = "syntax_from_args"
-# (check_id, ordinal, subject, occurrence). ``occurrence`` disambiguates two
-# records that share the first three fields — `COPY a a /d/` or
-# `COPY app ./app /d/` give two records with the same `(check_id, ordinal,
-# subject)` — by their position among records sharing that triple, in
-# record order. Never let one silently overwrite the other in a dict.
-_Key = tuple[str, int | None, str, int]
+# copy_sources: (check_id, ordinal, position) — position is the record's
+# index among the *same instruction's* copy_sources records, in source
+# order (never the subject: two sources may share one, and a collision
+# introduced by the fix itself must not merge their identities).
+# Every other check: (check_id, ordinal, subject) — one record per rule per
+# instruction, so this triple is already unique with no occurrence needed.
+_Key = tuple[str, int | None, int | str]
 
 
 def defect_check_passes(
-    after: list[RecordRun], cls: DefectClass, ordinal: int, new_source: str | None
+    after: list[RecordRun],
+    cls: DefectClass,
+    ordinal: int,
+    replaced_position: int | None,
+    new_source: str | None,
 ) -> str | None:
     """Whether the defect's own check passes for the bound instruction.
 
-    ``missing_copy_source``: the ``copy_sources`` record of ``new_source``
-    at ``ordinal`` must be ``passed``. ``from_argument_count``: the
-    ``syntax_from_args`` record at ``ordinal`` must be ``passed`` — that
-    check's subject is always the fixed condition name, never a source, so
-    ``new_source`` plays no part in the lookup. A run skipped file-wide, a
-    missing record, or any status but ``passed`` (``skipped``,
-    ``observation``, ``failed``, ``inconclusive``) fails the check; the
-    reason is returned as a string. ``None`` means the check passes.
+    ``missing_copy_source``: the ``copy_sources`` record at
+    ``replaced_position`` of the instruction at ``ordinal`` must be
+    ``passed`` **and** its subject must equal ``_norm(new_source)`` — a
+    passing record at that slot with some other subject means the slot was
+    not actually rewritten to the intended source. ``from_argument_count``:
+    the ``syntax_from_args`` record at ``ordinal`` must be ``passed`` —
+    that check's subject is always the fixed condition name, never a
+    source, so ``replaced_position``/``new_source`` play no part there. A
+    run skipped file-wide, a missing record, or any status but ``passed``
+    fails the check; the reason is returned as a string. ``None`` means the
+    check passes.
     """
     if cls == "missing_copy_source":
-        check_id = COPY_SOURCES
-        want_subject = new_source
-    elif cls == "from_argument_count":
-        check_id = _FROM_ARGS
-        want_subject = None
-    else:
-        return f"unrecognised defect class {cls!r}"
-    run = next((r for r in after if r.check_id == check_id), None)
-    if run is None:
-        return f"no {check_id} run in the after checks"
-    if run.file_status == "skipped":
-        return f"{check_id} skipped file-wide: {run.file_reason}"
-    matches = [
-        record
-        for record in run.records
-        if record.ordinal == ordinal
-        and (want_subject is None or record.subject == want_subject)
-    ]
-    if not matches:
-        subject_note = f" subject {want_subject!r}" if want_subject else ""
-        return f"no {check_id} record for ordinal {ordinal}{subject_note}"
-    failing = [record for record in matches if record.status != "passed"]
-    if not failing:
-        return None
-    record = failing[0]
-    return (
-        f"{check_id} record for ordinal {ordinal} subject "
-        f"{record.subject!r} is {record.status}: {record.reason}"
-    )
+        return _copy_defect_passes(after, ordinal, replaced_position, new_source)
+    if cls == "from_argument_count":
+        return _from_args_defect_passes(after, ordinal)
+    return f"unrecognised defect class {cls!r}"
 
 
 def regressions(
     before: list[RecordRun],
     after: list[RecordRun],
     ordinal: int,
-    absent: str | None,
+    replaced_position: int | None,
     new_source: str | None,
 ) -> list[str]:
     """Every record that got worse from ``before`` to ``after`` (F §6.2).
 
     Runs are matched by ``check_id`` first (each check id appears at most
-    once per side). Within a pair of runs, records are matched by key —
-    ``(check_id, ordinal, subject, occurrence)`` — except that the absent
-    source's key, at the bound instruction's ``ordinal`` and keeping its
-    occurrence index, is looked up under ``new_source`` in ``after``
-    instead of under its own subject: the fix replaced that text, so it no
-    longer exists in ``after`` under its old name. A ``passed`` record
-    whose matched successor is anything else is a regression line; so is a
-    key present before with no successor at all — regardless of that
-    record's own status, since a vanished check is itself a loss of
-    coverage.
+    once per side). Within a matched pair of the same ``file_status``,
+    records are matched by key (see the module docstring for why
+    ``copy_sources`` keys on position); the record at
+    ``(copy_sources, ordinal, replaced_position)`` is excluded from this
+    comparison entirely — it is expected to have failed before (the absent
+    source) and its after-state is judged by :func:`defect_check_passes`,
+    not here. A change in the number of ``copy_sources`` records for
+    ``ordinal`` is itself a regression line, checked independently of the
+    per-key comparison (a source appearing only in ``after`` would
+    otherwise never be looked at, since the loop below only walks
+    ``before``'s keys).
+
+    A ``passed`` record whose matched successor is anything else is a
+    regression line; so is a key present before with no successor at all,
+    regardless of that record's own status, since a vanished check is
+    itself a loss of coverage.
 
     Subjects are only comparable between two runs of the same
     ``file_status``: a ``copy_sources`` subject is the raw source under a
@@ -117,44 +122,80 @@ def regressions(
                 before_run.records,
                 after_run.records,
                 ordinal,
-                absent,
-                new_source,
+                replaced_position,
             )
         )
     return lines
 
 
-def _keyed(records: list[CheckRecord]) -> dict[_Key, CheckRecord]:
-    """Key every record by its full identity, in record order."""
-    seen: Counter[tuple[str, int | None, str]] = Counter()
+def _copy_defect_passes(
+    after: list[RecordRun],
+    ordinal: int,
+    position: int | None,
+    new_source: str | None,
+) -> str | None:
+    """``defect_check_passes`` for ``missing_copy_source``."""
+    run = next((r for r in after if r.check_id == COPY_SOURCES), None)
+    if run is None:
+        return f"no {COPY_SOURCES} run in the after checks"
+    if run.file_status == "skipped":
+        return f"{COPY_SOURCES} skipped file-wide: {run.file_reason}"
+    if position is None:
+        return "no replaced position given for a missing_copy_source defect"
+    if new_source is None:
+        return "no replacement source given for a missing_copy_source defect"
+    at_ordinal = [r for r in run.records if r.ordinal == ordinal]
+    if not 0 <= position < len(at_ordinal):
+        return f"no {COPY_SOURCES} record at position {position} for ordinal {ordinal}"
+    record = at_ordinal[position]
+    if record.status != "passed":
+        return (
+            f"{COPY_SOURCES} record for ordinal {ordinal} position {position} "
+            f"is {record.status}: {record.reason}"
+        )
+    expected = _norm(new_source)
+    if record.subject != expected:
+        return (
+            f"{COPY_SOURCES} record for ordinal {ordinal} position {position} "
+            f"has subject {record.subject!r}, expected {expected!r}"
+        )
+    return None
+
+
+def _from_args_defect_passes(after: list[RecordRun], ordinal: int) -> str | None:
+    """``defect_check_passes`` for ``from_argument_count``."""
+    run = next((r for r in after if r.check_id == _FROM_ARGS), None)
+    if run is None:
+        return f"no {_FROM_ARGS} run in the after checks"
+    if run.file_status == "skipped":
+        return f"{_FROM_ARGS} skipped file-wide: {run.file_reason}"
+    matches = [record for record in run.records if record.ordinal == ordinal]
+    if not matches:
+        return f"no {_FROM_ARGS} record for ordinal {ordinal}"
+    failing = [record for record in matches if record.status != "passed"]
+    if not failing:
+        return None
+    record = failing[0]
+    return (
+        f"{_FROM_ARGS} record for ordinal {ordinal} subject "
+        f"{record.subject!r} is {record.status}: {record.reason}"
+    )
+
+
+def _keyed(check_id: str, records: list[CheckRecord]) -> dict[_Key, CheckRecord]:
+    """Key every record of one run: position for ``copy_sources``, subject
+    for everything else (see the module docstring)."""
+    if check_id != COPY_SOURCES:
+        return {
+            (check_id, record.ordinal, record.subject): record for record in records
+        }
+    positions: Counter[int | None] = Counter()
     keyed: dict[_Key, CheckRecord] = {}
     for record in records:
-        triple = (record.check_id, record.ordinal, record.subject)
-        occurrence = seen[triple]
-        seen[triple] += 1
-        keyed[(*triple, occurrence)] = record
+        position = positions[record.ordinal]
+        positions[record.ordinal] += 1
+        keyed[(check_id, record.ordinal, position)] = record
     return keyed
-
-
-def _mapped_key(
-    key: _Key, ordinal: int, absent: str | None, new_source: str | None
-) -> _Key:
-    """The after-side key to look ``key`` up under.
-
-    Only the absent source of the bound instruction is remapped. Every
-    other key — another source, a different instruction, a syntax check's
-    fixed condition subject — is looked up unchanged.
-    """
-    check_id, key_ordinal, subject, occurrence = key
-    if (
-        check_id == COPY_SOURCES
-        and key_ordinal == ordinal
-        and absent is not None
-        and subject == absent
-        and new_source is not None
-    ):
-        return (check_id, key_ordinal, new_source, occurrence)
-    return key
 
 
 def _record_lines(
@@ -162,16 +203,23 @@ def _record_lines(
     before_records: list[CheckRecord],
     after_records: list[CheckRecord],
     ordinal: int,
-    absent: str | None,
-    new_source: str | None,
+    replaced_position: int | None,
 ) -> list[str]:
     """The regression lines of one matched pair of runs (same file_status)."""
-    before_keyed = _keyed(before_records)
-    after_keyed = _keyed(after_records)
     lines: list[str] = []
+    if check_id == COPY_SOURCES:
+        lines.extend(_copy_count_change_lines(before_records, after_records, ordinal))
+    excluded: _Key | None = (
+        (check_id, ordinal, replaced_position)
+        if check_id == COPY_SOURCES and replaced_position is not None
+        else None
+    )
+    before_keyed = _keyed(check_id, before_records)
+    after_keyed = _keyed(check_id, after_records)
     for key, before_record in before_keyed.items():
-        after_key = _mapped_key(key, ordinal, absent, new_source)
-        after_record = after_keyed.get(after_key)
+        if key == excluded:
+            continue
+        after_record = after_keyed.get(key)
         if after_record is None:
             lines.append(
                 f"{check_id} ordinal={before_record.ordinal} "
@@ -186,6 +234,20 @@ def _record_lines(
                 f"{after_record.status} after ({after_record.reason})"
             )
     return lines
+
+
+def _copy_count_change_lines(
+    before_records: list[CheckRecord], after_records: list[CheckRecord], ordinal: int
+) -> list[str]:
+    """A regression line if ``ordinal``'s source count changed either way."""
+    before_count = sum(1 for r in before_records if r.ordinal == ordinal)
+    after_count = sum(1 for r in after_records if r.ordinal == ordinal)
+    if before_count == after_count:
+        return []
+    return [
+        f"{COPY_SOURCES} ordinal={ordinal}: source count changed "
+        f"{before_count} -> {after_count}"
+    ]
 
 
 def _vanished_run_lines(check_id: str, records: list[CheckRecord]) -> list[str]:
