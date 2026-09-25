@@ -33,7 +33,8 @@ the seam audit that gated it is done (`docs/2026-09-06-phase4-seam-audit.md`): n
 neighbour consumes a deploy artifact today, and the one pair whose consumer half already
 exists is the ATP smoke-test by image tag. `first-consumer-seam` /
 `atp-smoke-test-seam` shipped that pair (verified with a real `atp` + container run:
-`atp_smoke: PASSED`); `ci-failure-diagnosis` is now the open front.
+`atp_smoke: PASSED`); `ci-failure-diagnosis` has shipped as the admission verdict
+(see Shipped); `ci-fix-authoring` is next, with its own spec.
 
 ## Direction
 
@@ -45,23 +46,26 @@ contract was wrong only after it has users. The order below is deliberate — ea
 tagged with what blocks it, so the sequencing survives without anyone re-reading this
 paragraph.
 
-- [ ] CI-failure diagnosis: read a real failed GitHub run of our own authored ci.yml, establish why it failed, emit a verdict citing evidence @owner:repo:deployer @id:ci-failure-diagnosis @blocked_by:todo://deployer/ci-failure-reproduction @epic:eco.dark-factory
-  REOPENED 2026-09-22. PR #72 proposes only the reading layer
-  (`todo://deployer/ci-failure-reading-layer`); establishing the cause from log phrases did
-  not survive acceptance — a phrase names a symptom, not a cause, and eight review rounds
-  produced a new counter-example each. The reading layer asserts no cause at all
-  (owner's decision 2026-09-22). The promise now rests on reproduction; anything beyond
-  findings-without-classes is a later task.
-  Open question for the owner (2026-09-24): `ci-failure-reproduction` (below) shipped —
-  findings with status and evidence, no causal class, same as the reading layer. Does that
-  satisfy this item's "establish why it failed" promise as written, or does the promise
-  itself need rewording now that both the reading layer and reproduction assert no cause?
-  Left as a question rather than a `@blocked_by` change: that call is the owner's.
-  Answer in progress (owner, 2026-09-24): the item closes with an **admission** verdict —
-  "a defect of a deployer-authored artifact is proven" (signed authoring record + closed defect
-  catalogue + recording-backed link), everything else `insufficient_grounds`. Spec:
-  `docs/superpowers/specs/2026-09-24-ci-failure-admission-design.md` on the docs branch
-  `docs/ci-failure-admission-spec` (DRAFT → targeted review → plan).
+- [ ] More admission template rows: each new CI/local builder shape needs a real recording and a spec change @id:admission-more-template-rows @epic:eco.dark-factory
+  The shipped link table (A §4.1) holds only the rows the run-1/run-5 recordings pin
+  (BuildKit and Podman 5.7.0 output for `missing_copy_source` / `from_argument_count`).
+  Any other builder, version or message shape reads `insufficient_grounds` at (3) by
+  design. A new row enters only with a real recording of it and an amendment of A §4.1;
+  a new defect class is a new spec (A, Non-goals).
+- [ ] Owner question: should other failed reproduction findings veto admission? @id:admission-other-findings-veto @epic:eco.dark-factory
+  Raised in #86: a failed `copy_sources` finding of another kind (excluded-by /
+  matches-nothing) or a failed `builder_check` does not veto an admission today — A §3.2
+  only makes the other syntax checks inadmissible. Left as the owner's call; changing it
+  is a spec change.
+- [ ] Strict `Snapshot.tree_complete` (parked in A3 review) @id:admission-strict-tree-complete @epic:eco.dark-factory
+  Today a lax bool. The snapshot bytes are hashed and signed by a trusted key, so the
+  coercion only reaches our own output; a hand-crafted signed snapshot with `"true"`
+  would need a trusted key.
+- [ ] Lift the duplicated `_norm` / `_instruction_key` helpers into one shared helper (parked in A3 review) @id:admission-shared-instruction-key @epic:eco.dark-factory
+  `admission/decide.py` carries its own copies of `reproduce/checks.py:_norm` and
+  `admission/templates.py:_instruction_key`; one shared helper keeps them from drifting.
+- [ ] Optionally refuse a trust root inside the git toplevel of the working directory (parked in A3 review) @id:admission-trust-root-git-toplevel @epic:eco.dark-factory
+  Hardening beyond the spec's checked roots (A §2.3), not a known defect.
 - [ ] Real `docker build --check` recordings for the two synthetic reader fixtures @owner:repo:deployer @id:repro-check-output-real-recordings @epic:eco.dark-factory
   `tests/fixtures/reproduction/check-outputs/builder-unreachable.txt` and
   `lint-then-error.txt` are synthetic — no Docker host was reachable when the bundle was
@@ -84,6 +88,9 @@ paragraph.
 - [ ] Fix authoring from a diagnosis: artifact edit, L1/L2, confirm the diagnosed cause is gone @owner:repo:deployer @blocked_by:todo://deployer/ci-failure-diagnosis @id:ci-fix-authoring @epic:eco.dark-factory
   — the other half of the founding doc's "generate/fix ... diagnose failed CI", split
   out with the owner 2026-09-21 so the diagnosis slice can be accepted on its own.
+  Unblocked in principle once `ci-failure-diagnosis` merges: its entry gate is
+  `accept_for_fix` over an `admitted` section (A §7). It still needs its own spec — the
+  admission proves a defect, not how a fix is authored or confirmed.
   Depends on the diagnosis item: without a trustworthy cause a fix is authored against
   a guess. How a fix is confirmed is decided in its own design — L1/L2 alone are NOT
   enough to claim "the CI is fixed", because they verify the artifact this repo
@@ -206,6 +213,27 @@ them is the next thing to pick up.
 
 ## Shipped
 
+- [x] CI-failure diagnosis: read a real failed GitHub run of our own authored ci.yml, establish why it failed, emit a verdict citing evidence @owner:repo:deployer @id:ci-failure-diagnosis @blocked_by:todo://deployer/ci-failure-reproduction @epic:eco.dark-factory
+  Closed by the admission verdict (owner, 2026-09-24): "a defect of a deployer-authored
+  artifact is proven", everything else `insufficient_grounds`. Shipped by the stack #84
+  (A1: authoring-record model, `ssh-keygen -Y` signing, trust store, git chokepoint), #85
+  (A2: `author --signing-key` issues a signed, immutable, excluded set), #86 (A3:
+  ownership, template rows, decision, preparation, consumer gate, verdict 1.3), #87 (A4:
+  23 admission bundles, owner review) and the PR that lands this entry (replay, docs;
+  this checkbox follows the repo's rhythm for a closing PR and asserts nothing about a
+  merge; the line's tags, `@blocked_by` included, are left as they were by the owner's
+  decision). Spec: `docs/superpowers/specs/2026-09-24-ci-failure-admission-design.md`.
+  `diagnose --reproduce` adds an `admission` section to every attempted reproduction:
+  `admitted` needs ownership (the Dockerfile at `head_sha` equals a record signed by a key
+  in the out-of-repo trust store, `deployer trust add|replace|revoke`), a defect from the
+  closed two-class catalogue (`missing_copy_source`, `from_argument_count`) and a link of
+  CI's and the local build's failures through recording-backed template rows over an
+  `exact` restoration. Exit codes unchanged; no cause beyond those two classes is ever
+  claimed. Acceptance: the 23 committed bundles replay to their `expected.json`, and
+  `accept_for_fix` accepts only `admit-run-1` / `admit-run-5`, each against its own
+  target. History: the reading layer (#72) asserted no cause after log phrases failed
+  acceptance; reproduction (#76–#82) reported findings without a class; admission is
+  the one positive verdict on top of both.
 - [x] CI-failure reading layer: a versioned snapshot of a failed run, evidence completeness, observations, `deployer diagnose` @owner:repo:deployer @id:ci-failure-reading-layer @epic:eco.dark-factory
   Proposed by PR #72 (not merged at the time of writing; this checkbox follows the repo's
   rhythm for a closing PR and asserts nothing about a merge). The part of

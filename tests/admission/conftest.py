@@ -329,9 +329,12 @@ def fake_containers(monkeypatch: pytest.MonkeyPatch) -> FakeContainers:
     return fake
 
 
-def replay_case(case: str, tmp_path: Path, fake: FakeContainers) -> Replayed:
-    """Replay ``case`` through R under ``tmp_path / "work"``."""
-    bundle = BUNDLES / case
+def replay_case(
+    case: str, tmp_path: Path, fake: FakeContainers, bundles: Path = BUNDLES
+) -> Replayed:
+    """Replay ``case`` (a bundle under ``bundles``, R's reproduction bundles
+    by default) through R under ``tmp_path / "work"``."""
+    bundle = bundles / case
     rt, env = _containers(bundle, fake)
     run = load_snapshot((bundle / "snapshot.json").read_text())
     root = tmp_path / "work"
