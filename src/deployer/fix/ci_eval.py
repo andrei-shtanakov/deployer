@@ -20,6 +20,7 @@ from deployer.admission.model import DefectClass
 from deployer.admission.templates import (
     CopyMatch,
     FromMatch,
+    _instruction_key,
     match_copy_ci,
     match_from_ci,
 )
@@ -38,14 +39,18 @@ NOT_ENABLED = "templates not enabled"
 NOT_REACHED = "build step not reached"
 UNKNOWN_FORMAT = "unknown format"
 AMBIGUOUS = "binding ambiguous"
+FAILED_BEFORE = "CI failed before the build"
 
 _KINDS: dict[str, templates.Kind] = {
     "missing_copy_source": "copy",
     "from_argument_count": "from",
 }
-# The most specific reason first, when no attempt is positive or recurred.
-_SPECIFIC: tuple[tuple[templates.Evidence, str], ...] = (
+_GREEN = frozenset({"success", "skipped", "neutral"})
+# The most specific reason first, when no attempt is positive or recurred;
+# ``"failed_before"`` marks an attempt whose job failed before its build step.
+_SPECIFIC: tuple[tuple[str, str], ...] = (
     ("binding_ambiguous", AMBIGUOUS),
+    ("failed_before", FAILED_BEFORE),
     ("not_confirmed", NOT_REACHED),
     ("unknown_format", UNKNOWN_FORMAT),
     ("not_enabled", NOT_ENABLED),
@@ -60,7 +65,9 @@ class AttemptEvidence:
     attempt's, or ``undetermined`` when a qualified attempt's job text could
     not be read here. ``lines`` are the template's evidence lines, plus the
     admission match's when the defect recurred (1-based, in the job text).
-    ``template`` is the CI template's verdict (``None`` when not read).
+    ``template`` is the CI template's verdict (``None`` when not read);
+    ``failed_before_build`` is set when the template did not pass and a step
+    of the bound job before its build step failed.
     """
 
     key: tuple[int, int, str]
@@ -70,6 +77,7 @@ class AttemptEvidence:
     detail: str | None
     lines: tuple[int, ...]
     template: templates.Evidence | None = None
+    failed_before_build: bool = False
 
 
 def from_qualification(q: Qualified) -> AttemptEvidence:
@@ -133,7 +141,9 @@ def _evaluate(
         return "ci_confirmed", None
     if not qualified:
         return "ci_confirmation_insufficient", NO_QUALIFYING
-    seen = {e.template for e in qualified}
+    seen: set[str | None] = {e.template for e in qualified}
+    if any(e.failed_before_build for e in qualified):
+        seen.add("failed_before")
     reason = next((r for t, r in _SPECIFIC if t in seen), NOT_REACHED)
     return "ci_confirmation_insufficient", reason
 
@@ -157,7 +167,7 @@ def _read(
             q, f"log of job {job.job_id} is not the one it was qualified on"
         )
     outcome = templates.match_ci(_KINDS[cls], corrected_text, text)
-    recurrence = _recurrence(cls, text, lines)
+    recurrence = _recurrence(cls, text, corrected_text, lines)
     detail = outcome.detail
     evidence_lines = set(outcome.lines)
     if recurrence is not None:
@@ -171,24 +181,43 @@ def _read(
         detail=detail,
         lines=tuple(sorted(evidence_lines)),
         template=outcome.evidence,
+        failed_before_build=outcome.evidence != "passed" and _failed_before(q),
+    )
+
+
+def _failed_before(q: Qualified) -> bool:
+    """A step of the bound job before its build step concluded non-green."""
+    if q.job is None or q.shape is None:
+        return False
+    return any(
+        s.number < q.shape.build_step
+        and s.conclusion is not None
+        and s.conclusion not in _GREEN
+        for s in q.job.all_steps or []
     )
 
 
 def _recurrence(
-    cls: DefectClass, text: str, lines: tuple[int, int]
+    cls: DefectClass, text: str, corrected: str, lines: tuple[int, int]
 ) -> tuple[int, ...] | None:
-    """The admission match's evidence lines when it binds to ``lines``.
+    """The admission match's evidence lines when it binds to the corrected
+    instruction by A §4.2's rules (``admission.decide._bind_ci``).
 
-    Span: a ``CopyMatch``'s ``lines`` (R's ``>>>`` block span); a
-    ``FromMatch``'s single parse-error line ``N`` read as ``(N, N)``.
-    ``None`` or ``"ambiguous"`` is no recurrence.
+    COPY: the ``CopyMatch`` span (R's ``>>>`` block span) equals ``lines``
+    and its block text is the corrected instruction, whatever its object.
+    FROM: the parse-error line equals the instruction's first line
+    ``lines[0]``. ``None`` or ``"ambiguous"`` is no recurrence.
     """
-    match = match_copy_ci(text) if cls == "missing_copy_source" else match_from_ci(text)
-    if isinstance(match, CopyMatch) and match.lines == lines:
-        return match.evidence_lines
-    if isinstance(match, FromMatch) and match.line is not None:
-        if (match.line, match.line) == lines:
-            return match.evidence_lines
+    if cls == "missing_copy_source":
+        copy = match_copy_ci(text)
+        if not isinstance(copy, CopyMatch) or copy.lines != lines:
+            return None
+        key = _instruction_key(copy.step_text or "")
+        return copy.evidence_lines if key == _instruction_key(corrected) else None
+    found = match_from_ci(text)
+    if isinstance(found, FromMatch) and found.line is not None:
+        if found.line == lines[0]:
+            return found.evidence_lines
     return None
 
 
