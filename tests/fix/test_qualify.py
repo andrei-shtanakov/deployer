@@ -18,7 +18,7 @@ from deployer.forge import (
     StepRef,
 )
 from deployer.provenance.model import sha256_hex
-from deployer.reproduce.buildline import BuildConfig
+from deployer.reproduce.buildline import BuildConfig, Unsupported, parse_build_line
 from deployer.reproduce.shape import Shape
 
 FIX = "f" * 40
@@ -308,3 +308,26 @@ def test_build_args_compare_as_pairs() -> None:
     args: Any = [["V", "1"]]
     build = replace(ORIGINAL_BUILD, build_args=args)  # the stored JSON form
     assert _q(_read(), build=build).status == "qualified"
+
+
+def test_context_other_than_dot_never_parses() -> None:
+    """Why ``_COMPARED`` has no context: the build line admits ``.`` only."""
+    assert parse_build_line("docker build app") == Unsupported("context app")
+    assert parse_build_line("docker build . ") == BuildConfig(
+        "Dockerfile", (), None, None
+    )
+
+
+def test_fully_green_mapped_job_qualifies() -> None:
+    job = _job()
+    assert job.all_steps is not None
+    green = replace(
+        job,
+        conclusion="success",
+        steps=[],
+        all_steps=[replace(s, conclusion="success") for s in job.all_steps],
+    )
+    result = _q(_read(jobs=[_lint(), green]))
+    assert (result.status, result.reason, result.job) == ("qualified", None, green)
+    assert result.shape is not None
+    assert result.shape.build_step == 3

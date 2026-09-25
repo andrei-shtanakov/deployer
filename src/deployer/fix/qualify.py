@@ -38,6 +38,7 @@ from deployer.reproduce.shape import (
 
 Qualification = Literal["qualified", "excluded", "undetermined"]
 _EVENTS = ("push", "workflow_dispatch")
+# No context field: buildline.parse_build_line admits only the context ".".
 _COMPARED = ("dockerfile", "build_args", "platform")
 
 
