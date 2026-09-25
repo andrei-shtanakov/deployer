@@ -25,6 +25,17 @@ and both builders print the pulled reference normalised (``docker.io/library/
 …``), so no pull line binds unambiguously before recordings show the forms:
 ``Outcome.image_pull`` is always ``None`` for now, which never affects the parse
 evidence (§6.3).
+
+A text matcher cannot tell a builder's own ``STEP``/``#k`` line from the same
+text echoed by a ``RUN`` step's output: a build that prints a forged
+``STEP k/n: <corrected text>`` line is indistinguishable here. This is a limit
+of the hypothesis, to be weighed when recordings back a row.
+
+A CI job's text may hold more than one build. Both BuildKit matchers refuse
+such a log as ``binding_ambiguous`` when they can see it: ``[internal] load
+build definition`` more than once, or ``#k`` numbering restarting (a new, never
+seen ``#k`` lower than one already seen — within one build BuildKit numbers new
+vertices in increasing order).
 """
 
 import re
@@ -65,6 +76,10 @@ ROWS: tuple[Row, ...] = (
     Row("from-parsed/buildkit", "ci", "buildkit", "from", None),
 )
 """The four rows of §6.3/§7.3 — all hypotheses, none backed by a recording."""
+
+# TODO: spec §7.3 says the FROM image-pull result "is recorded when visible";
+# ``Outcome.image_pull`` deliberately stays ``None`` until recordings show a
+# pull line that binds unambiguously to the corrected FROM (see module doc).
 
 _TEST_REGISTRY: list[Row] = []
 # Test-only: rows injected by the test seam. Never written from ``src/``.
@@ -115,6 +130,9 @@ def match_ci(kind: Kind, corrected_text: str, log: str) -> Outcome:
     lines = _lines(log)
     if not any(_BK_ANY_RE.fullmatch(line) for line in lines):
         return _outcome("unknown_format", (), "no BuildKit progress lines")
+    several = _several_builds(lines)
+    if several is not None:
+        return several
     if kind == "from":
         return _buildkit_from(lines)
     if not _bindable(corrected_text):
@@ -124,10 +142,9 @@ def match_ci(kind: Kind, corrected_text: str, log: str) -> Outcome:
 
 _STEP_RE = re.compile(r"STEP (?P<k>[0-9]{1,9})/(?P<n>[0-9]{1,9}): (?P<text>.*)")
 _COMPLETION_RE = re.compile(r"Successfully tagged \S+")
-_PODMAN_FROM_ARGS_RE = re.compile(
-    r"Error: FROM requires either one argument, or three: .*"
-)
-_BK_ANY_RE = re.compile(r"#[0-9]{1,9} .*")
+_PODMAN_FROM_ARGS = "FROM requires either one argument, or three"
+_BK_ANY_RE = re.compile(r"#(?P<k>[0-9]{1,9}) .*")
+_BK_DEFINITION_RE = re.compile(r"#[0-9]{1,9} \[internal\] load build definition\b.*")
 _BK_HEADER_RE = re.compile(r"#(?P<k>[0-9]{1,9}) \[(?P<bracket>[^\]]*)\] (?P<text>.*)")
 _BK_STAGE_RE = re.compile(r"(?:[^\s\]]+ )?[0-9]{1,9}/[0-9]{1,9}")
 _BK_DONE_RE = re.compile(r"#(?P<k>[0-9]{1,9}) DONE(?: [0-9]{1,9}(?:\.[0-9]{1,9})?s)?")
@@ -166,7 +183,11 @@ def _after_step(out: list[str], number: int, k: int, n: int) -> Outcome:
         if line.lower().startswith("error"):
             return _outcome("not_confirmed", (number, later), "error after step")
         if _COMPLETION_RE.fullmatch(line):
-            return _outcome("passed", (number, later), None)
+            if k == n:
+                return _outcome("passed", (number, later), None)
+            return _outcome(
+                "binding_ambiguous", (number, later), "completion before step n"
+            )
         step = _STEP_RE.fullmatch(line)
         if step is None:
             continue
@@ -216,12 +237,12 @@ def _buildkit_copy(text: str, lines: list[str]) -> Outcome:
 
 
 def _buildkit_result(lines: list[str], number: int, k: str) -> Outcome:
-    """The result lines of step ``k``: an error or ``CACHED`` → not
+    """The result lines of step ``k`` after its header: an error or ``CACHED`` → not
     confirmed; exactly one ``DONE`` → passed; none or several → ambiguous."""
     done: list[int] = []
     cached: list[int] = []
     errors: list[int] = []
-    for n, line in enumerate(lines, 1):
+    for n, line in enumerate(lines[number:], number + 1):
         for regex, bucket in (
             (_BK_DONE_RE, done),
             (_BK_CACHED_RE, cached),
@@ -255,6 +276,27 @@ def _buildkit_from(lines: list[str]) -> Outcome:
     return _outcome("passed", (stages[0],), None)
 
 
+def _several_builds(lines: list[str]) -> Outcome | None:
+    """``binding_ambiguous`` when the log visibly holds more than one build:
+    the build definition loaded more than once, or ``#k`` numbering restarting
+    (a new ``#k`` lower than the highest seen). ``None`` otherwise."""
+    loads = [n for n, line in enumerate(lines, 1) if _BK_DEFINITION_RE.fullmatch(line)]
+    if len(loads) > 1:
+        return _outcome("binding_ambiguous", tuple(loads), "several builds in log")
+    seen: set[int] = set()
+    highest = 0
+    for n, line in enumerate(lines, 1):
+        m = _BK_ANY_RE.fullmatch(line)
+        if m is None:
+            continue
+        k = int(m.group("k"))
+        if k not in seen and k < highest:
+            return _outcome("binding_ambiguous", (n,), f"#{k} numbering restarts")
+        seen.add(k)
+        highest = max(highest, k)
+    return None
+
+
 def _enabled(side: Side, kind: Kind) -> bool:
     """Whether an enabled row covers this side and kind."""
     return any(row.side == side and row.kind == kind for row in enabled_rows())
@@ -282,9 +324,10 @@ def _is_stage(header: re.Match[str]) -> bool:
 
 
 def _is_podman_parse_error(line: str) -> bool:
-    """Podman parse-error hypothesis: the FROM argument-count error or any line
+    """Podman parse-error hypothesis: the FROM argument-count message anywhere
+    (bare or wrapped in ``Error: building at STEP "FROM …": …``) or any line
     naming a parse error (broad on purpose: it can only refuse)."""
-    if _PODMAN_FROM_ARGS_RE.fullmatch(line):
+    if _PODMAN_FROM_ARGS in line:
         return True
     return _PARSE_ERROR in line.lower()
 

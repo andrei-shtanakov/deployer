@@ -382,3 +382,94 @@ def test_crlf_reads_like_lf() -> None:
     """Lines are stripped, so CRLF output binds like LF."""
     crlf = _BUILDKIT_COPY_OK.replace("\n", "\r\n")
     assert _ci_copy(crlf).evidence == "passed"
+
+
+# Fix round 1 regressions ----------------------------------------------------
+
+
+def test_buildkit_copy_done_before_header_not_counted() -> None:
+    """A ``#k DONE`` printed before the header is not this step's result."""
+    log = f"#5 DONE 0.1s\n#5 [2/3] {_COPY}\n"
+    assert _ci_copy(log).evidence == "binding_ambiguous"
+
+
+def test_buildkit_copy_cached_before_header_not_counted() -> None:
+    """Result lines before the header never decide the step."""
+    log = f"#5 CACHED\n#5 [2/3] {_COPY}\n#5 DONE 0.1s\n"
+    assert _ci_copy(log).evidence == "passed"
+
+
+def test_buildkit_copy_k_reused_by_later_build() -> None:
+    """A later build reusing ``#5`` for a non-stage vertex cannot lend its
+    ``DONE`` to our step: the numbering restart refuses the log."""
+    log = (
+        f"#5 [2/3] {_COPY}\n"
+        "#1 [internal] load build definition from Dockerfile\n"
+        "#5 exporting to image\n"
+        "#5 DONE 0.3s\n"
+    )
+    assert _ci_copy(log).evidence == "binding_ambiguous"
+
+
+def test_buildkit_copy_two_definition_loads() -> None:
+    """The build definition loaded twice means two builds in one log."""
+    load = "#1 [internal] load build definition from Dockerfile\n#1 DONE 0.0s\n"
+    log = f"{load}#5 [2/3] {_COPY}\n#5 DONE 0.1s\n{load}"
+    outcome = _ci_copy(log)
+    assert outcome.evidence == "binding_ambiguous"
+    assert outcome.lines == (1, 5)
+
+
+def test_buildkit_interleaved_lower_k_is_not_a_restart() -> None:
+    """A lower ``#k`` already seen (interleaved output) is not a restart."""
+    log = (
+        "#1 [internal] load build definition from Dockerfile\n"
+        f"#5 [2/3] {_COPY}\n"
+        "#1 DONE 0.0s\n"
+        "#5 DONE 0.1s\n"
+    )
+    assert _ci_copy(log).evidence == "passed"
+
+
+def test_buildkit_from_two_builds_refused() -> None:
+    """An earlier build's stage header cannot pass our failed build."""
+    log = (
+        "#1 [internal] load build definition from Dockerfile\n"
+        "#4 [1/2] FROM x\n"
+        "#4 DONE\n"
+        "#1 [internal] load build definition from Dockerfile\n"
+        "#1 DONE\n"
+        "ERROR: failed to solve: invalid reference format\n"
+    )
+    assert _ci_from(log).evidence == "binding_ambiguous"
+
+
+def test_buildkit_from_numbering_restart_refused() -> None:
+    """A restart of ``#k`` numbering also refuses the FROM row."""
+    log = "#4 [1/2] FROM x\n#4 DONE\n#2 [internal] load .dockerignore\n"
+    assert _ci_from(log).evidence == "binding_ambiguous"
+
+
+def test_podman_copy_completion_before_last_step() -> None:
+    """Completion right after step k < n is not this sequence's end."""
+    stdout = f"STEP 2/3: {_COPY}\nSuccessfully tagged a\n"
+    assert _local_copy(stdout).evidence == "binding_ambiguous"
+
+
+def test_podman_from_wrapped_argument_error() -> None:
+    """The FROM-args message wrapped in a step-bound error still refutes."""
+    stderr = (
+        'Error: building at STEP "FROM a b c d": FROM requires either one '
+        "argument, or three: FROM <source> [AS <name>]\n"
+    )
+    outcome = _local_from("STEP 1/3: FROM a\n", stderr)
+    assert outcome.evidence == "not_confirmed"
+    assert outcome.detail == "stderr: parse error"
+
+
+def test_module_documents_forged_step_limit_and_pull_todo() -> None:
+    """The hypothesis limits are written down, not implied."""
+    own = (_SRC / "deployer" / "fix" / "templates.py").read_text(encoding="utf-8")
+    doc = templates.__doc__ or ""
+    assert "forged" in doc
+    assert "TODO:" in own and "§7.3" in own
