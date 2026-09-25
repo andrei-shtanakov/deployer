@@ -285,23 +285,22 @@ project; its `status` is one of `in_progress`, `stopped`, `locally_confirmed`,
 admission`, `fix method not established`, `no proposal`, `no local confirmation`,
 `commit blocked`.
 
-**Local confirmation, publication and CI confirmation are not available in practice
-yet.** Both proof stages read their positive evidence off a closed table of template
-rows, and a row is enabled only together with the test that checks it against a real
-recording of that build (design §9) — no recording exists yet, so every row stays
-disabled. A correct input that passes every earlier check (admission, binding, the
-proposal envelope, the commit) still stops at the recording gate:
+**Local confirmation is available; CI confirmation is not yet.** Both proof stages read
+their positive evidence off a closed table of template rows, and a row is enabled only
+together with the test that checks it against a real recording of that build (design
+§9). The two local (Podman) rows, COPY/ADD and FROM, are backed by the L-recordings
+(`tests/fixtures/recordings/local`) and enabled, so `deployer fix` can reach
+`locally_confirmed` and `fix publish` can publish. The local evidence is the corrected
+instruction's own step line (with or without Podman's `[i/n] ` stage prefix), unique in
+the Dockerfile and in the output: COPY/ADD also needs the same stage's next step, or a
+completion naming the fix build's own tag; FROM needs no next marker, since Buildah
+prints that line only after its FROM check passed (design §6.3,
+`docs/fix-buildah-from-parse.md`). A skipped stage, a repeated instruction or a
+completion of another tag never confirms.
 
-```
-no local confirmation: templates not enabled
-```
-
-The earlier refusals are still possible and behave as designed — `no admission`, `fix
-method not established`, `no proposal` and `commit blocked` all still fire on the inputs
-that trigger them; only the recording-backed proof past them is unreachable. CI
-confirmation is gated the same way, one stage later (design §11 stages 3–4):
-`deployer fix confirm` never reaches `ci_confirmed` while its templates are disabled.
-It still reports the other insufficient reasons (`no qualifying run`, `defect recurred`,
+CI confirmation stays gated one stage later (design §11 stage 4): the CI rows have no
+recording enabled yet, so `deployer fix confirm` never reaches `ci_confirmed`. It still
+reports the other insufficient reasons (`no qualifying run`, `defect recurred`,
 `qualification undetermined`, …) where they apply; when a qualifying attempt is otherwise
 clean, the reason is `templates not enabled`.
 

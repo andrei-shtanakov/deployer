@@ -241,13 +241,31 @@ def test_failed_build_not_cleaned(copy_case: Case) -> None:
     assert not any(call[:1] == ["rmi"] for call in copy_case.fake.calls)
 
 
-def test_default_templates_not_enabled(copy_case: Case) -> None:
-    """Every row is disabled: a passing build still does not confirm."""
+def test_default_rows_confirm(copy_case: Case) -> None:
+    """The local rows are recording-backed: a passing build confirms without
+    the seam."""
     copy_case.set_build(0, stdout=_copy_stdout())
     result = copy_case.run()
-    assert not result.ok
-    assert result.reason == "no local confirmation: templates not enabled"
-    assert result.proof.evidence[0]["evidence"] == "not_enabled"
+    assert result.ok, result.reason
+    assert result.proof.evidence[0]["evidence"] == "passed"
+
+
+@pytest.mark.parametrize(
+    ("done", "ok"),
+    [
+        (f"COMMIT {fix_tag(FIX_ID)}", True),
+        (f"Successfully tagged {fix_tag(FIX_ID)}:latest", True),
+        ("Successfully tagged localhost/deployer-fix-other:latest", False),
+    ],
+    ids=["commit", "tagged", "foreign"],
+)
+def test_completion_bound_to_fix_tag(copy_case: Case, done: str, ok: bool) -> None:
+    """A completion after the last step binds only to the fix build's tag."""
+    copy_case.set_build(0, stdout=f"STEP 12/12: {COPY_TEXT}\n{done}\n")
+    result = copy_case.run()
+    assert result.ok is ok
+    if not ok:
+        assert result.reason == "no local confirmation: completion of another tag"
 
 
 def test_seam_passes_and_records_evidence(copy_case: Case) -> None:
@@ -386,10 +404,20 @@ def test_from_fix_passes_with_seam(from_case: Case) -> None:
     assert result.proof.evidence[0]["corrected_text"] == FROM_TEXT
 
 
-def test_from_fix_default_not_enabled(from_case: Case) -> None:
-    """run-5 with no seam: templates not enabled."""
+def test_from_fix_default_rows_confirm(from_case: Case) -> None:
+    """run-5 with no seam: the corrected FROM's own step line confirms."""
     from_case.set_build(0, stdout=f"STEP 1/10: {FROM_TEXT}\n")
-    assert from_case.run().reason == "no local confirmation: templates not enabled"
+    result = from_case.run()
+    assert result.ok, result.reason
+    assert result.proof.evidence[0]["lines"] == [1]
+
+
+def test_from_fix_other_step_is_not_evidence(from_case: Case) -> None:
+    """run-5: a build-stage step that is not the corrected FROM's proves
+    nothing (the old file-wide rule, refuted by l9)."""
+    from_case.set_build(0, stdout="STEP 1/10: FROM python:3.12-slim\n")
+    result = from_case.run()
+    assert result.reason == "no local confirmation: corrected step line absent"
 
 
 def test_build_config_from_stored_input() -> None:
