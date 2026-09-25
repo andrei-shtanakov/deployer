@@ -229,8 +229,13 @@ def split_lines(text: str) -> list[str]:
     """The one line rule of admission evidence: ``text`` split on ``\\n``
     only, so element ``i`` is text line ``i + 1`` whatever other break
     characters (``\\r``, form feed, ``\\u2028`` …) the text holds. The
-    consumer gate (A §7) counts evidence lines with this same rule."""
-    return text.split("\n")
+    consumer gate (A §7) counts evidence lines with this same rule. A final
+    ``\n`` terminates the last line; it does not open an empty one, so no
+    line number past the file's end can be produced."""
+    lines = text.split("\n")
+    if lines[-1] == "":
+        lines.pop()
+    return lines
 
 
 def _lines(text: str) -> list[str]:

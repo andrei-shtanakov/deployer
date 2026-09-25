@@ -426,10 +426,7 @@ def _line_count(name: str, rel: str, try_dir: Path) -> int | Refused:
         text = data.decode("utf-8")
     except UnicodeDecodeError as exc:
         return Refused(f"{name} evidence file {_show(rel)} is not UTF-8: {exc}")
-    lines = split_lines(text)
-    if lines[-1] == "":
-        lines.pop()
-    return len(lines)
+    return len(split_lines(text))
 
 
 def _errors(exc: ValidationError) -> str:

@@ -979,3 +979,22 @@ def test_target_repo_is_compared_case_insensitively(try_dir: Path) -> None:
         accept_for_fix(_document(), try_dir, _target(repo="O/R")), Accepted
     )
     _refused(accept_for_fix(_document(), try_dir, _target(repo="O/X")), "binding repo")
+
+
+def test_a_final_newline_opens_no_line() -> None:
+    """PR #86 review minor: producer and gate count ``a\\nb\\n`` as two lines."""
+    assert templates.split_lines("a\nb\n") == ["a", "b"]
+    assert templates.split_lines("") == []
+
+
+def test_an_unterminated_last_block_names_only_existing_lines(tmp_path: Path) -> None:
+    """PR #86 review minor: a CI block with no closing fence at the end of a
+    newline-terminated log yields evidence lines the gate can resolve."""
+    text = "Dockerfile:11\n--------------------\n  11 | >>> COPY docs/setup.md ./\n"
+    block = templates._locate_blocks(templates._lines(text))
+    assert len(block) == 1
+    count = len(templates.split_lines(text))
+    assert max(block[0].evidence) <= count
+    try_dir = tmp_path
+    (try_dir / "ci.log").write_text(text, encoding="utf-8", newline="")
+    assert consumer._line_count("ci", "ci.log", try_dir) == count

@@ -364,7 +364,8 @@ def test_write_text_is_utf8_with_untranslated_newlines(tmp_path: Path) -> None:
         "from deployer.reproduce.run import _write_text\n"
         "if locale.getencoding().upper().replace('-', '') != 'ISO88591':\n"
         "    sys.exit(77)\n"
-        "_write_text(Path(sys.argv[1]), 'ł € ok\\r\\nnext')\n"
+        # ASCII-only source: the argv must decode under any locale.
+        "_write_text(Path(sys.argv[1]), '\\u0142 \\u20ac ok\\r\\nnext')\n"
     )
     env = {**os.environ, "LC_ALL": "en_US.ISO8859-1", "PYTHONUTF8": "0"}
     done = subprocess.run(
