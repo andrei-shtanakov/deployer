@@ -18,6 +18,10 @@ from typing import Any, Literal
 
 from deployer.admission.model import DefectClass
 from deployer.admission.templates import (
+    AMBIGUOUS as AMBIGUOUS_MATCH,
+)
+from deployer.admission.templates import (
+    Ambiguous,
     CopyMatch,
     FromMatch,
     _instruction_key,
@@ -39,6 +43,7 @@ NOT_ENABLED = "templates not enabled"
 NOT_REACHED = "build step not reached"
 UNKNOWN_FORMAT = "unknown format"
 AMBIGUOUS = "binding ambiguous"
+NOT_EVALUATED = "qualified attempt not evaluated"
 FAILED_BEFORE = "CI failed before the build"
 
 _KINDS: dict[str, templates.Kind] = {
@@ -67,7 +72,10 @@ class AttemptEvidence:
     admission match's when the defect recurred (1-based, in the job text).
     ``template`` is the CI template's verdict (``None`` when not read);
     ``failed_before_build`` is set when the template did not pass and a step
-    of the bound job before its build step failed.
+    of the bound job before its build step failed. ``ambiguous_recurrence``
+    is set when the admitted class's admission matcher found its diagnostic
+    but could not bind it (``"ambiguous"``): not a recurrence, but it blocks
+    ``ci_confirmed`` as ``binding ambiguous`` (ruling AB).
     """
 
     key: tuple[int, int, str]
@@ -78,11 +86,18 @@ class AttemptEvidence:
     lines: tuple[int, ...]
     template: templates.Evidence | None = None
     failed_before_build: bool = False
+    ambiguous_recurrence: bool = False
 
 
 def from_qualification(q: Qualified) -> AttemptEvidence:
     """Evidence of an attempt that was not read for evidence: its
-    qualification and reason, neither positive nor recurred."""
+    qualification and reason, neither positive nor recurred.
+
+    A ``qualified`` attempt must be read by :func:`attempt_evidence`; one
+    passed here was never checked for recurrence, so it is ``undetermined``.
+    """
+    if q.status == "qualified":
+        return _undetermined(q, NOT_EVALUATED)
     return AttemptEvidence(_key(q), q.status, False, False, q.reason, ())
 
 
@@ -101,9 +116,9 @@ def attempt_evidence(
     rebuilt from ``log`` — blank, not the text the attempt was qualified on,
     or any failure — the evidence is ``undetermined`` with the reason.
     """
-    if q.status != "qualified":
-        return from_qualification(q)
     try:
+        if q.status != "qualified":
+            return from_qualification(q)
         return _read(q, cls, corrected_text, lines, log)
     except Exception as exc:  # noqa: BLE001 — totality: never raise
         return _undetermined(q, f"evidence failed: {type(exc).__name__}: {exc}")
@@ -137,6 +152,8 @@ def _evaluate(
         return "ci_confirmation_insufficient", CONTRADICTORY
     if recurred:
         return "ci_confirmation_insufficient", RECURRED
+    if any(e.ambiguous_recurrence for e in qualified):
+        return "ci_confirmation_insufficient", AMBIGUOUS
     if positive:
         return "ci_confirmed", None
     if not qualified:
@@ -167,21 +184,25 @@ def _read(
             q, f"log of job {job.job_id} is not the one it was qualified on"
         )
     outcome = templates.match_ci(_KINDS[cls], corrected_text, text)
-    recurrence = _recurrence(cls, text, corrected_text, lines)
+    recurrence = _recurrence(cls, text, corrected_text, tuple(lines))
+    ambiguous = recurrence == AMBIGUOUS_MATCH
     detail = outcome.detail
     evidence_lines = set(outcome.lines)
-    if recurrence is not None:
+    if isinstance(recurrence, tuple):
         detail = f"defect recurred at lines {lines[0]}-{lines[1]}"
         evidence_lines.update(recurrence)
+    elif ambiguous:
+        detail = "admission match ambiguous"
     return AttemptEvidence(
         key=_key(q),
         qualification="qualified",
         positive=outcome.evidence == "passed",
-        recurred=recurrence is not None,
+        recurred=isinstance(recurrence, tuple),
         detail=detail,
         lines=tuple(sorted(evidence_lines)),
         template=outcome.evidence,
         failed_before_build=outcome.evidence != "passed" and _failed_before(q),
+        ambiguous_recurrence=ambiguous,
     )
 
 
@@ -198,23 +219,28 @@ def _failed_before(q: Qualified) -> bool:
 
 
 def _recurrence(
-    cls: DefectClass, text: str, corrected: str, lines: tuple[int, int]
-) -> tuple[int, ...] | None:
+    cls: DefectClass, text: str, corrected: str, lines: tuple[int, ...]
+) -> tuple[int, ...] | Ambiguous | None:
     """The admission match's evidence lines when it binds to the corrected
     instruction by A §4.2's rules (``admission.decide._bind_ci``).
 
     COPY: the ``CopyMatch`` span (R's ``>>>`` block span) equals ``lines``
     and its block text is the corrected instruction, whatever its object.
     FROM: the parse-error line equals the instruction's first line
-    ``lines[0]``. ``None`` or ``"ambiguous"`` is no recurrence.
+    ``lines[0]``. ``None`` is no recurrence; the matcher's ``"ambiguous"``
+    is returned as it is (no recurrence, but it blocks the claim).
     """
     if cls == "missing_copy_source":
         copy = match_copy_ci(text)
+        if copy == AMBIGUOUS_MATCH:
+            return AMBIGUOUS_MATCH
         if not isinstance(copy, CopyMatch) or copy.lines != lines:
             return None
         key = _instruction_key(copy.step_text or "")
         return copy.evidence_lines if key == _instruction_key(corrected) else None
     found = match_from_ci(text)
+    if found == AMBIGUOUS_MATCH:
+        return AMBIGUOUS_MATCH
     if isinstance(found, FromMatch) and found.line is not None:
         if found.line == lines[0]:
             return found.evidence_lines
@@ -240,5 +266,12 @@ def _undetermined(q: Qualified, reason: str) -> AttemptEvidence:
 
 
 def _key(q: Qualified) -> tuple[int, int, str]:
-    """``(run_id, attempt, job key or "")``."""
-    return q.run_id, q.attempt, q.job_key or ""
+    """``(run_id, attempt, job key or "")``; never raises, so a malformed
+    ``q`` still yields evidence (``(0, 0, "")`` for missing parts)."""
+    run_id, attempt = getattr(q, "run_id", 0), getattr(q, "attempt", 0)
+    job_key = getattr(q, "job_key", None)
+    return (
+        run_id if isinstance(run_id, int) else 0,
+        attempt if isinstance(attempt, int) else 0,
+        job_key if isinstance(job_key, str) else "",
+    )

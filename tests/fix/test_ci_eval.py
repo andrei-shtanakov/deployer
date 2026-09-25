@@ -109,6 +109,7 @@ def _ev(
     template: str | None = "not_confirmed",
     run: int = 1,
     before: bool = False,
+    ambiguous: bool = False,
 ) -> AttemptEvidence:
     """Hand-built evidence for the evaluation table."""
     return AttemptEvidence(
@@ -120,6 +121,7 @@ def _ev(
         (),
         template,  # type: ignore[arg-type]
         before,
+        ambiguous,
     )
 
 
@@ -164,7 +166,8 @@ def test_copy_recurrence_same_span() -> None:
     got = _copy(_copy_recur())
     assert (got.positive, got.recurred) == (False, True)
     assert got.detail == "defect recurred at lines 11-11"
-    assert got.lines
+    # Template: header 2, ``#12 ERROR`` 3; admission: block 4-7, header, bound.
+    assert got.lines == (2, 3, 4, 5, 6, 7)
 
 
 def test_copy_recurrence_other_object() -> None:
@@ -177,12 +180,34 @@ def test_copy_other_span_is_not_recurrence() -> None:
     assert not _copy(_copy_recur(line=12)).recurred
 
 
-def test_ambiguous_match_is_not_recurrence() -> None:
-    """``"ambiguous"`` is not a recurrence."""
-    log = _copy_recur() + (
-        f'#9 ERROR: failed to calculate checksum of ref {REF}: "/x": not found\n'
-    )
-    assert not _copy(log).recurred
+AMBIGUOUS_COPY = _copy_recur() + (
+    f'#9 ERROR: failed to calculate checksum of ref {REF}: "/x": not found\n'
+)
+
+
+def test_ambiguous_copy_blocks_but_does_not_recur() -> None:
+    """Ruling AB: an ``"ambiguous"`` COPY match is not a recurrence, but
+    it is flagged and blocks the claim beside a positive attempt."""
+    got = _copy(AMBIGUOUS_COPY)
+    assert (got.recurred, got.ambiguous_recurrence) == (False, True)
+    assert got.detail == "admission match ambiguous"
+    positive = _copy(COPY_OK, q=_q(COPY_OK, attempt=2))
+    assert evaluate([positive, got], True) == (INSUFFICIENT, "binding ambiguous")
+    assert evaluate([got, positive], True) == (INSUFFICIENT, "binding ambiguous")
+
+
+def test_ambiguous_from_blocks() -> None:
+    """Parse errors naming two lines are ambiguous for FROM: flagged."""
+    log = FROM_RECUR.format(n=1) + FROM_RECUR.format(n=2).split("\n", 1)[1]
+    got = attempt_evidence(_q(log), "from_argument_count", FROM, FROM_LINES, log)
+    assert (got.recurred, got.ambiguous_recurrence) == (False, True)
+
+
+def test_recurrence_outranks_ambiguous() -> None:
+    """A proven recurrence elsewhere ranks above an ambiguous match."""
+    ambiguous = _copy(AMBIGUOUS_COPY)
+    recurred = _copy(_copy_recur(), q=_q(_copy_recur(), attempt=2))
+    assert evaluate([ambiguous, recurred], True) == (INSUFFICIENT, "defect recurred")
 
 
 def test_from_recurrence_same_line() -> None:
@@ -347,6 +372,31 @@ TABLE: list[tuple[str, list[AttemptEvidence], bool, str, str | None]] = [
         "binding ambiguous",
     ),
     (
+        "pos+ambig",
+        [_ev(positive=True, template="passed"), _ev(ambiguous=True, run=2)],
+        True,
+        INSUFFICIENT,
+        "binding ambiguous",
+    ),
+    (
+        "recur+ambig",
+        [_ev(recurred=True), _ev(ambiguous=True, run=2)],
+        True,
+        INSUFFICIENT,
+        "defect recurred",
+    ),
+    (
+        "contra+ambig",
+        [
+            _ev(positive=True, template="passed"),
+            _ev(recurred=True, run=2),
+            _ev(ambiguous=True, run=3),
+        ],
+        True,
+        INSUFFICIENT,
+        "contradictory runs",
+    ),
+    (
         "excl-recur",
         [_ev("excluded", recurred=True, template=None)],
         True,
@@ -462,3 +512,63 @@ def test_failed_before_but_passed_is_positive() -> None:
     """A passed template is positive whatever failed before the build."""
     got = _copy(COPY_OK, q=_q(COPY_OK, setup="failure"))
     assert (got.positive, got.failed_before_build) == (True, False)
+
+
+# Fix round 2 regressions ------------------------------------------------------
+
+
+def test_from_qualification_of_qualified_is_undetermined() -> None:
+    """I-1: a qualified attempt not read for evidence is undetermined and
+    blocks a positive attempt elsewhere."""
+    unread = from_qualification(_q(_copy_recur(), attempt=2))
+    assert unread.qualification == "undetermined"
+    assert unread.detail == "qualified attempt not evaluated"
+    positive = _copy(COPY_OK)
+    assert evaluate([positive, unread], True) == (
+        INSUFFICIENT,
+        "qualification undetermined",
+    )
+
+
+def test_malformed_attempt_never_raises() -> None:
+    """M-1: even reading ``q.status`` is inside the totality guard."""
+    bad: Any = None
+    got = attempt_evidence(bad, "missing_copy_source", COPY, COPY_LINES, COPY_OK)
+    assert (got.key, got.qualification) == ((0, 0, ""), "undetermined")
+
+
+def test_lines_as_list_still_recurs() -> None:
+    """M-2: spans compare as tuples whatever sequence the caller passes."""
+    lines: Any = [11, 11]
+    log = _copy_recur()
+    got = attempt_evidence(_q(log), "missing_copy_source", COPY, lines, log)
+    assert got.recurred
+
+
+def test_multiline_copy_recurs() -> None:
+    """M-4: a COPY spanning lines 11-12 recurs at its whole span."""
+    log = (
+        "#1 [internal] load build definition from Dockerfile\n"
+        f"#12 [stage-0 7/9] {COPY}\n"
+        f'#12 ERROR: failed to calculate checksum of ref {REF}: "/docs/setup.md": '
+        "not found\n"
+        "Dockerfile:11\n"
+        "--------------------\n"
+        "  11 | >>> COPY docs/setup.md \\\n"
+        "  12 | >>>     ./setup.md\n"
+        "--------------------\n"
+    )
+    corrected = "COPY docs/setup.md \\\n    ./setup.md"
+    got = attempt_evidence(_q(log), "missing_copy_source", corrected, (11, 12), log)
+    assert got.recurred
+    got = attempt_evidence(_q(log), "missing_copy_source", corrected, (11, 11), log)
+    assert not got.recurred
+
+
+def test_copy_recurrence_with_rows_disabled() -> None:
+    """M-4: production rows disabled — recurrence uses the admission
+    matchers, so the result is still ``defect recurred``."""
+    log = _copy_recur()
+    got = attempt_evidence(_q(log), "missing_copy_source", COPY, COPY_LINES, log)
+    assert (got.template, got.recurred) == ("not_enabled", True)
+    assert evaluate([got], True) == (INSUFFICIENT, "defect recurred")
