@@ -14,7 +14,7 @@ byte of the instruction and changes only the listed token.
 """
 
 import re
-from collections.abc import Mapping
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal
 
@@ -111,14 +111,16 @@ def parse_reference(token: str) -> Reference | None:
 def propose_from(
     parsed: ParsedDockerfile,
     bound: Bound,
-    build_args: Mapping[str, str],
+    build_args: Sequence[tuple[str, str]],
     dockerfile: bytes,
 ) -> FromFix | str:
     """F1 or F2 for ``bound``'s FROM, or the no-proposal reason (§4.2).
 
     ``parsed`` is the whole Dockerfile as R read it (for stage names and
     references to the token); ``build_args`` is R's bound build
-    configuration, the only channel left that could select the token;
+    configuration as ``(name, value)`` pairs, the only channel left that
+    could select the token — every pair is checked, so a name given twice
+    is refused when either value names the token;
     ``dockerfile`` is the raw bytes ``parsed`` was read from, checked for
     continuations the builders would join differently from R.
     """
@@ -229,7 +231,7 @@ def _f1(
     bound: Bound,
     tokens: list[str],
     token: str,
-    build_args: Mapping[str, str],
+    build_args: Sequence[tuple[str, str]],
     conditions: list[str],
 ) -> FromFix | str:
     """F1: insert ``AS`` before a stage-name token nothing else names."""
@@ -248,7 +250,7 @@ def _f1(
     conditions.append(f"{token!r} collides with no stage name (any case)")
     conditions.append(f"no FROM references {token!r} (any case)")
     conditions.append(f"no --from= or mount from= names {token!r} (any case)")
-    for name, value in sorted(build_args.items()):
+    for name, value in sorted(build_args):
         if value.lower() == token:
             return f"build arg {name!r} names {token!r}"
     conditions.append(f"no build arg of the bound build configuration names {token!r}")

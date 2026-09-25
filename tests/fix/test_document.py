@@ -391,6 +391,47 @@ def test_verify_inputs_stored_path_is_a_directory(tmp_path: Path) -> None:
     assert str(evidence_path) in reason
 
 
+def _refuse_whole_reads(monkeypatch: pytest.MonkeyPatch, big: Path) -> None:
+    """Make ``Path.read_bytes`` raise for ``big``: only streaming may read it."""
+    real = Path.read_bytes
+
+    def read_bytes(self: Path) -> bytes:
+        if self == big:
+            raise AssertionError(f"{self} was read whole")
+        return real(self)
+
+    monkeypatch.setattr(Path, "read_bytes", read_bytes)
+
+
+def test_verify_inputs_streams_a_large_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A multi-MB evidence file is hashed in chunks, never read whole."""
+    big = tmp_path / "build.stdout"
+    data = os.urandom(5 * 1024 * 1024 + 17)
+    doc = _document(
+        tmp_path, input=_input(tmp_path, evidence=[_stored_file(big, data)])
+    )
+    _refuse_whole_reads(monkeypatch, big)
+    assert verify_inputs(doc) is None
+
+
+def test_verify_inputs_streams_and_detects_a_large_change(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A one-byte change at the end of a multi-MB file is caught by
+    streaming too."""
+    big = tmp_path / "build.stdout"
+    data = os.urandom(5 * 1024 * 1024)
+    doc = _document(
+        tmp_path, input=_input(tmp_path, evidence=[_stored_file(big, data)])
+    )
+    big.write_bytes(data[:-1] + bytes([data[-1] ^ 1]))
+    _refuse_whole_reads(monkeypatch, big)
+    reason = verify_inputs(doc)
+    assert reason is not None and "has changed" in reason
+
+
 # --- save/load --------------------------------------------------------
 
 

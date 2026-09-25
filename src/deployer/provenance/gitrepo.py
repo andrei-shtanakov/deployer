@@ -64,6 +64,12 @@ def origin_slug(path: Path) -> str | None:
         url = _git(path, "remote", "get-url", "origin").decode().strip()
     except GitError:
         return None
+    return slug_from_url(url)
+
+
+def slug_from_url(url: str) -> str | None:
+    """``owner/name`` parsed from a remote URL (scp-like, ssh, https or a
+    path ending in ``owner/name[.git]``), or ``None`` if unparseable."""
     match = _SLUG_RE.search(url)
     return f"{match.group(1)}/{match.group(2)}" if match else None
 
@@ -89,6 +95,12 @@ def dirty_paths(path: Path) -> list[str]:
 def head_commit(path: Path) -> str:
     """The commit SHA that ``HEAD`` points at."""
     return _git(path, "rev-parse", "HEAD").decode().strip()
+
+
+def blob_bytes(path: Path, commit: str, rel: str) -> bytes:
+    """The committed bytes of ``rel`` at ``commit`` (``git cat-file blob``):
+    the raw blob, no filter or end-of-line conversion applied."""
+    return _git(path, "cat-file", "blob", f"{commit}:{rel}")
 
 
 def tree_listing(path: Path, commit: str) -> list[TreeRow]:
