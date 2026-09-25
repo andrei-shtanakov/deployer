@@ -92,17 +92,30 @@ class CheckRecord:
     reason: str | None            # for every status but "passed"
     finding: ReproductionCheck | None  # the exact ReproductionCheck R emits for a failed/observation unit, else None
 
-def copy_source_records(parsed, context: Path, dockerfile: str, rules: IgnoreRules) -> list[CheckRecord]
-def syntax_records(parsed, dockerfile: str) -> list[CheckRecord]
+@dataclass(frozen=True)
+class CheckRun:
+    check_id: str                         # "copy_sources" or one syntax check id
+    file_status: Literal["ran", "skipped"]
+    file_reason: str | None               # R's exact file-wide reason when skipped
+    records: list[CheckRecord]            # may be empty, e.g. a Dockerfile without COPY/ADD
+
+def copy_source_records(parsed, context: Path, dockerfile: str, rules: IgnoreRules) -> CheckRun
+def syntax_records(parsed, dockerfile: str) -> list[CheckRun]   # one per syntax check id
 ```
+
+The file-level status is **part of the result**, so a file-wide skip is never inferred from
+records: a Dockerfile without COPY/ADD gives `CheckRun("copy_sources", "ran", None, [])`
+when checks ran and `CheckRun("copy_sources", "skipped", "<R's reason>", [])` under an
+unsupported ignore file or an unread Dockerfile — the two are distinguishable, and the
+fold reproduces R's single `skipped` check from `file_status`.
 
 Rules (F §6.2):
 - one `copy_sources` record **per source** of every COPY/ADD: `passed` (present, not excluded; glob with a match), `failed` (absent / matches nothing / excluded — `finding` = the `ReproductionCheck` `_check_source` builds today), `skipped` (why-skipped of `_sources`, remote ADD, unmodelled chars — `reason` = the exact reason string R builds today);
 - an instruction whose sources cannot be read (`_sources` returns a skip reason) → one record with `subject="*"`, `skipped`;
-- a file-wide skip (`unread_reason`, `rules.unsupported`) → a `skipped` record for **every** COPY/ADD source of every instruction (subject = raw source, or `"*"` when unreadable), reason = R's reason string;
+- a file-wide skip (`unread_reason`, `rules.unsupported`) → `file_status="skipped"` with R's reason **and** a `skipped` record for every COPY/ADD source of every instruction (subject = raw source, or `"*"` when unreadable) — zero records when there are none;
 - syntax: one record per `(check_id, instruction)` for every instruction the rule applies to — `syntax_first_from` on the first non-ARG instruction (or `ordinal=None` for an empty file), `syntax_from_args` on every FROM, `syntax_keyword` on every instruction, `syntax_continuation` on the last instruction; status `passed` or `failed`/`observation` (R's rule: `observation` under a `# syntax=` directive); unread → all `skipped`.
 
-`copy_source_checks` and `syntax_checks` become folds over the records and must return **exactly** today's lists (same order, same fields): `copy_source_checks` = findings of failed records in order, then one aggregate `passed` if there were no failures and at least one `passed`/`failed` record, then the skipped `ReproductionCheck`s in order; file-wide skips return today's single skipped check. `syntax_checks` = per check id, today's order.
+`copy_source_checks` and `syntax_checks` become folds over `CheckRun` and must return **exactly** today's lists (same order, same fields): `file_status="skipped"` → today's single skipped check with `file_reason`; otherwise findings of failed records in order, then one aggregate `passed` if there were no failures and at least one `passed`/`failed` record, then the skipped `ReproductionCheck`s in order. `syntax_checks` = per check id, today's order.
 
 - [ ] **Step 1: Parity test first.** In `tests/reproduce/test_detail.py`, before touching `checks.py`, capture today's outputs over every committed bundle tree and a set of synthetic Dockerfiles, then assert the refactored functions return equal lists:
 
@@ -124,6 +137,8 @@ SYNTHETIC = {
     "escape_directive": "# escape=`\nFROM a:1\nCOPY present.txt /d\n",
     "syntax_directive_bad_from": "# syntax=docker/dockerfile:1\nFROM a b\n",
     "empty": "",
+    "no_copy": "FROM a:1\nRUN true\n",
+    "no_copy_unsupported_ignore": "FROM a:1\nRUN true\n",   # run with .dockerignore "[ab]"
 }
 
 
@@ -145,6 +160,7 @@ Record the golden outputs to `tests/reproduce/detail_golden.json` with a one-off
   - `test_unsupported_ignore_propagates`: `.dockerignore` with `[ab]` → every source skipped with `ignore pattern not modelled: …`.
   - `test_syntax_per_instruction`: `FROM a b` then `FROM c:1` → `syntax_from_args` failed for ordinal 0, passed for ordinal 1; with `# syntax=` the failed one is `observation`.
   - `test_empty_file_first_from`: empty Dockerfile → one `syntax_first_from` record with `ordinal=None`, failed.
+  - `test_no_copy_ran_vs_skipped`: a Dockerfile without COPY/ADD → `file_status="ran"`, no records; the same file with `.dockerignore` `[ab]` → `file_status="skipped"` with R's reason, no records; the parity test covers both (`no_copy`, `no_copy_unsupported_ignore`).
 - [ ] **Step 3: Implement** `detail.py` by moving the loop bodies out of `copy_source_checks` / `syntax_checks` into record producers (reuse `_sources`, `_norm`, `_has_unmodelled_chars`, `_check_source`, `_skip`, `_from_args_ok`, `KEYWORDS`); rewrite `copy_source_checks` and `syntax_checks` as folds. Import cycle: `detail.py` imports from `checks.py` and `dockerfile.py` private helpers; `checks.copy_source_checks` imports `copy_source_records` lazily inside the function, or move the helpers into `detail.py` and re-export — choose the one that keeps `checks.py`'s public names unchanged.
 - [ ] **Step 4:** `uv run pytest tests/reproduce -q` — parity + record tests pass; full suite green.
 - [ ] **Step 5: Commit** `feat(reproduce): detailed per-instruction, per-source check records`.
@@ -196,7 +212,21 @@ StopReason = Literal["no admission", "fix method not established", "no proposal"
                      "no local confirmation", "commit blocked"]
 
 class LastOperation(BaseModel): command: Literal["fix", "publish", "confirm"]; at: str; result: str; reason: str | None
-class Input(BaseModel): verdict_sha256: str; binding: dict; clone: str; origin: str; head: str; clean: bool; target: dict
+class StoredFile(BaseModel): path: str; sha256: str          # absolute path + hash at `deployer fix` time
+class Input(BaseModel):
+    verdict: StoredFile           # the 1.3 document as read; publish/confirm reload it and require the same hash
+    root: str                     # the working root the try dir is relative to
+    try_dir: str                  # R's try dir (absolute)
+    source_dir: str               # R's restored source/ (absolute)
+    evidence: list[StoredFile]    # every evidence file the admission section references (ci.log, build.*)
+    binding: dict                 # admission binding (repo, head_sha, artifact_path, artifact_sha256)
+    reproduction_binding: dict    # R's binding: job_id, workflow_job, build_step, dockerfile
+    build: dict                   # R's BuildConfig: dockerfile, build_args, platform
+    workflow_path: str            # R's bound workflow path (FailedRun.workflow_path)
+    workflow_sha256: str          # sha256 of that workflow's bytes in source/
+    backend: str                  # R's environment.backend
+    clone: str; origin: str; head: str; clean: bool
+    target: dict                  # Target(repo, head_sha, artifact_path, artifact_sha256)
 class Proposal(BaseModel): cls: str (alias "class"); file: str; lines: tuple[int, int]; transformation: Literal["copy-source", "F1", "F2"]; original: str; replacement: str; ordinal: int; rationale: list[dict]; envelope: list[dict]
 class LocalProof(BaseModel): dockerfile_sha256: str; build: dict; backend: str; versions: dict; records_before: list[dict]; records_after: list[dict]; evidence: list[dict]; later_failure: dict | None
 class Publication(BaseModel): worktree: str; branch: str; fix_commit: str | None; diff_ok: bool; base: str | None; pr_url: str | None
@@ -209,11 +239,16 @@ class FixDocument(BaseModel):
 def save(doc: FixDocument, path: Path) -> None     # atomic: write tmp in same dir, fsync, os.replace
 def load(path: Path) -> FixDocument                # ValidationError/OSError propagate to the CLI (exit 2)
 def check_writable(directory: Path) -> str | None  # create+remove a probe file; reason or None
+def verify_inputs(doc: FixDocument) -> str | None  # every StoredFile re-hashed; a missing/changed file → reason
 ```
+
+`Input` is the single producer of what `publish` (T14) and `confirm` (T19) need: they never
+re-derive it from the clone. `verify_inputs` re-hashes the verdict and every evidence file
+before `accept_for_fix` is re-run; a mismatch refuses (publish exit 1).
 
 Invariants (validator): `stopped` ⇔ `stop_reason` set; `locally_confirmed`/`fix_proposed`/`ci_confirmed` need `proposal`, `local_proof`, `publication.fix_commit`; `fix_proposed`/`ci_confirmed` need `publication.pr_url`; `ci_confirmed` needs the last `ci_attempts` outcome `ci_confirmed`.
 
-- [ ] Tests: each invariant; `class` on the wire; `save` atomic (a failing `os.replace` monkeypatched leaves the old file intact and no tmp file); `check_writable` on a read-only dir returns a reason; round-trip. Commit `feat(fix): the fix document`.
+- [ ] Tests: each invariant; `verify_inputs` with a changed verdict, a missing evidence file, all intact; `class` on the wire; `save` atomic (a failing `os.replace` monkeypatched leaves the old file intact and no tmp file); `check_writable` on a read-only dir returns a reason; round-trip. Commit `feat(fix): the fix document`.
 
 ---
 
@@ -256,9 +291,9 @@ class FromFix: transformation: Literal["F1", "F2"]; replacement: str; conditions
 def propose_from(parsed: ParsedDockerfile, bound: Bound, build_args: dict[str, str]) -> FromFix | str   # str = no-proposal reason
 ```
 
-The grammar note records the BuildKit and Buildah revisions read and the rule found in each (stage names are lowercased and must match `^[a-z][a-z0-9-_.]*$` in BuildKit's `instructions` parser; Buildah's `imagebuildah` uses BuildKit's parser package — the implementer **verifies** both at pinned tags, quotes the lines, and sets `STAGE_NAME_RE` to the intersection; tokens with uppercase letters are accepted only if both lowercase them the same way, else refused). F1/F2 exactly as F §4.2: complete literal reference with explicit tag (`:`) or digest (`@sha256:`) after an optional inline `--platform=<v>`; no `$`; F1 conditions incl. no `--from=<token>`, no `FROM <token>`, no build arg value equal to the token, no collision with an existing stage name (case-insensitive); F2 dangling `AS`. The replacement keeps every original byte and inserts ` AS` before the token (F1) or deletes the trailing `AS` token and the whitespace before it (F2). `conditions` lists each checked condition for the deterministic explanation.
+The grammar note records the BuildKit and Buildah revisions read and the rule found in each (stage names are lowercased and must match `^[a-z][a-z0-9-_.]*$` in BuildKit's `instructions` parser; Buildah's `imagebuildah` uses BuildKit's parser package — the implementer **verifies** both at pinned tags, quotes the lines, and sets `STAGE_NAME_RE` to the intersection; tokens with uppercase letters are accepted only if both lowercase them the same way, else refused). F1/F2 exactly as F §4.2. The reference is validated by a **grammar**, not by the presence of `:` — `parse_reference(token) -> Reference | None` implements the distribution reference grammar (`[domain[:port]/]path-component(/path-component)*[:tag][@digest]`, lowercase path components `[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*`, tag `[\w][\w.-]{0,127}`, digest `sha256:[0-9a-f]{64}`, a `domain:port` colon is not a tag) and F1/F2 require `tag or digest` present; the reference comes after an optional inline `--platform=<v>`; no `$`; F1 conditions incl. no `--from=<token>`, no `FROM <token>`, no build arg value equal to the token, no collision with an existing stage name (case-insensitive); F2 dangling `AS`. The replacement keeps every original byte and inserts ` AS` before the token (F1) or deletes the trailing `AS` token and the whitespace before it (F2). `conditions` lists each checked condition for the deterministic explanation.
 
-- [ ] Tests: run-5's `FROM python:3.12-slim extra` → F1 `FROM python:3.12-slim AS extra`; F2; each refusal of F §4.2 (`FROM python 3.12`, `FROM python builder`, `-slim`, 4 args, 3 args without AS, `--foo=x`, `$TAG`, collision, `COPY --from=extra`, `FROM extra`, build arg naming it); grammar accepts/rejects table incl. `AS` in any case. Commit `feat(fix): closed FROM transformations F1/F2`.
+- [ ] Tests: `parse_reference` — `python:3.12-slim` tag; `registry:5000/app` no tag (port colon); `registry:5000/app:1` tag; `app@sha256:<64 hex>` digest; `Python:3` invalid (uppercase); `app:` invalid; run-5's `FROM python:3.12-slim extra` → F1 `FROM python:3.12-slim AS extra`; `FROM registry:5000/app extra` → no proposal (no tag); F2; each refusal of F §4.2 (`FROM python 3.12`, `FROM python builder`, `-slim`, 4 args, 3 args without AS, `--foo=x`, `$TAG`, collision, `COPY --from=extra`, `FROM extra`, build arg naming it); grammar accepts/rejects table incl. `AS` in any case. Commit `feat(fix): closed FROM transformations F1/F2`.
 
 ---
 
@@ -313,14 +348,17 @@ def validate_answer(raw: str, eligible: Sequence[str], facts: ProjectFacts, list
 **Interfaces — Produces:**
 
 ```python
-def defect_check_passes(after: list[CheckRecord], cls: DefectClass, ordinal: int, new_source: str | None) -> str | None
-def regressions(before: list[CheckRecord], after: list[CheckRecord], ordinal: int,
+def defect_check_passes(after: list[CheckRun], cls: DefectClass, ordinal: int, new_source: str | None) -> str | None
+def regressions(before: list[CheckRun], after: list[CheckRun], ordinal: int,
                 absent: str | None, new_source: str | None) -> list[str]
 ```
 
+A `CheckRun` with `file_status="skipped"` after (and `ran` before) is itself a regression
+of every record it held before; a skipped run on the defect's check → not passed.
+
 Keys `(check_id, ordinal, subject)`; the absent source's key maps to the new source's key; `passed` before and anything else after → a regression line; a key present before and missing after → a regression line; `skipped` or `observation` for the defect check → not passed.
 
-- [ ] Tests over hand-built `CheckRecord` lists: passes; regression on another source; a disappeared record; the mapped key; F1 with `syntax_from_args` passed. Commit `feat(fix): the per-record regression rule`.
+- [ ] Tests over hand-built `CheckRun` values: a run skipped file-wide after, ran before → regressions; passes; regression on another source; a disappeared record; the mapped key; F1 with `syntax_from_args` passed. Commit `feat(fix): the per-record regression rule`.
 
 ---
 
@@ -358,12 +396,16 @@ A row is enabled iff `recording is not None` **or** it was injected through `_TE
 @dataclass(frozen=True)
 class Admitted: section: AdmissionSection; target: Target; ownership: OwnershipFacts; clone_head: str; origin: str
 def gate(document: Mapping[str, object], root: Path, clone: Path, env: Mapping[str, str],
-         extra_roots: Sequence[Path]) -> Admitted | str     # str = no-admission reason
+         extra_roots: Sequence[Path]) -> Admitted | str     # str = no-admission reason (deployer fix)
+def recheck_admission(doc: FixDocument, env: Mapping[str, str]) -> str | None
+    # publish only: verify_inputs; reload the stored verdict; accept_for_fix(verdict, try_dir, stored target);
+    # verify_ownership over the stored source_dir with the CURRENT trust dir and checked_roots =
+    # (source_dir, clone, worktree, fix dir). No clone HEAD / cleanliness check (F §8.3).
 ```
 
 Steps (F §2): clone is a checkout at its toplevel with `origin` (`provenance.gitrepo`), `HEAD` = `binding.head_sha`, `dirty_paths` empty; target = (`origin_slug`, `HEAD`, `binding.artifact_path`, sha256 of the clone's Dockerfile read no-follow); `try_dir = root / reproduction.try_dir`; `accept_for_fix`; `verify_ownership(source_dir, repo=target.repo, artifact_path=…, trust=trust_dir(env), checked_roots=(source_dir, clone, *extra_roots))` must be `confirmed`. `extra_roots` = the planned fix dir and worktree paths.
 
-- [ ] Tests (reuse `tests/admission/conftest.py` replay + `AdmissionSet` to produce a real admitted document and try dir): accepted; not at toplevel; no origin; untracked-only dirt; `HEAD` ≠ head_sha; Dockerfile bytes ≠; origin `HTTPS://GitHub.com/Example/Project` case variant accepted (Review Focus 2); revoked key; trust dir inside `source/`. Commit `feat(fix): the gate`.
+- [ ] Tests (reuse `tests/admission/conftest.py` replay + `AdmissionSet` to produce a real admitted document and try dir): `recheck_admission` passes after the user moves the clone's `HEAD` or dirties it, and refuses on a revoked key, a changed verdict or evidence file; `gate`: accepted; not at toplevel; no origin; untracked-only dirt; `HEAD` ≠ head_sha; Dockerfile bytes ≠; origin `HTTPS://GitHub.com/Example/Project` case variant accepted (Review Focus 2); revoked key; trust dir inside `source/`. Commit `feat(fix): the gate`.
 
 ---
 
@@ -402,9 +444,9 @@ def local_proof(section: ReproductionSection, source_dir: Path, fix_dir: Path, c
                 rt: ContainerRuntime, build_timeout: int) -> LocalResult
 ```
 
-Steps (F §6): backend must equal `section.environment.backend` (else `local backend differs from R's`); copy `source/` to `fix_dir/context` (symlinks kept, made writable, as R does), write `corrected` to `context/<dockerfile>`; records before on `source_dir` (original bytes) and after on the context via Task 1 (CI rules; local rules for the backend) → Task 8 checks; build through `reproduce.build.run_build(rt, context, config, tag, timeout)` with R's bound `BuildConfig` reconstructed from `section.build`; write `build.stdout`/`build.stderr` with `reproduce.run._write_text`; `templates.match_local`; timeout → not ok; later failure recorded only after `passed`.
+Steps (F §6): backend must equal `section.environment.backend` (else `local backend differs from R's`); the endpoint must be confirmed local with R's `endpoint.confirm_local(rt, env)` (a refusal → `no local confirmation: <R's reason>`); copy `source/` to `fix_dir/context` (symlinks kept, made writable, as R does), write `corrected` to `context/<dockerfile>`; records before on `source_dir` (original bytes) and after on the context via Task 1 (CI rules; local rules for the backend) → Task 8 checks; build through `reproduce.build.run_build(rt, context, config, tag, timeout)` with R's bound `BuildConfig` (stored in `Input.build`) and a service tag unique to the fix dir, `localhost/deployer-fix-<run_id>-<fix seq>` (never CI's `-t`); afterwards `cleanup_image(rt, tag, built=exit_code == 0)` and `build_containers_state(rt, finished=launch_error is None)`, both recorded in `LocalProof.build` (`image_cleanup`, `build_containers`) exactly as R records them; write `build.stdout`/`build.stderr` with `reproduce.run._write_text`; `templates.match_local`; timeout → not ok; later failure recorded only after `passed`.
 
-- [ ] Tests with the `FakeContainers` fixture from `tests/admission/conftest.py` and the replayed run-1/run-5: default → `no local confirmation: templates not enabled`; with the seam and a synthetic passing stdout → ok and `later_failure` recorded for a synthetic later error; timeout → not ok; backend `docker` → refused; a regression (corrected Dockerfile that breaks another source) → not ok naming it; `source/` untouched (tree hash before/after). Commit `feat(fix): the local proof`.
+- [ ] Tests with the `FakeContainers` fixture from `tests/admission/conftest.py` and the replayed run-1/run-5 (no real builds): the endpoint refused under `DOCKER_HOST` / `--container-host`; the build argv carries the unique fix tag and never CI's; `rmi -f <tag>` issued after a successful build and its result recorded (`removed` / `failed` from a fake non-zero rmi); default → `no local confirmation: templates not enabled`; with the seam and a synthetic passing stdout → ok and `later_failure` recorded for a synthetic later error; timeout → not ok; backend `docker` → refused; a regression (corrected Dockerfile that breaks another source) → not ok naming it; `source/` untouched (tree hash before/after). Commit `feat(fix): the local proof`.
 
 ---
 
@@ -416,7 +458,7 @@ Steps (F §6): backend must equal `section.environment.backend` (else `local bac
 
 Order (F §5.3): new fix dir + writability (`check_writable`, else exit 2) → save `in_progress` → gate (Task 10) → bind (Task 4) → preconditions: `outside` fix dir/worktree (else exit 2), worktree add, `preflight` in the worktree with the key, preliminary `exclusion_proven` (pointer + a placeholder set path) → proposal (Task 5 or Tasks 6+7; the chooser is called **at most once** and never on an envelope stop) → local proof (Task 12) → `plan_set` + final `exclusion_proven` on its real paths → write the corrected bytes in the worktree, `issue(…, edit_ignore=False)`, require `Issued.set_dir == set_dir_name(plan.record_sha256)` → `allowed_diff_problem` → `commit` → `locally_confirmed`. Checkpoint saves after preconditions, proposal, local proof, commit. Stops set `stopped` + reason; exceptions → reason (never a traceback); a save failure after the commit → exit 2 naming fix dir, worktree, branch, commit.
 
-- [ ] Tests (P level, faked runtime/model/gh, real Git; run-1 variants with one and two candidate files built at test time via `AdmissionSet`, not from committed data): run-5 → `stopped: no local confirmation` by default; with the seam → `locally_confirmed`, the commit holds the F1 line and the new set; run-1 two-candidates → `fix method not established` and the fake chooser asserts no call; model malformed → stop, one call; no key → `commit blocked`; exclusion needing an edit → `commit blocked`, nothing written; save failure after commit → exit 2 with identifiers; CLI exit table. Commit `feat(fix): deployer fix`.
+- [ ] Tests (P level, faked runtime/model/gh, real Git; run-1 variants built at test time via `AdmissionSet`, not from committed data: `basename-unique` — one other file named `setup.md` exists, the envelope passes with every eligible blob in the prompt and the fake model picks it; `basename-ambiguous` — two files named `setup.md`): run-5 → `stopped: no local confirmation` by default; with the seam → `locally_confirmed`, the commit holds the F1 line and the new set; run-1 `basename-ambiguous` → `fix method not established` and the fake chooser asserts no call; run-1 `basename-unique` with the seam → `locally_confirmed`, the proposal's `rationale` from the fake; model malformed → stop, one call; no key → `commit blocked`; exclusion needing an edit → `commit blocked`, nothing written; save failure after commit → exit 2 with identifiers; CLI exit table. Commit `feat(fix): deployer fix`.
 
 ---
 
@@ -434,9 +476,9 @@ class GitRemote(Protocol):
     def push(self, repo_dir: Path, branch: str) -> None
 ```
 
-Order (F §8.3): load; status must be `locally_confirmed`/`fix_proposed`/`ci_confirmed`; record `base` in `publication` and save **before** any network action; a stored different base → refused; re-run the gate with the stored target and the current trust dir; branch tip == stored fix commit; re-check the allowed diff; fetch base; `merge_base(base_tip, fix_commit) == head_sha` and the diff `merge_base..fix_commit` equals the allowed change; push; look up a PR by head branch (`gh api repos/{repo}/pulls?head={owner}:{branch}&state=open`), create only if none; `fix_proposed`. Refusals leave the status, set `last_operation`.
+Order (F §8.3): load; status must be `locally_confirmed`/`fix_proposed`/`ci_confirmed`; record `base` in `publication` and save **before** any network action; a stored different base → refused; `recheck_admission` (T10 — stored target, stored verdict and evidence, current trust; **not** the clone's `HEAD` or cleanliness); the worktree branch tip == stored fix commit; the **committed content** is re-checked with `git diff --name-status -z <head_sha> <fix_commit>` plus `link_problem` over `git show <head_sha>:<file>` / `git show <fix_commit>:<file>` (the commit, not the working tree); fetch base; `merge_base(base_tip, fix_commit) == head_sha` and `diff_names(merge_base, fix_commit)` equals the allowed change; push; look up an open PR whose head branch is the fix branch **and** whose `head.sha` equals the stored fix commit **and** whose `base.ref` equals the stored base — reuse it; a PR on that branch with another base or head → refused; create only if none. The resulting status: `locally_confirmed` → `fix_proposed`; `fix_proposed` and `ci_confirmed` are **kept** on a successful repeat. Refusals leave the status, set `last_operation`.
 
-- [ ] Tests (faked `GitRemote` and `gh`, real Git for the tip/diff): happy path; trust revoked; tip changed; stored diff tampered; a base already containing the fix commit (merge base ≠ head_sha) refused; a base missing head_sha refused; a timeout on create then repeat → the existing PR found, no second create; different `--base` on repeat refused; push failure on a `fix_proposed` repeat leaves `fix_proposed`; CLI exit table. Commit `feat(fix): fix publish`. **Open PR F1c.**
+- [ ] Tests (faked `GitRemote` and `gh`, real Git for the tip/diff): happy path; the user's clone `HEAD` moved/dirty after `deployer fix` → publish still succeeds; the committed Dockerfile amended in the worktree (a new commit) → tip changed, refused; an existing PR with a different base or head sha → refused; a successful repeat on `ci_confirmed` keeps `ci_confirmed`; trust revoked; tip changed; stored diff tampered; a base already containing the fix commit (merge base ≠ head_sha) refused; a base missing head_sha refused; a timeout on create then repeat → the existing PR found, no second create; different `--base` on repeat refused; push failure on a `fix_proposed` repeat leaves `fix_proposed`; CLI exit table. Commit `feat(fix): fix publish`. **Open PR F1c.**
 
 ---
 
@@ -444,7 +486,12 @@ Order (F §8.3): load; status must be `locally_confirmed`/`fix_proposed`/`ci_con
 
 **Files:** Create `tests/fixtures/fix/copy-one-candidate/…`, `tests/fixtures/fix/copy-two-candidates/…`, `tests/fixtures/fix/make_fix_bundle.py`, `tests/fixtures/fix/CHECKSUMS.sha256`, `tests/fix/test_fix_bundle_integrity.py`; Modify `pyproject.toml`/`tests/conftest.py` (exclude `tests/fixtures/fix/*/tree`).
 
-Built from `tests/fixtures/admission/admit-run-1` by the generator: `copy-one-candidate` adds exactly one eligible file for the absent `docs/setup.md` (e.g. `docs/SETUP.md`) **before** issuing the set, so ownership still confirms; `copy-two-candidates` adds two same-basename files (`docs/a/setup.md`, `docs/b/setup.md`). Tree, `tree-listing.json`, the signed set (public test key from A4; the generator takes `--key`, no private key committed) regenerated consistently; `PROVENANCE.md` separates the original failure record (run-1's logs, byte-identical) from the test modification. Integrity test as A4's (exact case set, checksums, tree = listing, provenance present, no private key).
+Built from the run-1 **reproduction** bundle (`tests/fixtures/reproduction/run-1`; the A4 private key is gone by the owner's decision) by a generator that uses its **own new test key pair** (`--key PATH`, fresh ed25519 if omitted), writes its own `test-key.pub`, `trust/allowed_signers` and fingerprint into `PROVENANCE.md`, and never commits a private key. Cases, named for what they prove:
+
+- `copy-basename-unique` — one other regular file named `setup.md` (`docs/guide/setup.md`) is added **before** issuing the set. The envelope does **not** make it the only eligible blob (every other regular file of the tree stays eligible); it makes it the only file passing the basename floor's check. The expected outcome is recorded as: envelope passed, the prompt lists all eligible blobs, and the proposal is the **model's** choice — the bundle carries the fake model answer used by the acceptance test, labelled as such.
+- `copy-basename-ambiguous` — two files named `setup.md` (`docs/a/setup.md`, `docs/b/setup.md`) → `fix method not established: basename floor`, the model not called.
+
+Tree, `tree-listing.json` and the signed set regenerated consistently; `PROVENANCE.md` separates the original failure record (run-1's logs, byte-identical) from the test modification. Integrity test as A4's (exact case set, checksums, tree = listing, provenance present, no private key).
 
 - [ ] Build, scratch-replay through R → admission → `admitted` for both, commit, **open PR F1d for the owner** (no auto-merge). Task 13's run-1 P tests do **not** depend on this data: they build the one- and two-candidate variants at test time with `tests/admission/conftest.py`'s `AdmissionSet` (a generated key, a temporary tree). The committed bundles are the reviewed inputs for the stage-5 end-to-end acceptance.
 
@@ -466,9 +513,9 @@ def list_runs_for_sha(repo: str, sha: str, runner: GhRunner) -> list[RunSummary]
 def read_attempt(repo: str, run: RunSummary, attempt: int, runner: GhRunner) -> AttemptRead
 ```
 
-`list_runs_for_sha`: `actions/runs?head_sha=<sha>&per_page=100&page=n` with the same `total_count` completeness rule as `_Gh.jobs` (short, malformed or inconsistent → the reason string, never a shorter list). `read_attempt`: attempt metadata `actions/runs/{id}/attempts/{n}`, jobs of that attempt **without** the green filter, each job built with `_build_job` from its log (a job's `FailedJob.steps` keeps only non-green steps; `all_steps` keeps all — reuse as is), `logs_state` per job; a `GhError` with status → recorded in `error`, status-less → propagates. `fetch_failed_run` unchanged.
+`list_runs_for_sha`: `actions/runs?head_sha=<sha>&per_page=100&page=n` with the same `total_count` completeness rule as `_Gh.jobs` (short, malformed or inconsistent → the reason string, never a shorter list). `read_attempt`: attempt metadata `actions/runs/{id}/attempts/{n}`, jobs of that attempt **without** the green filter, each job built with `_build_job` from its log (a job's `FailedJob.steps` keeps only non-green steps; `all_steps` keeps all — reuse as is), `logs_state` per job; a `GhError` with status → recorded in `error`. A status-less `GhError` (timeout, `gh` missing, unparseable) is **not** propagated out of the confirmation path: `list_runs_for_sha` returns it as its reason string and `read_attempt` records it in `error`, so `fix confirm` (T19) reports `ci_confirmation_insufficient` with that reason and exits 1 — never a traceback, never exit 2 (exit 2 stays for local `fix.json` I/O). `fetch_failed_run` unchanged.
 
-- [ ] Tests with a fake runner: complete listing; `total_count` 3 but 2 rows then an empty page → reason (Review Focus 5); malformed page → reason; a successful attempt read with all jobs; a 410 log → `logs_state` `unavailable`; `fetch_failed_run` tests unchanged. Commit `feat(forge): read runs of any outcome by head_sha`.
+- [ ] Tests with a fake runner: a status-less `GhError` on the listing → reason; on an attempt read → `error` set, no exception; complete listing; `total_count` 3 but 2 rows then an empty page → reason (Review Focus 5); malformed page → reason; a successful attempt read with all jobs; a 410 log → `logs_state` `unavailable`; `fetch_failed_run` tests unchanged. Commit `feat(forge): read runs of any outcome by head_sha`.
 
 ---
 
@@ -484,9 +531,11 @@ def bind_build_any(workflow_text: str, job: FailedJob) -> Shape | Refusal
     # R's _bind + checkout rules, but the build step is the unique step whose run line parses as a build; conclusion ignored
 Qualification = Literal["qualified", "excluded", "undetermined"]
 @dataclass(frozen=True)
-class Qualified: status: Qualification; reason: str | None; job: FailedJob | None; shape: Shape | None
+class Qualified: run_id: int; attempt: int; job_key: str | None; status: Qualification; reason: str | None; job: FailedJob | None; shape: Shape | None
 def qualify(read: AttemptRead, fix_commit: str, original_path: str, original_key: str,
             original_build: BuildConfig, workflow_text: str) -> Qualified
+    # original_path/original_key/original_build come from FixDocument.input (T3):
+    # workflow_path, reproduction_binding["workflow_job"], build
 ```
 
 `qualify` (F §7.2): excluded when proven from read data — event not push/workflow_dispatch, `head_sha` ≠ fix commit, path ≠ original, no job maps to the key (with the job listing complete), exactly one job maps but its build config differs, checkout SHA read and ≠ fix commit; undetermined when data is missing — `error` set, the mapped job's log `unavailable`/`error` (checkout and build binding need it), several jobs map (cannot decide), an incomplete attempt; qualified otherwise. `check_workflow` refactored to call `job_key` (behaviour unchanged, R tests guard).
@@ -505,6 +554,7 @@ def qualify(read: AttemptRead, fix_commit: str, original_path: str, original_key
 @dataclass(frozen=True)
 class AttemptEvidence: key: tuple[int, int, str]; qualification: Qualification; positive: bool; recurred: bool; detail: str | None; lines: tuple[int, ...]
 def attempt_evidence(q: Qualified, cls: DefectClass, corrected_text: str, lines: tuple[int, int]) -> AttemptEvidence
+    # key = (q.run_id, q.attempt, q.job_key or "")
 def evaluate(evidence: list[AttemptEvidence], listing_complete: bool) -> tuple[Literal["ci_confirmed", "ci_confirmation_insufficient"], str | None]
 ```
 
@@ -530,7 +580,7 @@ Status must be `fix_proposed`/`ci_confirmed` (else exit 1, nothing read); list r
 
 **Files:** Modify `README.md`, `CLAUDE.md`, `TODO.md`.
 
-README: the three commands, the statuses, that local and CI confirmation are disabled until recordings (stages 3–4) — `deployer fix` currently always ends at `no local confirmation: templates not enabled` in production. CLAUDE.md: the `fix` package. TODO.md: `ci-fix-authoring` stays **open**; add the gated follow-ups with owner tags: L-recordings (owner permission), C-recordings (owner permission), end-to-end acceptance and closing. Commit `docs(fix): stages 1-2 documented; item stays open`. **Open PR F2.**
+README: the three commands and the statuses; that local confirmation and publication are not available yet: a correct input that passes every earlier check stops at the recording gate (`no local confirmation: templates not enabled`), while earlier refusals (no admission, fix method not established, no proposal, …) remain possible; CI confirmation is gated the same way (stages 3–4). CLAUDE.md: the `fix` package. TODO.md: `ci-fix-authoring` stays **open**; add the gated follow-ups with owner tags: L-recordings (owner permission), C-recordings (owner permission), end-to-end acceptance and closing. Commit `docs(fix): stages 1-2 documented; item stays open`. **Open PR F2.**
 
 ---
 
@@ -539,4 +589,4 @@ README: the three commands, the statuses, that local and CI confirmation are dis
 - **Spec coverage:** F §1 → T3, T13, T14, T19; §1.1 → T13; §2 → T10; §3 → T11 (diff), T4 (link); §3.1 → T4; §4.1 → T6, T7; §4.2 → T5; §4.3 → T5 (grammar note); §5.1 → T11; §5.2 → T2, T13; §5.3 → T13; §6.1 → T12; §6.2 → T1, T8; §6.3/6.4 → T9, T12; §6.5 → T12, T3; §7.1 → T16; §7.2 → T17; §7.3 → T9, T18; §7.4/7.5 → T18, T19; §8.1 → T3; §8.2 → T13, T14, T19; §8.3 → T14; §8.4 → T13, T14, T19; §9 → T9 (seam + guard; recordings are stages 3–4); §10 → tests of every task, P via T13/T15, G via T11/T14; §11 stages 1, 1b, 2 → PRs F1a–F2.
 - **Not in this plan (by design):** stages 3–5 (recordings, row enabling, end-to-end acceptance, closing the item) — each needs the owner's permission for real runs.
 - **Placeholders:** Task 5's stage-name grammar is derived by the implementer from pinned sources; the plan fixes the method, the deliverable (the note with quoted lines) and the tests, not the regex — the regex is a fact to be read, not designed.
-- **Type consistency:** `Bound` (T4) → T5, T6, T11, T12; `CheckRecord` (T1) → T8, T12; `PlannedSet`/`exclusion_proven`/`issue(edit_ignore=)` (T2) → T13; `FixDocument` (T3) → T13, T14, T19; `templates.match_local/match_ci` (T9) → T12, T18; `AttemptRead` (T16) → T17; `Qualified` (T17) → T18.
+- **Type consistency:** `Bound` (T4) → T5, T6, T11, T12; `CheckRun`/`CheckRecord` (T1) → T8, T12; `FixDocument.input` (T3) → T10 `recheck_admission`, T12, T14, T17, T19; `PlannedSet`/`exclusion_proven`/`issue(edit_ignore=)` (T2) → T13; `FixDocument` (T3) → T13, T14, T19; `templates.match_local/match_ci` (T9) → T12, T18; `AttemptRead` (T16) → T17; `Qualified` (T17) → T18.
