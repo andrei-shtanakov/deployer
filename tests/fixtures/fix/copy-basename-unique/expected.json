@@ -1,0 +1,41 @@
+{
+  "admission": "admitted",
+  "base": "run-1",
+  "defect": {
+    "class": "missing_copy_source",
+    "lines": [
+      11,
+      11
+    ]
+  },
+  "envelope": "passed",
+  "model_answer": {
+    "fake": true,
+    "file": "fake-model-answer.json"
+  },
+  "model_called": true,
+  "prompt_lists": [
+    ".dockerignore",
+    ".github/workflows/diagnosis-polygon.yml",
+    "docs/guide/setup.md",
+    "pyproject.toml",
+    "src/ci_build/__init__.py",
+    "tests/test_greeting.py",
+    "uv.lock"
+  ],
+  "proposal": {
+    "chosen_by": "model",
+    "original": "COPY docs/setup.md ./setup.md",
+    "replacement": "COPY docs/guide/setup.md ./setup.md",
+    "transformation": "copy-source"
+  },
+  "trust": {
+    "kind": "dir",
+    "path": "trust"
+  },
+  "without_seam": {
+    "detail": "templates not enabled",
+    "reason": "no local confirmation",
+    "status": "stopped"
+  }
+}

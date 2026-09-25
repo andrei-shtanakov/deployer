@@ -1,0 +1,144 @@
+{
+  "sha": "d6e330fd8d85f761962d8a134f0ffdd0e914bf9b",
+  "truncated": false,
+  "tree": [
+    {
+      "path": ".deployer",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "528b0316f51c88529519b7ebf443b5b7c9d672d2"
+    },
+    {
+      "path": ".deployer/authoring",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "8ecc5b732193f6cb72c836b41cd2266f9dd54034"
+    },
+    {
+      "path": ".deployer/authoring/Dockerfile.current",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "d8fd6b33ab5c5de294cf5f8e9900aeb74201a643"
+    },
+    {
+      "path": ".deployer/authoring/Dockerfile",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "7dc3a8b8f6a07074a4908d45c9b861cc705d893f"
+    },
+    {
+      "path": ".deployer/authoring/Dockerfile/5ee6ee07fe6fafd73cbb6ff2bc3bc71a58b0899e468036ea010a9b63cb3a1534",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "8b1f2a2607d9c0c769302e90ba3f40129f610b96"
+    },
+    {
+      "path": ".deployer/authoring/Dockerfile/5ee6ee07fe6fafd73cbb6ff2bc3bc71a58b0899e468036ea010a9b63cb3a1534/record.json",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "156e311f786e9c7547d1acc9ac810bff7a905e0c"
+    },
+    {
+      "path": ".deployer/authoring/Dockerfile/5ee6ee07fe6fafd73cbb6ff2bc3bc71a58b0899e468036ea010a9b63cb3a1534/record.json.sig",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "b7aba3757da954405f58f3020b1ae5af88586018"
+    },
+    {
+      "path": ".deployer/authoring/Dockerfile/5ee6ee07fe6fafd73cbb6ff2bc3bc71a58b0899e468036ea010a9b63cb3a1534/snapshot.json",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "f8a1ab1ae5f976e17644c8c200c760c0baed6f45"
+    },
+    {
+      "path": ".dockerignore",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "e8e840b33919f874646c3ce6916687b7a44590e5"
+    },
+    {
+      "path": ".github",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "ea7f8e977a2dad6dc424d53c081092ff4ce8faf3"
+    },
+    {
+      "path": ".github/workflows",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "9812c4fe43605918f92eda60c71a57cd9ccc0db2"
+    },
+    {
+      "path": ".github/workflows/diagnosis-polygon.yml",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "fc63131b602c4dd7f3656edf0d6b5bf78284b66a"
+    },
+    {
+      "path": "Dockerfile",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "73566c3934d823a09ecd7f4a6dcb7080b3089e0c"
+    },
+    {
+      "path": "docs",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "058aec87e637d6a8be1eb85e8f4c9f03b2e38acd"
+    },
+    {
+      "path": "docs/guide",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "f39ed25ec52c1f50847adf17c5d4a74fcb274e34"
+    },
+    {
+      "path": "docs/guide/setup.md",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "2a2ad1b8d7af8dd484b3411bd1f477bd54573b64"
+    },
+    {
+      "path": "pyproject.toml",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "a4c243ad5cce5607350c7e865400cd577910b704"
+    },
+    {
+      "path": "src",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "523e8ce7ed3fe87097dd62f71982280b482676ce"
+    },
+    {
+      "path": "src/ci_build",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "8a577034737b162d2235a3c6cd6f38f0d5f42814"
+    },
+    {
+      "path": "src/ci_build/__init__.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "8e3fe2ab830313364e8df2bf88c2e13e34121a37"
+    },
+    {
+      "path": "tests",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "f611679aba4f1c3aa5634a84ca54cf1786415053"
+    },
+    {
+      "path": "tests/test_greeting.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "84b6d03da23ffef8758afe396c87d430d998c582"
+    },
+    {
+      "path": "uv.lock",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "ab6178519f72e1aef5b229ff241c099e6af1b440"
+    }
+  ]
+}

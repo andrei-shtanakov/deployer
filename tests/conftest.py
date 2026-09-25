@@ -4,11 +4,13 @@ import pytest
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
-# Reproduction and admission bundles vendor a project's tree, its own tests
-# included; those are data for the replay and integrity tests, never collected.
+# Reproduction, admission and fix bundles vendor a project's tree, its own
+# tests included; those are data for the replay and integrity tests, never
+# collected.
 collect_ignore_glob = [
     "fixtures/reproduction/*/tree",
     "fixtures/admission/*/tree",
+    "fixtures/fix/*/tree",
 ]
 
 

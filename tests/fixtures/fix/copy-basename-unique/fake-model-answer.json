@@ -1,0 +1,17 @@
+{
+  "plausible": [
+    "docs/guide/setup.md"
+  ],
+  "rationale": [
+    {
+      "explanation": "FAKE model answer (test fixture, not a model output): docs/guide/setup.md is the only eligible file whose basename is the absent docs/setup.md's",
+      "facts": [
+        {
+          "kind": "path",
+          "ref": "docs/guide/setup.md"
+        }
+      ]
+    }
+  ],
+  "source": "docs/guide/setup.md"
+}

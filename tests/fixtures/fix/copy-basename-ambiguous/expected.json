@@ -1,0 +1,22 @@
+{
+  "admission": "admitted",
+  "base": "run-1",
+  "defect": {
+    "class": "missing_copy_source",
+    "lines": [
+      11,
+      11
+    ]
+  },
+  "envelope": "stopped",
+  "model_called": false,
+  "stop": {
+    "detail_prefix": "5 basename floor: 2 eligible files",
+    "reason": "fix method not established",
+    "status": "stopped"
+  },
+  "trust": {
+    "kind": "dir",
+    "path": "trust"
+  }
+}
