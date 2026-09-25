@@ -415,9 +415,14 @@ Buildah reading in `docs/fix-buildah-from-parse.md`, and are enabled (owner, 202
 
 What the recordings and the reading show, and every rule below relies on:
 
-- Podman prints a step line only **after** Buildah's check for that step passed, and
-  checks each stage's FROM when the stage starts, not in a whole-file pass (note step 5–6;
-  `l8`).
+- Podman checks each stage's FROM when the stage starts, not in a whole-file pass, and
+  prints the stage's FROM step line only **after** that check passed (note steps 5–6;
+  `l8`). This holds for FROM only: a COPY/ADD step line is printed **before** the step
+  runs, so it proves only that the step started.
+- Podman prints the FROM line **rebuilt** for display (Buildah `stage_executor.go`
+  `prepare`: the base after ARG/env expansion with quotes removed, `--platform=` in
+  front, ` AS <name>` only for a non-numeric name); COPY/ADD step lines print the
+  instruction as written.
 - A stage nothing depends on is **skipped**: none of its instructions runs and none of
   its step lines is printed (`l5`, `l9`). A skipped stage's instruction is therefore
   never confirmed: its step line is absent → not confirmed.
@@ -426,8 +431,15 @@ What the recordings and the reading show, and every rule below relies on:
   included (`l5`, `l7`). The matchers read the prefixed form and the unprefixed one.
 - **Uniqueness in the Dockerfile, first.** The corrected instruction's text must occur
   exactly once among the corrected Dockerfile's instructions, compared as the rest of the
-  fix compares them (A's `_as_r_reads`, R's `dockerfile.parse`, `Instruction.text`);
-  otherwise → `binding ambiguous`, decided before any output is read. A skipped identical
+  fix compares them (A's `_as_r_reads`, R's `dockerfile.parse`, `Instruction.text`; a FROM
+  by its rebuilt display form); otherwise → `binding ambiguous`, decided before any output
+  is read. That comparison is sound only in the modelled form, so it is refused
+  (`binding ambiguous`) when the whole corrected Dockerfile fails the fix-wide reading
+  checks (`fix/reading.py`: a continuation without a preceding blank, a keyword not
+  separated by a space, a comment inside a continuation, an unmodelled escape
+  directive), or when any instruction of the kind's family (FROM; COPY and ADD) holds
+  `$`, a quote or a backslash, is a COPY/ADD heredoc or JSON form, or is a FROM with a
+  numeric stage name. A skipped identical
   instruction prints nothing, so it must never make the one printed line look unique:
   `l5` has the identical COPY in a skipped and a built stage and prints one step line;
   `l7` builds both and prints two.

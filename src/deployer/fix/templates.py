@@ -20,13 +20,18 @@ the outcome is ``unknown_format``. Digit groups are ASCII and bounded to nine
 digits; no pattern nests quantifiers. ``Outcome.lines`` are 1-based.
 
 Local (Podman) evidence binds the corrected instruction's **own** step line
-(§6.3). Podman prefixes the step lines of a multi-stage file with ``[i/n] ``
-and prints a step line only once Buildah's check for that step has passed; it
-skips a stage nothing depends on, printing nothing for it
-(``docs/fix-buildah-from-parse.md``). So the corrected text must also occur
-once among the corrected Dockerfile's instructions — an identical instruction
-in a skipped stage would otherwise lend its absence to a false binding — and
-a completion line binds only when it names the build's own tag.
+(§6.3). Podman prefixes the step lines of a multi-stage file with ``[i/n] ``;
+it prints a stage's FROM line only once Buildah's FROM check for that stage
+has passed (a COPY/ADD line is printed before its step runs), and it skips a
+stage nothing depends on, printing nothing for it
+(``docs/fix-buildah-from-parse.md``). The FROM line is rebuilt for display
+(``$VAR`` expanded, quotes removed); other lines print as written. So the
+corrected text must provably occur once among the corrected Dockerfile's
+instructions — an identical instruction in a skipped stage would otherwise
+lend its absence to a false binding: the whole file must pass the fix-wide
+reading checks and every instruction of the kind's family must be in the
+modelled form, else ``binding_ambiguous``. A completion line binds only when
+it names the build's own tag.
 
 BuildKit FROM evidence is file-wide ("the Dockerfile was parsed"): it binds no
 step line to the corrected FROM text. The optional image-pull record needs
@@ -53,7 +58,14 @@ from typing import Literal
 
 from deployer.admission.prepare import _as_r_reads
 from deployer.admission.templates import split_lines
-from deployer.reproduce.dockerfile import parse, unread_reason
+from deployer.fix.reading import comment_reason, join_reason, keyword_reason
+from deployer.reproduce.dockerfile import (
+    Instruction,
+    ParsedDockerfile,
+    opens_heredoc,
+    parse,
+    unread_reason,
+)
 
 Side = Literal["local", "ci"]
 Backend = Literal["podman", "buildkit"]
@@ -142,7 +154,7 @@ def match_local(
         return _outcome("unknown_format", (), "a line exceeds the read bound")
     if not _bindable(corrected_text):
         return _outcome("binding_ambiguous", (), "corrected text is not one line")
-    unique = _unique_in_dockerfile(corrected_text, dockerfile)
+    unique = _unique_in_dockerfile(kind, corrected_text, dockerfile)
     if unique is not None:
         return unique
     out, err = _lines(stdout), _lines(stderr)
@@ -187,19 +199,27 @@ _BK_ERROR_RE = re.compile(r"#(?P<k>[0-9]{1,9}) (?:ERROR|CANCELED)(?:[: ].*)?")
 _PARSE_ERROR = "parse error"
 
 
-def _unique_in_dockerfile(text: str, dockerfile: bytes) -> Outcome | None:
-    """``binding_ambiguous`` unless the corrected text is exactly one of the
-    corrected Dockerfile's instructions, compared as R reads them
-    (``_as_r_reads``, ``dockerfile.parse``, ``Instruction.text``). Decided
+def _unique_in_dockerfile(kind: Kind, text: str, dockerfile: bytes) -> Outcome | None:
+    """``binding_ambiguous`` unless the corrected text is provably exactly one
+    of the corrected Dockerfile's instructions as Podman prints them. Decided
     before any output is read: an identical instruction in a skipped stage
-    prints nothing and must not make the one printed line look unique."""
+    prints nothing and must not make the one printed line look unique.
+
+    Instructions are read as R reads them (``_as_r_reads``,
+    ``dockerfile.parse``), which is sound only where the builders read alike:
+    the whole file must pass the fix-wide reading checks (``fix.reading``),
+    and every instruction of the kind's family must be in the modelled form
+    (``_family_reason``). FROMs are compared by the line Podman rebuilds for
+    them (``_from_display``); COPY/ADD by ``Instruction.text``."""
     parsed = parse(_as_r_reads(dockerfile))
-    if unread_reason(parsed) is not None:
-        return _outcome("binding_ambiguous", (), "Dockerfile: split not read")
     wanted = parse(text).instructions
     if len(wanted) != 1:
         return _outcome("binding_ambiguous", (), "corrected text is not one line")
-    at = [i.first_line for i in parsed.instructions if i.text == wanted[0].text]
+    reason = _reading_reason(dockerfile, parsed) or _family_reason(kind, parsed)
+    if reason is not None:
+        return _outcome("binding_ambiguous", (), f"Dockerfile: {reason}")
+    key = _from_display if kind == "from" else _instruction_text
+    at = [i.first_line for i in parsed.instructions if key(i) == key(wanted[0])]
     if not at:
         return _outcome(
             "binding_ambiguous", (), "Dockerfile: corrected instruction absent"
@@ -212,6 +232,90 @@ def _unique_in_dockerfile(text: str, dockerfile: bytes) -> Outcome | None:
             f"Dockerfile: corrected instruction repeated at lines {where}",
         )
     return None
+
+
+def _reading_reason(dockerfile: bytes, parsed: ParsedDockerfile) -> str | None:
+    """Where R's reading of the whole file may differ from the builders'
+    (the checks ``envelope``/``fromfix`` apply to the bound instruction)."""
+    if unread_reason(parsed) is not None:
+        return "split not read"
+    lines = dockerfile.splitlines()
+    spans = (
+        b"\n".join(lines[i.first_line - 1 : i.last_line]) for i in parsed.instructions
+    )
+    return (
+        join_reason(dockerfile)
+        or keyword_reason(parsed.instructions)
+        or next(filter(None, map(comment_reason, spans)), None)
+    )
+
+
+_FAMILY: dict[Kind, frozenset[str]] = {
+    "from": frozenset({"FROM"}),
+    "copy": frozenset({"COPY", "ADD"}),
+}
+_UNRESOLVED = frozenset("$\"'\\")
+"""Characters that make an instruction depend on expansion or quoting: Podman
+prints FROM rebuilt after ``ProcessWord`` (quotes removed, ``$VAR``
+expanded), so its printed line is not provably the written one."""
+
+
+def _family_reason(kind: Kind, parsed: ParsedDockerfile) -> str | None:
+    """Why an instruction of ``kind``'s family is not in the modelled form
+    (uniqueness is then unprovable), or ``None``."""
+    family = _FAMILY.get(kind, frozenset())
+    for instruction in parsed.instructions:
+        if instruction.keyword not in family:
+            continue
+        line, args = instruction.first_line, instruction.args
+        if _UNRESOLVED & set(args):
+            return (
+                f"{instruction.keyword} at line {line} holds a substitution, "
+                "quote or escape; uniqueness is unprovable"
+            )
+        if kind == "copy" and (
+            opens_heredoc(instruction.keyword, args) or _body(args).startswith("[")
+        ):
+            return (
+                f"{instruction.keyword} at line {line} is a heredoc or JSON "
+                "form; uniqueness is unprovable"
+            )
+        if kind == "from" and _from_name(args).isdigit():
+            return f"FROM at line {line} has a numeric stage name Podman drops"
+    return None
+
+
+def _body(args: str) -> str:
+    """COPY/ADD arguments after the leading ``--flag`` words."""
+    words = args.split()
+    while words and words[0].startswith("--"):
+        words.pop(0)
+    return " ".join(words)
+
+
+def _from_name(args: str) -> str:
+    """A FROM's ``AS`` stage name, or ``""``."""
+    rest = [word for word in args.split() if not word.startswith("--")]
+    if len(rest) == 3 and rest[1].upper() == "AS":
+        return rest[2]
+    return ""
+
+
+def _from_display(instruction: Instruction) -> str:
+    """The FROM line as Podman rebuilds it for display: flags, the base, and
+    `` AS <name>`` — ``AS`` uppercased, the name lowercased (refuse-only: two
+    FROMs differing only there compare equal)."""
+    words = instruction.args.split()
+    flags = [word for word in words if word.startswith("--")]
+    rest = [word for word in words if not word.startswith("--")]
+    name = _from_name(instruction.args)
+    shown = [*flags, *rest[:1], "AS", name.lower()] if name else [*flags, *rest]
+    return " ".join(["FROM", *shown])
+
+
+def _instruction_text(instruction: Instruction) -> str:
+    """``Instruction.text``, R's normalised reading."""
+    return instruction.text
 
 
 def _podman_copy(

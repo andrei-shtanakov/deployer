@@ -15,6 +15,8 @@ import pytest
 from deployer.fix import templates
 from deployer.fix.templates import ROWS, Outcome, enabled_rows, match_ci, match_local
 from tests.fix.conftest import enable_for_test
+from tests.fix.test_local_recordings import EXPECTED as RECORDED
+from tests.fix.test_local_recordings import recorded_checks, replay
 
 _ROOT = Path(__file__).resolve().parents[2]
 _SRC = _ROOT / "src"
@@ -62,14 +64,20 @@ def test_rows_are_the_four_closed_rows() -> None:
 
 def test_no_row_enabled_without_recording() -> None:
     """§9: a production row is enabled only with its recording. Exactly the
-    two local rows are, each on an existing recording directory; the CI rows
-    stay disabled."""
+    two local rows are; the cases under each one's ``Row.recording`` replay
+    through ``match_local`` to the replay test's table; the CI rows stay
+    disabled."""
     enabled = enabled_rows()
     assert tuple(row.id for row in enabled) == _LOCAL_ROWS
     for row in enabled:
         assert row.recording is not None
-        assert (_ROOT / row.recording).is_dir()
-        assert any((_ROOT / row.recording).glob("*/checks.json"))
+        root = _ROOT / row.recording
+        mine = [c for c in recorded_checks(root) if c[1] == row.kind]
+        assert mine, row.id
+        for check in mine:
+            outcome = replay(root, check)
+            got = (outcome.evidence, outcome.lines, outcome.detail)
+            assert got == RECORDED[check], (row.id, check)
     assert all(row.recording is None for row in ROWS if row.side == "ci")
 
 
@@ -326,6 +334,37 @@ def test_podman_copy_absent_from_dockerfile() -> None:
     )
 
 
+def test_i2_copy_continuation_twin_refused() -> None:
+    """Review I2: ``docs/a\\<newline>b`` reads ``docs/a b`` in R but prints
+    ``docs/ab`` in Podman; the whole-file reading check refuses it, so the
+    skipped stage's COPY cannot borrow the built one's line."""
+    text = "COPY docs/ab ./x"
+    dockerfile = (
+        b"FROM python:3.12-slim AS a\n"
+        b"COPY docs/ab ./x\n"
+        b"FROM python:3.12-slim AS b\n"
+        b"COPY docs/a\\\n"
+        b"b ./x\n"
+        b"RUN true\n"
+    )
+    stdout = "[2/2] STEP 2/3: COPY docs/ab ./x\n[2/2] STEP 3/3: RUN true\n"
+    outcome = _local_copy(stdout, text=text, dockerfile=dockerfile)
+    assert outcome.evidence == "binding_ambiguous"
+    assert outcome.detail is not None and "continuation" in outcome.detail
+
+
+@pytest.mark.parametrize(
+    "other", ['COPY "docs/setup.md" /app/docs/setup.md', "COPY $SRC /app/docs/setup.md"]
+)
+def test_j_copy_family_unmodelled_refused(other: str) -> None:
+    """Ruling J: any COPY/ADD with a quote or ``$`` makes uniqueness
+    unprovable."""
+    dockerfile = f"FROM a AS x\n{other}\nFROM b\n{_COPY}\n".encode()
+    outcome = _local_copy(_PODMAN_COPY_OK, dockerfile=dockerfile)
+    assert outcome.evidence == "binding_ambiguous"
+    assert outcome.detail is not None and "unprovable" in outcome.detail
+
+
 def test_podman_copy_escape_directive_unread() -> None:
     """A non-default escape directive: the split is untrusted."""
     dockerfile = b"# escape=`\n" + _DOCKERFILE
@@ -379,6 +418,36 @@ def test_podman_from_step_bound_error() -> None:
         "not_confirmed",
         "stderr: step-bound error",
     )
+
+
+@pytest.mark.parametrize(
+    "built", ["FROM ${BASE}", 'FROM "python:3.12-slim"'], ids=["arg", "quoted"]
+)
+def test_i1_skipped_from_beside_rebuilt_twin(built: str) -> None:
+    """Review I1: the corrected FROM sits in a skipped stage; another FROM
+    that Podman prints rebuilt as the same line must not confirm it."""
+    text = "FROM python:3.12-slim"
+    dockerfile = (
+        f"ARG BASE=python:3.12-slim\n{text}\nRUN true\n{built}\nRUN true\n"
+    ).encode()
+    stdout = f"[2/2] STEP 1/2: {text}\n[2/2] STEP 2/2: RUN true\n"
+    outcome = match_local("from", text, stdout, "", dockerfile=dockerfile, tag=_TAG)
+    assert outcome.evidence == "binding_ambiguous"
+    assert outcome.detail is not None and "unprovable" in outcome.detail
+
+
+def test_from_display_twin_refused() -> None:
+    """FROMs differing only in ``as``/name case print the same line."""
+    dockerfile = f"{_FROM}\nRUN x\nFROM python:3.12-slim as EXTRA\n".encode()
+    outcome = _local_from(f"STEP 1/2: {_FROM}\n", dockerfile=dockerfile)
+    assert outcome.evidence == "binding_ambiguous"
+
+
+def test_from_numeric_stage_name_refused() -> None:
+    """Podman drops a numeric ``AS <n>`` from the printed line."""
+    dockerfile = f"{_FROM}\nRUN x\nFROM python:3.12-slim AS 0\n".encode()
+    outcome = _local_from(f"STEP 1/2: {_FROM}\n", dockerfile=dockerfile)
+    assert outcome.evidence == "binding_ambiguous"
 
 
 def test_podman_from_dockerfile_duplicate() -> None:

@@ -295,8 +295,10 @@ instruction's own step line (with or without Podman's `[i/n] ` stage prefix), un
 the Dockerfile and in the output: COPY/ADD also needs the same stage's next step, or a
 completion naming the fix build's own tag; FROM needs no next marker, since Buildah
 prints that line only after its FROM check passed (design §6.3,
-`docs/fix-buildah-from-parse.md`). A skipped stage, a repeated instruction or a
-completion of another tag never confirms.
+`docs/fix-buildah-from-parse.md`). A skipped stage, a repeated instruction, a
+completion of another tag, or a Dockerfile outside the modelled form (a substitution or
+quote in that instruction family, or an unmodelled continuation anywhere) never
+confirms.
 
 CI confirmation stays gated one stage later (design §11 stage 4): the CI rows have no
 recording enabled yet, so `deployer fix confirm` never reaches `ci_confirmed`. It still

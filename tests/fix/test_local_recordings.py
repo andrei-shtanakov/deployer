@@ -15,7 +15,8 @@ import pytest
 
 from deployer.fix import templates
 
-LOCAL = Path(__file__).parent.parent / "fixtures" / "recordings" / "local"
+ROOT = Path(__file__).resolve().parents[2]
+LOCAL = ROOT / templates.LOCAL_RECORDING
 FROM_B = "FROM python:3.12-slim AS b"
 
 EXPECTED: dict[tuple[str, str, str], tuple[str, tuple[int, ...], str | None]] = {
@@ -69,14 +70,34 @@ EXPECTED: dict[tuple[str, str, str], tuple[str, tuple[int, ...], str | None]] = 
 }
 
 
-def _checks() -> list[tuple[str, str, str]]:
-    """``(case, kind, corrected)`` for every check of every recorded case."""
+def recorded_checks(root: Path = LOCAL) -> list[tuple[str, str, str]]:
+    """``(case, kind, corrected)`` for every check of every case under
+    ``root``."""
     return [
         (case.name, check["kind"], check["corrected"])
-        for case in sorted(LOCAL.iterdir())
+        for case in sorted(root.iterdir())
         if case.is_dir()
         for check in json.loads((case / "checks.json").read_text())
     ]
+
+
+def replay(root: Path, check: tuple[str, str, str]) -> templates.Outcome:
+    """``match_local`` over one recorded check under ``root``."""
+    name, kind, corrected = check
+    case = root / name
+    return templates.match_local(
+        kind,  # type: ignore[arg-type]
+        corrected,
+        (case / "build.stdout").read_text(),
+        (case / "build.stderr").read_text(),
+        dockerfile=(case / "tree" / "Dockerfile").read_bytes(),
+        tag=_tag(case),
+    )
+
+
+def _checks() -> list[tuple[str, str, str]]:
+    """Every check of the local recording."""
+    return recorded_checks()
 
 
 def _tag(case: Path) -> str:
@@ -95,16 +116,7 @@ def test_the_table_covers_every_recorded_check() -> None:
 )
 def test_local_recording_replays(check: tuple[str, str, str]) -> None:
     """The production rows (no seam) give the table's outcome."""
-    name, kind, corrected = check
-    case = LOCAL / name
-    outcome = templates.match_local(
-        kind,  # type: ignore[arg-type]
-        corrected,
-        (case / "build.stdout").read_text(),
-        (case / "build.stderr").read_text(),
-        dockerfile=(case / "tree" / "Dockerfile").read_bytes(),
-        tag=_tag(case),
-    )
+    outcome = replay(LOCAL, check)
     assert (outcome.evidence, outcome.lines, outcome.detail) == EXPECTED[check]
 
 

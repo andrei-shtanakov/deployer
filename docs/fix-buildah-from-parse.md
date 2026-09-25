@@ -2,8 +2,8 @@
 
 This note records pinned source for design §6.3
 (`docs/superpowers/specs/2026-09-25-ci-fix-authoring-design.md`). It covers the local
-FROM template, which is still a hypothesis. The row reads "a build-stage step exists and
-no parse error" as proof that the diagnosed FROM argument-count error is gone. That holds
+FROM template, which was still a hypothesis when this note was written. The row then
+read "a build-stage step exists and no parse error" as proof that the diagnosed FROM argument-count error is gone. That holds
 only if the builder checks every instruction before it builds any stage. §6.3 says this
 is established for BuildKit. For Podman it has to be settled from Buildah's parse path at
 the pinned version and from a recording with a bad FROM in a later stage. The source was
@@ -13,8 +13,10 @@ read on 2026-09-25. It was read only; nothing was built or run for this note.
 anything, but that pass does not check how many arguments FROM has. The
 `FROM requires either one argument, or three` check runs **per stage**, when that stage
 starts to build. A stage that nothing depends on is skipped by default, so its FROM is
-never checked. The **local FROM row stays disabled** (details under "What this means for
-the local FROM row").
+never checked. The file-wide rule is therefore **refuted** for Podman. On 2026-09-25 the
+owner enabled the local FROM row on a narrower rule instead: the corrected stage's own
+FROM step line, which step 6 below backs (details under "What this means for the local
+FROM row" and its addendum).
 
 ## Pins
 
@@ -219,6 +221,18 @@ For BuildKit, §6.3 says the instruction parse comes before building stages. For
    not need. It also fails on its own terms when the stage is skipped. That would change
    the design, and this note does not make that change.
 
-The **local FROM row stays disabled** (`no local confirmation: templates not enabled`).
-The file-wide premise §6.3 rests on is false for the pinned Podman. The L4 recording
-cannot settle it, because stage `a` was skipped.
+The file-wide premise §6.3 rested on is **refuted** for the pinned Podman (`l8`, `l9`;
+the L4 recording alone cannot settle it, because stage `a` was skipped).
+
+**Addendum (2026-09-25, owner decision).** The local FROM row is **enabled** on the
+narrower rule of point 3: the evidence is the corrected stage's own FROM step line,
+`STEP 1/m: <corrected FROM>` (with or without the `[i/n] ` prefix), exactly once, with
+no parse error and no error bound to that step. Step 6 backs it: the line is printed
+only after that stage's FROM check passed. A skipped stage prints no line, so it is
+never confirmed. One more source fact bounds the rule: `StageExecutor.prepare`
+(`stage_executor.go` lines 949–965) prints `displayFrom`, the base **after** ARG/env
+expansion with quotes removed, `--platform=` in front and ` AS <name>` only for a
+non-numeric name. Two FROMs written differently can therefore print the same line, so
+the matcher refuses (`binding ambiguous`) whenever any FROM in the file holds `$`, a
+quote or a backslash, or has a numeric stage name, and compares FROMs by that rebuilt
+form (design §6.3).
