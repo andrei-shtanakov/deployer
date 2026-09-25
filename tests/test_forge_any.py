@@ -73,6 +73,8 @@ class FakeGh:
         default_factory=lambda: {"status": "completed", "conclusion": "success"}
     )
     attempt_error: GhError | None = None
+    # Identity fields the attempt endpoint leaves out, to test a missing one.
+    attempt_drop: tuple[str, ...] = ()
     jobs: list[dict[str, Any]] = field(default_factory=lambda: [job(1), job(2)])
     jobs_error: GhError | None = None
     logs: dict[int, str | GhError] = field(default_factory=dict)
@@ -90,7 +92,15 @@ class FakeGh:
         if m := _ATTEMPT_RE.search(path):
             if self.attempt_error is not None:
                 raise self.attempt_error
-            return json.dumps({**self.attempt, "run_attempt": int(m.group(2))})
+            body = {
+                "id": int(m.group(1)),
+                "head_sha": _SHA,
+                "run_attempt": int(m.group(2)),
+                **self.attempt,
+            }
+            return json.dumps(
+                {k: v for k, v in body.items() if k not in self.attempt_drop}
+            )
         raise AssertionError(f"unexpected path {path}")
 
     def _runs(self, page: int) -> str:
@@ -435,3 +445,70 @@ def test_an_unfinished_attempt_records_its_status_and_reads_no_jobs() -> None:
     assert read.error is None
     assert read.logs_state == {}
     assert not any("/jobs" in p for p in fake.paths)
+
+
+# --- attempt identity against the RunSummary ----------------------------------
+
+
+@pytest.mark.parametrize(
+    ("override", "expected"),
+    [
+        (
+            {"head_sha": "other"},
+            f"attempt metadata mismatch: head_sha other, not {_SHA}",
+        ),
+        ({"head_sha": None}, "attempt metadata malformed: head_sha=None"),
+        ({"head_sha": 5}, "attempt metadata malformed: head_sha=5"),
+        ({"run_attempt": 2}, "attempt metadata mismatch: run_attempt 2, not 1"),
+        ({"run_attempt": "1"}, "attempt metadata malformed: run_attempt='1'"),
+        ({"run_attempt": True}, "attempt metadata malformed: run_attempt=True"),
+        ({"id": 8}, "attempt metadata mismatch: id 8, not 7"),
+        ({"id": "7"}, "attempt metadata malformed: id='7'"),
+        ({"id": None}, "attempt metadata malformed: id=None"),
+    ],
+)
+def test_attempt_identity_must_match_the_run_summary(
+    override: dict[str, Any], expected: str
+) -> None:
+    fake = FakeGh(attempt={"status": "completed", "conclusion": "success", **override})
+    read = read_attempt("o/r", summary(), 1, fake)
+    assert read.error == expected
+    assert read.jobs is None
+    assert (read.status, read.conclusion) == ("unknown", None)
+    assert not any("/jobs" in p for p in fake.paths)
+
+
+@pytest.mark.parametrize(
+    ("dropped", "expected"),
+    [
+        ("head_sha", "attempt metadata malformed: head_sha=None"),
+        ("run_attempt", "attempt metadata malformed: run_attempt=None"),
+    ],
+)
+def test_a_missing_identity_field_is_an_error(dropped: str, expected: str) -> None:
+    fake = FakeGh(attempt_drop=(dropped,))
+    read = read_attempt("o/r", summary(), 1, fake)
+    assert read.error == expected
+    assert read.jobs is None
+
+
+def test_an_absent_run_id_is_accepted() -> None:
+    fake = FakeGh(attempt_drop=("id",))
+    read = read_attempt("o/r", summary(), 1, fake)
+    assert read.error is None
+    assert read.jobs is not None
+
+
+def test_an_unfinished_attempt_is_identity_checked_too() -> None:
+    fake = FakeGh(attempt={"status": "in_progress", "conclusion": None, "id": 9})
+    read = read_attempt("o/r", summary(), 1, fake)
+    assert read.error == "attempt metadata mismatch: id 9, not 7"
+
+
+def test_non_object_attempt_metadata_is_malformed() -> None:
+    class ListGh:
+        def api(self, argv: list[str], *, timeout: float) -> str:
+            return "[]"
+
+    read = read_attempt("o/r", summary(), 1, ListGh())
+    assert read.error == "attempt metadata malformed: not an object (list)"

@@ -501,8 +501,11 @@ def read_attempt(
         return _attempt_error(
             run, attempt, "unknown", None, f"attempt metadata unparseable: {exc}"
         )
-    status = meta.get("status") if isinstance(meta, dict) else None
-    conclusion = meta.get("conclusion") if isinstance(meta, dict) else None
+    identity = _attempt_identity_error(meta, run, attempt)
+    if identity is not None:
+        return _attempt_error(run, attempt, "unknown", None, identity)
+    status = meta.get("status")
+    conclusion = meta.get("conclusion")
     if not isinstance(status, str) or not (
         conclusion is None or isinstance(conclusion, str)
     ):
@@ -524,6 +527,35 @@ def read_attempt(
             run, attempt, status, conclusion, f"jobs listing unparseable: {exc}"
         )
     return AttemptRead(run, attempt, status, conclusion, jobs, logs_state, None)
+
+
+def _attempt_identity_error(meta: object, run: RunSummary, attempt: int) -> str | None:
+    """Why the metadata is not attempt ``attempt`` of ``run``, or ``None``.
+
+    ``head_sha`` must equal the listed run's, ``run_attempt`` the requested
+    attempt, and ``id`` — only when present — the run id. A missing value or
+    a wrong type is malformed, a different value a mismatch; either names the
+    field, and neither is ever accepted silently.
+    """
+    if not isinstance(meta, dict):
+        return f"attempt metadata malformed: not an object ({type(meta).__name__})"
+    head_sha, run_attempt = meta.get("head_sha"), meta.get("run_attempt")
+    if not isinstance(head_sha, str):
+        return f"attempt metadata malformed: head_sha={head_sha!r}"
+    if head_sha != run.head_sha:
+        return f"attempt metadata mismatch: head_sha {head_sha}, not {run.head_sha}"
+    if not _is_int(run_attempt):
+        return f"attempt metadata malformed: run_attempt={run_attempt!r}"
+    if run_attempt != attempt:
+        return f"attempt metadata mismatch: run_attempt {run_attempt}, not {attempt}"
+    if "id" not in meta:
+        return None
+    run_id = meta["id"]
+    if not _is_int(run_id):
+        return f"attempt metadata malformed: id={run_id!r}"
+    if run_id != run.run_id:
+        return f"attempt metadata mismatch: id {run_id}, not {run.run_id}"
+    return None
 
 
 def _attempt_error(
