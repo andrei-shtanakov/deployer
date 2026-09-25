@@ -20,7 +20,7 @@ from typing import Literal
 
 from deployer.admission.prepare import _as_r_reads
 from deployer.fix.binding import Bound
-from deployer.reproduce.dockerfile import ParsedDockerfile, parse
+from deployer.reproduce.dockerfile import ParsedDockerfile, parse, unread_reason
 
 # The BuildKit ∩ Buildah stage-name grammar, matched against the raw token
 # with no case folding (see docs/fix-stage-name-grammar.md for the pinned
@@ -108,15 +108,26 @@ def parse_reference(token: str) -> Reference | None:
 
 
 def propose_from(
-    parsed: ParsedDockerfile, bound: Bound, build_args: Mapping[str, str]
+    parsed: ParsedDockerfile,
+    bound: Bound,
+    build_args: Mapping[str, str],
+    dockerfile: bytes,
 ) -> FromFix | str:
     """F1 or F2 for ``bound``'s FROM, or the no-proposal reason (§4.2).
 
     ``parsed`` is the whole Dockerfile as R read it (for stage names and
     references to the token); ``build_args`` is R's bound build
-    configuration, the only channel left that could select the token.
+    configuration, the only channel left that could select the token;
+    ``dockerfile`` is the raw bytes ``parsed`` was read from, checked for
+    continuations the builders would join differently from R.
     """
     instruction = bound.instruction
+    unread = unread_reason(parsed)
+    if unread is not None:
+        return unread
+    join_reason = _join_reason(dockerfile)
+    if join_reason is not None:
+        return join_reason
     keyword_reason = _keyword_reason(parsed)
     if keyword_reason is not None:
         return keyword_reason
@@ -126,9 +137,9 @@ def propose_from(
         parsed.instructions[bound.ordinal] != instruction
     ):
         return "the bound instruction does not match the parsed Dockerfile"
-    join_reason = _continuation_reason(bound.original)
-    if join_reason is not None:
-        return join_reason
+    comment_reason = _comment_reason(bound.original)
+    if comment_reason is not None:
+        return comment_reason
     tokens = instruction.args.split()
     flags, rest = _split_flags(tokens)
     if isinstance(flags, str):
@@ -159,22 +170,35 @@ def _keyword_reason(parsed: ParsedDockerfile) -> str | None:
     return None
 
 
-def _continuation_reason(original: bytes) -> str | None:
-    """Refuse a continuation R and the builders may join differently.
+def _join_reason(dockerfile: bytes) -> str | None:
+    """Refuse any continuation R and the builders may join differently.
 
     R joins continuation lines with a space; BuildKit joins them with no
-    separator, so ``img:1\\<newline>extra`` reads as ``img:1extra`` there.
-    Only continuations after a space or tab read the same in both. A
-    comment line inside the continuation could also hold the token's bytes,
-    so it is refused too.
+    separator, so ``img:1\\<newline>extra`` reads as ``img:1extra`` and
+    ``--from=ext\\<newline>ra`` as ``--from=extra`` there. Only
+    continuations after a space or tab read the same in both, so every
+    line of the whole Dockerfile is checked — a reference hidden in
+    another instruction matters as much as the bound FROM itself.
+    """
+    for number, line in enumerate(dockerfile.splitlines(), start=1):
+        content = line.rstrip(b" \t")
+        if content.endswith(b"\\") and content[-2:-1] not in (b" ", b"\t"):
+            return (
+                f"line {number}: a line continuation without a preceding "
+                "blank is not modelled"
+            )
+    return None
+
+
+def _comment_reason(original: bytes) -> str | None:
+    """Refuse a comment line inside the bound FROM's continuation.
+
+    Its bytes could hold the token, so locating the token would not be
+    unambiguous.
     """
     lines = original.splitlines()
     if any(line.lstrip(b" \t").startswith(b"#") for line in lines[1:]):
         return "a comment inside the instruction's continuation is not modelled"
-    for line in lines:
-        content = line.rstrip(b" \t")
-        if content.endswith(b"\\") and content[-2:-1] not in (b" ", b"\t"):
-            return "a line continuation without a preceding blank is not modelled"
     return None
 
 

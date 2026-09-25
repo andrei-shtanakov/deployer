@@ -36,7 +36,7 @@ def _propose(
     )
     bound = bind_instruction(dockerfile, defect)
     assert isinstance(bound, Bound)
-    return propose_from(parsed, bound, build_args or {}), bound
+    return propose_from(parsed, bound, build_args or {}, dockerfile), bound
 
 
 # --- parse_reference -------------------------------------------------------
@@ -297,7 +297,7 @@ def test_refusal_not_from() -> None:
         original=b"RUN a b\n",
         instruction=parsed.instructions[1],
     )
-    result = propose_from(parsed, bound, {})
+    result = propose_from(parsed, bound, {}, dockerfile)
     assert isinstance(result, str)
     assert "not a FROM" in result
 
@@ -409,3 +409,35 @@ def test_f2_refused_when_as_opens_continuation_line() -> None:
     """A dangling AS alone on a continuation line is not located."""
     result, _ = _propose(b"FROM img:1 \\\n  AS\n")
     assert isinstance(result, str)
+
+
+# --- fix round 2 regressions -----------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "other",
+    [
+        b"COPY --from=ext\\\nra /a /b\n",
+        b"RUN --mount=type=bind,from=ext\\\nra true\n",
+        b"ONBUILD COPY --from=ext\\\nra /a /b\n",
+        b"FROM ext\\\nra\n",
+    ],
+)
+def test_refusal_join_in_other_instruction(other: bytes) -> None:
+    """BuildKit's no-separator join rebuilds ``extra`` in another instruction."""
+    result, _ = _propose(b"FROM img:1 extra\n" + other)
+    assert isinstance(result, str)
+    assert "line 2: a line continuation" in result
+
+
+def test_blank_continuation_elsewhere_allows_f1() -> None:
+    """A continuation after a blank anywhere reads alike: F1 still proposed."""
+    result, _ = _propose(b"FROM img:1 extra\nRUN a \\\n  b\n")
+    assert isinstance(result, FromFix)
+
+
+def test_refusal_escape_directive() -> None:
+    """A non-default ``# escape=`` makes R's split untrusted: no proposal."""
+    result, _ = _propose(b"# escape=`\nFROM img:1 extra \\\n\n", line=2)
+    assert isinstance(result, str)
+    assert "escape directive" in result
