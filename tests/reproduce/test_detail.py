@@ -8,7 +8,7 @@ import pytest
 from deployer.reproduce import dockerfile, ignore
 from deployer.reproduce.detail import (
     CheckRecord,
-    CheckRun,
+    RecordRun,
     copy_source_records,
     syntax_records,
 )
@@ -51,7 +51,7 @@ def test_golden_covers_every_case() -> None:
     assert len(tree_cases()) >= 51
 
 
-def _copy_run(tmp_path: Path, text: str, ignore_text: str = "") -> CheckRun:
+def _copy_run(tmp_path: Path, text: str, ignore_text: str = "") -> RecordRun:
     ctx = tmp_path / "ctx"
     ctx.mkdir(parents=True)
     (ctx / "present.txt").write_text("x\n")
@@ -61,7 +61,7 @@ def _copy_run(tmp_path: Path, text: str, ignore_text: str = "") -> CheckRun:
     return copy_source_records(dockerfile.parse(text), ctx, "Dockerfile", rules)
 
 
-def _by_subject(run: CheckRun) -> dict[str, CheckRecord]:
+def _by_subject(run: RecordRun) -> dict[str, CheckRecord]:
     return {r.subject: r for r in run.records}
 
 
@@ -155,7 +155,7 @@ def test_unsupported_ignore_propagates(tmp_path: Path) -> None:
     ]
 
 
-def _syntax_run(text: str, check_id: str) -> CheckRun:
+def _syntax_run(text: str, check_id: str) -> RecordRun:
     runs = syntax_records(dockerfile.parse(text), "Dockerfile")
     return next(r for r in runs if r.check_id == check_id)
 
@@ -216,7 +216,7 @@ def test_empty_file_first_from() -> None:
 
 def test_no_copy_ran_vs_skipped(tmp_path: Path) -> None:
     text = "FROM a:1\nRUN true\n"
-    assert _copy_run(tmp_path / "a", text) == CheckRun("copy_sources", "ran", None, [])
-    assert _copy_run(tmp_path / "b", text, UNSUPPORTED_IGNORE) == CheckRun(
+    assert _copy_run(tmp_path / "a", text) == RecordRun("copy_sources", "ran", None, [])
+    assert _copy_run(tmp_path / "b", text, UNSUPPORTED_IGNORE) == RecordRun(
         "copy_sources", "skipped", "ignore pattern not modelled: [ab]", []
     )

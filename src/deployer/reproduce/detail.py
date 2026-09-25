@@ -74,7 +74,7 @@ class CheckRecord:
 
 
 @dataclass(frozen=True)
-class CheckRun:
+class RecordRun:
     """One check over one Dockerfile: its file-level status and its records.
 
     ``file_status`` is part of the result, never inferred from ``records``:
@@ -90,11 +90,11 @@ class CheckRun:
 
 def copy_source_records(
     parsed: ParsedDockerfile, context: Path, dockerfile: str, rules: IgnoreRules
-) -> CheckRun:
+) -> RecordRun:
     """One ``copy_sources`` record per source of every COPY/ADD."""
     file_reason = _copy_file_reason(parsed, rules)
     if file_reason is not None:
-        return CheckRun(
+        return RecordRun(
             COPY_SOURCES,
             "skipped",
             file_reason,
@@ -110,14 +110,14 @@ def copy_source_records(
         for ordinal, inst in _copy_instructions(parsed)
         for record in _source_records(ordinal, inst, files, context, dockerfile, rules)
     ]
-    return CheckRun(COPY_SOURCES, "ran", None, records)
+    return RecordRun(COPY_SOURCES, "ran", None, records)
 
 
-def syntax_records(parsed: ParsedDockerfile, dockerfile: str) -> list[CheckRun]:
+def syntax_records(parsed: ParsedDockerfile, dockerfile: str) -> list[RecordRun]:
     """One run per syntax check id, in R's order; one record per instruction."""
     unread = unread_reason(parsed)
     status: CheckStatus = "observation" if parsed.syntax_directive else "failed"
-    runs: list[CheckRun] = []
+    runs: list[RecordRun] = []
     for check_id in SYNTAX_CHECK_IDS:
         units = list(_syntax_units(check_id, parsed))
         if unread is not None:
@@ -127,17 +127,17 @@ def syntax_records(parsed: ParsedDockerfile, dockerfile: str) -> list[CheckRun]:
                 )
                 for ordinal, inst, _ in units
             ]
-            runs.append(CheckRun(check_id, "skipped", unread, records))
+            runs.append(RecordRun(check_id, "skipped", unread, records))
             continue
         records = [
             _syntax_record(check_id, ordinal, inst, problem, status, dockerfile)
             for ordinal, inst, problem in units
         ]
-        runs.append(CheckRun(check_id, "ran", None, records))
+        runs.append(RecordRun(check_id, "ran", None, records))
     return runs
 
 
-def fold_copy_sources(run: CheckRun) -> list[ReproductionCheck]:
+def fold_copy_sources(run: RecordRun) -> list[ReproductionCheck]:
     """R's aggregate ``copy_sources`` list, exactly as before the records."""
     if run.file_status == "skipped":
         return [
@@ -157,7 +157,7 @@ def fold_copy_sources(run: CheckRun) -> list[ReproductionCheck]:
     return findings + skipped
 
 
-def fold_syntax(runs: list[CheckRun]) -> list[ReproductionCheck]:
+def fold_syntax(runs: list[RecordRun]) -> list[ReproductionCheck]:
     """R's aggregate syntax list: per check id its findings, else one pass."""
     checks: list[ReproductionCheck] = []
     for run in runs:
