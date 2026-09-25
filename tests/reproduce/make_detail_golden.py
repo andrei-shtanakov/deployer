@@ -1,8 +1,11 @@
-"""One-off: record R's aggregate check outputs before the detailed refactor.
+"""Record R's aggregate check outputs for the parity test.
 
-Run on the unchanged code: ``uv run python tests/reproduce/make_detail_golden.py``.
-``test_detail.test_outputs_unchanged`` then asserts the refactored functions
-return exactly these lists.
+The committed entries were recorded on the code before the detailed refactor
+(``ceb1a55``) and pin its behaviour. This script therefore only **adds** the
+entries of new trees or cases; it refuses to write if any existing entry
+would change, since that would re-bless a behaviour change instead of
+failing ``test_outputs_unchanged``. Run: ``uv run python
+tests/reproduce/make_detail_golden.py``.
 """
 
 import json
@@ -33,8 +36,15 @@ def main() -> None:
             ctx = make_context(Path(tmp) / case, case)
             copy, syntax = golden(ctx, text)
             out[f"synthetic:{case}"] = {"copy_sources": copy, "syntax": syntax}
-    GOLDEN.write_text(json.dumps(out, indent=1, sort_keys=True) + "\n")
-    print(f"wrote {len(out)} entries to {GOLDEN}")
+    out = json.loads(json.dumps(out))  # tuples as lists, the committed form
+    existing = json.loads(GOLDEN.read_text()) if GOLDEN.is_file() else {}
+    changed = sorted(k for k in existing if k in out and out[k] != existing[k])
+    if changed:
+        sys.exit(f"refusing to re-bless changed entries: {', '.join(changed)}")
+    added = sorted(set(out) - set(existing))
+    merged = {**existing, **{k: out[k] for k in added}}
+    GOLDEN.write_text(json.dumps(merged, indent=1, sort_keys=True) + "\n")
+    print(f"added {len(added)} entries to {GOLDEN}: {', '.join(added) or 'none'}")
 
 
 if __name__ == "__main__":

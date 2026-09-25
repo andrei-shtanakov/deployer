@@ -93,19 +93,19 @@ class CheckRecord:
     finding: ReproductionCheck | None  # the exact ReproductionCheck R emits for a failed/observation unit, else None
 
 @dataclass(frozen=True)
-class CheckRun:
+class RecordRun:
     check_id: str                         # "copy_sources" or one syntax check id
     file_status: Literal["ran", "skipped"]
     file_reason: str | None               # R's exact file-wide reason when skipped
     records: list[CheckRecord]            # may be empty, e.g. a Dockerfile without COPY/ADD
 
-def copy_source_records(parsed, context: Path, dockerfile: str, rules: IgnoreRules) -> CheckRun
-def syntax_records(parsed, dockerfile: str) -> list[CheckRun]   # one per syntax check id
+def copy_source_records(parsed, context: Path, dockerfile: str, rules: IgnoreRules) -> RecordRun
+def syntax_records(parsed, dockerfile: str) -> list[RecordRun]   # one per syntax check id
 ```
 
 The file-level status is **part of the result**, so a file-wide skip is never inferred from
-records: a Dockerfile without COPY/ADD gives `CheckRun("copy_sources", "ran", None, [])`
-when checks ran and `CheckRun("copy_sources", "skipped", "<R's reason>", [])` under an
+records: a Dockerfile without COPY/ADD gives `RecordRun("copy_sources", "ran", None, [])`
+when checks ran and `RecordRun("copy_sources", "skipped", "<R's reason>", [])` under an
 unsupported ignore file or an unread Dockerfile — the two are distinguishable, and the
 fold reproduces R's single `skipped` check from `file_status`.
 
@@ -115,7 +115,7 @@ Rules (F §6.2):
 - a file-wide skip (`unread_reason`, `rules.unsupported`) → `file_status="skipped"` with R's reason **and** a `skipped` record for every COPY/ADD source of every instruction (subject = raw source, or `"*"` when unreadable) — zero records when there are none;
 - syntax: one record per `(check_id, instruction)` for every instruction the rule applies to — `syntax_first_from` on the first non-ARG instruction (or `ordinal=None` for an empty file), `syntax_from_args` on every FROM, `syntax_keyword` on every instruction, `syntax_continuation` on the last instruction; status `passed` or `failed`/`observation` (R's rule: `observation` under a `# syntax=` directive); unread → all `skipped`.
 
-`copy_source_checks` and `syntax_checks` become folds over `CheckRun` and must return **exactly** today's lists (same order, same fields): `file_status="skipped"` → today's single skipped check with `file_reason`; otherwise findings of failed records in order, then one aggregate `passed` if there were no failures and at least one `passed`/`failed` record, then the skipped `ReproductionCheck`s in order. `syntax_checks` = per check id, today's order.
+`copy_source_checks` and `syntax_checks` become folds over `RecordRun` and must return **exactly** today's lists (same order, same fields): `file_status="skipped"` → today's single skipped check with `file_reason`; otherwise findings of failed records in order, then one aggregate `passed` if there were no failures and at least one `passed`/`failed` record, then the skipped `ReproductionCheck`s in order. `syntax_checks` = per check id, today's order.
 
 - [ ] **Step 1: Parity test first.** In `tests/reproduce/test_detail.py`, before touching `checks.py`, capture today's outputs over every committed bundle tree and a set of synthetic Dockerfiles, then assert the refactored functions return equal lists:
 
@@ -348,17 +348,17 @@ def validate_answer(raw: str, eligible: Sequence[str], facts: ProjectFacts, list
 **Interfaces — Produces:**
 
 ```python
-def defect_check_passes(after: list[CheckRun], cls: DefectClass, ordinal: int, new_source: str | None) -> str | None
-def regressions(before: list[CheckRun], after: list[CheckRun], ordinal: int,
+def defect_check_passes(after: list[RecordRun], cls: DefectClass, ordinal: int, new_source: str | None) -> str | None
+def regressions(before: list[RecordRun], after: list[RecordRun], ordinal: int,
                 absent: str | None, new_source: str | None) -> list[str]
 ```
 
-A `CheckRun` with `file_status="skipped"` after (and `ran` before) is itself a regression
+A `RecordRun` with `file_status="skipped"` after (and `ran` before) is itself a regression
 of every record it held before; a skipped run on the defect's check → not passed.
 
 Keys `(check_id, ordinal, subject)`; the absent source's key maps to the new source's key; `passed` before and anything else after → a regression line; a key present before and missing after → a regression line; `skipped` or `observation` for the defect check → not passed.
 
-- [ ] Tests over hand-built `CheckRun` values: a run skipped file-wide after, ran before → regressions; passes; regression on another source; a disappeared record; the mapped key; F1 with `syntax_from_args` passed. Commit `feat(fix): the per-record regression rule`.
+- [ ] Tests over hand-built `RecordRun` values: a run skipped file-wide after, ran before → regressions; passes; regression on another source; a disappeared record; the mapped key; F1 with `syntax_from_args` passed. Commit `feat(fix): the per-record regression rule`.
 
 ---
 
@@ -590,4 +590,4 @@ README: the three commands and the statuses; that local confirmation and publica
 - **Spec coverage:** F §1 → T3, T13, T14, T19; §1.1 → T13; §2 → T10; §3 → T11 (diff), T4 (link); §3.1 → T4; §4.1 → T6, T7; §4.2 → T5; §4.3 → T5 (grammar note); §5.1 → T11; §5.2 → T2, T13; §5.3 → T13; §6.1 → T12; §6.2 → T1, T8; §6.3/6.4 → T9, T12; §6.5 → T12, T3; §7.1 → T16; §7.2 → T17; §7.3 → T9, T18; §7.4/7.5 → T18, T19; §8.1 → T3; §8.2 → T13, T14, T19; §8.3 → T14; §8.4 → T13, T14, T19; §9 → T9 (seam + guard; recordings are stages 3–4); §10 → tests of every task, P via T13/T15, G via T11/T14; §11 stages 1, 1b, 2 → PRs F1a–F2.
 - **Not in this plan (by design):** stages 3–5 (recordings, row enabling, end-to-end acceptance, closing the item) — each needs the owner's permission for real runs.
 - **Placeholders:** Task 5's stage-name grammar is derived by the implementer from pinned sources; the plan fixes the method, the deliverable (the note with quoted lines) and the tests, not the regex — the regex is a fact to be read, not designed.
-- **Type consistency:** `Bound` (T4) → T5, T6, T11, T12; `CheckRun`/`CheckRecord` (T1) → T8, T12; `FixDocument.input` (T3) → T10 `recheck_admission`, T12, T14, T17, T19; `PlannedSet`/`exclusion_proven`/`issue(edit_ignore=)` (T2) → T13; `FixDocument` (T3) → T13, T14, T19; `templates.match_local/match_ci` (T9) → T12, T18; `AttemptRead` (T16) → T17; `Qualified` (T17) → T18.
+- **Type consistency:** `Bound` (T4) → T5, T6, T11, T12; `RecordRun`/`CheckRecord` (T1) → T8, T12; `FixDocument.input` (T3) → T10 `recheck_admission`, T12, T14, T17, T19; `PlannedSet`/`exclusion_proven`/`issue(edit_ignore=)` (T2) → T13; `FixDocument` (T3) → T13, T14, T19; `templates.match_local/match_ci` (T9) → T12, T18; `AttemptRead` (T16) → T17; `Qualified` (T17) → T18.
