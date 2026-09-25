@@ -73,10 +73,28 @@ def ownership_from_facts(facts: OwnershipFacts) -> Ownership:
 class Defect(BaseModel):
     """Condition (2): a closed-catalogue defect (A §3), required when
     ``admitted``. ``object`` is the source path for ``missing_copy_source``,
-    the FROM instruction text for ``from_argument_count``."""
+    the FROM instruction text for ``from_argument_count``.
 
-    model_config = ConfigDict(extra="forbid")
-    cls: DefectClass
+    ``class`` is a Python keyword, so the attribute is ``cls``; the wire
+    field is ``class`` (A §6.2), both ways: ``validate_by_name`` (with
+    ``validate_by_alias`` kept at its default ``True``) accepts the
+    attribute name too, ``serialize_by_alias`` means a plain
+    ``model_dump()``/``model_dump_json()`` (no ``by_alias=False`` override)
+    always emits ``class``, never ``cls``. This is pydantic's own
+    replacement for ``populate_by_name`` (soft-deprecated since 2.11,
+    "strictly equivalent" per its docstring to ``validate_by_name=True,
+    validate_by_alias=True``); it is also the form pyrefly's pydantic
+    support recognises for the synthesised ``__init__`` signature —
+    ``populate_by_name`` alone left ``cls=...`` construction unresolvable.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+        validate_by_name=True,
+        validate_by_alias=True,
+        serialize_by_alias=True,
+    )
+    cls: DefectClass = Field(alias="class")
     file: str
     lines: tuple[int, int]
     object: str

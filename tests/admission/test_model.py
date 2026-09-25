@@ -211,6 +211,41 @@ class TestDefectInvariants:
             )
 
 
+class TestDefectClassAlias:
+    """``class`` is the wire field (A §6.2 line 308); ``cls`` is the
+    Python-side attribute, since ``class`` is a keyword."""
+
+    def test_constructs_from_the_wire_key(self) -> None:
+        """``model_validate`` accepts ``{"class": ...}``."""
+        defect = Defect.model_validate(
+            {
+                "class": "missing_copy_source",
+                "file": "Dockerfile",
+                "lines": (2, 2),
+                "object": "src",
+            }
+        )
+        assert defect.cls == "missing_copy_source"
+
+    def test_dump_emits_class_never_cls(self) -> None:
+        """A plain ``model_dump_json`` uses the alias, not the attribute
+        name, even with no ``by_alias`` argument."""
+        dumped = _DEFECT.model_dump_json()
+        assert '"class"' in dumped
+        assert '"cls"' not in dumped
+
+        dumped_dict = _DEFECT.model_dump()
+        assert "class" in dumped_dict
+        assert "cls" not in dumped_dict
+
+    def test_class_alias_stays_hidden_inside_a_section(self) -> None:
+        """The alias holds nested inside ``AdmissionSection``."""
+        section = AdmissionSection.model_validate(_admitted())
+        dumped = section.model_dump_json()
+        assert '"class":"missing_copy_source"' in dumped
+        assert '"cls"' not in dumped
+
+
 class TestUnmetInvariants:
     """``Unmet.condition`` is one of the three closed conditions."""
 
@@ -263,6 +298,21 @@ class TestAdmissionSectionInvariants:
                     ]
                 )
             )
+
+
+def test_admitted_section_round_trips_through_json() -> None:
+    """A full ``admitted`` section (``Defect``, ``Link``, ``SideLink``,
+    ``DifferenceDecision`` all present) survives ``model_dump_json`` /
+    ``model_validate_json``, alias and all."""
+    section = AdmissionSection.model_validate(_admitted())
+    dumped = section.model_dump_json()
+    assert '"class"' in dumped
+    assert '"cls"' not in dumped
+
+    restored = AdmissionSection.model_validate_json(dumped)
+    assert restored == section
+    assert restored.defect is not None
+    assert restored.defect.cls == "missing_copy_source"
 
 
 def test_step4_refusal_serialises_with_its_fingerprint(
