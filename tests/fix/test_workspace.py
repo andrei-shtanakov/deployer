@@ -9,6 +9,7 @@ import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -662,18 +663,36 @@ def test_commit_never_runs_user_programs(tmp_path: Path) -> None:
     assert blob == _CORRECTED
 
 
+_HOOK_EVENTS = (
+    "post-checkout",
+    "pre-commit",
+    "prepare-commit-msg",
+    "commit-msg",
+    "post-commit",
+    "post-index-change",
+    "reference-transaction",
+)
+
+
+def _identity_env() -> dict[str, str]:
+    """A test-side identity for helper commits."""
+    env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@e"}
+    return env | {"GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@e"}
+
+
 def test_hooks_do_not_run(tmp_path: Path) -> None:
-    """Neither ``post-checkout`` on the worktree nor any commit hook runs."""
+    """No file hook and no ``hook.*`` config hook runs, on any event,
+    during add, check or commit (round 2, finding 2)."""
     clone = _make_clone(tmp_path / "work")
     head = _git(clone, "rev-parse", "HEAD").strip()
     marker = tmp_path / "hook-ran"
     hooks = clone / ".git" / "hooks"
-    for hook in ("post-checkout", "prepare-commit-msg", "post-commit"):
-        (hooks / hook).write_text(f"#!/bin/sh\necho {hook} >> '{marker}'\n")
+    for hook in _HOOK_EVENTS:
+        (hooks / hook).write_text(f"#!/bin/sh\necho file:{hook} >> '{marker}'\n")
         (hooks / hook).chmod(0o755)
-    for hook in ("pre-commit", "commit-msg"):
-        (hooks / hook).write_text("#!/bin/sh\nexit 1\n")
-        (hooks / hook).chmod(0o755)
+    _git(clone, "config", "hook.spy.command", f"echo config >> '{marker}'")
+    for event in _HOOK_EVENTS:
+        _git(clone, "config", "--add", "hook.spy.event", event)
     fix = new_fix_dir(tmp_path / "attempt-1")
     branch = branch_name("missing_copy_source", head, fix.seq)
     assert add_worktree(clone, fix.worktree, branch, head) is None
@@ -681,6 +700,140 @@ def test_hooks_do_not_run(tmp_path: Path) -> None:
     sha = commit(fix.worktree, "m", _vetted(fix.worktree))
     assert len(sha) == 40
     assert not marker.exists()
+    # The spy itself works: plain git runs it.
+    _git(fix.worktree, "commit", "--allow-empty", "-q", "-m", "probe")
+    assert marker.exists()
+
+
+def test_a_prepare_commit_msg_config_hook_cannot_tamper(tmp_path: Path) -> None:
+    """Probe ``p_hooktamper``: a config hook that rewrites the message and
+    stages ``evil.txt`` never runs; the commit is the vetted one."""
+    clone = _make_clone(tmp_path / "work")
+    head = _git(clone, "rev-parse", "HEAD").strip()
+    hook = tmp_path / "h.sh"
+    hook.write_text(
+        "#!/bin/sh\n"
+        "echo 'INJECTED' > \"$1\"\n"
+        "b=$(echo evil | git hash-object -w --stdin)\n"
+        "git update-index --add --cacheinfo 100644,$b,evil.txt\n"
+    )
+    hook.chmod(0o755)
+    _git(clone, "config", "hook.t.command", str(hook))
+    _git(clone, "config", "hook.t.event", "prepare-commit-msg")
+    fix = new_fix_dir(tmp_path / "attempt-1")
+    branch = branch_name("missing_copy_source", head, fix.seq)
+    assert add_worktree(clone, fix.worktree, branch, head) is None
+    _apply_fix(fix.worktree)
+    sha = commit(fix.worktree, "the real message", _vetted(fix.worktree))
+    assert _git(fix.worktree, "log", "-1", "--format=%B", sha).strip() == (
+        "the real message"
+    )
+    assert "evil.txt" not in _git(fix.worktree, "ls-tree", "-r", "--name-only", sha)
+    assert "evil.txt" not in _git(fix.worktree, "ls-files")
+
+
+def test_a_post_commit_config_hook_cannot_amend(tmp_path: Path) -> None:
+    """Probe ``p_postcommit``: an amending ``post-commit`` config hook never
+    runs; the returned sha is the branch tip and holds no unvetted file."""
+    clone = _make_clone(tmp_path / "work")
+    head = _git(clone, "rev-parse", "HEAD").strip()
+    hook = tmp_path / "h.sh"
+    hook.write_text(
+        "#!/bin/sh\n"
+        '[ -n "$AMENDED" ] && exit 0\n'
+        "b=$(echo evil | git hash-object -w --stdin)\n"
+        "git update-index --add --cacheinfo 100644,$b,evil.txt\n"
+        "AMENDED=1 git commit -q --amend --no-edit\n"
+    )
+    hook.chmod(0o755)
+    _git(clone, "config", "hook.t.command", str(hook))
+    _git(clone, "config", "hook.t.event", "post-commit")
+    fix = new_fix_dir(tmp_path / "attempt-1")
+    branch = branch_name("missing_copy_source", head, fix.seq)
+    assert add_worktree(clone, fix.worktree, branch, head) is None
+    _apply_fix(fix.worktree)
+    sha = commit(fix.worktree, "msg", _vetted(fix.worktree))
+    assert _git(clone, "rev-parse", f"refs/heads/{branch}").strip() == sha
+    assert "evil.txt" not in _git(fix.worktree, "ls-tree", "-r", "--name-only", sha)
+    ident = f"{DEPLOYER_NAME} <{DEPLOYER_EMAIL}>"
+    who = _git(fix.worktree, "log", "-1", "--format=%an <%ae>|%cn <%ce>", sha)
+    assert who.strip() == f"{ident}|{ident}"
+
+
+def test_an_onbranch_filter_and_hook_never_run(tmp_path: Path) -> None:
+    """Probe ``p_onbranch``: a filter and a hook included only on
+    ``deployer/**`` branches are read inside the new worktree and
+    neutralised before any file is checked out."""
+    clone = _make_clone(tmp_path / "work")
+    head = _git(clone, "rev-parse", "HEAD").strip()
+    marker = tmp_path / "marker"
+    spy = tmp_path / "spy.sh"
+    spy.write_text(f"#!/bin/sh\necho ran:$1 >> '{marker}'\ncat\n")
+    spy.chmod(0o755)
+    include = tmp_path / "inc.cfg"
+    include.write_text(
+        f'[filter "evil"]\n\tsmudge = {spy} smudge\n\tclean = {spy} clean\n'
+        "\trequired = true\n"
+        f'[hook "evil"]\n\tcommand = {spy} hook\n'
+        "\tevent = post-checkout\n\tevent = post-index-change\n"
+        "\tevent = reference-transaction\n"
+    )
+    _git(clone, "config", "includeIf.onbranch:deployer/**.path", str(include))
+    (clone / ".git" / "info").mkdir(exist_ok=True)
+    (clone / ".git" / "info" / "attributes").write_text("* filter=evil\n")
+    fix = new_fix_dir(tmp_path / "attempt-1")
+    branch = branch_name("missing_copy_source", head, fix.seq)
+    assert add_worktree(clone, fix.worktree, branch, head) is None
+    assert not marker.exists()
+    assert (fix.worktree / "Dockerfile").read_bytes() == _DOCKERFILE
+    _apply_fix(fix.worktree)
+    sha = commit(fix.worktree, "m", _vetted(fix.worktree))
+    assert not marker.exists()
+    assert _git(fix.worktree, "show", f"{sha}:Dockerfile").encode() == _CORRECTED
+
+
+def test_commit_refuses_a_branch_that_moved(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``update-ref`` is compare-and-swap: a branch moved after the
+    re-check is not overwritten."""
+    _, fix, branch = _prepared(tmp_path)
+    _apply_fix(fix.worktree)
+    vetted = _vetted(fix.worktree)
+    monkeypatch.setattr(workspace, "_recheck", lambda *args: None)
+    moved = (
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(fix.worktree),
+                "commit-tree",
+                "HEAD^{tree}",
+                "-p",
+                "HEAD",
+            ],
+            input=b"elsewhere",
+            check=True,
+            capture_output=True,
+            env=_identity_env(),
+        )
+        .stdout.decode()
+        .strip()
+    )
+    _git(fix.worktree, "update-ref", f"refs/heads/{branch}", moved)
+    with pytest.raises(CommitError, match="git update-ref failed"):
+        commit(fix.worktree, "m", vetted)
+    assert _git(fix.worktree, "rev-parse", f"refs/heads/{branch}").strip() == moved
+
+
+def test_commit_leaves_no_temporary_index(tmp_path: Path) -> None:
+    """The temporary index lives in the fix directory and is removed; the
+    worktree's own index ends in sync with the new commit."""
+    _, fix, _ = _prepared(tmp_path)
+    _apply_fix(fix.worktree)
+    sha = commit(fix.worktree, "m", _vetted(fix.worktree))
+    assert [p.name for p in fix.path.iterdir()] == ["worktree"]
+    assert _git(fix.worktree, "diff", "--cached", "--name-only", sha) == ""
 
 
 def test_commit_with_nothing_vetted_raises(tmp_path: Path) -> None:
@@ -696,3 +849,35 @@ def test_commit_outside_a_repository_raises(tmp_path: Path) -> None:
     (tmp_path / "plain").mkdir()
     with pytest.raises(CommitError, match="git rev-parse failed"):
         commit(tmp_path / "plain", "m", Vetted(head="0" * 40, changes=()))
+
+
+def test_a_tree_with_an_unvetted_entry_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``diff-tree`` verifies the built tree: an entry slipped into the
+    temporary index stops the commit before ``commit-tree``."""
+    _, fix, branch = _prepared(tmp_path)
+    _apply_fix(fix.worktree)
+    vetted = _vetted(fix.worktree)
+    before = _git(fix.worktree, "rev-parse", f"refs/heads/{branch}")
+    evil = (
+        subprocess.run(
+            ["git", "-C", str(fix.worktree), "hash-object", "-w", "--stdin"],
+            input=b"evil\n",
+            check=True,
+            capture_output=True,
+        )
+        .stdout.decode()
+        .strip()
+    )
+    real_run = workspace._run
+
+    def slipping_run(cwd: Path, *args: str, **kwargs: Any) -> Any:
+        if args[:2] == ("update-index", "--add"):
+            args = (*args, "--cacheinfo", f"100644,{evil},evil.txt")
+        return real_run(cwd, *args, **kwargs)
+
+    monkeypatch.setattr(workspace, "_run", slipping_run)
+    with pytest.raises(CommitError, match="built tree differs"):
+        commit(fix.worktree, "m", vetted)
+    assert _git(fix.worktree, "rev-parse", f"refs/heads/{branch}") == before

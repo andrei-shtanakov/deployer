@@ -10,24 +10,28 @@ or touched.
 Git runs through one chokepoint, :func:`_run`, which never raises: the
 public functions turn a failure into a reason, except :func:`commit`, which
 raises :class:`CommitError` for the caller to map. No user-configured
-program runs on an agent's work: every command points ``core.hooksPath`` at
-the null device (no ``post-checkout``, ``pre-commit``,
-``prepare-commit-msg``, ``commit-msg`` or ``post-commit``), turns off
+program runs on an agent's work. Every command points ``core.hooksPath`` at
+the null device, disables every configured ``hook.<name>``, turns off
 ``core.fsmonitor``, auto-gc and auto-maintenance, and empties the
 ``clean``/``smudge``/``process`` command of every configured filter driver
-(:func:`_guards`). The worktree therefore holds raw blobs; the local proof
-reads R's ``source/``, not the worktree.
+(:func:`_guards`, read in the repository or worktree the command runs in).
+The worktree therefore holds raw blobs; the local proof reads R's
+``source/``, not the worktree.
 
-The commit stages blobs, not paths: :func:`allowed_diff_problem` returns a
-:class:`Vetted` naming every allowed change with the blob of the exact bytes
-it checked, and :func:`commit` re-reads the status and re-hashes the bytes
-before writing exactly those blobs into the index — ``git add`` never runs.
+The commit is built with plumbing only (``read-tree``, ``update-index``,
+``write-tree``, ``commit-tree``, ``update-ref``), which runs no commit
+hooks: :func:`allowed_diff_problem` returns a :class:`Vetted` naming every
+allowed change with the blob of the exact bytes it checked, and
+:func:`commit` re-checks those bytes and writes exactly those blobs, in a
+temporary index, into a verified tree — ``git add`` and ``git commit`` never
+run.
 """
 
 import os
 import re
 import stat
 import subprocess
+import tempfile
 import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -55,7 +59,7 @@ _POINTER_PATH = f"{SET_ROOT}/{POINTER}"
 _SET_PREFIX = f"{SET_ROOT}/{SET_PARENT}/"
 _SET_FILES = frozenset({RECORD_FILE, SIGNATURE_FILE, SNAPSHOT_FILE})
 _SET_NAME_RE = re.compile(r"[0-9a-f]{64}")
-_FILTER_KEY_RE = re.compile(r"filter\.(.+)\.[^.]+")
+_GUARDED_KEY_RE = re.compile(r"(filter|hook)\.(.+)\.[^.]+")
 _MODIFIED = frozenset({" M", "M ", "MM"})
 _ADDED = frozenset({"??", "A ", "AM"})
 _DELETED = frozenset({" D", "D "})
@@ -219,8 +223,10 @@ def add_worktree(clone: Path, path: Path, branch: str, head_sha: str) -> str | N
     Refused when ``path`` is not :func:`outside` the clone or already exists,
     when ``head_sha`` names no commit, when ``refs/heads/<branch>`` is not a
     valid ref name or already exists. The clone's ``HEAD`` and working tree
-    are not touched. The new worktree's ``HEAD`` is re-read and must equal
-    the resolved ``head_sha``.
+    are not touched. The worktree is added with ``--no-checkout``; its
+    ``HEAD`` is re-read and must equal the resolved ``head_sha``; its files
+    are then populated with ``read-tree -u --reset`` under guards read inside
+    the new worktree, on the new branch.
     """
     if not outside(path, clone):
         return f"worktree path {path} is not outside the clone {clone}"
@@ -245,12 +251,31 @@ def add_worktree(clone: Path, path: Path, branch: str, head_sha: str) -> str | N
             if exists.code == 0
             else f"cannot check branch {branch}: {exists.error}"
         )
-    added = _run(clone, "worktree", "add", "-b", branch, str(path), sha, g=guards)
+    added = _run(
+        clone,
+        "worktree",
+        "add",
+        "--no-checkout",
+        "-b",
+        branch,
+        str(path),
+        sha,
+        g=guards,
+    )
     if added.code != 0:
         return f"git worktree add failed: {added.error}"
-    head = _run(path, "rev-parse", "HEAD", g=guards)
+    # Only now, on the new branch, is the worktree's own configuration
+    # known (an ``includeIf "onbranch:…"`` may add filters or hooks), so
+    # its guards are read there before any file is checked out.
+    worktree_guards = _guards(path)
+    if isinstance(worktree_guards, str):
+        return worktree_guards
+    head = _run(path, "rev-parse", "HEAD", g=worktree_guards)
     if head.code != 0 or head.stdout.decode().strip() != sha:
         return f"the worktree at {path} is not at {sha}"
+    filled = _run(path, "read-tree", "-u", "--reset", sha, g=worktree_guards)
+    if filled.code != 0:
+        return f"git read-tree failed: {filled.error}"
     return None
 
 
@@ -300,73 +325,127 @@ def allowed_diff_problem(
 
 
 def commit(worktree: Path, message: str, vetted: Vetted) -> str:
-    """Commit exactly ``vetted``'s blobs; the new commit's sha.
+    """Commit exactly ``vetted``'s blobs with plumbing; the new commit's sha.
 
-    Re-reads the status (its path set must equal ``vetted``'s) and
-    ``HEAD`` (unchanged), re-hashes every added or modified path's bytes
-    (each blob must equal the vetted one), then writes those blobs into the
-    index with ``update-index --cacheinfo`` — the ``HEAD`` entry's mode for
-    a modified path, ``100644`` for a new one — and removes each deletion
-    with ``update-index --force-remove``. The staged diff against ``HEAD``
-    must then name exactly ``vetted``'s paths. ``git add`` never runs.
+    Re-reads ``HEAD`` (unchanged) and the status (its path set must equal
+    ``vetted``'s). Then builds the commit without any porcelain command, so
+    no hook of any kind (file or ``hook.*`` config) can run or alter it:
+
+    1. a temporary index in the fix directory (``worktree``'s parent),
+       ``read-tree`` of ``HEAD``; every added or modified path's bytes are
+       re-read and ``hash-object -w --no-filters``-ed (each blob must equal
+       the vetted one) and entered with ``update-index --cacheinfo`` — the
+       ``HEAD`` entry's mode for a modified path, ``100644`` for a new one;
+       each deletion with ``update-index --force-remove``;
+    2. ``write-tree``, verified by ``diff-tree`` against ``HEAD``'s tree:
+       exactly the vetted paths, each with the vetted blob (or deleted);
+    3. ``commit-tree -p HEAD --no-gpg-sign`` with the message on stdin;
+    4. ``update-ref`` of the worktree's branch from ``HEAD`` to the new
+       commit (compare-and-swap: refused if the branch moved);
+    5. ``read-tree`` of the new commit into the worktree's own index, so its
+       status is clean; the working files are not touched.
 
     Author and committer are always ``deployer <deployer@localhost>``,
     passed explicitly for both roles, whatever the clone's configuration or
-    the environment says. Hooks do not run (``--no-verify`` plus the
-    chokepoint's ``core.hooksPath`` override) and the commit is not
-    GPG/SSH-signed (``--no-gpg-sign``): an agent commit must not depend on
-    the user's hooks or an interactive signer; the provenance set carries
-    its own signature. Raises :class:`CommitError`.
+    the environment says. The commit is never GPG/SSH-signed: an agent
+    commit must not depend on an interactive signer; the provenance set
+    carries its own signature. Raises :class:`CommitError`.
     """
     guards = _guards(worktree)
     if isinstance(guards, str):
         raise CommitError(guards)
     _recheck(worktree, vetted, guards)
-    modes = _head_modes(worktree, guards)
+    branch = _run(worktree, "symbolic-ref", "-q", "HEAD", g=guards)
+    _must(branch, "symbolic-ref")
+    ref = branch.stdout.decode().strip()
+    with tempfile.TemporaryDirectory(dir=worktree.parent, prefix=".index-") as tmp:
+        index = {"GIT_INDEX_FILE": str(Path(tmp).resolve() / "index")}
+        tree = _build_tree(worktree, vetted, guards, index)
+    made = _run(
+        worktree,
+        "commit-tree",
+        "--no-gpg-sign",
+        tree,
+        "-p",
+        vetted.head,
+        g=guards,
+        env=_IDENTITY,
+        stdin=message.encode(),
+    )
+    _must(made, "commit-tree")
+    new = made.stdout.decode().strip()
+    moved = _run(
+        worktree, "update-ref", "-m", "deployer fix", ref, new, vetted.head, g=guards
+    )
+    _must(moved, "update-ref")
+    _must(_run(worktree, "read-tree", new, g=guards), "read-tree")
+    return new
+
+
+def _build_tree(
+    worktree: Path, vetted: Vetted, guards: Sequence[str], index: Mapping[str, str]
+) -> str:
+    """The tree of ``HEAD`` plus exactly ``vetted``'s changes, built in the
+    temporary ``index`` and verified with ``diff-tree``."""
+    _must(_run(worktree, "read-tree", vetted.head, g=guards, env=index), "read-tree")
+    modes = _head_modes(worktree, vetted.head, guards)
     cacheinfo: list[str] = []
     removed: list[str] = []
     for path, blob in vetted.changes:
         if blob is None:
             removed.append(path)
             continue
-        written = _hash_file(worktree, path, guards, write=True)
-        if written != blob:
+        if _hash_file(worktree, path, guards, write=True) != blob:
             raise CommitError(f"{path}: changed since it was checked")
-        mode = modes.get(path, _REGULAR_MODE)
-        cacheinfo += ["--cacheinfo", f"{mode},{blob},{path}"]
-    _must(_run(worktree, "update-index", "--add", *cacheinfo, g=guards), "stage")
+        cacheinfo += ["--cacheinfo", f"{modes.get(path, _REGULAR_MODE)},{blob},{path}"]
+    staged = _run(worktree, "update-index", "--add", *cacheinfo, g=guards, env=index)
+    _must(staged, "update-index")
     if removed:
         removal = _run(
-            worktree, "update-index", "--force-remove", "--", *removed, g=guards
+            worktree,
+            "update-index",
+            "--force-remove",
+            "--",
+            *removed,
+            g=guards,
+            env=index,
         )
-        _must(removal, "unstage deletions")
-    staged = _run(
+        _must(removal, "update-index --force-remove")
+    written = _run(worktree, "write-tree", g=guards, env=index)
+    _must(written, "write-tree")
+    tree = written.stdout.decode().strip()
+    diff = _run(
         worktree,
-        "diff",
-        "--cached",
-        "--name-only",
+        "diff-tree",
+        "-r",
         "-z",
         "--no-renames",
-        "HEAD",
+        f"{vetted.head}^{{tree}}",
+        tree,
         g=guards,
     )
-    _must(staged, "diff --cached")
-    if _paths(staged.stdout) != {path for path, _ in vetted.changes}:
-        raise CommitError("the staged changes differ from the vetted ones")
-    made = _run(
-        worktree,
-        "commit",
-        "--no-verify",
-        "--no-gpg-sign",
-        "-m",
-        message,
-        g=guards,
-        env=_IDENTITY,
-    )
-    _must(made, "commit")
-    head = _run(worktree, "rev-parse", "HEAD", g=guards)
-    _must(head, "rev-parse")
-    return head.stdout.decode().strip()
+    _must(diff, "diff-tree")
+    if _tree_changes(diff.stdout, modes) != dict(vetted.changes):
+        raise CommitError("the built tree differs from the vetted changes")
+    return tree
+
+
+def _tree_changes(raw: bytes, modes: Mapping[str, str]) -> dict[str, str | None]:
+    """``path -> new blob`` (``None`` for a deletion) from ``diff-tree -r -z``
+    raw output; a change whose mode is not the expected one maps to ``""``,
+    which no vetted blob equals."""
+    fields = [f for f in raw.split(b"\0") if f]
+    changes: dict[str, str | None] = {}
+    for meta, raw_path in zip(fields[::2], fields[1::2]):
+        _, new_mode, _, new_blob, status = meta.decode().lstrip(":").split()
+        path = _decode(raw_path)
+        if status == "D":
+            changes[path] = None
+        elif new_mode != modes.get(path, _REGULAR_MODE):
+            changes[path] = ""
+        else:
+            changes[path] = new_blob
+    return changes
 
 
 def _run(
@@ -397,25 +476,29 @@ def _run(
 
 def _guards(repo: Path) -> tuple[str, ...] | str:
     """The ``-c`` overrides for every command against ``repo``: the base
-    guards plus, per configured filter driver, empty ``clean``, ``smudge``
-    and ``process`` commands and ``required=false``; or the reason the
-    drivers could not be read."""
-    listed = _run(repo, "config", "-z", "--get-regexp", r"^filter\.", g=_BASE_GUARDS)
+    guards; per configured filter driver, empty ``clean``, ``smudge`` and
+    ``process`` commands and ``required=false``; per configured ``hook.*``
+    name, ``enabled=false``. Or the reason the configuration could not be
+    read."""
+    listed = _run(
+        repo, "config", "-z", "--get-regexp", r"^(filter|hook)\.", g=_BASE_GUARDS
+    )
     if listed.code not in (0, 1):
-        return f"cannot read the filter configuration: {listed.error}"
-    names: set[str] = set()
+        return f"cannot read the filter and hook configuration: {listed.error}"
+    filters: set[str] = set()
+    hooks: set[str] = set()
     for entry in listed.stdout.split(b"\0"):
         key = entry.split(b"\n", 1)[0].decode(errors="replace")
-        match = _FILTER_KEY_RE.fullmatch(key)
+        match = _GUARDED_KEY_RE.fullmatch(key)
         if match is None:
             continue
-        name = match.group(1)
+        kind, name = match.group(1), match.group(2)
         if "=" in name:
-            return f"cannot neutralise the filter driver {name!r}"
-        names.add(name)
+            return f"cannot neutralise the {kind} {name!r}"
+        (filters if kind == "filter" else hooks).add(name)
     neutral = [
         f"filter.{name}.{key}={value}"
-        for name in sorted(names)
+        for name in sorted(filters)
         for key, value in (
             ("clean", ""),
             ("smudge", ""),
@@ -423,7 +506,8 @@ def _guards(repo: Path) -> tuple[str, ...] | str:
             ("required", "false"),
         )
     ]
-    return (*_BASE_GUARDS, *neutral)
+    disabled = [f"hook.{name}.enabled=false" for name in sorted(hooks)]
+    return (*_BASE_GUARDS, *neutral, *disabled)
 
 
 def _must(result: _Result, step: str) -> None:
@@ -451,9 +535,9 @@ def _recheck(worktree: Path, vetted: Vetted, guards: Sequence[str]) -> None:
         raise CommitError(f"the changed paths differ from the vetted ones: {extra}")
 
 
-def _head_modes(worktree: Path, guards: Sequence[str]) -> dict[str, str]:
-    """Path to mode for every blob in ``HEAD``."""
-    listed = _run(worktree, "ls-tree", "-r", "-z", "HEAD", g=guards)
+def _head_modes(worktree: Path, head: str, guards: Sequence[str]) -> dict[str, str]:
+    """Path to mode for every blob in ``head``."""
+    listed = _run(worktree, "ls-tree", "-r", "-z", head, g=guards)
     _must(listed, "ls-tree")
     modes: dict[str, str] = {}
     for record in listed.stdout.split(b"\0"):
