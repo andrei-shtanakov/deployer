@@ -1,0 +1,11 @@
+completeness: logs=present annotations=present
+outcome: UNCLASSIFIED
+causes: none asserted
+[job 108396892742 step 3] UNCLASSIFIED: dockerfile parse error: ERROR: failed to build: failed to solve: dockerfile parse error on line 1: FROM requires either one or three arguments
+    cited evidence is job-level (no step binding)
+reproduction: attempted
+  restoration: exact
+  failed: syntax error at line 1: FROM takes one or three arguments
+  comparison: reproduced_with_differences
+  try: .deployer-runs/36239375530/reproduction/attempt-1/tries/001
+admission: admitted

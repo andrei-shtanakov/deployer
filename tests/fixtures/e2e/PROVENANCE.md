@@ -29,6 +29,7 @@ This is the real end-to-end run of `ci-fix-authoring` (spec §11 stage 5, plan T
 - `verdict.json`: the `diagnose --reproduce` output, with `admission` admitted.
 - `reproduction/`: R's `source.json`, the CI log (`ci.log`), and the local build streams and manifest.
 - `fix/fix.json`: the final fix document, `ci_confirmed`. It holds absolute local paths (the run directory, worktree and clone) as written.
+  **These absolute paths are kept on purpose** (owner, #103): the evidence is verbatim, and the paths hold no secret, only the local username (the same as the GitHub login) and the directory layout. This is the first time absolute paths appear under `tests/`.
 - `fix/build.stdout` and `fix/build.stderr`: the local proof build.
 - `fix/fix-commit.patch`: `git format-patch` of the fix commit. It changes exactly one Dockerfile instruction and re-issues the authoring set.
 - `diagnose.log`, `fix.log`, `publish.log`, `confirm.log`: the CLI output of each step.

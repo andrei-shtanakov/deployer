@@ -1,0 +1,4 @@
+status: fix_proposed
+branch: deployer/fix/missing-copy-source/1b9ade27c685-001
+base: polygon/fix-e2e-copy-base
+pr: https://github.com/andrei-shtanakov/deployer/pull/101

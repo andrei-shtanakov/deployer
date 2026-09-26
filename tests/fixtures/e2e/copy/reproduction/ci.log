@@ -1,0 +1,192 @@
+##[group]Run docker build --file ./Dockerfile .
+docker build --file ./Dockerfile .
+shell: /usr/bin/bash -e {0}
+##[endgroup]
+﻿2026-09-26T11:36:56.9237443Z Current runner version: '2.337.0'
+##[group]Runner Image Provisioner
+Hosted Compute Agent
+Version: 20260828.587
+Commit: abac92662cab4cc7352de4f9f9d2e2419aad9c29
+Build Date: 2026-08-28T16:44:25Z
+Worker ID: {d48ded91-8909-4683-8c14-eb32e9bc5aa5}
+Azure Region: eastus
+##[endgroup]
+##[group]Operating System
+Ubuntu
+24.04.5
+LTS
+##[endgroup]
+##[group]Runner Image
+Image: ubuntu-24.04
+Version: 20260920.314.1
+Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20260920.314/images/ubuntu/Ubuntu2404-Readme.md
+Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20260920.314
+##[endgroup]
+##[group]GITHUB_TOKEN Permissions
+Contents: read
+Metadata: read
+Packages: read
+##[endgroup]
+Secret source: Actions
+Cache mode: write
+Prepare workflow directory
+Prepare all required actions
+Getting action download info
+Download action repository 'actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd' (SHA:93cb6efe18208431cddfb8368fd83d5badbf9bfd)
+Complete job name: build
+Syncing repository: andrei-shtanakov/deployer
+##[group]Getting Git version info
+Working directory is '/home/runner/work/deployer/deployer'
+[command]/usr/bin/git version
+git version 2.55.0
+##[endgroup]
+Temporarily overriding HOME='/home/runner/work/_temp/e239d915-1d14-4b7c-a819-cf0755a4eb40' before making global git config changes
+Adding repository directory to the temporary git global config as a safe directory
+[command]/usr/bin/git config --global --add safe.directory /home/runner/work/deployer/deployer
+Deleting the contents of '/home/runner/work/deployer/deployer'
+##[group]Initializing the repository
+[command]/usr/bin/git init /home/runner/work/deployer/deployer
+hint: Using 'master' as the name for the initial branch. This default branch name
+hint: will change to "main" in Git 3.0. To configure the initial branch name
+hint: to use in all of your new repositories, which will suppress this warning,
+hint: call:
+hint:
+hint: 	git config --global init.defaultBranch <name>
+hint:
+hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+hint: 'development'. The just-created branch can be renamed via this command:
+hint:
+hint: 	git branch -m <name>
+hint:
+hint: Disable this message with "git config set advice.defaultBranchName false"
+Initialized empty Git repository in /home/runner/work/deployer/deployer/.git/
+[command]/usr/bin/git remote add origin https://github.com/andrei-shtanakov/deployer
+##[endgroup]
+##[group]Disabling automatic garbage collection
+[command]/usr/bin/git config --local gc.auto 0
+##[endgroup]
+##[group]Setting up auth
+[command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+[command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+[command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+[command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+[command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+[command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+[command]/usr/bin/git config --local http.https://github.com/.extraheader AUTHORIZATION: basic ***
+##[endgroup]
+##[group]Fetching the repository
+[command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +1b9ade27c6857c1f9e3eb6119a5c10a0e57949c2:refs/remotes/origin/polygon/fix-e2e-copy-base
+From https://github.com/andrei-shtanakov/deployer
+ * [new ref]         1b9ade27c6857c1f9e3eb6119a5c10a0e57949c2 -> origin/polygon/fix-e2e-copy-base
+##[endgroup]
+##[group]Determining the checkout info
+##[endgroup]
+[command]/usr/bin/git sparse-checkout disable
+[command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+##[group]Checking out the ref
+[command]/usr/bin/git checkout --progress --force -B polygon/fix-e2e-copy-base refs/remotes/origin/polygon/fix-e2e-copy-base
+Switched to a new branch 'polygon/fix-e2e-copy-base'
+branch 'polygon/fix-e2e-copy-base' set up to track 'origin/polygon/fix-e2e-copy-base'.
+##[endgroup]
+[command]/usr/bin/git log -1 --format=%H
+1b9ade27c6857c1f9e3eb6119a5c10a0e57949c2
+#0 building with "default" instance using docker driver
+
+#1 [internal] load build definition from Dockerfile
+#1 transferring dockerfile: 388B done
+#1 DONE 0.0s
+
+#2 [auth] library/python:pull token for registry-1.docker.io
+#2 DONE 0.0s
+
+#3 [internal] load metadata for ghcr.io/astral-sh/uv:0.5.11
+#3 DONE 0.2s
+
+#4 [internal] load metadata for docker.io/library/python:3.12-slim
+#4 DONE 0.3s
+
+#5 [internal] load .dockerignore
+#5 transferring context:
+#5 transferring context: 51B done
+#5 DONE 0.0s
+
+#6 [internal] load build context
+#6 transferring context: 584B done
+#6 DONE 0.0s
+
+#7 [stage-0 4/9] COPY pyproject.toml uv.lock ./
+#7 CACHED
+
+#8 [stage-0 5/9] RUN uv sync --frozen --no-install-project
+#8 CACHED
+
+#9 [stage-0 3/9] WORKDIR /app
+#9 CACHED
+
+#10 [stage-0 6/9] COPY src/ci_build ./src/ci_build
+#10 CACHED
+
+#11 [stage-0 2/9] COPY --from=ghcr.io/astral-sh/uv:0.5.11 /uv /uvx /bin/
+#11 CACHED
+
+#12 [stage-0 7/9] COPY docs/setup.md ./setup.md
+#12 ERROR: failed to calculate checksum of ref bab1ddb9-e66f-4080-9fbf-9a64e0823a66::1ywu15bgt3a3nj8csehqjbop0: "/docs/setup.md": not found
+
+#13 FROM ghcr.io/astral-sh/uv:0.5.11@sha256:0ac957607303916420297a4c9c213bb33fbd3c888f9cd7f4f7273596ebf42b85
+#13 resolve ghcr.io/astral-sh/uv:0.5.11@sha256:0ac957607303916420297a4c9c213bb33fbd3c888f9cd7f4f7273596ebf42b85 done
+#13 sha256:19979093e3da84cd28f7b6f852513b795e084427176ef9fbfac58642e69b461a 1.30kB / 1.30kB done
+#13 sha256:0ac957607303916420297a4c9c213bb33fbd3c888f9cd7f4f7273596ebf42b85 2.19kB / 2.19kB done
+#13 sha256:7e479fa39802632c25b4e5c14ddfab9c5f443cd7c89626a0408d31a0b7afc193 669B / 669B done
+#13 CANCELED
+
+#14 [stage-0 1/9] FROM docker.io/library/python:3.12-slim@sha256:f77ac9e44ae96ef2c90b8053ea08c31f8be030f824196b0ae4db6d462c84e51f
+#14 resolve docker.io/library/python:3.12-slim@sha256:f77ac9e44ae96ef2c90b8053ea08c31f8be030f824196b0ae4db6d462c84e51f done
+#14 sha256:f77ac9e44ae96ef2c90b8053ea08c31f8be030f824196b0ae4db6d462c84e51f 10.37kB / 10.37kB done
+#14 sha256:44ff437bba879d4941b710a369a8f19266aea34b29002807f0c487fabc9eec9b 1.75kB / 1.75kB done
+#14 sha256:9e87977b867847e186d066f531ef783b006d582a985c341c269446088d90f2c4 5.65kB / 5.65kB done
+#14 CANCELED
+------
+ > [stage-0 7/9] COPY docs/setup.md ./setup.md:
+------
+Dockerfile:11
+--------------------
+   9 |     
+  10 |     COPY src/ci_build ./src/ci_build
+  11 | >>> COPY docs/setup.md ./setup.md
+  12 |     
+  13 |     RUN uv sync --frozen
+--------------------
+ERROR: failed to build: failed to solve: failed to compute cache key: failed to calculate checksum of ref bab1ddb9-e66f-4080-9fbf-9a64e0823a66::1ywu15bgt3a3nj8csehqjbop0: "/docs/setup.md": not found
+##[error]Process completed with exit code 1.
+Post job cleanup.
+[command]/usr/bin/git version
+git version 2.55.0
+Temporarily overriding HOME='/home/runner/work/_temp/4ce6eff7-b9ad-4621-ad1c-2b01ca501c76' before making global git config changes
+Adding repository directory to the temporary git global config as a safe directory
+[command]/usr/bin/git config --global --add safe.directory /home/runner/work/deployer/deployer
+[command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+[command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+[command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+http.https://github.com/.extraheader
+[command]/usr/bin/git config --local --unset-all http.https://github.com/.extraheader
+[command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+[command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+[command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+Cleaning up orphan processes
+##[group]Run actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+with:
+  repository: andrei-shtanakov/deployer
+  token: ***
+  ssh-strict: true
+  ssh-user: git
+  persist-credentials: true
+  clean: true
+  sparse-checkout-cone-mode: true
+  fetch-depth: 1
+  fetch-tags: false
+  show-progress: true
+  lfs: false
+  submodules: false
+  set-safe-directory: true
+##[endgroup]
+Process completed with exit code 1.
