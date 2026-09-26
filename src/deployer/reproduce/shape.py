@@ -129,8 +129,10 @@ def _load(workflow_text: str) -> tuple[dict[str, Any], dict[Any, Any]] | Refusal
     try:
         document = yaml.safe_load(workflow_text)
     except (yaml.YAMLError, ValueError, TypeError, RecursionError) as exc:
-        # safe_load raises bare ValueError on an impossible date (2001-02-30)
-        # and RecursionError on deep nesting: both are an unreadable workflow.
+        # safe_load raises bare ValueError on an impossible date (2001-02-30),
+        # TypeError on an unhashable mapping key (e.g. a flow sequence used as
+        # a key) and RecursionError on deep nesting: all are an unreadable
+        # workflow, never an exception out of this total reader.
         return Refusal(f"workflow not readable: {exc.__class__.__name__}")
     jobs = document.get("jobs") if isinstance(document, dict) else None
     if not isinstance(jobs, dict):
