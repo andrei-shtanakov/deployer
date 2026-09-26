@@ -654,70 +654,31 @@ def _buildkit_copy(
 def _bound_to_conclusion(
     lines: list[str], copy: Position, conclusion: str | None
 ) -> Outcome | None:
-    """Ruling AB: the COPY's pass against the bound build step's API
-    conclusion, which a RUN cannot forge (a killed or truncated build prints
-    no ``#k ERROR``). ``success``: no failing vertex at all. ``failure``: a
-    failing vertex, provably after the COPY (:func:`_failure_after`). Any
-    other conclusion (``cancelled``, ``timed_out``, ``skipped``, ``None``,
-    unknown) → ``binding_ambiguous`` naming it. ``None`` when it holds."""
+    """Rulings AB/AD: the COPY's pass against the bound build step's API
+    conclusion, which a RUN cannot forge. Only ``success`` can confirm, and
+    then with no failing vertex anywhere from the section start to the end of
+    the log. A failed step never proves the corrected COPY ran: every line
+    that could show it — the header, ``#k DONE``, a later ``#k ERROR`` — is
+    build output a failing RUN can print (the runner splits output on ``\r``
+    too), and a killed build prints no real ``#k ERROR`` at all (#100
+    review). §7.4 keeps only *proven* passage, so ``failure`` and every other
+    conclusion → ``binding_ambiguous`` naming it. ``copy`` is unused here
+    and kept for the caller's shape. ``None`` when the pass holds."""
+    del copy
     if any(_MASK in line for line in lines):
         # A step can print ``::add-mask::<text>``; the runner then logs that
         # text as ``***`` everywhere after it, so any line the checks rely
-        # on (a real ``#k ERROR``, a real header) can be erased (breaker
-        # ruling AC, round-5 re-review).
+        # on can be erased (breaker ruling AC, round-5 re-review).
         return _outcome("binding_ambiguous", (), "runner-masked text in the log")
-    failed = any(_BK_ERROR_RE.fullmatch(line) for line in lines)
-    if conclusion == "success":
-        if not failed:
-            return None
+    if conclusion != "success":
+        detail = (
+            f"build step conclusion is {conclusion!r}; only success proves the COPY ran"
+        )
+        return _outcome("binding_ambiguous", (), detail)
+    if any(_BK_ERROR_RE.fullmatch(line) for line in lines):
         detail = "failing vertex in a build step concluded success"
         return _outcome("binding_ambiguous", (), detail)
-    if conclusion == "failure":
-        if failed:
-            return _failure_after(lines, copy)
-        detail = "build step concluded failure without a failing vertex"
-        return _outcome("binding_ambiguous", (), detail)
-    detail = f"build step conclusion is {conclusion!r}"
-    return _outcome("binding_ambiguous", (), detail)
-
-
-def _failure_after(lines: list[str], copy: Position) -> Outcome | None:
-    """``binding_ambiguous`` unless every ``#k ERROR``/``CANCELED`` of the
-    build is provably after the corrected COPY (rulings X, Z, AA): exactly
-    one failing vertex, whose stage headers all give one position of the
-    COPY's stage (same name and step count), numbered higher than the COPY's
-    position derived from the Dockerfile. ``lines`` run from the section
-    start to the end of the job log: a failing step can print a header /
-    ``#k DONE`` pair for a COPY the build never reached (the runner splits
-    output on ``\r`` too), and a line that ends the section early, but not
-    the real ``#k ERROR`` after it. ``None`` when no vertex failed (a
-    successful build) or the failure follows the COPY (``c4``: ``#15 ERROR``
-    at ``[stage-0  8/10]`` after the COPY at ``7/10``)."""
-    failed = {m.group("k") for line in lines if (m := _BK_ERROR_RE.fullmatch(line))}
-    if not failed:
-        return None
-    detail = "failure not provably after the corrected step"
-    if len(failed) != 1:
-        return _outcome("binding_ambiguous", (), detail)
-    (k,) = failed
-    found = {
-        _stage_position(m)
-        for line in lines
-        if (m := _BK_HEADER_RE.fullmatch(line)) and m.group("k") == k
-    }
-    step = found.pop() if len(found) == 1 else None
-    if step is None or (step.name, step.n) != (copy.name, copy.n) or step.k <= copy.k:
-        return _outcome("binding_ambiguous", (), detail)
     return None
-
-
-def _stage_position(header: re.Match[str]) -> Position | None:
-    """A stage header's :class:`Position`, or ``None`` when its bracket is
-    not a stage header."""
-    m = _BK_STAGE_RE.fullmatch(header.group("bracket"))
-    if m is None or not _is_stage(header):
-        return None
-    return Position(m.group("name"), int(m.group("k")), int(m.group("n")))
 
 
 def _buildkit_result(lines: list[str], number: int, k: str) -> Outcome:

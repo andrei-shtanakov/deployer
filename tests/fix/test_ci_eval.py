@@ -816,7 +816,7 @@ def test_forged_header_after_the_build_step_refused(boundary: str) -> None:
 
 # Round 3, ruling X (N1): a failure must provably follow the corrected COPY ---
 
-_NOT_AFTER = "failure not provably after the corrected step"
+_NOT_AFTER = "build step conclusion is 'failure'; only success proves the COPY ran"
 
 
 def _n1(run: str = "#6 [stage-0 2/3] RUN make", extra_error: str = "") -> str:
@@ -891,7 +891,7 @@ def test_n1_failure_not_after_refused(run: str, extra: str) -> None:
 @pytest.mark.parametrize(
     ("failing", "passed"),
     [
-        ("#9 [stage-0 4/4] RUN false", True),
+        ("#9 [stage-0 4/4] RUN false", False),
         ("#9 [other 4/4] RUN false", False),
         ("#9 [stage-0 3/4] RUN false", False),
         ("#9 [stage-0 2/4] RUN false", False),
@@ -899,8 +899,9 @@ def test_n1_failure_not_after_refused(run: str, extra: str) -> None:
     ids=["after", "other-stage", "same-step", "before"],
 )
 def test_failure_after_the_copy_only(failing: str, passed: bool) -> None:
-    """Only a failing vertex of the COPY's stage at a later step leaves the
-    COPY passed (``c4``'s shape); a successful build is unchanged."""
+    """A failed build step never proves the COPY ran, wherever its failing
+    vertex sits — even ``c4``'s shape, a later step of the same stage
+    (#100 review, ruling AD)."""
     df = f"FROM python:3.12-slim\nRUN make\n{_FORGED_COPY}\nRUN false\n".encode()
     log = stamp(
         HEADER + _BUILDING + f"#8 [stage-0 3/4] {_FORGED_COPY}\n#8 DONE 0.0s\n"
@@ -1064,10 +1065,16 @@ def test_ab_killed_build_refused(vid: str, tail: str, build: str) -> None:
 @pytest.mark.parametrize(
     ("build", "detail"),
     [
-        ("skipped", "build step conclusion is 'skipped'"),
-        (None, "build step conclusion is None"),
-        ("neutral", "build step conclusion is 'neutral'"),
-        ("failure", "build step concluded failure without a failing vertex"),
+        (
+            "skipped",
+            "build step conclusion is 'skipped'; only success proves the COPY ran",
+        ),
+        (None, "build step conclusion is None; only success proves the COPY ran"),
+        (
+            "neutral",
+            "build step conclusion is 'neutral'; only success proves the COPY ran",
+        ),
+        ("failure", _NOT_AFTER),
     ],
     ids=["skipped", "missing", "unknown", "failure-no-vertex"],
 )

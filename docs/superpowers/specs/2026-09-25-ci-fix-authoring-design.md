@@ -640,12 +640,15 @@ every rule below relies on:
   (review R2): a failing step can print a section-end line (`Post job cleanup.`,
   `##[group]…`), which ends the positive evidence but must not hide the real
   failure. Both rules only refuse. The COPY pass is also bound to the bound build step's
-  conclusion in the jobs API, which no build output can forge (ruling AB): `success`
-  needs no failing vertex anywhere; `failure` needs a failing vertex that passes the
-  after-the-COPY rule above; `success` with a failing vertex, `failure` without one, any
-  other conclusion (`cancelled`, `timed_out`, `skipped`, none) or a build step that is
-  not uniquely identified → `binding ambiguous` (a killed or truncated build prints no
-  `#k ERROR`). A step can print `::add-mask::<text>`, after which the runner logs that
+  conclusion in the jobs API, which no build output can forge (rulings AB, AD): only
+  `success` can confirm, and then with no failing vertex anywhere. A build step that
+  concluded `failure` never proves the corrected COPY ran: every line that could show
+  it — the header, `#k DONE`, a later `#k ERROR` placing the failure after the COPY — is
+  output a failing `RUN` before the COPY can print, and a killed build prints no real
+  `#k ERROR` (#100 review). So `failure`, `success` with a failing vertex, any other
+  conclusion (`cancelled`, `timed_out`, `skipped`, none) and a build step that is not
+  uniquely identified → `binding ambiguous`. The after-the-COPY rule above is thereby
+  superseded for confirmation; `c4` is insufficient. A step can print `::add-mask::<text>`, after which the runner logs that
   text as `***` everywhere: any line the rules above rely on could be erased, so `***`
   anywhere from the section start to the end of the log → `binding ambiguous` (ruling
   AC; legitimately masked secrets refuse too). BuildKit re-prints a vertex header when progress interleaves (`c1` prints
@@ -686,7 +689,10 @@ result.
   take no further part.
 
 A later independent failure in the same run does not cancel proven passage of the
-corrected place. Ambiguous binding → no positive evidence.
+corrected place. Ambiguous binding → no positive evidence. On CI, passage is proven only
+by a build step that concluded `success` (§7.3, ruling AD): a failed step's log cannot
+prove it, so a CI run whose build fails after the corrected instruction confirms nothing
+(`c4`), and the local proof's own later-failure record (§6.4) is unaffected.
 
 ### 7.5 The result of a confirmation attempt
 

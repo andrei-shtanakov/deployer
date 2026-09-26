@@ -315,11 +315,12 @@ exactly one named stage header carrying the corrected text (BuildKit's step numb
 right-aligned to the step count, as in `[stage-0  7/10]`) and that step's `#k DONE`;
 `#k CACHED` never confirms. The header must sit at the COPY's position derived from
 the Dockerfile (single stage, only recorded instructions; anything else refuses), and
-if the build failed — searched to the end of the log — the failure must be provably
-at a later step of the COPY's stage. FROM is file-wide: a named build-stage header and no
-`dockerfile parse error` (BuildKit parses the whole file first). A later independent
-failure in the same run does not cancel a proven pass; any `undetermined` attempt, a
-recurrence or an ambiguous binding does (design §7.3–§7.4).
+the build step must have concluded `success` in the GitHub API with no failing vertex
+anywhere in the log: a failed build's output cannot prove the COPY ran, because a
+failing `RUN` can print every line that would. Any `***` (a runner mask) refuses too.
+FROM is file-wide: a named build-stage header and no `dockerfile parse error` (BuildKit
+parses the whole file first). Any `undetermined` attempt, a recurrence or an ambiguous
+binding makes the result insufficient (design §7.3–§7.4).
 
 Exit codes: `fix` — `0` `locally_confirmed`, `1` `stopped`, `2` invalid invocation or
 local I/O; `fix publish` — `0` pushed and a PR created or found, `1` refused, `2` local

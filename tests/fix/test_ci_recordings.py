@@ -91,9 +91,25 @@ EXPECTED: dict[str, tuple[list[Attempt], str, str | None]] = {
         None,
     ),
     "c3-from-parsed": ([(*_PASS, (147,), None)], "ci_confirmed", None),
-    # The padded header ``#14 [stage-0  7/10]`` binds; ``RUN false`` fails
-    # later (``#15 ERROR``), which does not cancel the proven pass (§7.4).
-    "c4-copy-later-failure": ([(*_PASS, (195, 196), None)], "ci_confirmed", None),
+    # The padded header ``#14 [stage-0  7/10]`` binds, but the build step
+    # concluded ``failure`` (``RUN false``): a failed step's output cannot
+    # prove the COPY ran — a failing RUN can print every line that would
+    # (#100 review, ruling AD) — so passage is not proven (§7.4).
+    "c4-copy-later-failure": (
+        [
+            (
+                "qualified",
+                "binding_ambiguous",
+                False,
+                False,
+                (),
+                (),
+                "build step conclusion is 'failure'; only success proves the COPY ran",
+            )
+        ],
+        INSUFFICIENT,
+        "binding ambiguous",
+    ),
     "c5-copy-recurred": (
         [
             (
