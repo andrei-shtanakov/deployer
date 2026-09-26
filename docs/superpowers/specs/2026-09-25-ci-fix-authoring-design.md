@@ -639,7 +639,13 @@ every rule below relies on:
   searched from the section start to the **end of the log**, not only in the section
   (review R2): a failing step can print a section-end line (`Post job cleanup.`,
   `##[group]…`), which ends the positive evidence but must not hide the real
-  failure. Both rules only refuse. BuildKit re-prints a vertex header when progress interleaves (`c1` prints
+  failure. Both rules only refuse. The COPY pass is also bound to the bound build step's
+  conclusion in the jobs API, which no build output can forge (ruling AB): `success`
+  needs no failing vertex anywhere; `failure` needs a failing vertex that passes the
+  after-the-COPY rule above; `success` with a failing vertex, `failure` without one, any
+  other conclusion (`cancelled`, `timed_out`, `skipped`, none) or a build step that is
+  not uniquely identified → `binding ambiguous` (a killed or truncated build prints no
+  `#k ERROR`). BuildKit re-prints a vertex header when progress interleaves (`c1` prints
   `#7 [stage-0 1/9] FROM …` twice). A corrected COPY re-printed this way reads as a
   repeated header or `k` → `binding ambiguous`. That is a known, conservative false
   negative; no C-recording shows it for the corrected COPY.

@@ -125,7 +125,9 @@ def test_registry_unreachable_from_src() -> None:
 
 def test_ci_enabled_by_default() -> None:
     """The recording-backed CI rows need no seam."""
-    copy = match_ci("copy", _COPY, _BUILDKIT_COPY_OK, dockerfile=_DOCKERFILE)
+    copy = match_ci(
+        "copy", _COPY, _BUILDKIT_COPY_OK, dockerfile=_DOCKERFILE, conclusion="success"
+    )
     from_ = match_ci("from", _FROM, _BUILDKIT_FROM_OK, dockerfile=_DOCKERFILE)
     assert (copy.evidence, from_.evidence) == ("passed", "passed")
 
@@ -631,9 +633,15 @@ def test_podman_from_parse_error(stderr: str) -> None:
 # COPY / BuildKit ------------------------------------------------------------
 
 
-def _ci_copy(log: str, text: str = _COPY, dockerfile: bytes = _DOCKERFILE) -> Outcome:
-    """``match_ci`` for COPY (a production row)."""
-    return match_ci("copy", text, log, dockerfile=dockerfile)
+def _ci_copy(
+    log: str,
+    text: str = _COPY,
+    dockerfile: bytes = _DOCKERFILE,
+    conclusion: str | None = "success",
+) -> Outcome:
+    """``match_ci`` for COPY (a production row), the build step concluded
+    ``conclusion``."""
+    return match_ci("copy", text, log, dockerfile=dockerfile, conclusion=conclusion)
 
 
 def test_buildkit_copy_synthetic_shape_passes() -> None:

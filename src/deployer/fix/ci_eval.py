@@ -41,6 +41,7 @@ from deployer.forge import (
     _LOG_TIMESTAMP_RE,
     Completeness,
     FailedJob,
+    StepInfo,
     _build_job,
 )
 from deployer.reproduce.shape import job_text
@@ -246,8 +247,11 @@ def _template(
     and its evidence lines as lines of ``log``. No section is
     ``binding_ambiguous`` (ruling T). The log's lines after the section, to
     its end, go to the template as ``after``: section-end markers end the
-    positive evidence but never hide a failing vertex (ruling AA)."""
-    title = _build_title(q)
+    positive evidence but never hide a failing vertex (ruling AA). The bound
+    build step's API conclusion goes with it (ruling AB): a step not
+    identified uniquely has none, which refuses COPY evidence."""
+    step = _build_step(q)
+    title = step.name if step is not None and step.name.startswith(_RUN) else None
     steps = frozenset(s.name for s in (q.job.all_steps if q.job else None) or [])
     section = _section(log, title, steps) if title is not None else None
     if not isinstance(section, tuple):
@@ -260,6 +264,7 @@ def _template(
         "\n".join(read[start:end]),
         dockerfile=dockerfile,
         after="\n".join(read[end:]),
+        conclusion=step.conclusion if step is not None else None,
     )
     return outcome, tuple(start + n for n in outcome.lines)
 
@@ -278,15 +283,14 @@ def _ends_section(line: str, steps: frozenset[str]) -> bool:
     return line.startswith(_POST) and (line in steps or line[len(_POST) :] in steps)
 
 
-def _build_title(q: Qualified) -> str | None:
-    """The bound build step's runner group title (``Run <build line>``): the
-    step's name when it has that form, else ``None``."""
+def _build_step(q: Qualified) -> StepInfo | None:
+    """The bound build step as the jobs API lists it, when exactly one step
+    has its number, else ``None``. Its name, when of the form ``Run <build
+    line>``, is the runner group title; its conclusion binds COPY evidence."""
     if q.job is None or q.shape is None:
         return None
-    names = [s.name for s in q.job.all_steps or [] if s.number == q.shape.build_step]
-    if len(names) != 1 or not names[0].startswith(_RUN):
-        return None
-    return names[0]
+    steps = [s for s in q.job.all_steps or [] if s.number == q.shape.build_step]
+    return steps[0] if len(steps) == 1 else None
 
 
 def build_section(

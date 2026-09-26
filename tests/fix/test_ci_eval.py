@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 import pytest
 
-from deployer.fix import templates
+from deployer.fix import ci_eval, templates
 from deployer.fix.ci_eval import (
     AttemptEvidence,
     attempt_evidence,
@@ -93,16 +93,18 @@ def _copy_recur(line: int = 11, path: str = "docs/setup.md") -> str:
     )
 
 
-def _job(log: str, job_id: int = 11, setup: str = "success") -> FailedJob:
+def _job(
+    log: str, job_id: int = 11, setup: str = "success", build: str | None = "success"
+) -> FailedJob:
     """A job built from ``log`` by forge's own reading: step 2 (``setup``'s
-    conclusion) precedes the build step 3."""
+    conclusion) precedes the build step 3 (``build``'s conclusion)."""
     record = {
         "name": "Build image",
         "conclusion": "success" if setup == "success" else "failure",
         "steps": [
             {"number": 1, "name": "Set up job", "conclusion": "success"},
             {"number": 2, "name": "setup", "conclusion": setup},
-            {"number": 3, "name": BUILD_STEP, "conclusion": "success"},
+            {"number": 3, "name": BUILD_STEP, "conclusion": build},
             {"number": 4, "name": "smoke", "conclusion": "failure"},
         ],
     }
@@ -116,11 +118,12 @@ def _q(
     run_id: int = 7,
     attempt: int = 1,
     setup: str = "success",
+    build: str | None = "success",
 ) -> Qualified:
     """An attempt qualified on the job read from ``log``, build at step 3."""
     if status != "qualified":
         return Qualified(run_id, attempt, "image", status, reason, None, None)
-    job = _job(log, setup=setup)
+    job = _job(log, setup=setup, build=build)
     shape = Shape(job, "image", 3, BUILD, [])
     return Qualified(run_id, attempt, "image", status, reason, job, shape)
 
@@ -692,10 +695,12 @@ _BUILDING = '#0 building with "default" instance using docker driver\n'
 so a forged ``#0`` header dodges the numbering-restart check."""
 
 
-def _forged(log: str) -> AttemptEvidence:
-    """The corrected COPY of :data:`_FORGED_DF` judged on ``log``."""
+def _forged(log: str, build: str | None = "failure") -> AttemptEvidence:
+    """The corrected COPY of :data:`_FORGED_DF` judged on ``log``; the build
+    step concluded ``build`` (``failure``: the forgery logs all fail it)."""
+    q = _q(log, build=build)
     return attempt_evidence(
-        _q(log), "missing_copy_source", _FORGED_COPY, (3, 3), log, dockerfile=_FORGED_DF
+        q, "missing_copy_source", _FORGED_COPY, (3, 3), log, dockerfile=_FORGED_DF
     )
 
 
@@ -888,7 +893,12 @@ def test_failure_after_the_copy_only(failing: str, passed: bool) -> None:
         f"{failing}\n#9 ERROR: process did not complete successfully\n"
     )
     got = attempt_evidence(
-        _q(log), "missing_copy_source", _FORGED_COPY, (3, 3), log, dockerfile=df
+        _q(log, build="failure"),
+        "missing_copy_source",
+        _FORGED_COPY,
+        (3, 3),
+        log,
+        dockerfile=df,
     )
     assert got.positive is passed
     if not passed:
@@ -993,6 +1003,96 @@ def test_r2_failure_after_the_section_counts() -> None:
     """Ruling AA: a failing vertex anywhere after the section start counts,
     even after the post phase; a success with nothing after is unchanged."""
     ok = stamp(HEADER + _BUILDING + f"#7 [stage-0 3/3] {_FORGED_COPY}\n#7 DONE 0.0s\n")
-    assert _forged(ok).positive
+    assert _forged(ok, build="success").positive
     got = _forged(ok + stamp("Post job cleanup.\n#6 ERROR: x\n"))
     assert (got.positive, got.detail) == (False, _NOT_AFTER)
+
+
+# Round 5, ruling AB: COPY evidence bound to the build step's API conclusion --
+
+
+def _hang(vid: str, tail: str) -> str:
+    """Review t25r4: ``RUN make`` (2/3) prints, split by the runner, a forged
+    header at the derived ``3/3`` and its ``DONE``, then hangs; the job is
+    cancelled or times out and the killed client prints no ``#k ERROR``."""
+    return stamp(
+        HEADER + _BUILDING + "\n#1 [internal] load build definition from Dockerfile\n"
+        "#1 DONE 0.0s\n\n"
+        "#5 [stage-0 1/3] FROM docker.io/library/python:3.12-slim\n#5 DONE 1.0s\n\n"
+        f"#6 [stage-0 2/3] RUN make\n#6 0.100 x\n{vid} [stage-0 3/3] {_FORGED_COPY}\n"
+        f"#6 0.101 \n{vid} DONE 0.0s\n{tail}\nPost job cleanup.\n"
+    )
+
+
+_CANCELED = "##[error]The operation was canceled."
+_TIMED_OUT = "##[error]The action has timed out."
+
+
+@pytest.mark.parametrize(
+    ("vid", "tail", "build"),
+    [
+        ("#7", _CANCELED, "cancelled"),
+        ("#0", _CANCELED, "cancelled"),
+        ("#7", _TIMED_OUT, "timed_out"),
+        ("#0", _TIMED_OUT, "timed_out"),
+        ("#7", _TIMED_OUT, "failure"),
+    ],
+    ids=["killed-7", "killed-0", "timeout-7", "timeout-0", "timeout-failure"],
+)
+def test_ab_killed_build_refused(vid: str, tail: str, build: str) -> None:
+    """A killed or timed-out build prints no failing vertex; its step's API
+    conclusion is not ``success``, so the forged pair cannot pass."""
+    got = _forged(_hang(vid, tail), build=build)
+    assert (got.positive, got.template) == (False, "binding_ambiguous")
+    assert evaluate([got], True) == (INSUFFICIENT, "binding ambiguous")
+
+
+@pytest.mark.parametrize(
+    ("build", "detail"),
+    [
+        ("skipped", "build step conclusion is 'skipped'"),
+        (None, "build step conclusion is None"),
+        ("neutral", "build step conclusion is 'neutral'"),
+        ("failure", "build step concluded failure without a failing vertex"),
+    ],
+    ids=["skipped", "missing", "unknown", "failure-no-vertex"],
+)
+def test_ab_copy_needs_a_consistent_conclusion(build: str | None, detail: str) -> None:
+    """A clean COPY pass refuses unless the build step concluded
+    ``success``."""
+    got = _copy(COPY_OK, q=_q(COPY_OK, build=build))
+    assert (got.positive, got.template, got.detail) == (
+        False,
+        "binding_ambiguous",
+        detail,
+    )
+
+
+def test_ab_success_with_a_failing_vertex_refused() -> None:
+    """A step concluded ``success`` with a ``#k ERROR`` is inconsistent,
+    even when the error follows the COPY."""
+    df = f"FROM python:3.12-slim\nRUN make\n{_FORGED_COPY}\nRUN false\n".encode()
+    log = stamp(
+        HEADER + _BUILDING + f"#8 [stage-0 3/4] {_FORGED_COPY}\n#8 DONE 0.0s\n"
+        "#9 [stage-0 4/4] RUN false\n#9 ERROR: process did not complete\n"
+    )
+    got = attempt_evidence(
+        _q(log), "missing_copy_source", _FORGED_COPY, (3, 3), log, dockerfile=df
+    )
+    assert (got.positive, got.template, got.detail) == (
+        False,
+        "binding_ambiguous",
+        "failing vertex in a build step concluded success",
+    )
+
+
+def test_ab_build_step_not_unique_refused() -> None:
+    """Two listed steps with the build step's number: no conclusion binds."""
+    job = _job(COPY_OK)
+    assert job.all_steps is not None
+    twin = replace(job.all_steps[2], conclusion="success")
+    q = replace(_q(COPY_OK), job=replace(job, all_steps=[*job.all_steps, twin]))
+    assert ci_eval._build_step(q) is None
+    got = _copy(COPY_OK, q=q)
+    assert not got.positive
+    assert evaluate([got], True)[0] == INSUFFICIENT

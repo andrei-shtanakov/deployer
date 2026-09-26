@@ -189,6 +189,7 @@ def match_ci(
     *,
     dockerfile: bytes,
     after: str = "",
+    conclusion: str | None = None,
 ) -> Outcome:
     """CI (BuildKit plain progress) positive evidence (§7.3).
 
@@ -199,7 +200,10 @@ def match_ci(
     file-wide (BuildKit parses the whole file first). ``after`` is the rest
     of the job log after ``log`` (to its end): read only for failing
     vertices, which a section end printed by a failing step must not hide
-    (ruling AA)."""
+    (ruling AA). ``conclusion`` is the jobs API conclusion of the bound build
+    step, which no build output can forge: COPY evidence holds only for
+    ``success`` with no failing vertex or ``failure`` with one after the COPY
+    (ruling AB); FROM ignores it."""
     if not _enabled("ci", kind):
         return _NOT_ENABLED
     strict = strict_form_reason(dockerfile)
@@ -227,7 +231,7 @@ def match_ci(
         return several
     if kind == "from" or position is None:
         return _buildkit_from(lines)
-    return _buildkit_copy(corrected_text, lines, position, _lines(after))
+    return _buildkit_copy(corrected_text, lines, position, _lines(after), conclusion)
 
 
 class Position(NamedTuple):
@@ -604,13 +608,18 @@ def _podman_from(text: str, out: list[str], err: list[str]) -> Outcome:
 
 
 def _buildkit_copy(
-    text: str, lines: list[str], position: Position, after: list[str]
+    text: str,
+    lines: list[str],
+    position: Position,
+    after: list[str],
+    conclusion: str | None,
 ) -> Outcome:
     """COPY/ADD: exactly one stage header ``#k [...] <text>`` and ``#k DONE``;
     ``#k CACHED`` or an error is not confirmed; a missing or repeated ``k``
     is ambiguous. The header's bracket must be exactly the ``position``
     derived from the Dockerfile (ruling Z): a failing step can print its own
-    header, but not choose where the COPY is."""
+    header, but not choose where the COPY is. A pass is then bound to the
+    build step's API ``conclusion`` (:func:`_bound_to_conclusion`)."""
     headers = [
         (n, m)
         for n, line in enumerate(lines, 1)
@@ -637,7 +646,31 @@ def _buildkit_copy(
     result = _buildkit_result(lines, number, k)
     if result.evidence != "passed":
         return result
-    return _failure_after([*lines, *after], position) or result
+    return _bound_to_conclusion([*lines, *after], position, conclusion) or result
+
+
+def _bound_to_conclusion(
+    lines: list[str], copy: Position, conclusion: str | None
+) -> Outcome | None:
+    """Ruling AB: the COPY's pass against the bound build step's API
+    conclusion, which a RUN cannot forge (a killed or truncated build prints
+    no ``#k ERROR``). ``success``: no failing vertex at all. ``failure``: a
+    failing vertex, provably after the COPY (:func:`_failure_after`). Any
+    other conclusion (``cancelled``, ``timed_out``, ``skipped``, ``None``,
+    unknown) → ``binding_ambiguous`` naming it. ``None`` when it holds."""
+    failed = any(_BK_ERROR_RE.fullmatch(line) for line in lines)
+    if conclusion == "success":
+        if not failed:
+            return None
+        detail = "failing vertex in a build step concluded success"
+        return _outcome("binding_ambiguous", (), detail)
+    if conclusion == "failure":
+        if failed:
+            return _failure_after(lines, copy)
+        detail = "build step concluded failure without a failing vertex"
+        return _outcome("binding_ambiguous", (), detail)
+    detail = f"build step conclusion is {conclusion!r}"
+    return _outcome("binding_ambiguous", (), detail)
 
 
 def _failure_after(lines: list[str], copy: Position) -> Outcome | None:
