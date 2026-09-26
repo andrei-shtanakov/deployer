@@ -112,7 +112,10 @@ Input: the 1.3 verdict document, its try dir, and a local clone of the project.
 
 1. The clone is checked **as a whole**: a Git checkout at its repository root with an
    `origin`, `HEAD` = the admission `binding.head_sha`, and a **clean** working tree
-   (staged, unstaged and untracked, as A's provenance preflight does). Equality of `HEAD`
+   (staged, unstaged and untracked, as A's provenance preflight does), and **not a
+   partial clone** (`extensions.partialClone` or any `remote.<name>.promisor` set): a
+   missing blob would make Git fetch it over the network from inside a local-only
+   command. Guarded Git reads also carry `GIT_NO_LAZY_FETCH=1`. Equality of `HEAD`
    and of the Dockerfile bytes is not enough on its own.
 2. The fix directory (§5.1) and the worktree must lie **outside** the clone; otherwise
    exit `2` (invalid invocation) — a worktree inside the clone would make it dirty.
@@ -447,7 +450,7 @@ What the recordings and the reading show, and every rule below relies on:
   included (`l5`, `l7`). The matchers read the prefixed form and the unprefixed one.
 - **Uniqueness in the Dockerfile, first.** The corrected instruction's text must occur
   exactly once among the corrected Dockerfile's instructions, compared as the rest of the
-  fix compares them (A's `_as_r_reads`, R's `dockerfile.parse`, `Instruction.text`; a FROM
+  fix compares them (A's `decode_as_read_text`, R's `dockerfile.parse`, `Instruction.text`; a FROM
   by its rebuilt display form); otherwise → `binding ambiguous`, decided before any output
   is read. That comparison is sound only in the modelled form, so it is refused
   (`binding ambiguous`) when the whole corrected Dockerfile fails the fix-wide reading
@@ -748,12 +751,12 @@ local proof, after the commit, after publication, after each confirmation attemp
     `ci_confirmed` document);
   - `1`: refused — admission or trust re-check failed, stored state changed, push or PR
     creation failed, status not `locally_confirmed`/`fix_proposed`/`ci_confirmed`;
-  - `2`: local I/O failure.
+  - `2`: local I/O failure, or `fix.json.lock` held by another fix operation (§8.4).
 - `deployer fix confirm <fix.json>` — one confirmation attempt.
   - `0`: the attempt is positive (`ci_confirmed`);
   - `1`: insufficient (every §7.5 reason, including an unavailable CI log or an incomplete
     API listing), or the document is not published;
-  - `2`: local I/O failure.
+  - `2`: local I/O failure, or `fix.json.lock` held by another fix operation (§8.4).
 
 Exit codes of existing commands are unchanged.
 
@@ -786,7 +789,11 @@ evidence intact; the failure is recorded in `last_operation`.
 ### 8.4 Errors
 
 Every step is total: an exception becomes a reason in the document, never a traceback.
-Exit `2` is reserved for local I/O failures; when one happens after operations already
+Exit `2` is reserved for local I/O failures, and for a `fix.json` lock held by another
+`fix publish` / `fix confirm` (both take an exclusive, non-blocking lock on
+`fix.json.lock` for the whole read-modify-write; the lock file is never deleted, since
+unlinking it would reopen the race); the document is then left untouched. When an I/O
+failure happens after operations already
 performed (a `fix.json` save after the commit was created), the message names the
 identifiers of what was created (fix directory, worktree, branch, commit, PR).
 
@@ -857,6 +864,7 @@ production row is enabled without a recording (§9) guards the seam.
   extra changed file is refused by the full-diff check; a fix directory inside the clone
   exits `2`; the fix-branch tip changed before `publish` is refused.
 - **Gate (§2):** clone not at the repository root; no `origin`; untracked-only dirt;
+  a partial clone;
   `HEAD` ≠ `head_sha`; Dockerfile bytes ≠ `artifact_sha256`; a revoked key; a trust
   directory inside R's restored `source/` → each `no admission` (at `fix` and at
   `publish`).

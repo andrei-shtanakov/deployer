@@ -6,13 +6,17 @@ committed to the project. ``Input`` is the single producer of what
 ``fix publish`` (T14) and ``fix confirm`` (T19) need: they never re-derive it
 from the clone. This module is pure model shape plus local I/O (save, load,
 a writability probe, a re-hash of the stored inputs); it authors nothing and
-runs no command.
+runs no command. ``exclusive`` is the document's lock: ``fix publish`` and
+``fix confirm`` each hold it from load through the final save.
 """
 
 import contextlib
+import fcntl
 import hashlib
 import os
+import stat
 import uuid
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Annotated, Any, Literal, Self
 
@@ -29,6 +33,10 @@ from deployer.admission.model import DefectClass
 
 FIX_SCHEMA_VERSION = "1.0"
 _HASH_CHUNK = 1024 * 1024
+_LOCK_FLAGS = os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
+"""The lock file's open flags: never follow a symlink at its name (a
+symlink is refused, never used to create or lock a file elsewhere), never
+block opening a FIFO planted there."""
 
 Status = Literal[
     "in_progress",
@@ -257,6 +265,64 @@ def load(path: Path) -> FixDocument:
     parsing it, propagates to the caller (CLI exit 2).
     """
     return FixDocument.model_validate_json(path.read_bytes())
+
+
+class LockError(Exception):
+    """The fix document's lock could not be taken; the message says why and
+    names the lock file."""
+
+
+def lock_path(path: Path) -> Path:
+    """The lock file of the fix document at ``path``: ``<path>.lock``."""
+    return path.parent / f"{path.name}.lock"
+
+
+@contextlib.contextmanager
+def exclusive(path: Path) -> Iterator[None]:
+    """Hold an exclusive, non-blocking ``flock`` on ``<path>.lock``.
+
+    Serializes the read-modify-write of ``fix publish`` and ``fix confirm``
+    on one document, so a concurrent run cannot drop another's write.
+    Raises :class:`LockError` before yielding when another process holds the
+    lock (``another fix operation holds <path>.lock``) or when the lock file
+    cannot be opened or locked (a symlink or non-regular file at its name
+    included); the document is never touched then.
+
+    The lock file is created on first use and never removed: with ``flock``,
+    unlinking it would let a waiting process lock the old, unlinked inode
+    while a third creates and locks a new file at the same name, so two runs
+    would both hold "the" lock. Closing the descriptor releases the lock.
+
+    POSIX-only (``fcntl.flock``), as the provenance publication lock.
+    """
+    fd = _take_lock(lock_path(path))
+    try:
+        yield
+    finally:
+        os.close(fd)
+
+
+def _take_lock(lock: Path) -> int:
+    """Open ``lock`` (no-follow) and ``flock`` it exclusively without
+    blocking; its descriptor, or :class:`LockError`."""
+    try:
+        fd = os.open(lock, _LOCK_FLAGS, 0o600)
+    except OSError as exc:
+        raise LockError(f"cannot lock {lock}: {type(exc).__name__}: {exc}") from exc
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise LockError(f"cannot lock {lock}: not a regular file")
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError as exc:
+        os.close(fd)
+        raise LockError(f"another fix operation holds {lock}") from exc
+    except LockError:
+        os.close(fd)
+        raise
+    except OSError as exc:
+        os.close(fd)
+        raise LockError(f"cannot lock {lock}: {type(exc).__name__}: {exc}") from exc
+    return fd
 
 
 def check_writable(directory: Path) -> str | None:

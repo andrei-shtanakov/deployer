@@ -18,7 +18,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal
 
-from deployer.admission.prepare import _as_r_reads
+from deployer.admission.prepare import decode_as_read_text
 from deployer.fix.binding import Bound
 from deployer.fix.reading import (
     comment_reason,
@@ -361,7 +361,7 @@ def _checked(
     show that BuildKit or Buildah read the replacement the same way. The
     builders' reading rests on the byte-level rules checked before it.
     """
-    reread = parse(_as_r_reads(replacement)).instructions
+    reread = parse(decode_as_read_text(replacement)).instructions
     same_lines = len(replacement.splitlines()) == len(bound.original.splitlines())
     if (
         len(reread) != 1

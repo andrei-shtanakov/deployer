@@ -17,7 +17,7 @@ import re
 from dataclasses import dataclass
 
 from deployer.admission.decide import GLOB_CHARS, LINK_MODES, REMOTE_PREFIXES
-from deployer.admission.prepare import _as_r_reads
+from deployer.admission.prepare import decode_as_read_text
 from deployer.fix.binding import Bound
 from deployer.fix.reading import (
     comment_reason,
@@ -26,7 +26,11 @@ from deployer.fix.reading import (
     strict_form_reason,
 )
 from deployer.provenance.model import TreeRow
-from deployer.reproduce.checks import _is_modelled_source, _norm, _sources
+from deployer.reproduce.checks import (
+    is_modelled_source,
+    local_copy_sources,
+    normalize_copy_path,
+)
 from deployer.reproduce.dockerfile import opens_heredoc, parse, unread_reason
 from deployer.reproduce.ignore import IgnoreRules, excluded_by
 
@@ -54,7 +58,7 @@ class Candidates:
     ``eligible`` holds context-relative listing paths, sorted. Each entry of
     ``conditions`` is ``{"condition": str, "ok": bool, "detail": str}``.
     ``position`` is the absent raw token's index among the bound
-    instruction's sources, in ``_sources`` order — the envelope requires
+    instruction's sources, in ``local_copy_sources`` order — the envelope requires
     that token to occur exactly once as a whole token, so the index is
     unambiguous. It identifies the record a fresh ``copy_sources`` re-check
     must judge for this defect (design §6.2), since a one-token replacement
@@ -198,7 +202,7 @@ def _ok(condition: str, detail: str) -> dict:
 
 def _document_reason(bound: Bound, dockerfile: bytes) -> str | None:
     """Document-wide forms R does not read, or a ``bound`` not from it."""
-    parsed = parse(_as_r_reads(dockerfile))
+    parsed = parse(decode_as_read_text(dockerfile))
     unread = unread_reason(parsed)
     if unread is not None:
         return unread
@@ -255,10 +259,10 @@ def _bound_reason(bound: Bound) -> str | None:
 
 def _locate(bound: Bound, absent: str) -> _Located | str:
     """The one source written for ``absent``, in a notation §4.1 keeps."""
-    sources, why = _sources(bound.instruction)
+    sources, why = local_copy_sources(bound.instruction)
     if why is not None:
         return f"sources not readable ({why})"
-    written = [source for source in sources if _norm(source) == absent]
+    written = [source for source in sources if normalize_copy_path(source) == absent]
     if len(written) != 1:
         return f"{len(written)} sources normalise to {absent!r}, expected exactly one"
     raw = written[0]
@@ -327,7 +331,7 @@ def _form_reason(path: str) -> str | None:
     R's normalised form (no ``./``, ``..``, ``//``, leading or trailing
     ``/``) — so the written token names exactly this path.
     """
-    if not _is_modelled_source(path):
+    if not is_modelled_source(path):
         return "outside the closed alphabet"
     if GLOB_CHARS & set(path):
         return "a glob character"
@@ -335,7 +339,7 @@ def _form_reason(path: str) -> str | None:
         return "reads as a remote source"
     if path.startswith("-"):
         return "reads as a flag"
-    if _norm(path) != path or path == ".":
+    if normalize_copy_path(path) != path or path == ".":
         return "not in R's normalised form"
     return None
 
@@ -344,7 +348,10 @@ def _others_reason(others: list[str], regular: list[str]) -> str | None:
     """Every other source must be an unambiguous regular file (§4.1 (4))."""
     files = set(regular)
     for other in others:
-        if _form_reason(_strip_dot(other)) is not None or _norm(other) not in files:
+        if (
+            _form_reason(_strip_dot(other)) is not None
+            or normalize_copy_path(other) not in files
+        ):
             return (
                 f"the other source {other!r} is not an unambiguous regular file of "
                 "the listing; a destination conflict is not disproven"
@@ -359,7 +366,7 @@ def _strip_dot(source: str) -> str:
 
 def _collides(path: str, others: list[str]) -> bool:
     """(a) a duplicate source, or (b) a destination name conflict."""
-    normalised = [_norm(other) for other in others]
+    normalised = [normalize_copy_path(other) for other in others]
     if path in normalised:
         return True
     name = posixpath.basename(path)
@@ -368,19 +375,19 @@ def _collides(path: str, others: list[str]) -> bool:
 
 def _checked(bound: Bound, raw: str, written: str, replacement: bytes) -> bytes | str:
     """Re-read ``replacement`` as R does; only ``raw`` may have changed."""
-    reread = parse(_as_r_reads(replacement)).instructions
+    reread = parse(decode_as_read_text(replacement)).instructions
     tokens = bound.instruction.args.split()
     if tokens.count(raw) != 1:
         return f"{raw!r} is not exactly one argument of the instruction"
     expected = [written if token == raw else token for token in tokens]
-    sources, _ = _sources(bound.instruction)
+    sources, _ = local_copy_sources(bound.instruction)
     expected_sources = [written if source == raw else source for source in sources]
     same_lines = len(replacement.splitlines()) == len(bound.original.splitlines())
     if (
         len(reread) != 1
         or reread[0].keyword != bound.instruction.keyword
         or reread[0].args.split() != expected
-        or _sources(reread[0]) != (expected_sources, None)
+        or local_copy_sources(reread[0]) != (expected_sources, None)
         or not same_lines
     ):
         return "the replacement does not re-read as the intended instruction"

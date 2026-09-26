@@ -21,7 +21,7 @@ from deployer.fix.ci_eval import (
     from_qualification,
 )
 from deployer.fix.qualify import Qualification, Qualified
-from deployer.forge import Completeness, FailedJob, _build_job
+from deployer.forge import Completeness, FailedJob, build_failed_job
 from deployer.reproduce.buildline import BuildConfig
 from deployer.reproduce.shape import Shape
 from tests.fix.conftest import enable_for_test
@@ -108,7 +108,7 @@ def _job(
             {"number": 4, "name": "smoke", "conclusion": "failure"},
         ],
     }
-    return _build_job(record, job_id, log, [], Completeness("present", "absent"))
+    return build_failed_job(record, job_id, log, [], Completeness("present", "absent"))
 
 
 def _q(
@@ -805,7 +805,9 @@ def test_forged_header_after_the_build_step_refused(boundary: str) -> None:
         for s in job.all_steps
     ] + [post]
     record = {"name": job.name, "conclusion": job.conclusion, "steps": steps}
-    job = _build_job(record, job.job_id, log, [], Completeness("present", "absent"))
+    job = build_failed_job(
+        record, job.job_id, log, [], Completeness("present", "absent")
+    )
     q = replace(_q(log), job=job)
     got = attempt_evidence(
         q, "missing_copy_source", _FORGED_COPY, (3, 3), log, dockerfile=_FORGED_DF

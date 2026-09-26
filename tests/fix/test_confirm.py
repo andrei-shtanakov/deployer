@@ -27,7 +27,7 @@ from deployer.fix.confirm import REFUSED, ConfirmAbort, confirm
 from deployer.fix.document import FixDocument, load, save
 from deployer.fix.qualify import Qualified
 from deployer.forge import AttemptRead, Evidence, FailedJob, GhError
-from tests.fix.conftest import enable_for_test
+from tests.fix.conftest import enable_for_test, held_lock
 from tests.fix.test_ci_eval import FROM_BODY, FROM_RECUR_BODY, stamp
 from tests.fix.test_publish import _published
 
@@ -671,6 +671,53 @@ def test_save_failure_names_file(fix: Fix) -> None:
 def test_unreadable_doc(tmp_path: Path) -> None:
     with pytest.raises(ConfirmAbort, match="cannot read"):
         confirm(tmp_path / "fix.json", CiGh("0" * 40), lambda: AT)
+
+
+# --- the fix.json lock ----------------------------------------------------------
+
+
+def test_lock_held(fix: Fix, capsys: pytest.CaptureFixture[str]) -> None:
+    """Another process holds the lock: refused (exit 2), nothing read from
+    gh, the document byte-for-byte unchanged."""
+    gh = fix.gh(fix.ok())
+    lock = f"{fix.doc_path}.lock"
+    with held_lock(fix.doc_path):
+        with pytest.raises(ConfirmAbort) as caught:
+            fix.run(gh)
+        assert str(caught.value) == f"another fix operation holds {lock}"
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(cli, "SubprocessGh", lambda: gh)
+            assert cli.main(["fix", "confirm", str(fix.doc_path)]) == 2
+    assert f"another fix operation holds {lock}" in capsys.readouterr().err
+    assert gh.paths == []
+    assert fix.doc_path.read_bytes() == fix.original
+
+
+def test_lock_sequential(fix: Fix) -> None:
+    """Two sequential runs both append: the lock is released between them
+    and its file is kept."""
+    before = len(fix.doc.ci_attempts)
+    fix.run(fix.gh(fix.ok()))
+    doc = fix.run(fix.gh(fix.ok()))
+    assert len(doc.ci_attempts) == before + 2
+    assert Path(f"{fix.doc_path}.lock").is_file()
+
+
+def test_lock_symlink(fix: Fix, tmp_path: Path) -> None:
+    """A symlink at the lock's name is refused, never followed."""
+    lock = Path(f"{fix.doc_path}.lock")
+    target = tmp_path / "elsewhere"
+    lock.unlink(missing_ok=True)
+    lock.symlink_to(target)
+    gh = fix.gh(fix.ok())
+    try:
+        with pytest.raises(ConfirmAbort, match=re.escape(f"cannot lock {lock}")):
+            fix.run(gh)
+    finally:
+        lock.unlink()
+    assert not target.exists()
+    assert gh.paths == []
+    assert fix.doc_path.read_bytes() == fix.original
 
 
 # --- the CLI (§8.2) ------------------------------------------------------------

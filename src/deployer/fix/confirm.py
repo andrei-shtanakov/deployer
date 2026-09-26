@@ -31,9 +31,12 @@ undetermined``.
 
 The attempt is appended to ``ci_attempts`` (never replacing an earlier
 one); the status mirrors it (``ci_confirmed`` or ``fix_proposed``); the
-document is saved atomically. Nothing raises except :class:`ConfirmAbort`
-(exit 2): ``fix.json`` could not be read or saved, or its directory is not
-writable.
+document is saved atomically. The whole operation, load through save,
+holds ``fix.json``'s exclusive lock (:func:`deployer.fix.document.exclusive`)
+so a concurrent ``confirm`` or ``publish`` cannot drop this attempt. Nothing
+raises except :class:`ConfirmAbort` (exit 2): the lock is held elsewhere or
+cannot be taken, ``fix.json`` could not be read or saved, or its directory is
+not writable.
 """
 
 import re
@@ -50,7 +53,9 @@ from deployer.fix.document import (
     CiAttempt,
     FixDocument,
     LastOperation,
+    LockError,
     check_writable,
+    exclusive,
     load,
     save,
 )
@@ -73,8 +78,8 @@ _SLUG_RE = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
 
 
 class ConfirmAbort(Exception):
-    """``fix.json`` could not be read or saved (exit 2); the message names
-    the file."""
+    """``fix.json`` could not be locked, read or saved (exit 2); the message
+    names the file."""
 
 
 @dataclass(frozen=True)
@@ -114,9 +119,22 @@ def confirm(doc_path: Path, gh: GhRunner, clock: Callable[[], str]) -> FixDocume
     Returns the saved document. ``last_operation.result`` is the attempt's
     outcome (``ci_confirmed`` or ``ci_confirmation_insufficient``), or
     :data:`REFUSED` when the status is not published (nothing read, no
-    attempt recorded). Raises :class:`ConfirmAbort` only when ``fix.json``
-    cannot be read or saved or its directory is not writable.
+    attempt recorded). Raises :class:`ConfirmAbort` only when ``fix.json``'s
+    lock is held elsewhere or cannot be taken (nothing read, the document
+    untouched), ``fix.json`` cannot be read or saved, or its directory is not
+    writable.
     """
+    try:
+        with exclusive(doc_path):
+            return _confirm_locked(doc_path, gh, clock)
+    except LockError as exc:
+        raise ConfirmAbort(str(exc)) from exc
+
+
+def _confirm_locked(
+    doc_path: Path, gh: GhRunner, clock: Callable[[], str]
+) -> FixDocument:
+    """:func:`confirm` under the document's lock."""
     try:
         doc = load(doc_path)
     except Exception as exc:  # noqa: BLE001 — every read failure is exit 2

@@ -35,7 +35,7 @@ from deployer.provenance.model import TreeRow
 from deployer.provenance.trust import trust_dir
 from deployer.reproduce import dockerfile, shape
 from deployer.reproduce.model import ReproductionSection
-from deployer.reproduce.run import TryDirError, _write_text
+from deployer.reproduce.run import TryDirError, write_utf8_record
 
 FRONTEND_ARG = "BUILDKIT_SYNTAX"
 """The build arg that switches BuildKit to another frontend (a dialect)."""
@@ -65,10 +65,10 @@ def prepare(
     artifact_path = section.binding.dockerfile
     job = _job(snapshot, section.binding.job_id)
     ci_text = shape.job_text(job)
-    _write_text(try_dir / CI_LOG, ci_text)
+    write_utf8_record(try_dir / CI_LOG, ci_text)
     artifact = _tree_bytes(source_dir, artifact_path)
     stdout, stderr = _build_output(try_dir, section)
-    listing, complete = _head_listing(attempt_dir, snapshot.head_sha)
+    listing, complete = read_head_listing(attempt_dir, snapshot.head_sha)
     environment = section.environment
     return VerifiedFacts(
         binding=Binding(
@@ -85,7 +85,7 @@ def prepare(
             checked_roots=(source_dir, root),
         ),
         reproduction=section,
-        parsed=dockerfile.parse(_as_r_reads(artifact or b"")),
+        parsed=dockerfile.parse(decode_as_read_text(artifact or b"")),
         head_listing=listing,
         head_listing_complete=complete,
         ci_text=ci_text,
@@ -148,9 +148,12 @@ def _sha256(data: bytes | None) -> str | None:
     return hashlib.sha256(data).hexdigest() if data is not None else None
 
 
-def _as_r_reads(data: bytes) -> str:
+def decode_as_read_text(data: bytes) -> str:
     """``data`` decoded as R's ``Path.read_text(errors="replace")`` decodes
-    it: locale encoding, universal newlines, so line numbers agree with R's."""
+    it: locale encoding, universal newlines, so line numbers agree with R's.
+
+    Shared with ``fix``, which must read a Dockerfile or workflow exactly as
+    reproduction and admission read it."""
     return io.TextIOWrapper(io.BytesIO(data), errors="replace").read()
 
 
@@ -172,7 +175,7 @@ def _read_record(path: Path) -> str:
         raise TryDirError(f"cannot read {path}: {exc}") from exc
 
 
-def _head_listing(attempt_dir: Path, head_sha: str) -> tuple[list[TreeRow], bool]:
+def read_head_listing(attempt_dir: Path, head_sha: str) -> tuple[list[TreeRow], bool]:
     """The ``head_sha`` listing R stored in ``source.json`` for this attempt,
     as stored, and whether it is complete (R's ``truncated`` flag negated)."""
     meta = attempt_dir / "source.json"

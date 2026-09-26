@@ -96,7 +96,7 @@ def context_conditions(parsed: ParsedDockerfile) -> list[str]:
 def _git_conditions(inst: Instruction) -> list[str]:
     """Unmet (d) conditions of one local COPY/ADD."""
     where = f"{inst.keyword} at line {inst.first_line}"
-    sources, why = _sources(inst)
+    sources, why = local_copy_sources(inst)
     if why is not None:
         if why == _HEREDOC_REASON:
             return []  # inline content: nothing is read from the context
@@ -104,13 +104,13 @@ def _git_conditions(inst: Instruction) -> list[str]:
     unmet: list[str] = []
     for raw in sources:
         at = f"at line {inst.first_line}"
-        if not _is_modelled_source(raw):  # as written, before normalising
+        if not is_modelled_source(raw):  # as written, before normalising
             unmet.append(
                 f".git exclusion not proven: {inst.keyword} {raw} {at} "
                 "(source pattern not modelled)"
             )
             continue
-        source = _norm(raw)
+        source = normalize_copy_path(raw)
         if _may_reach_git(source):
             unmet.append(f".git exclusion not proven: {inst.keyword} {source} {at}")
     return unmet
@@ -127,7 +127,7 @@ def _may_reach_git(source: str) -> bool:
     return source == "." or fnmatch.fnmatchcase(".git", first)
 
 
-def _sources(inst: Instruction) -> tuple[list[str], str | None]:
+def local_copy_sources(inst: Instruction) -> tuple[list[str], str | None]:
     """The local sources of a COPY/ADD, or why they cannot be read.
 
     Leading ``--flag`` tokens are split off first, so the JSON array form is
@@ -166,7 +166,7 @@ def _sources(inst: Instruction) -> tuple[list[str], str | None]:
     return rest[:-1], None
 
 
-def _norm(source: str) -> str:
+def normalize_copy_path(source: str) -> str:
     """Context-relative form of a local source; ``.`` for the root.
 
     BuildKit clamps a COPY/ADD source to the context root, the way a leading
@@ -179,7 +179,7 @@ def _norm(source: str) -> str:
     return posixpath.normpath("/" + source).lstrip("/") or "."
 
 
-def _is_modelled_source(source: str) -> bool:
+def is_modelled_source(source: str) -> bool:
     """Whether a source is inside the closed alphabet (spec §3.2).
 
     A literal path or a glob of ``*``, ``?``, ``**``, ``[...]`` over letters,
@@ -193,7 +193,7 @@ def _is_modelled_source(source: str) -> bool:
 
 def _has_unmodelled_chars(source: str) -> bool:
     """Outside the alphabet, or a ``[...]`` class the glob expansion can't read."""
-    return not _is_modelled_source(source) or "[" in source
+    return not is_modelled_source(source) or "[" in source
 
 
 def _check_source(

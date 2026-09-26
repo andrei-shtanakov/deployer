@@ -95,7 +95,7 @@ def reproduce_run(
     except OSError as exc:
         raise TryDirError(f"cannot prepare the try context: {exc}") from exc
     try:
-        _make_writable(context)
+        restore_owner_write(context)
     except OSError as exc:
         raise TryDirError(f"cannot make context/ writable: {exc}") from exc
     rel_try = try_dir.relative_to(root).as_posix()
@@ -182,15 +182,15 @@ def _build_and_compare(
     seq = try_dir.name
     tag = build_mod.repro_tag(run_id, seq)
     run = build_mod.run_build(rt, context, found.build, tag, build_timeout)
-    _write_text(try_dir / "build.stdout", run.stdout)
-    _write_text(try_dir / "build.stderr", run.stderr)
+    write_utf8_record(try_dir / "build.stdout", run.stdout)
+    write_utf8_record(try_dir / "build.stderr", run.stderr)
 
     syntax, lint, buildx, check_run = buildcheck.run_builder_check(
         rt, context, found.build.dockerfile, build_timeout
     )
     if check_run is not None:
-        _write_text(try_dir / "check.stdout", check_run.stdout)
-        _write_text(try_dir / "check.stderr", check_run.stderr)
+        write_utf8_record(try_dir / "check.stdout", check_run.stdout)
+        write_utf8_record(try_dir / "check.stderr", check_run.stderr)
     merged = buildcheck.merge_syntax(parser_checks, syntax, found.build.dockerfile)
     checks_out = merged + lint + [c for c in static if c not in parser_checks]
 
@@ -250,7 +250,7 @@ def _build_and_compare(
         ),
         checks=checks_out,
         build=BuildResult(
-            argv=_relative_argv(run.argv, try_dir),
+            argv=argv_relative_to(run.argv, try_dir),
             exit_code=run.exit_code,
             launch_error=run.launch_error,
             failed_instruction=local_ref,
@@ -355,11 +355,11 @@ def _new_try(attempt_dir: Path) -> Path:
 
 
 def _write(try_dir: Path, section: ReproductionSection) -> ReproductionSection:
-    _write_text(try_dir / "manifest.json", section.model_dump_json(indent=2))
+    write_utf8_record(try_dir / "manifest.json", section.model_dump_json(indent=2))
     return section
 
 
-def _write_text(path: Path, text: str) -> None:
+def write_utf8_record(path: Path, text: str) -> None:
     """``text`` written as UTF-8, newlines untranslated; an ``OSError`` or a
     ``UnicodeError`` raised as a :class:`TryDirError`.
 
@@ -399,7 +399,7 @@ def _make_read_only(root: Path) -> None:
             os.chmod(path, path.stat().st_mode & ~0o222)
 
 
-def _make_writable(root: Path) -> None:
+def restore_owner_write(root: Path) -> None:
     """Restore owner write on every file and directory under ``root``.
 
     ``shutil.copytree`` copies ``source/``'s (now read-only) permission bits
@@ -420,7 +420,7 @@ def _make_writable(root: Path) -> None:
             os.chmod(path, path.stat().st_mode | 0o200)
 
 
-def _relative_argv(argv: list[str], try_dir: Path) -> list[str]:
+def argv_relative_to(argv: list[str], try_dir: Path) -> list[str]:
     """The recorded argv with any path under ``try_dir`` made relative to it.
 
     The build still runs with the absolute paths in ``argv``; only the copy

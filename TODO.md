@@ -57,8 +57,10 @@ paragraph.
   coercion only reaches our own output; a hand-crafted signed snapshot with `"true"`
   would need a trusted key.
 - [ ] Lift the duplicated `_norm` / `_instruction_key` helpers into one shared helper (parked in A3 review) @owner:repo:deployer @id:admission-shared-instruction-key @epic:eco.dark-factory
-  `admission/decide.py` carries its own copies of `reproduce/checks.py:_norm` and
-  `admission/templates.py:_instruction_key`; one shared helper keeps them from drifting.
+  `admission/decide.py` carries its own private copies (`_norm`, `_instruction_key`) of
+  `reproduce/checks.py:normalize_copy_path` and
+  `admission/templates.py:instruction_compare_key`; one shared helper keeps them from
+  drifting.
 - [ ] Optionally refuse a trust root inside the git toplevel of the working directory (parked in A3 review) @owner:repo:deployer @id:admission-trust-root-git-toplevel @epic:eco.dark-factory
   Hardening beyond the spec's checked roots (A §2.3), not a known defect.
 - [ ] Real `docker build --check` recordings for the two synthetic reader fixtures @owner:repo:deployer @id:repro-check-output-real-recordings @epic:eco.dark-factory
@@ -89,31 +91,15 @@ paragraph.
 - [ ] Widen CI COPY confirmation to multi-stage Dockerfiles, with its own C-recording @id:fix-ci-copy-multistage @trigger:"a real case needs it" @epic:eco.dark-factory
   Multi-stage COPY is refused on CI today: no recording shows `stage-<i>` numbering past
   0 or named multi-stage output (F4b, #100).
-- [ ] `fix confirm` has no lock: two concurrent confirms can drop an appended attempt @id:fix-confirm-concurrent-lock @epic:eco.dark-factory
-  `fix/confirm.py` loads `fix.json`, appends one attempt to `ci_attempts` and saves —
-  read-modify-write with no lock. Two `deployer fix confirm` runs racing on the same
-  `fix.json` can each read the same `ci_attempts`, and the loser's save silently drops
-  the winner's appended attempt instead of both surviving.
-- [ ] `reproduce/shape.py:131` catches only `yaml.YAMLError`; a bad YAML date raises `ValueError` @id:reproduce-shape-yaml-date-valueerror @epic:eco.dark-factory
-  `_load`'s `except yaml.YAMLError` does not cover a malformed YAML date scalar, which
-  `yaml.safe_load` raises as a bare `ValueError` — an unhandled exception out of a
-  function documented as total. `fix/qualify.py`'s caller is safe regardless: it wraps
-  the read behind its own broad `except Exception`, so today the crash cannot reach a
-  qualification result, but `_load`'s own contract is still narrower than it claims.
-- [ ] Private cross-package helper imports should become public @id:fix-private-helpers-public @epic:eco.dark-factory
-  `_as_r_reads` (`admission/prepare.py:151`, imported by six `fix/*.py` modules —
-  `author`, `binding`, `envelope`, `fromfix`, `publish`, `qualify`), `_build_job`
-  (`forge.py:839`, imported by `fix/ci_eval.py`) and `_instruction_key`
-  (`admission/templates.py:348`, imported by `fix/ci_eval.py`) are all underscore-private
-  names reached across a package boundary.
-  None has broken yet, but nothing stops the owning module from changing their shape
-  without noticing the cross-package callers.
-- [ ] In a partial clone, `cat-file` in `fix publish` and `fix confirm` could fetch over the network @id:fix-cat-file-partial-clone-fetch @epic:eco.dark-factory
-  `fix/publish.py` and `fix/confirm.py` read committed blobs with `git cat-file blob
-  <commit>:<path>` (`fix/workspace.py` too, for the original Dockerfile at `HEAD`). In an
-  ordinary clone every reachable blob is already local, but in a partial clone
-  (`--filter=blob:none`/`tree:none`) a missing blob triggers Git's own lazy fetch over
-  the network — silently, from inside a command the design describes as local-only.
+- [ ] `deployer author --signing-key` reads blobs without the partial-clone refusal @id:author-partial-clone-refusal @epic:eco.dark-factory
+  `provenance/issue.py` reads blobs through `gitrepo` with only `GIT_NO_LAZY_FETCH=1`; on git older
+  than 2.44 a partial clone would still lazy-fetch, and on newer git it surfaces as a raw
+  `GitError` rather than a clear refusal. `fix` refuses partial clones explicitly; authoring
+  does not (found reviewing the tech-debt PR).
+- [ ] Private imports across packages outside `fix` @id:private-imports-outside-fix @epic:eco.dark-factory
+  `admission/templates.py` ← `reproduce.compare._error_blocks`, `bench.py` ← `author._deployer_git_sha`,
+  `verify.py` ← `facts._normalize_requirement_name`. Same problem `fix-private-helpers-public` fixed
+  inside `fix`: rename to meaningful public names, no aliases.
 - [ ] Step-level log binding in forge: read the run-level log archive so a step's OUTPUT is bound to its StepRef, not only its `##[group]` header block @owner:repo:deployer @id:forge-step-level-log-binding @epic:eco.dark-factory
   Today `actions/jobs/{id}/logs` gives no line→step binding beyond the runner's `##[group]Run
   <name>` block, so the diagnostic text (test output, build errors) lands as honest job-level
@@ -232,6 +218,35 @@ them is the next thing to pick up.
 
 ## Shipped
 
+- [x] `reproduce/shape.py:131` catches only `yaml.YAMLError`; a bad YAML date raises `ValueError` @id:reproduce-shape-yaml-date-valueerror @epic:eco.dark-factory
+  `_load`'s `except yaml.YAMLError` does not cover a malformed YAML date scalar, which
+  `yaml.safe_load` raises as a bare `ValueError` — an unhandled exception out of a
+  function documented as total. `fix/qualify.py`'s caller is safe regardless: it wraps
+  the read behind its own broad `except Exception`, so today the crash cannot reach a
+  qualification result, but `_load`'s own contract is still narrower than it claims.
+  Fixed: `_load` refuses (`workflow not readable: <Exc>`) on `ValueError`, `TypeError`, `RecursionError` too (tech-debt PR).
+- [x] In a partial clone, `cat-file` in `fix publish` and `fix confirm` could fetch over the network @id:fix-cat-file-partial-clone-fetch @epic:eco.dark-factory
+  `fix/publish.py` and `fix/confirm.py` read committed blobs with `git cat-file blob
+  <commit>:<path>` (`fix/workspace.py` too, for the original Dockerfile at `HEAD`). In an
+  ordinary clone every reachable blob is already local, but in a partial clone
+  (`--filter=blob:none`/`tree:none`) a missing blob triggers Git's own lazy fetch over
+  the network — silently, from inside a command the design describes as local-only.
+  Fixed: `GIT_NO_LAZY_FETCH=1` in `gitrepo.guarded_git_env`, plus an explicit partial-clone refusal in the `fix` gate and `workspace` guards (tech-debt PR).
+- [x] `fix confirm` has no lock: two concurrent confirms can drop an appended attempt @id:fix-confirm-concurrent-lock @epic:eco.dark-factory
+  `fix/confirm.py` loads `fix.json`, appends one attempt to `ci_attempts` and saves —
+  read-modify-write with no lock. Two `deployer fix confirm` runs racing on the same
+  `fix.json` can each read the same `ci_attempts`, and the loser's save silently drops
+  the winner's appended attempt instead of both surviving.
+  Fixed: `publish` and `confirm` take an exclusive non-blocking `flock` on `fix.json.lock` (never deleted); a held lock refuses, exit 2 (tech-debt PR).
+- [x] Private cross-package helper imports should become public @id:fix-private-helpers-public @epic:eco.dark-factory
+  `_as_r_reads` (`admission/prepare.py:151`, imported by six `fix/*.py` modules —
+  `author`, `binding`, `envelope`, `fromfix`, `publish`, `qualify`), `_build_job`
+  (`forge.py:839`, imported by `fix/ci_eval.py`) and `_instruction_key`
+  (`admission/templates.py:348`, imported by `fix/ci_eval.py`) are all underscore-private
+  names reached across a package boundary.
+  None has broken yet, but nothing stops the owning module from changing their shape
+  without noticing the cross-package callers.
+  Fixed: 14 names made public with meaningful names (table in the tech-debt PR), e.g. `_as_r_reads` → `decode_as_read_text`, `_build_job` → `build_failed_job`.
 - [x] Fix authoring from a diagnosis: artifact edit, L1/L2, confirm the diagnosed cause is gone @owner:repo:deployer @id:ci-fix-authoring @epic:eco.dark-factory
   — the other half of the founding doc's "generate/fix ... diagnose failed CI", split
   out with the owner 2026-09-21 so the diagnosis slice can be accepted on its own.

@@ -22,9 +22,9 @@ from deployer.reproduce.checks import (
     _check_source,
     _context_paths,
     _has_unmodelled_chars,
-    _norm,
     _skip,
-    _sources,
+    local_copy_sources,
+    normalize_copy_path,
 )
 from deployer.reproduce.dockerfile import (
     _CHECK_IDS,
@@ -193,7 +193,7 @@ def _copy_instructions(parsed: ParsedDockerfile) -> Iterator[tuple[int, Instruct
 
 def _raw_subjects(inst: Instruction) -> list[str]:
     """Sources as written, or ``"*"`` when the instruction cannot be read."""
-    sources, why_skipped = _sources(inst)
+    sources, why_skipped = local_copy_sources(inst)
     return [UNREADABLE_SUBJECT] if why_skipped is not None else sources
 
 
@@ -206,7 +206,7 @@ def _source_records(
     rules: IgnoreRules,
 ) -> list[CheckRecord]:
     """The records of one COPY/ADD — the loop body of R's ``copy_sources``."""
-    sources, why_skipped = _sources(inst)
+    sources, why_skipped = local_copy_sources(inst)
     if why_skipped is not None:
         return [_skip_record(ordinal, inst, UNREADABLE_SUBJECT, why_skipped)]
     records: list[CheckRecord] = []
@@ -221,7 +221,7 @@ def _source_records(
                 _skip_record(ordinal, inst, raw, f"source pattern not modelled: {raw}")
             )
             continue
-        source = _norm(raw)
+        source = normalize_copy_path(raw)
         found = _check_source(inst, source, files, context, dockerfile, rules)
         if not found:
             records.append(_record(COPY_SOURCES, ordinal, inst, source, "passed"))

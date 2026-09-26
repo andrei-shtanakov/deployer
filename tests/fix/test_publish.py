@@ -32,7 +32,7 @@ from deployer.fix.publish import (
 from deployer.forge import GhError
 from deployer.provenance import trust
 from deployer.provenance.model import SET_ROOT
-from tests.fix.conftest import enable_for_test, git
+from tests.fix.conftest import enable_for_test, git, held_lock
 from tests.fix.test_author import FROM_STDOUT, Case, _case
 from tests.provenance.conftest import make_key
 
@@ -834,6 +834,44 @@ def test_an_invalid_base_is_refused_unrecorded(pub: Published, base: str) -> Non
     _refused(doc, "is not a valid branch name")
     assert doc.publication is not None and doc.publication.base is None
     assert pub.remote.calls == []
+
+
+def test_lock_held(
+    pub: Published,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Another process holds the lock: refused (exit 2), no git or gh call,
+    the document byte-for-byte unchanged."""
+    from deployer import cli
+
+    original = pub.doc_path.read_bytes()
+    lock = f"{pub.doc_path}.lock"
+    monkeypatch.setattr(cli, "SubprocessGitRemote", lambda: pub.remote)
+    monkeypatch.setattr(cli, "SubprocessGh", lambda: pub.gh)
+    with held_lock(pub.doc_path):
+        with pytest.raises(PublishAbort) as caught:
+            pub.run()
+        assert str(caught.value) == f"another fix operation holds {lock}"
+        argv = ["fix", "publish", str(pub.doc_path), "--base", BASE]
+        assert cli.main(argv) == 2
+    assert f"another fix operation holds {lock}" in capsys.readouterr().err
+    assert pub.remote.calls == [] and pub.gh.calls == []
+    assert pub.doc_path.read_bytes() == original
+
+
+def test_lock_symlink(pub: Published, tmp_path: Path) -> None:
+    """A symlink at the lock's name is refused, never followed."""
+    original = pub.doc_path.read_bytes()
+    lock = Path(f"{pub.doc_path}.lock")
+    target = tmp_path / "elsewhere"
+    lock.unlink(missing_ok=True)
+    lock.symlink_to(target)
+    with pytest.raises(PublishAbort, match="cannot lock"):
+        pub.run()
+    assert not target.exists()
+    assert pub.remote.calls == [] and pub.gh.calls == []
+    assert pub.doc_path.read_bytes() == original
 
 
 def test_an_unreadable_document_aborts(tmp_path: Path) -> None:

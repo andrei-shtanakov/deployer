@@ -29,7 +29,7 @@ from deployer.provenance.model import (
     sha256_hex,
 )
 from deployer.reproduce.model import ReproductionSection
-from deployer.reproduce.run import _make_writable, reproduce_run
+from deployer.reproduce.run import reproduce_run, restore_owner_write
 from tests.provenance.conftest import make_key, make_repo_with_origin
 from tests.reproduce.bundles import BUNDLES, BundleGh, _containers
 from tests.reproduce.conftest import FakeContainers
@@ -317,7 +317,7 @@ class Replayed:
 
     def unlock(self) -> Path:
         """Make R's read-only ``source/`` writable for a targeted mutation."""
-        _make_writable(self.source)
+        restore_owner_write(self.source)
         return self.source
 
 

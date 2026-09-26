@@ -21,8 +21,11 @@ is reused, at any other commit refused); a PR is created only after that.
 
 Success moves ``locally_confirmed`` to ``fix_proposed`` and keeps
 ``fix_proposed``/``ci_confirmed``. A refusal leaves the status unchanged
-and is recorded in ``last_operation``. Nothing raises except
-:class:`PublishAbort` (exit 2): ``fix.json`` could not be read or saved.
+and is recorded in ``last_operation``. The whole operation, load through
+the last save, holds ``fix.json``'s exclusive lock
+(:func:`deployer.fix.document.exclusive`). Nothing raises except
+:class:`PublishAbort` (exit 2): the lock is held elsewhere or cannot be
+taken, or ``fix.json`` could not be read or saved.
 
 Every Git command runs through ``fix.workspace``'s guarded chokepoint:
 hooks, filters and fsmonitor are disabled, so publishing never runs a
@@ -40,14 +43,16 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from deployer.admission.ownership import verify_ownership
-from deployer.admission.prepare import _as_r_reads
+from deployer.admission.prepare import decode_as_read_text
 from deployer.fix.binding import Bound, link_problem
 from deployer.fix.chooser import _fence
 from deployer.fix.document import (
     FixDocument,
     LastOperation,
+    LockError,
     Proposal,
     Publication,
+    exclusive,
     load,
     save,
 )
@@ -85,7 +90,7 @@ _NO_PROMPT = {"GIT_TERMINAL_PROMPT": "0"}
 
 
 class PublishAbort(Exception):
-    """Exit 2 (§8.2): ``fix.json`` could not be read or saved; the message
+    """Exit 2 (§8.2): ``fix.json`` could not be locked, read or saved; the message
     names what was already done on the remote (§8.4)."""
 
 
@@ -215,8 +220,20 @@ def publish(
     :data:`PUBLISHED` (the branch is pushed and a PR created or found, its
     URL in ``publication.pr_url``) or :data:`REFUSED` with the reason; a
     refusal never changes ``status``. Raises :class:`PublishAbort` only when
-    ``fix.json`` cannot be read or saved.
+    ``fix.json``'s lock is held elsewhere or cannot be taken (nothing read,
+    the document untouched) or ``fix.json`` cannot be read or saved.
     """
+    try:
+        with exclusive(doc_path):
+            return _publish_locked(doc_path, base, env, git, gh)
+    except LockError as exc:
+        raise PublishAbort(str(exc)) from exc
+
+
+def _publish_locked(
+    doc_path: Path, base: str, env: Mapping[str, str], git: GitRemote, gh: GhRunner
+) -> FixDocument:
+    """:func:`publish` under the document's lock."""
     try:
         doc = load(doc_path)
     except Exception as exc:  # noqa: BLE001 — every read failure is exit 2
@@ -638,7 +655,7 @@ def _dockerfile_problem(doc: FixDocument, head_df: bytes, fix_df: bytes) -> str 
 
 def _bound(head_df: bytes, proposal: Proposal) -> Bound | str:
     """The stored proposal's instruction, re-bound over ``head_df``."""
-    instructions = parse(_as_r_reads(head_df)).instructions
+    instructions = parse(decode_as_read_text(head_df)).instructions
     if not 0 <= proposal.ordinal < len(instructions):
         return f"the proposal's ordinal {proposal.ordinal} is out of range"
     instruction = instructions[proposal.ordinal]

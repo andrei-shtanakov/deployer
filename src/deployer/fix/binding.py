@@ -12,8 +12,8 @@ span.
 from dataclasses import dataclass
 
 from deployer.admission.model import Defect
-from deployer.admission.prepare import _as_r_reads
-from deployer.reproduce.checks import _norm, _sources
+from deployer.admission.prepare import decode_as_read_text
+from deployer.reproduce.checks import local_copy_sources, normalize_copy_path
 from deployer.reproduce.dockerfile import Instruction, parse
 
 
@@ -30,7 +30,7 @@ class Bound:
 def bind_instruction(dockerfile: bytes, defect: Defect) -> Bound | str:
     """Bind ``defect`` to exactly one instruction of ``dockerfile`` (§3.1).
 
-    ``dockerfile`` is decoded with admission's own ``prepare._as_r_reads``
+    ``dockerfile`` is decoded with admission's own ``prepare.decode_as_read_text``
     (the locale encoding, universal newlines, ``errors="replace"``) before
     R's ``dockerfile.parse``, so line numbers — and, for non-ASCII bytes,
     the decoded characters themselves — agree with what R actually read,
@@ -40,7 +40,7 @@ def bind_instruction(dockerfile: bytes, defect: Defect) -> Bound | str:
     ``from_argument_count``: its normalised text). Any failure returns the
     reason (``fix method not established``, per the caller).
     """
-    text = _as_r_reads(dockerfile)
+    text = decode_as_read_text(dockerfile)
     parsed = parse(text)
     matches = [
         (ordinal, instruction)
@@ -68,14 +68,14 @@ def _cross_check(defect: Defect, instruction: Instruction) -> str | None:
     """The §3.1 cross-check for ``defect.cls``, or ``None`` if it holds."""
     if defect.cls == "missing_copy_source":
         # R's own `copy_sources` absence finding is derived from exactly
-        # this instruction's `_sources`/`_norm` (checks.py): reusing them
-        # here, rather than re-deriving the source list independently,
-        # keeps the cross-check tied to the same notion of "source" that
-        # produced the defect in the first place.
-        sources, why = _sources(instruction)
+        # this instruction's `local_copy_sources`/`normalize_copy_path`
+        # (checks.py): reusing them here, rather than re-deriving the source
+        # list independently, keeps the cross-check tied to the same notion
+        # of "source" that produced the defect in the first place.
+        sources, why = local_copy_sources(instruction)
         if why is not None:
             return f"cross-check failed: sources not readable ({why})"
-        normalised = {_norm(source) for source in sources}
+        normalised = {normalize_copy_path(source) for source in sources}
         if defect.object not in normalised:
             return (
                 f"cross-check failed: {defect.object!r} is not a normalised "
@@ -112,8 +112,8 @@ def link_problem(original: bytes, corrected: bytes, bound: Bound) -> str | None:
     violated check's reason is returned, or ``None`` once ``corrected``
     passes them all.
     """
-    before = parse(_as_r_reads(original))
-    after = parse(_as_r_reads(corrected))
+    before = parse(decode_as_read_text(original))
+    after = parse(decode_as_read_text(corrected))
     if not 0 <= bound.ordinal < len(before.instructions):
         return "bound ordinal is out of range for the original Dockerfile"
     first, last = bound.lines

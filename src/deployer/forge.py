@@ -31,11 +31,16 @@ _PER_PAGE = 100
 _FAILED_CONCLUSIONS = frozenset({"failure", "timed_out"})
 _GREEN_CONCLUSIONS = frozenset({"success", "skipped", "neutral"})
 _HTTP_STATUS_RE = re.compile(r"\(HTTP (\d{3})\)")
-_LOG_TIMESTAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z ?")
+RUNNER_LOG_TIMESTAMP_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z ?"
+)
+"""The ISO-8601 UTC timestamp (and one space) a runner prefixes to each log line."""
 # The runner colours some lines (e.g. echoing the step command) with ANSI CSI
 # sequences; stripping is mechanical framing removal, not interpretation.
-_ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
-_GROUP_PREFIX = "##[group]"
+ANSI_CSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+"""An ANSI CSI escape sequence (colour and cursor control) in a runner log."""
+RUNNER_GROUP_PREFIX = "##[group]"
+"""The runner's marker that opens a collapsible log group; the title follows it."""
 _ENDGROUP = "##[endgroup]"
 
 LogsState = Literal["present", "unavailable", "error"]
@@ -199,7 +204,7 @@ class AttemptRead:
     past its metadata) or when ``error`` is set. ``logs_state`` is per job
     id. ``error`` records any ``GhError`` — HTTP status or none — and any
     malformed or unparseable response; it is never raised. ``logs`` maps a
-    job id to the exact log text read for it (the text ``_build_job`` was
+    job id to the exact log text read for it (the text ``build_failed_job`` was
     given); a job whose log was not read (``logs_state`` other than
     ``"present"``) has no key, so a consumer never mistakes an absent log
     for an empty one.
@@ -392,7 +397,7 @@ def fetch_failed_run(
         log_text, logs_state = gh.logs(job_id)
         annotations, annotations_state = gh.annotations(job_id)
         jobs.append(
-            _build_job(
+            build_failed_job(
                 record,
                 job_id,
                 log_text,
@@ -593,13 +598,15 @@ def _read_all_jobs(
         if state == "present":
             texts[job_id] = log_text
         jobs.append(
-            _build_job(record, job_id, log_text, [], Completeness(state, "absent"))
+            build_failed_job(
+                record, job_id, log_text, [], Completeness(state, "absent")
+            )
         )
     return jobs, states, texts
 
 
 def _check_job_record(record: object) -> None:
-    """Refuse a job record ``_build_job`` could not read without guessing."""
+    """Refuse a job record ``build_failed_job`` could not read without guessing."""
     steps = record.get("steps") if isinstance(record, dict) else None
     ok = (
         isinstance(record, dict)
@@ -847,13 +854,19 @@ def _level_of(annotation: dict[str, Any]) -> str | None:
     return None if level is None else str(level)
 
 
-def _build_job(
+def build_failed_job(
     record: dict[str, Any],
     job_id: int,
     log_text: str,
     annotations: list[dict[str, Any]],
     completeness: Completeness,
 ) -> FailedJob:
+    """A :class:`FailedJob` built from a job ``record`` and its ``log_text``.
+
+    Only non-green steps are kept as ``steps`` (``all_steps`` keeps every
+    step); log blocks are bound to steps by exact title, and those bound to a
+    green step, plus ``annotations``, become job-level evidence.
+    """
     all_steps = list(record.get("steps") or [])
     step_infos = [
         StepInfo(
@@ -936,11 +949,11 @@ def _split_blocks(log_text: str) -> list[tuple[str | None, list[str]]]:
             blocks.append((title, current))
 
     for raw in log_text.splitlines():
-        line = _LOG_TIMESTAMP_RE.sub("", raw, count=1)
-        line = _ANSI_RE.sub("", line)
-        if line.startswith(_GROUP_PREFIX):
+        line = RUNNER_LOG_TIMESTAMP_RE.sub("", raw, count=1)
+        line = ANSI_CSI_RE.sub("", line)
+        if line.startswith(RUNNER_GROUP_PREFIX):
             flush()
-            title = line.removeprefix(_GROUP_PREFIX)
+            title = line.removeprefix(RUNNER_GROUP_PREFIX)
             current = [line]
         elif line == _ENDGROUP:
             current.append(line)

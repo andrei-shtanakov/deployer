@@ -3,7 +3,7 @@
 import pytest
 
 from deployer.admission.model import Defect
-from deployer.admission.prepare import _as_r_reads
+from deployer.admission.prepare import decode_as_read_text
 from deployer.fix.binding import Bound, bind_instruction, link_problem, splice
 from deployer.fix.envelope import Candidates, apply_source, eligible_sources
 from deployer.provenance.model import TreeRow
@@ -30,7 +30,7 @@ def _bound(dockerfile: bytes, line: int = 2) -> Bound:
     Lets the reading refusals be tested on forms ``bind_instruction``
     itself would already refuse.
     """
-    parsed = parse(_as_r_reads(dockerfile))
+    parsed = parse(decode_as_read_text(dockerfile))
     ordinal, instruction = next(
         (n, i) for n, i in enumerate(parsed.instructions) if i.first_line == line
     )
@@ -103,7 +103,7 @@ def test_eligible_through_bind_instruction() -> None:
 
 
 def test_position_is_the_absent_source_index() -> None:
-    """``position`` is the absent source's index in ``_sources`` order.
+    """``position`` is the absent source's index in ``local_copy_sources`` order.
 
     Task 8's ``regressions``/``defect_check_passes`` key a fresh
     ``copy_sources`` re-check by this index, not by subject text, so it

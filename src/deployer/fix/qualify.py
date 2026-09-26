@@ -22,7 +22,7 @@ reads a workflow. It never raises.
 from dataclasses import dataclass
 from typing import Literal
 
-from deployer.admission.prepare import _as_r_reads
+from deployer.admission.prepare import decode_as_read_text
 from deployer.forge import AttemptRead, FailedJob
 from deployer.provenance.model import sha256_hex
 from deployer.reproduce.buildline import BuildConfig
@@ -136,7 +136,7 @@ def _judge(
         return _Verdict("undetermined", f"attempt not completed: {read.status}")
     if read.jobs is None:
         return _Verdict("undetermined", "attempt jobs not read")
-    text = _as_r_reads(workflow)
+    text = decode_as_read_text(workflow)
     mapped = _map_job(read.jobs, text, original_key)
     if isinstance(mapped, _Verdict):
         return mapped
