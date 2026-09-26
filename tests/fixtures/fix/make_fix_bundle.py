@@ -79,6 +79,16 @@ NOT_CHECKSUMMED = {CHECKSUMS, "make_fix_bundle.py"}
 BASE_FILES = ("snapshot.json", "endpoint.json", "local.stdout", "local.stderr")
 BASE_FILES_OPTIONAL = ("local.exit", "local.timeout")
 FAKE_ANSWER = "fake-model-answer.json"
+WITHOUT_SEAM_NOTE = """
+## Note on `without_seam` (2026-09-26)
+
+`expected.json`'s `without_seam` (`no local confirmation: templates not enabled`)
+was true when this bundle was recorded (#94): then no template row was enabled.
+Since F3b (#99) the local rows are enabled on the L-recordings, and since F4b the
+CI rows on the C-recordings, so production no longer stops that way. The value is
+kept as recorded, not regenerated: it states the stop with **no** template row
+enabled, a configuration that production no longer has.
+"""
 NOISE = shutil.ignore_patterns("__pycache__", ".DS_Store")
 GIT = ("git", "-c", "core.excludesFile=/dev/null", "-c", "core.autocrlf=false")
 ABSENT = "docs/setup.md"
@@ -363,6 +373,7 @@ def _provenance(name: str, case: Case, bundle: Path) -> str:
         if case.answer is not None
         else ""
     )
+    note = WITHOUT_SEAM_NOTE if "without_seam" in case.expected else ""
     return f"""# Provenance: `{name}` (fix case, F §10 level P, §11 stage 1b)
 
 Proves: {case.proves}.
@@ -396,7 +407,7 @@ real build saw the files added below.
 
 `tree-listing.json` is `git ls-tree -r -t --full-tree` of this `tree/`; its
 `sha` stays the run's `head_sha`. `expected.json` and this file are new.
-"""
+{note}"""
 
 
 def write_checksums() -> None:

@@ -70,3 +70,11 @@ replay; `defect`; `envelope` — `passed` or `stopped`; `model_called`; then eit
 answer's file, `fake: true`), `proposal` (`chosen_by: model`, transformation,
 original and replacement instruction) and `without_seam` (the stop when no template
 row is enabled), or `stop` (status, reason, the detail's prefix).
+
+**Note (2026-09-26).** `copy-basename-unique`'s `without_seam` (`no local
+confirmation: templates not enabled`) was true when the bundle was recorded (#94),
+before any template row was enabled. Since F3b (#99) the local rows are enabled on the
+L-recordings, and since F4b the CI rows on the C-recordings, so production no longer
+stops that way. `expected.json` is kept as recorded, not regenerated: `without_seam`
+states the stop with no template row enabled. The case's own `PROVENANCE.md` carries
+the same note, written by `make_fix_bundle.py`.
