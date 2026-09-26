@@ -8,6 +8,7 @@ flag, environment variable or configuration names the registry.
 """
 
 import copy
+import fcntl
 import json
 import os
 import shutil
@@ -47,6 +48,18 @@ def enable_for_test(*row_ids: str) -> Iterator[tuple[templates.Row, ...]]:
 # --- an admitted verdict over a real clone (shared by the gate and ``fix``) ---
 
 ORIGIN = "git@github.com:example/project.git"
+
+
+@contextmanager
+def held_lock(doc_path: Path) -> Iterator[None]:
+    """This test process holds ``flock`` on ``<doc_path>.lock``, as a
+    concurrent ``fix publish``/``fix confirm`` would."""
+    fd = os.open(f"{doc_path}.lock", os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        yield
+    finally:
+        os.close(fd)
 
 
 def git(repo: Path, *args: str) -> str:
