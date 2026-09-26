@@ -432,8 +432,9 @@ out` (and `fetch failure`); run-3 → `UNCLASSIFIED`, `assertion error`; the con
 replayed offline by `tests/test_fixture_runs.py`. A fifth run with an injected
 `FROM` syntax error (2026-09-22, `polygon/run-5` @ `937d465`, run `35706782471`)
 reads `UNCLASSIFIED` with `dockerfile parse error`; its evidence (injection diff,
-verdict, log, anonymised snapshot) is still on the rescue branch
-`rescue/pr3-negchecks-tail` at `9e89daa`, **not** in this PR's tree, and no test in
+verdict, log, anonymised snapshot) is kept at commit `9e89daa`, pinned by the tag
+`evidence/polygon-run-5-diagnosis` (the rescue branch that held it was deleted
+2026-09-26), **not** in this PR's tree, and no test in
 this PR replays it. The original promise — read a failed run and establish why it
 failed — is **open**, and is taken up by
 `docs/superpowers/specs/2026-09-22-ci-failure-reproduction-design.md` (a separate

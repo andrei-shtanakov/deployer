@@ -318,7 +318,7 @@ them is the next thing to pick up.
   the final head all read UNCLASSIFIED with their observations: run-1 `copy/add source not
   found`, run-2 `connection timed out`, run-3 `assertion error`, control → refusal. Run-5
   (injected `FROM` syntax error, 2026-09-22, reads `dockerfile parse error`) is a saved
-  experiment on `rescue/pr3-negchecks-tail` @ 9e89daa, not a fixture of this tree. Paid
+  experiment at `9e89daa`, pinned by the tag `evidence/polygon-run-5-diagnosis`, not a fixture of this tree. Paid
   benchmark #2 promoted as golden 2.0 (12/12).
 - [x] CI-failure reproduction: restore the artifact and its context at the run's actual checkout SHA, run deterministic checks and L2 on a supported build configuration, report findings with status and evidence — no causal class @owner:repo:deployer @id:ci-failure-reproduction @epic:eco.dark-factory
   Shipped by the stack #76 (forge), #77 (offline core), #78 (runtime core), #79
