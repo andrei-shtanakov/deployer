@@ -22,6 +22,7 @@ observation made with the earlier hypothesis matchers and is not read.
 
 import hashlib
 import json
+import re
 import subprocess
 from collections.abc import Iterator
 from dataclasses import dataclass, field
@@ -301,6 +302,50 @@ def test_padding_is_what_c4_and_c9_print() -> None:
     ):
         calls = json.loads((CI / name / "gh-calls.json").read_text())
         assert f"#14 {header}\n" in calls[-1]["stdout"], name
+
+
+_PRINTED_RE = re.compile(r"#[0-9]+ \[(?P<bracket>[^\]]+)\] (?P<text>.*)")
+_STAMP_RE = re.compile(r"\ufeff?[0-9T:.-]+Z ")
+
+
+def _printed(name: str) -> list[tuple[str, str]]:
+    """Every ``(bracket, text)`` stage header in the case's recorded job
+    logs (``[internal]``/``[auth]`` vertices are no stage steps)."""
+    calls = json.loads((CI / name / "gh-calls.json").read_text())
+    logs = [c.get("stdout") or "" for c in calls if c["argv"][-1].endswith("/logs")]
+    return [
+        (m.group("bracket"), m.group("text"))
+        for log in logs
+        for line in log.split("\n")
+        if (m := _PRINTED_RE.fullmatch(_STAMP_RE.sub("", line, count=1)))
+        and m.group("bracket").split()[0] not in ("internal", "auth")
+    ]
+
+
+@pytest.mark.parametrize("name", _names(), ids=[n.split("-")[0] for n in _names()])
+def test_buildkit_position_model(name: str) -> None:
+    """Ruling Z: every stage header BuildKit printed in a C-recording is the
+    position :func:`templates.buildkit_steps` derives from the recorded
+    Dockerfile (a FROM header prints the resolved image, so it binds to the
+    stage's FROM); the checked COPY/FROM is printed at its derived position.
+    ``c8`` (two stages, a parse error) prints no stage header and is outside
+    the model."""
+    case = _case(name)
+    steps = templates.buildkit_steps(case.dockerfile)
+    printed = _printed(name)
+    if isinstance(steps, str):
+        assert name == "c8-from-bad-in-skipped-stage", steps
+        assert printed == []
+        return
+    derived = {("FROM" if i.keyword == "FROM" else i.text): p.bracket for i, p in steps}
+    assert printed
+    for bracket, text in printed:
+        key = "FROM" if text.startswith("FROM ") else text
+        assert derived[key] == bracket, (text, bracket)
+    if case.kind == "copy":
+        assert (derived[case.corrected], case.corrected) in printed
+    else:
+        assert any(b == derived["FROM"] and t.startswith("FROM ") for b, t in printed)
 
 
 # --- end to end through ``confirm`` ------------------------------------------

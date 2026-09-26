@@ -45,7 +45,7 @@ _PODMAN_COPY_OK = (
 _BUILDKIT_COPY_OK = (
     "#1 [internal] load build definition from Dockerfile\n"
     "#1 DONE 0.0s\n"
-    "#5 [stage-0 2/3] COPY docs/setup.md /app/docs/setup.md\n"
+    "#5 [extra 3/3] COPY docs/setup.md /app/docs/setup.md\n"
     "#5 DONE 0.1s\n"
 )
 _BUILDKIT_FROM_OK = (
@@ -643,13 +643,13 @@ def test_buildkit_copy_synthetic_shape_passes() -> None:
 
 def test_buildkit_copy_cached_not_accepted() -> None:
     """``#k CACHED`` is never accepted automatically."""
-    log = f"#5 [stage-0 2/3] {_COPY}\n#5 CACHED\n"
+    log = f"#5 [extra 3/3] {_COPY}\n#5 CACHED\n"
     assert _ci_copy(log).evidence == "not_confirmed"
 
 
 def test_buildkit_copy_error() -> None:
     """A step-bound error → not confirmed."""
-    log = f"#5 [stage-0 2/3] {_COPY}\n#5 ERROR: failed to calculate checksum\n"
+    log = f"#5 [extra 3/3] {_COPY}\n#5 ERROR: failed to calculate checksum\n"
     assert _ci_copy(log).evidence == "not_confirmed"
 
 
@@ -661,17 +661,17 @@ def test_buildkit_copy_header_absent() -> None:
 
 def test_buildkit_copy_missing_done() -> None:
     """No ``#k DONE`` for the header's k → binding ambiguous."""
-    log = f"#5 [stage-0 2/3] {_COPY}\n#6 DONE 0.1s\n"
+    log = f"#5 [extra 3/3] {_COPY}\n#6 DONE 0.1s\n"
     assert _ci_copy(log).evidence == "binding_ambiguous"
 
 
 @pytest.mark.parametrize(
     "log",
     [
-        f"#5 [stage-0 2/3] {_COPY}\n#5 [stage-0 2/3] {_COPY}\n#5 DONE 0.1s\n",  # header twice
-        f"#5 [stage-0 2/3] {_COPY}\n#9 [stage-0 2/3] {_COPY}\n#5 DONE 0.1s\n#9 DONE 0.1s\n",
-        f"#5 [stage-0 2/3] {_COPY}\n#5 [stage-0 3/3] RUN x\n#5 DONE 0.1s\n",  # k reused
-        f"#5 [stage-0 2/3] {_COPY}\n#5 DONE 0.1s\n#5 DONE 0.2s\n",  # DONE twice
+        f"#5 [extra 3/3] {_COPY}\n#5 [extra 3/3] {_COPY}\n#5 DONE 0.1s\n",  # header twice
+        f"#5 [extra 3/3] {_COPY}\n#9 [extra 3/3] {_COPY}\n#5 DONE 0.1s\n#9 DONE 0.1s\n",
+        f"#5 [extra 3/3] {_COPY}\n#5 [stage-0 3/3] RUN x\n#5 DONE 0.1s\n",  # k reused
+        f"#5 [extra 3/3] {_COPY}\n#5 DONE 0.1s\n#5 DONE 0.2s\n",  # DONE twice
     ],
 )
 def test_buildkit_copy_repeated_k(log: str) -> None:
@@ -730,13 +730,25 @@ def test_buildkit_from_loading_steps_are_not_evidence() -> None:
 
 
 @pytest.mark.parametrize(
-    "bracket",
-    ["stage-0  7/10", "stage-0 10/10", "stage-0 7/9", "a    7/1000", "x 2/3"],
+    ("bracket", "k", "n", "stage"),
+    [
+        ("stage-0  7/10", 7, 10, ""),
+        ("stage-0 10/10", 10, 10, ""),
+        ("stage-0 7/9", 7, 9, ""),
+        ("a    7/1000", 7, 1000, " AS a"),
+        ("x 2/3", 2, 3, " AS x"),
+    ],
+    ids=["pad", "wide", "bare", "pad3", "named"],
 )
-def test_buildkit_padded_step_passes(bracket: str) -> None:
-    """``k`` right-aligned to ``n``'s width, or unpadded when as wide."""
+def test_buildkit_padded_step_passes(bracket: str, k: int, n: int, stage: str) -> None:
+    """``k`` right-aligned to ``n``'s width, or unpadded when as wide; the
+    COPY is step ``k`` of ``n`` in the Dockerfile (ruling Z)."""
+    runs = "RUN x\n"
+    dockerfile = (
+        f"FROM python:3.12-slim{stage}\n{runs * (k - 2)}{_COPY}\n{runs * (n - k)}"
+    ).encode()
     log = f"#5 [{bracket}] {_COPY}\n#5 DONE 0.1s\n"
-    assert _ci_copy(log).evidence == "passed"
+    assert _ci_copy(log, dockerfile=dockerfile).evidence == "passed"
 
 
 @pytest.mark.parametrize(
@@ -914,13 +926,13 @@ def test_crlf_reads_like_lf() -> None:
 
 def test_buildkit_copy_done_before_header_not_counted() -> None:
     """A ``#k DONE`` printed before the header is not this step's result."""
-    log = f"#5 DONE 0.1s\n#5 [stage-0 2/3] {_COPY}\n"
+    log = f"#5 DONE 0.1s\n#5 [extra 3/3] {_COPY}\n"
     assert _ci_copy(log).evidence == "binding_ambiguous"
 
 
 def test_buildkit_copy_cached_before_header_not_counted() -> None:
     """Result lines before the header never decide the step."""
-    log = f"#5 CACHED\n#5 [stage-0 2/3] {_COPY}\n#5 DONE 0.1s\n"
+    log = f"#5 CACHED\n#5 [extra 3/3] {_COPY}\n#5 DONE 0.1s\n"
     assert _ci_copy(log).evidence == "passed"
 
 
@@ -928,7 +940,7 @@ def test_buildkit_copy_k_reused_by_later_build() -> None:
     """A later build reusing ``#5`` for a non-stage vertex cannot lend its
     ``DONE`` to our step: the numbering restart refuses the log."""
     log = (
-        f"#5 [stage-0 2/3] {_COPY}\n"
+        f"#5 [extra 3/3] {_COPY}\n"
         "#1 [internal] load build definition from Dockerfile\n"
         "#5 exporting to image\n"
         "#5 DONE 0.3s\n"
@@ -939,7 +951,7 @@ def test_buildkit_copy_k_reused_by_later_build() -> None:
 def test_buildkit_copy_two_definition_loads() -> None:
     """The build definition loaded twice means two builds in one log."""
     load = "#1 [internal] load build definition from Dockerfile\n#1 DONE 0.0s\n"
-    log = f"{load}#5 [stage-0 2/3] {_COPY}\n#5 DONE 0.1s\n{load}"
+    log = f"{load}#5 [extra 3/3] {_COPY}\n#5 DONE 0.1s\n{load}"
     outcome = _ci_copy(log)
     assert outcome.evidence == "binding_ambiguous"
     assert outcome.lines == (1, 5)
@@ -949,7 +961,7 @@ def test_buildkit_interleaved_lower_k_is_not_a_restart() -> None:
     """A lower ``#k`` already seen (interleaved output) is not a restart."""
     log = (
         "#1 [internal] load build definition from Dockerfile\n"
-        f"#5 [stage-0 2/3] {_COPY}\n"
+        f"#5 [extra 3/3] {_COPY}\n"
         "#1 DONE 0.0s\n"
         "#5 DONE 0.1s\n"
     )
@@ -998,3 +1010,90 @@ def test_module_documents_forged_step_limit_and_pull_todo() -> None:
     doc = templates.__doc__ or ""
     assert "forged" in doc
     assert "TODO:" in own and "§7.3" in own
+
+
+# Round 4, ruling Z: the COPY's BuildKit position from the Dockerfile ---------
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "ARG X=1",
+        "ADD a.txt /a",
+        "ONBUILD RUN x",
+        "SHELL /bin/sh -c",
+        "HEALTHCHECK NONE",
+        "EXPOSE 80",
+        "VOLUME /data",
+        "STOPSIGNAL SIGTERM",
+        "ENTRYPOINT python",
+        "MAINTAINER me",
+    ],
+    ids=[
+        "arg",
+        "add",
+        "onbuild",
+        "shell",
+        "health",
+        "expose",
+        "volume",
+        "stop",
+        "entry",
+        "maint",
+    ],
+)
+def test_ci_copy_unmodelled_step_refused(line: str) -> None:
+    """An instruction whose BuildKit step numbering no C-recording shows
+    makes the COPY's position underivable: refused before the log."""
+    dockerfile = f"{_FROM}\nWORKDIR /app\n{_COPY}\n{line}\n".encode()
+    outcome = _ci_copy(_BUILDKIT_COPY_OK, dockerfile=dockerfile)
+    assert outcome.evidence == "binding_ambiguous"
+    keyword = line.split()[0]
+    assert outcome.detail == (
+        f"Dockerfile: {keyword} at line 4: its BuildKit step numbering is not recorded"
+    )
+
+
+@pytest.mark.parametrize(
+    "dockerfile",
+    [
+        f"FROM a AS x\nRUN y\nFROM b\n{_COPY}\n",
+        f"FROM --platform=linux/amd64 a\n{_COPY}\n",
+        f"FROM a AS Extra\n{_COPY}\n",
+        f"FROM a as x\n{_COPY}\n",
+    ],
+    ids=["stages", "platform", "upper", "lower-as"],
+)
+def test_ci_copy_unmodelled_stage_refused(dockerfile: str) -> None:
+    """Several stages, a FROM flag or an unrecorded stage-name form: the
+    stage display BuildKit prints is not recorded."""
+    outcome = _ci_copy(_BUILDKIT_COPY_OK, dockerfile=dockerfile.encode())
+    assert outcome.evidence == "binding_ambiguous"
+    assert outcome.lines == ()
+
+
+def test_ci_copy_header_must_be_the_derived_position() -> None:
+    """A header with the corrected text at any other bracket is refused."""
+    log = f"#5 [extra 2/3] {_COPY}\n#5 DONE 0.1s\n"
+    assert _ci_copy(log) == Outcome(
+        "binding_ambiguous",
+        (1,),
+        "step header [extra 2/3] is not the Dockerfile's [extra 3/3]",
+        None,
+    )
+
+
+def test_buildkit_steps_model() -> None:
+    """Steps are FROM/RUN/COPY/WORKDIR; ENV/USER/CMD/LABEL are not."""
+    dockerfile = (
+        b"FROM a\nENV A=1\nWORKDIR /w\nUSER u\nCOPY a b\nLABEL x=y\nRUN z\nCMD c\n"
+    )
+    steps = templates.buildkit_steps(dockerfile)
+    assert not isinstance(steps, str)
+    assert [(i.keyword, p.bracket) for i, p in steps] == [
+        ("FROM", "stage-0 1/4"),
+        ("WORKDIR", "stage-0 2/4"),
+        ("COPY", "stage-0 3/4"),
+        ("RUN", "stage-0 4/4"),
+    ]
+    assert isinstance(templates.buildkit_steps(b""), str)

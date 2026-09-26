@@ -244,16 +244,24 @@ def _template(
 ) -> tuple[templates.Outcome, tuple[int, ...]]:
     """The CI template over the bound build step's section of ``log`` only,
     and its evidence lines as lines of ``log``. No section is
-    ``binding_ambiguous`` (ruling T)."""
+    ``binding_ambiguous`` (ruling T). The log's lines after the section, to
+    its end, go to the template as ``after``: section-end markers end the
+    positive evidence but never hide a failing vertex (ruling AA)."""
     title = _build_title(q)
     steps = frozenset(s.name for s in (q.job.all_steps if q.job else None) or [])
-    section = build_section(log, title, steps) if title is not None else None
+    section = _section(log, title, steps) if title is not None else None
     if not isinstance(section, tuple):
         reason = section or "the bound build step has no runner group title"
         return templates.Outcome("binding_ambiguous", (), reason, None), ()
-    offset, text = section
-    outcome = templates.match_ci(_KINDS[cls], corrected, text, dockerfile=dockerfile)
-    return outcome, tuple(offset + n for n in outcome.lines)
+    start, end, read = section
+    outcome = templates.match_ci(
+        _KINDS[cls],
+        corrected,
+        "\n".join(read[start:end]),
+        dockerfile=dockerfile,
+        after="\n".join(read[end:]),
+    )
+    return outcome, tuple(start + n for n in outcome.lines)
 
 
 def _ends_section(line: str, steps: frozenset[str]) -> bool:
@@ -301,7 +309,20 @@ def build_section(
     timestamp (:data:`_RUNNER_TS_RE`); or a line break other than ``\\n`` (a
     lone ``\\r``, ``\\x0b``, ``\\x0c``, ``\\x1c``-``\\x1e``, ``\\x85``,
     U+2028, U+2029) on a section line, which forge's own reading would have
-    split."""
+    split. The rest of the log after the section is still searched for
+    failing vertices (:func:`_template`, ruling AA)."""
+    section = _section(log, title, steps)
+    if isinstance(section, str):
+        return section
+    start, end, read = section
+    return start, "\n".join(read[start:end])
+
+
+def _section(
+    log: str, title: str, steps: frozenset[str]
+) -> tuple[int, int, list[str]] | str:
+    """:func:`build_section` as ``(start, end, read)``: the section is
+    ``read[start:end]`` of the log's lines as read, or the reason."""
     raw = log.removeprefix("\ufeff").split("\n")
     if raw and raw[-1] == "" and len(raw) > 1:
         raw.pop()
@@ -332,7 +353,7 @@ def build_section(
         problem = _section_line_problem(lines[i], read[i])
         if problem is not None:
             return f"log line {i + 1}: {problem}"
-    return start, "\n".join(read[start:end])
+    return start, end, read
 
 
 def _section_line_problem(line: str, read: str) -> str | None:

@@ -625,7 +625,21 @@ every rule below relies on:
   numbered higher than the COPY's (`c4`: `#15 ERROR` at `[stage-0  8/10]` after the
   COPY at `7/10`). An error in another stage, at an equal or lower step, unmapped, or
   more than one erroring vertex → `binding ambiguous` ("failure not provably after the
-  corrected step"). Successful builds are unchanged. BuildKit re-prints a vertex header when progress interleaves (`c1` prints
+  corrected step"). Successful builds are unchanged. The forged header could name any
+  step, so the COPY's position is never read from the header (review R1): it is
+  derived from the corrected Dockerfile, and the matched header's bracket must be
+  exactly `<stage> <k right-aligned>/<n>`, the failing vertex compared against that
+  derived `k`, stage name and `n`. The numbering model is only what the C-recordings
+  show: one stage, its FROM first, printed `stage-0` unnamed (`c1`) or by its name for
+  `FROM <image> AS <name>` (`c3`), no FROM flag; `FROM`, `RUN`, `COPY` (also
+  `--from=<image>`) and `WORKDIR` are steps; `ENV`, `USER`, `CMD` (`c1`, count 9) and
+  `LABEL` (`c7`, count 9) are not. Any other instruction (`ADD`, `ARG`, `ENTRYPOINT`,
+  `EXPOSE`, …), several stages or another stage form → `binding ambiguous`; a step 0
+  or past `n` is no stage header. Failing vertices (`#k ERROR`/`#k CANCELED`) are
+  searched from the section start to the **end of the log**, not only in the section
+  (review R2): a failing step can print a section-end line (`Post job cleanup.`,
+  `##[group]…`), which ends the positive evidence but must not hide the real
+  failure. Both rules only refuse. BuildKit re-prints a vertex header when progress interleaves (`c1` prints
   `#7 [stage-0 1/9] FROM …` twice). A corrected COPY re-printed this way reads as a
   repeated header or `k` → `binding ambiguous`. That is a known, conservative false
   negative; no C-recording shows it for the corrected COPY.
