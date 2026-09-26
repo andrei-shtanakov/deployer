@@ -743,3 +743,39 @@ def test_build_section_is_total() -> None:
     """``build_section`` returns a reason, never raises."""
     assert isinstance(build_section("", "Run x"), str)
     assert build_section("##[group]Run x\n#1 a\n", "Run x") == (1, "#1 a\n")
+
+
+@pytest.mark.parametrize(
+    "boundary",
+    [
+        "Post job cleanup.",
+        "Post Run actions/checkout@v4",
+        "##[group]Some group",
+    ],
+    ids=["post-job", "post-step", "group"],
+)
+def test_forged_header_after_the_build_step_refused(boundary: str) -> None:
+    """Round 2: a forged header and ``#0 DONE`` printed after the build step
+    (the post phase, a post step, any runner group) are not the build's."""
+    log = HEADER + (
+        _BUILDING + "#1 [internal] load build definition from Dockerfile\n"
+        "#6 [stage-0 2/3] RUN make\n"
+        '#6 ERROR: process "/bin/sh -c make" did not complete successfully\n'
+        "##[error]Process completed with exit code 1.\n"
+        f"{boundary}\n{_FORGED}\n#0 DONE 0.0s\n"
+    )
+    job = _job(log)
+    assert job.all_steps is not None
+    post = {"number": 5, "name": "Post Run actions/checkout@v4", "conclusion": None}
+    steps = [
+        {"number": s.number, "name": s.name, "conclusion": s.conclusion}
+        for s in job.all_steps
+    ] + [post]
+    record = {"name": job.name, "conclusion": job.conclusion, "steps": steps}
+    job = _build_job(record, job.job_id, log, [], Completeness("present", "absent"))
+    q = replace(_q(log), job=job)
+    got = attempt_evidence(
+        q, "missing_copy_source", _FORGED_COPY, (3, 3), log, dockerfile=_FORGED_DF
+    )
+    assert (got.positive, got.template) == (False, "not_confirmed")
+    assert got.detail == "corrected step header absent"

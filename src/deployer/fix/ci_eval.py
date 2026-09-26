@@ -4,7 +4,8 @@
 on: positive evidence is :func:`deployer.fix.templates.match_ci` returning
 ``passed`` on the bound build step's own section of the log as read
 (:func:`build_section`: the block after the one ``##[group]Run <build line>``
-header, up to the next ``##[group]Run `` header, split on ``\\n`` only);
+header, up to the next ``##[group]`` line or the post phase, split on
+``\\n`` only);
 recurrence is the admitted class's admission matcher
 (:mod:`deployer.admission.templates`) binding to the corrected instruction's
 line span, whatever its object. A non-qualified attempt becomes evidence
@@ -62,7 +63,8 @@ _KINDS: dict[str, templates.Kind] = {
 }
 _GREEN = frozenset({"success", "skipped", "neutral"})
 _RUN = "Run "
-_RUN_GROUP = f"{_GROUP_PREFIX}{_RUN}"
+_POST = "Post "
+_POST_JOB = "Post job cleanup."
 _BREAKS = frozenset("\r\x0b\x0c\x1c\x1d\x1e\x85\u2028\u2029")
 """Line breaks other than ``\\n`` that ``str.splitlines`` splits on: on a
 section line they are refused, never re-split (ruling T)."""
@@ -235,13 +237,28 @@ def _template(
     and its evidence lines as lines of ``log``. No section is
     ``binding_ambiguous`` (ruling T)."""
     title = _build_title(q)
-    section = build_section(log, title) if title is not None else None
+    steps = frozenset(s.name for s in (q.job.all_steps if q.job else None) or [])
+    section = build_section(log, title, steps) if title is not None else None
     if not isinstance(section, tuple):
         reason = section or "the bound build step has no runner group title"
         return templates.Outcome("binding_ambiguous", (), reason, None), ()
     offset, text = section
     outcome = templates.match_ci(_KINDS[cls], corrected, text, dockerfile=dockerfile)
     return outcome, tuple(offset + n for n in outcome.lines)
+
+
+def _ends_section(line: str, steps: frozenset[str]) -> bool:
+    """Whether ``line`` is the runner's own start of what follows the build
+    step: any ``##[group]`` line (the next step's ``##[group]Run …``, e.g.
+    ``c6``'s second build at log line 208), the job's post phase
+    ``Post job cleanup.`` (every C-recording prints it right after the build
+    output, e.g. ``c1`` line 208, ``c4`` line 213 after ``##[error]Process
+    completed with exit code 1.``), or ``Post <step name>`` for a step of the
+    job (the form of a post step's title; the recordings' one post step,
+    ``Post Run actions/checkout@…``, prints only ``Post job cleanup.``)."""
+    if line.startswith(_GROUP_PREFIX) or line == _POST_JOB:
+        return True
+    return line.startswith(_POST) and (line in steps or line[len(_POST) :] in steps)
 
 
 def _build_title(q: Qualified) -> str | None:
@@ -255,14 +272,17 @@ def _build_title(q: Qualified) -> str | None:
     return names[0]
 
 
-def build_section(log: str, title: str) -> tuple[int, str] | str:
+def build_section(
+    log: str, title: str, steps: frozenset[str] = frozenset()
+) -> tuple[int, str] | str:
     """The bound build step's own section of the job log as read.
 
     ``log`` is split on ``\\n`` only (a leading BOM dropped); each line is
     read as forge reads it (one trailing ``\\r`` of a CRLF ending, the runner
     timestamp and ANSI sequences removed). The section is the lines after the
-    one line ``##[group]<title>``, up to the next ``##[group]Run `` line or
-    the end. Returns ``(offset, text)`` — section line ``n`` is line
+    one line ``##[group]<title>``, up to the first line that ends the build
+    step's output (:func:`_ends_section`; ``steps`` are the job's step names)
+    or the end. Returns ``(offset, text)`` — section line ``n`` is line
     ``offset + n`` of ``log`` — or the reason there is no such section: no
     header or several, or a line break other than ``\\n`` (a lone ``\\r``,
     ``\\x0b``, ``\\x0c``, ``\\x1c``-``\\x1e``, ``\\x85``, U+2028, U+2029) on a
@@ -281,7 +301,7 @@ def build_section(log: str, title: str) -> tuple[int, str] | str:
         return f"{len(at)} runner group headers {header!r} in the log (need one)"
     start = at[0] + 1
     end = next(
-        (i for i in range(start, len(read)) if read[i].startswith(_RUN_GROUP)),
+        (i for i in range(start, len(read)) if _ends_section(read[i], steps)),
         len(read),
     )
     for i in range(start, end):

@@ -581,7 +581,11 @@ every rule below relies on:
 - **The bound build step's own section only.** The template reads only the part of the
   job log that the build step printed: the lines after exactly one runner group header
   `##[group]Run <bound build line>` (the build step's name as the jobs API gives it),
-  up to the next `##[group]Run ` header or the end of the log. It works on the raw log
+  up to the first line that starts what follows the build step: any `##[group]` line,
+  the runner's post phase `Post job cleanup.` (every C-recording prints it right after
+  the build output: `c1` line 208, `c4` line 213), or `Post <step name>` for a step of
+  the job. If none of these comes, the section runs to the end of the log. Post-job
+  output never supplies evidence. It works on the raw log
   as read, split on `\n` only; a CRLF ending counts as one `\n` break. No such header,
   or several → `binding ambiguous`. A section line that holds any other line break
   `str.splitlines` would split on is also `binding ambiguous`, and the character is

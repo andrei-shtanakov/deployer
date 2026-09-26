@@ -307,8 +307,8 @@ can reach `ci_confirmed`. The corrected Dockerfile is read at the fix commit fir
 (replace refs off): it must be the bound build's file, hash to the locally proved bytes,
 be in the strict form, and hold a corrected COPY/ADD exactly once (BuildKit also skips a
 stage nothing depends on). Only the build step's own section of the log is read: the
-lines after its one `##[group]Run <build line>` header, up to the next `##[group]Run `
-header, split on `\n` only; any other line break there refuses. COPY/ADD then needs
+lines after its one `##[group]Run <build line>` header, up to the next `##[group]` line
+or the post phase (`Post job cleanup.`), split on `\n` only; any other line break there refuses. COPY/ADD then needs
 exactly one named stage header carrying the corrected text (BuildKit's step number
 right-aligned to the step count, as in `[stage-0  7/10]`) and that step's `#k DONE`;
 `#k CACHED` never confirms. FROM is file-wide: a named build-stage header and no
