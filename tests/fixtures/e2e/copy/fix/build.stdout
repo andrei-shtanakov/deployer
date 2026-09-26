@@ -1,0 +1,32 @@
+STEP 1/12: FROM python:3.12-slim
+STEP 2/12: COPY --from=ghcr.io/astral-sh/uv:0.5.11 /uv /uvx /bin/
+--> be1a55a74c3a
+STEP 3/12: WORKDIR /app
+--> 2e2d59ba8ebe
+STEP 4/12: COPY pyproject.toml uv.lock ./
+--> 3cd81a6a1a35
+STEP 5/12: RUN uv sync --frozen --no-install-project
+Using CPython 3.12.14 interpreter at: /usr/local/bin/python3
+Creating virtual environment at: .venv
+Audited in 0.03ms
+--> a0c325616b09
+STEP 6/12: COPY src/ci_build ./src/ci_build
+--> 3d4f5e5233a4
+STEP 7/12: COPY docs/guide/setup.md ./setup.md
+--> 7075eecaf7de
+STEP 8/12: RUN uv sync --frozen
+Prepared 1 package in 3.57s
+Installed 1 package in 1ms
+ + ci-build==0.1.0 (from file:///app)
+--> 5b2cb3f8b79a
+STEP 9/12: RUN useradd --create-home appuser
+--> a3aa7e06c950
+STEP 10/12: USER appuser
+--> 8a2a2d7c9122
+STEP 11/12: ENV PATH="/app/.venv/bin:$PATH"
+--> add9787add32
+STEP 12/12: CMD ["python"]
+COMMIT localhost/deployer-fix-ae68e426-ab76-45a5-94f2-1eda061315e4
+--> 343f8f6722be
+Successfully tagged localhost/deployer-fix-ae68e426-ab76-45a5-94f2-1eda061315e4:latest
+343f8f6722be30ddc1fab4f165f047096deb0b07d6a74d81eab20d5266a8bd81

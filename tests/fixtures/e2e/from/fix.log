@@ -1,0 +1,5 @@
+fix: /Users/Andrei_Shtanakov/labs/all_ai_orchestrators/deployer/.deployer-runs/36239375530/reproduction/attempt-1/fixes/001/fix.json
+status: locally_confirmed
+worktree: /Users/Andrei_Shtanakov/labs/all_ai_orchestrators/deployer/.deployer-runs/36239375530/reproduction/attempt-1/fixes/001/worktree
+branch: deployer/fix/from-argument-count/63f37f38b1d5-001
+commit: c5bb893820c9c180a154576ef7f9ce2d27709ba5

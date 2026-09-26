@@ -1,0 +1,12 @@
+completeness: logs=present annotations=present
+outcome: UNCLASSIFIED
+causes: none asserted
+[job 108396889260 step 3] UNCLASSIFIED: copy/add source not found: ERROR: failed to build: failed to solve: failed to compute cache key: failed to calculate checksum of ref bab1ddb9-e66f-4080-9fbf-9a64e0823a66::1ywu15bgt3a3nj8csehqjbop0: "/docs/setup.md": not found
+    cited evidence is job-level (no step binding)
+reproduction: attempted
+  restoration: exact
+  failed: source docs/setup.md absent from the context
+  syntax: no finding among checks 1–4
+  comparison: reproduced_with_differences
+  try: .deployer-runs/36239373873/reproduction/attempt-1/tries/001
+admission: admitted

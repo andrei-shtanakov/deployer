@@ -1,0 +1,673 @@
+{
+  "schema_version": "1.0",
+  "fix_id": "f7662bf6-1ac4-416b-ad30-648f49eab935",
+  "status": "ci_confirmed",
+  "stop_reason": null,
+  "stop_detail": null,
+  "input": {
+    "verdict": {
+      "path": "/private/tmp/claude-501/-Users-Andrei-Shtanakov-labs-all-ai-orchestrators-deployer/d8148b7d-ebbb-467c-a27a-1bd9dd4c1d50/scratchpad/e2e/verdict-from.json",
+      "sha256": "fe71295db6d3b2ddaa5273e9e0b60d7059b07d9015efd2961910a83b905db2b8"
+    },
+    "root": "/Users/Andrei_Shtanakov/labs/all_ai_orchestrators/deployer",
+    "try_dir": ".deployer-runs/36239375530/reproduction/attempt-1/tries/001",
+    "source_dir": ".deployer-runs/36239375530/reproduction/attempt-1/source",
+    "evidence": [
+      {
+        "path": "/Users/Andrei_Shtanakov/labs/all_ai_orchestrators/deployer/.deployer-runs/36239375530/reproduction/attempt-1/tries/001/ci.log",
+        "sha256": "a2824f68a295e0a221c7684d3938bb51f97a52afc560c268ece0248b561d754b"
+      },
+      {
+        "path": "/Users/Andrei_Shtanakov/labs/all_ai_orchestrators/deployer/.deployer-runs/36239375530/reproduction/attempt-1/tries/001/build.stderr",
+        "sha256": "dcd0c9b0498a53a01f5ebed3fe0f989dcd07667f87dd7d2d77bb9487f6babbc1"
+      }
+    ],
+    "binding": {
+      "repo": "andrei-shtanakov/deployer",
+      "head_sha": "63f37f38b1d59be93d49763ddbd68fcb8c10b0a9",
+      "artifact_path": "Dockerfile",
+      "artifact_sha256": "2f3d1aef9395fd271334a659838c4d49046bcccbacb5320c747a397b005f834a"
+    },
+    "reproduction_binding": {
+      "job_id": 108396892742,
+      "workflow_job": "build",
+      "build_step": 3,
+      "dockerfile": "Dockerfile",
+      "context": "."
+    },
+    "build": {
+      "dockerfile": "Dockerfile",
+      "build_args": [],
+      "platform": null,
+      "tag": null
+    },
+    "workflow_path": ".github/workflows/diagnosis-polygon.yml",
+    "workflow_sha256": "35d4160afec95602d5cb141d30aa143cb86bf7a7488330fb1a71f0f7f122c3a2",
+    "backend": "podman",
+    "clone": "/private/tmp/claude-501/-Users-Andrei-Shtanakov-labs-all-ai-orchestrators-deployer/d8148b7d-ebbb-467c-a27a-1bd9dd4c1d50/scratchpad/e2e/base-from",
+    "origin": "andrei-shtanakov/deployer",
+    "head": "63f37f38b1d59be93d49763ddbd68fcb8c10b0a9",
+    "clean": true,
+    "target": {
+      "repo": "andrei-shtanakov/deployer",
+      "head_sha": "63f37f38b1d59be93d49763ddbd68fcb8c10b0a9",
+      "artifact_path": "Dockerfile",
+      "artifact_sha256": "2f3d1aef9395fd271334a659838c4d49046bcccbacb5320c747a397b005f834a"
+    }
+  },
+  "proposal": {
+    "class": "from_argument_count",
+    "file": "Dockerfile",
+    "lines": [
+      1,
+      1
+    ],
+    "transformation": "F1",
+    "original": "FROM python:3.12-slim extra\n",
+    "replacement": "FROM python:3.12-slim AS extra\n",
+    "ordinal": 0,
+    "rationale": [
+      {
+        "kind": "deterministic",
+        "transformation": "F1",
+        "original": "FROM python:3.12-slim extra",
+        "replacement": "FROM python:3.12-slim AS extra",
+        "conditions": [
+          "flags: none",
+          "'python:3.12-slim' is a complete literal reference (tag '3.12-slim')",
+          "'extra' matches the stage-name grammar (docs/fix-stage-name-grammar.md)",
+          "'extra' is not AS in any case",
+          "'extra' is not a reserved name (context, scratch)",
+          "'extra' collides with no stage name (any case)",
+          "no FROM references 'extra' (any case)",
+          "no --from= or mount from= names 'extra' (any case)",
+          "no build arg of the bound build configuration names 'extra'",
+          "'extra' located once, after a blank on the same line, in the original bytes",
+          "under R's parser (not the builders'), the replacement re-reads as the intended FROM on the same lines"
+        ],
+        "note": "a syntactic correction; not evidence of the author's intended stage name"
+      }
+    ],
+    "envelope": [
+      {
+        "condition": "flags: none",
+        "ok": true
+      },
+      {
+        "condition": "'python:3.12-slim' is a complete literal reference (tag '3.12-slim')",
+        "ok": true
+      },
+      {
+        "condition": "'extra' matches the stage-name grammar (docs/fix-stage-name-grammar.md)",
+        "ok": true
+      },
+      {
+        "condition": "'extra' is not AS in any case",
+        "ok": true
+      },
+      {
+        "condition": "'extra' is not a reserved name (context, scratch)",
+        "ok": true
+      },
+      {
+        "condition": "'extra' collides with no stage name (any case)",
+        "ok": true
+      },
+      {
+        "condition": "no FROM references 'extra' (any case)",
+        "ok": true
+      },
+      {
+        "condition": "no --from= or mount from= names 'extra' (any case)",
+        "ok": true
+      },
+      {
+        "condition": "no build arg of the bound build configuration names 'extra'",
+        "ok": true
+      },
+      {
+        "condition": "'extra' located once, after a blank on the same line, in the original bytes",
+        "ok": true
+      },
+      {
+        "condition": "under R's parser (not the builders'), the replacement re-reads as the intended FROM on the same lines",
+        "ok": true
+      }
+    ]
+  },
+  "local_proof": {
+    "dockerfile_sha256": "959ba109e612d22273579437666d336fa9dfb9e5b02624907b30f41b02156f3b",
+    "build": {
+      "dockerfile": "Dockerfile",
+      "context": ".",
+      "build_args": [],
+      "platform": null,
+      "tag": "localhost/deployer-fix-f7662bf6-1ac4-416b-ad30-648f49eab935",
+      "endpoint": "ssh://core@127.0.0.1:56907/run/user/501/podman/podman.sock",
+      "endpoint_source": "podman_default_connection",
+      "ci_ignore_file": ".dockerignore",
+      "local_ignore_file": ".dockerignore",
+      "argv": [
+        "podman",
+        "build",
+        "--file",
+        "context/Dockerfile",
+        "--tag",
+        "localhost/deployer-fix-f7662bf6-1ac4-416b-ad30-648f49eab935",
+        "--force-rm",
+        "context"
+      ],
+      "exit_code": 0,
+      "launch_error": null,
+      "image_cleanup": "removed",
+      "build_containers": "removed_by_builder",
+      "stdout": "build.stdout",
+      "stderr": "build.stderr"
+    },
+    "backend": "podman",
+    "versions": {
+      "client_version": "5.7.0",
+      "server_version": "5.7.0",
+      "platform": null,
+      "probe_warning": null
+    },
+    "records_before": [
+      {
+        "check_id": "copy_sources",
+        "file_status": "ran",
+        "file_reason": null,
+        "records": [
+          {
+            "ordinal": 1,
+            "lines": [
+              3,
+              3
+            ],
+            "subject": "*",
+            "status": "skipped",
+            "reason": "COPY at line 3: --from source is checked in its stage or image, not the context"
+          },
+          {
+            "ordinal": 3,
+            "lines": [
+              7,
+              7
+            ],
+            "subject": "pyproject.toml",
+            "status": "passed",
+            "reason": null
+          },
+          {
+            "ordinal": 3,
+            "lines": [
+              7,
+              7
+            ],
+            "subject": "uv.lock",
+            "status": "passed",
+            "reason": null
+          },
+          {
+            "ordinal": 5,
+            "lines": [
+              10,
+              10
+            ],
+            "subject": "src/ci_build",
+            "status": "passed",
+            "reason": null
+          }
+        ]
+      },
+      {
+        "check_id": "syntax_first_from",
+        "file_status": "ran",
+        "file_reason": null,
+        "records": [
+          {
+            "ordinal": 0,
+            "lines": [
+              1,
+              1
+            ],
+            "subject": "first_from",
+            "status": "passed",
+            "reason": null
+          }
+        ]
+      },
+      {
+        "check_id": "syntax_from_args",
+        "file_status": "ran",
+        "file_reason": null,
+        "records": [
+          {
+            "ordinal": 0,
+            "lines": [
+              1,
+              1
+            ],
+            "subject": "from_args",
+            "status": "failed",
+            "reason": "FROM takes one or three arguments"
+          }
+        ]
+      },
+      {
+        "check_id": "syntax_keyword",
+        "file_status": "ran",
+        "file_reason": null,
+        "records": [
+          {
+            "ordinal": 0,
+            "lines": [
+              1,
+              1
+            ],
+            "subject": "keyword",
+            "status": "passed",
+            "reason": null
+          },
+          {
+            "ordinal": 1,
+            "lines": [
+              3,
+              3
+            ],
+            "subject": "keyword",
+            "status": "passed",
+            "reason": null
+          },
+          {
+            "ordinal": 2,
+            "lines": [
+              5,
+              5
+            ],
+            "subject": "keyword",
+            "status": "passed",
+            "reason": null
+          },
+          {
+            "ordinal": 3,
+            "lines": [
+              7,
+              7
+            ],
+            "subject": "keyword",
+            "status": "passed",
+            "reason": null
+          },
+          {
+            "ordinal": 4,
+            "lines": [
+              8,
+              8
+            ],
+            "subject": "keyword",
+            "status": "passed",
+            "reason": null
+          },
+          {
+            "ordinal": 5,
+            "lines": [
+              10,
+              10
+            ],
+            "subject": "keyword",
+            "status": "passed",
+            "reason": null
+          },
+          {
+            "ordinal": 6,
+            "lines": [
+              12,
+              12
+            ],
+            "subject": "keyword",
+            "status": "passed",
+            "reason": null
+          },
+          {
+            "ordinal": 7,
+            "lines": [
+              14,
+              14
+            ],
+            "subject": "keyword",
+            "status": "passed",
+            "reason": null
+          },
+          {
+            "ordinal": 8,
+            "lines": [
+              15,
+              15
+            ],
+            "subject": "keyword",
+            "status": "passed",
+            "reason": null
+          },
+          {
+            "ordinal": 9,
+            "lines": [
+              17,
+              17
+            ],
+            "subject": "keyword",
+            "status": "passed",
+            "reason": null
+          },
+          {
+            "ordinal": 10,
+            "lines": [
+              19,
+              19
+            ],
+            "subject": "keyword",
+            "status": "passed",
+            "reason": null
+          }
+        ]
+      },
+      {
+        "check_id": "syntax_continuation",
+        "file_status": "ran",
+        "file_reason": null,
+        "records": [
+          {
+            "ordinal": 10,
+            "lines": [
+              19,
+              19
+            ],
+            "subject": "continuation",
+            "status": "passed",
+            "reason": null
+          }
+        ]
+      }
+    ],
+    "records_after": [
+      {
+        "check_id": "copy_sources",
+        "file_status": "ran",
+        "file_reason": null,
+        "records": [
+          {
+            "ordinal": 1,
+            "lines": [
+              3,
+              3
+            ],
+            "subject": "*",
+            "status": "skipped",
+            "reason": "COPY at line 3: --from source is checked in its stage or image, not the context"
+          },
+          {
+            "ordinal": 3,
+            "lines": [
+              7,
+              7
+            ],
+            "subject": "pyproject.toml",
+            "status": "passed",
+            "reason": null
+          },
+          {
+            "ordinal": 3,
+            "lines": [
+              7,
+              7
+            ],
+            "subject": "uv.lock",
+            "status": "passed",
+            "reason": null
+          },
+          {
+            "ordinal": 5,
+            "lines": [
+              10,
+              10
+            ],
+            "subject": "src/ci_build",
+            "status": "passed",
+            "reason": null
+          }
+        ]
+      },
+      {
+        "check_id": "syntax_first_from",
+        "file_status": "ran",
+        "file_reason": null,
+        "records": [
+          {
+            "ordinal": 0,
+            "lines": [
+              1,
+              1
+            ],
+            "subject": "first_from",
+            "status": "passed",
+            "reason": null
+          }
+        ]
+      },
+      {
+        "check_id": "syntax_from_args",
+        "file_status": "ran",
+        "file_reason": null,
+        "records": [
+          {
+            "ordinal": 0,
+            "lines": [
+              1,
+              1
+            ],
+            "subject": "from_args",
+            "status": "passed",
+            "reason": null
+          }
+        ]
+      },
+      {
+        "check_id": "syntax_keyword",
+        "file_status": "ran",
+        "file_reason": null,
+        "records": [
+          {
+            "ordinal": 0,
+            "lines": [
+              1,
+              1
+            ],
+            "subject": "keyword",
+            "status": "passed",
+            "reason": null
+          },
+          {
+            "ordinal": 1,
+            "lines": [
+              3,
+              3
+            ],
+            "subject": "keyword",
+            "status": "passed",
+            "reason": null
+          },
+          {
+            "ordinal": 2,
+            "lines": [
+              5,
+              5
+            ],
+            "subject": "keyword",
+            "status": "passed",
+            "reason": null
+          },
+          {
+            "ordinal": 3,
+            "lines": [
+              7,
+              7
+            ],
+            "subject": "keyword",
+            "status": "passed",
+            "reason": null
+          },
+          {
+            "ordinal": 4,
+            "lines": [
+              8,
+              8
+            ],
+            "subject": "keyword",
+            "status": "passed",
+            "reason": null
+          },
+          {
+            "ordinal": 5,
+            "lines": [
+              10,
+              10
+            ],
+            "subject": "keyword",
+            "status": "passed",
+            "reason": null
+          },
+          {
+            "ordinal": 6,
+            "lines": [
+              12,
+              12
+            ],
+            "subject": "keyword",
+            "status": "passed",
+            "reason": null
+          },
+          {
+            "ordinal": 7,
+            "lines": [
+              14,
+              14
+            ],
+            "subject": "keyword",
+            "status": "passed",
+            "reason": null
+          },
+          {
+            "ordinal": 8,
+            "lines": [
+              15,
+              15
+            ],
+            "subject": "keyword",
+            "status": "passed",
+            "reason": null
+          },
+          {
+            "ordinal": 9,
+            "lines": [
+              17,
+              17
+            ],
+            "subject": "keyword",
+            "status": "passed",
+            "reason": null
+          },
+          {
+            "ordinal": 10,
+            "lines": [
+              19,
+              19
+            ],
+            "subject": "keyword",
+            "status": "passed",
+            "reason": null
+          }
+        ]
+      },
+      {
+        "check_id": "syntax_continuation",
+        "file_status": "ran",
+        "file_reason": null,
+        "records": [
+          {
+            "ordinal": 10,
+            "lines": [
+              19,
+              19
+            ],
+            "subject": "continuation",
+            "status": "passed",
+            "reason": null
+          }
+        ]
+      }
+    ],
+    "evidence": [
+      {
+        "template": "local/podman/from",
+        "corrected_text": "FROM python:3.12-slim AS extra",
+        "evidence": "passed",
+        "detail": null,
+        "file": "build.stdout",
+        "lines": [
+          1
+        ],
+        "image_pull": null
+      }
+    ],
+    "later_failure": null
+  },
+  "publication": {
+    "worktree": "/Users/Andrei_Shtanakov/labs/all_ai_orchestrators/deployer/.deployer-runs/36239375530/reproduction/attempt-1/fixes/001/worktree",
+    "branch": "deployer/fix/from-argument-count/63f37f38b1d5-001",
+    "fix_commit": "c5bb893820c9c180a154576ef7f9ce2d27709ba5",
+    "diff_ok": true,
+    "base": "polygon/fix-e2e-from-base",
+    "pr_url": "https://github.com/andrei-shtanakov/deployer/pull/102",
+    "index_synced": true
+  },
+  "ci_attempts": [
+    {
+      "at": "2026-09-26T11:40:37+00:00",
+      "considered": [
+        {
+          "run_id": 36239525886,
+          "attempt": 1,
+          "job_key": "build",
+          "qualification": "qualified",
+          "reason": null
+        }
+      ],
+      "outcome": "ci_confirmed",
+      "reason": null,
+      "evidence": [
+        {
+          "run_id": 36239525886,
+          "attempt": 1,
+          "job_key": "build",
+          "job_id": 108397295144,
+          "positive": true,
+          "recurred": false,
+          "template": "passed",
+          "detail": null,
+          "lines": [],
+          "log_lines": [
+            {
+              "line": 138,
+              "text": "2026-09-26T11:39:58.9447989Z #7 [extra 1/8] FROM docker.io/library/python:3.12-slim@sha256:f77ac9e44ae96ef2c90b8053ea08c31f8be030f824196b0ae4db6d462c84e51f"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "last_operation": {
+    "command": "confirm",
+    "at": "2026-09-26T11:40:37+00:00",
+    "result": "ci_confirmed",
+    "reason": null
+  }
+}

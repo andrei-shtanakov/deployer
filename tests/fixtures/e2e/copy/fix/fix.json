@@ -1,0 +1,688 @@
+{
+  "schema_version": "1.0",
+  "fix_id": "ae68e426-ab76-45a5-94f2-1eda061315e4",
+  "status": "ci_confirmed",
+  "stop_reason": null,
+  "stop_detail": null,
+  "input": {
+    "verdict": {
+      "path": "/private/tmp/claude-501/-Users-Andrei-Shtanakov-labs-all-ai-orchestrators-deployer/d8148b7d-ebbb-467c-a27a-1bd9dd4c1d50/scratchpad/e2e/verdict-copy.json",
+      "sha256": "0ed4374fc178b7708362e6160c931b5dce81557d5b50a2bab152d4bde9512179"
+    },
+    "root": "/Users/Andrei_Shtanakov/labs/all_ai_orchestrators/deployer",
+    "try_dir": ".deployer-runs/36239373873/reproduction/attempt-1/tries/001",
+    "source_dir": ".deployer-runs/36239373873/reproduction/attempt-1/source",
+    "evidence": [
+      {
+        "path": "/Users/Andrei_Shtanakov/labs/all_ai_orchestrators/deployer/.deployer-runs/36239373873/reproduction/attempt-1/tries/001/ci.log",
+        "sha256": "a0140998fe5848c51a575664e70dde36ab4cd56327f43c46906eee97619b0abe"
+      },
+      {
+        "path": "/Users/Andrei_Shtanakov/labs/all_ai_orchestrators/deployer/.deployer-runs/36239373873/reproduction/attempt-1/tries/001/build.stderr",
+        "sha256": "fab3fcab12b8d6db28b775a50a8d82427208cd6e472a0eed5481bd464bf708c5"
+      }
+    ],
+    "binding": {
+      "repo": "andrei-shtanakov/deployer",
+      "head_sha": "1b9ade27c6857c1f9e3eb6119a5c10a0e57949c2",
+      "artifact_path": "Dockerfile",
+      "artifact_sha256": "6c8fb72680674c64a1207582427961ff5b53f5a253b1f7411bd46f46015accf6"
+    },
+    "reproduction_binding": {
+      "job_id": 108396889260,
+      "workflow_job": "build",
+      "build_step": 3,
+      "dockerfile": "Dockerfile",
+      "context": "."
+    },
+    "build": {
+      "dockerfile": "Dockerfile",
+      "build_args": [],
+      "platform": null,
+      "tag": null
+    },
+    "workflow_path": ".github/workflows/diagnosis-polygon.yml",
+    "workflow_sha256": "35d4160afec95602d5cb141d30aa143cb86bf7a7488330fb1a71f0f7f122c3a2",
+    "backend": "podman",
+    "clone": "/private/tmp/claude-501/-Users-Andrei-Shtanakov-labs-all-ai-orchestrators-deployer/d8148b7d-ebbb-467c-a27a-1bd9dd4c1d50/scratchpad/e2e/base-copy",
+    "origin": "andrei-shtanakov/deployer",
+    "head": "1b9ade27c6857c1f9e3eb6119a5c10a0e57949c2",
+    "clean": true,
+    "target": {
+      "repo": "andrei-shtanakov/deployer",
+      "head_sha": "1b9ade27c6857c1f9e3eb6119a5c10a0e57949c2",
+      "artifact_path": "Dockerfile",
+      "artifact_sha256": "6c8fb72680674c64a1207582427961ff5b53f5a253b1f7411bd46f46015accf6"
+    }
+  },
+  "proposal": {
+    "class": "missing_copy_source",
+    "file": "Dockerfile",
+    "lines": [
+      11,
+      11
+    ],
+    "transformation": "copy-source",
+    "original": "COPY docs/setup.md ./setup.md\n",
+    "replacement": "COPY docs/guide/setup.md ./setup.md\n",
+    "ordinal": 6,
+    "rationale": [
+      {
+        "facts": [
+          {
+            "kind": "path",
+            "ref": "docs/guide/setup.md"
+          }
+        ],
+        "explanation": "The absent source docs/setup.md is a markdown file under docs/; the eligible list contains docs/guide/setup.md, a setup.md living under docs/guide, which is the same basename in a nested docs directory — the most plausible relocated match."
+      }
+    ],
+    "envelope": [
+      {
+        "condition": "1 read alike, one token changes",
+        "ok": true,
+        "detail": "only the token 'docs/setup.md' may change"
+      },
+      {
+        "condition": "2 regular file",
+        "ok": true,
+        "detail": "12 regular files in the listing"
+      },
+      {
+        "condition": "3 effective build context",
+        "ok": true,
+        "detail": "7 in the modelled form, excluded by neither, not 'Dockerfile' or under '.deployer/'"
+      },
+      {
+        "condition": "4 collisions",
+        "ok": true,
+        "detail": "7 with no duplicate or destination conflict"
+      },
+      {
+        "condition": "5 basename floor",
+        "ok": true,
+        "detail": "1 eligible file(s) named 'setup.md'"
+      }
+    ]
+  },
+  "local_proof": {
+    "dockerfile_sha256": "964a76aa0e5563868083a690a55096b599cd138fe24b6625b42dab2ada49a1fc",
+    "build": {
+      "dockerfile": "Dockerfile",
+      "context": ".",
+      "build_args": [],
+      "platform": null,
+      "tag": "localhost/deployer-fix-ae68e426-ab76-45a5-94f2-1eda061315e4",
+      "endpoint": "ssh://core@127.0.0.1:56907/run/user/501/podman/podman.sock",
+      "endpoint_source": "podman_default_connection",
+      "ci_ignore_file": ".dockerignore",
+      "local_ignore_file": ".dockerignore",
+      "argv": [
+        "podman",
+        "build",
+        "--file",
+        "context/Dockerfile",
+        "--tag",
+        "localhost/deployer-fix-ae68e426-ab76-45a5-94f2-1eda061315e4",
+        "--force-rm",
+        "context"
+      ],
+      "exit_code": 0,
+      "launch_error": null,
+      "image_cleanup": "removed",
+      "build_containers": "removed_by_builder",
+      "stdout": "build.stdout",
+      "stderr": "build.stderr"
+    },
+    "backend": "podman",
+    "versions": {
+      "client_version": "5.7.0",
+      "server_version": "5.7.0",
+      "platform": null,
+      "probe_warning": null
+    },
+    "records_before": [
+      {
+        "check_id": "copy_sources",
+        "file_status": "ran",
+        "file_reason": null,
+        "records": [
+          {
+            "ordinal": 1,
+            "lines": [
+              3,
+              3
+            ],
+            "subject": "*",
+            "status": "skipped",
+            "reason": "COPY at line 3: --from source is checked in its stage or image, not the context"
+          },
+          {
+            "ordinal": 3,
+            "lines": [
+              7,
+              7
+            ],
+            "subject": "pyproject.toml",
+            "status": "passed",
+            "reason": null
+          },
+          {
+            "ordinal": 3,
+            "lines": [
+              7,
+              7
+            ],
+            "subject": "uv.lock",
+            "status": "passed",
+            "reason": null
+          },
+          {
+            "ordinal": 5,
+            "lines": [
+              10,
+              10
+            ],
+            "subject": "src/ci_build",
+            "status": "passed",
+            "reason": null
+          },
+          {
+            "ordinal": 6,
+            "lines": [
+              11,
+              11
+            ],
+            "subject": "docs/setup.md",
+            "status": "failed",
+            "reason": "source docs/setup.md absent from the context"
+          }
+        ]
+      },
+      {
+        "check_id": "syntax_first_from",
+        "file_status": "ran",
+        "file_reason": null,
+        "records": [
+          {
+            "ordinal": 0,
+            "lines": [
+              1,
+              1
+            ],
+            "subject": "first_from",
+            "status": "passed",
+            "reason": null
+          }
+        ]
+      },
+      {
+        "check_id": "syntax_from_args",
+        "file_status": "ran",
+        "file_reason": null,
+        "records": [
+          {
+            "ordinal": 0,
+            "lines": [
+              1,
+              1
+            ],
+            "subject": "from_args",
+            "status": "passed",
+            "reason": null
+          }
+        ]
+      },
+      {
+        "check_id": "syntax_keyword",
+        "file_status": "ran",
+        "file_reason": null,
+        "records": [
+          {
+            "ordinal": 0,
+            "lines": [
+              1,
+              1
+            ],
+            "subject": "keyword",
+            "status": "passed",
+            "reason": null
+          },
+          {
+            "ordinal": 1,
+            "lines": [
+              3,
+              3
+            ],
+            "subject": "keyword",
+            "status": "passed",
+            "reason": null
+          },
+          {
+            "ordinal": 2,
+            "lines": [
+              5,
+              5
+            ],
+            "subject": "keyword",
+            "status": "passed",
+            "reason": null
+          },
+          {
+            "ordinal": 3,
+            "lines": [
+              7,
+              7
+            ],
+            "subject": "keyword",
+            "status": "passed",
+            "reason": null
+          },
+          {
+            "ordinal": 4,
+            "lines": [
+              8,
+              8
+            ],
+            "subject": "keyword",
+            "status": "passed",
+            "reason": null
+          },
+          {
+            "ordinal": 5,
+            "lines": [
+              10,
+              10
+            ],
+            "subject": "keyword",
+            "status": "passed",
+            "reason": null
+          },
+          {
+            "ordinal": 6,
+            "lines": [
+              11,
+              11
+            ],
+            "subject": "keyword",
+            "status": "passed",
+            "reason": null
+          },
+          {
+            "ordinal": 7,
+            "lines": [
+              13,
+              13
+            ],
+            "subject": "keyword",
+            "status": "passed",
+            "reason": null
+          },
+          {
+            "ordinal": 8,
+            "lines": [
+              15,
+              15
+            ],
+            "subject": "keyword",
+            "status": "passed",
+            "reason": null
+          },
+          {
+            "ordinal": 9,
+            "lines": [
+              16,
+              16
+            ],
+            "subject": "keyword",
+            "status": "passed",
+            "reason": null
+          },
+          {
+            "ordinal": 10,
+            "lines": [
+              18,
+              18
+            ],
+            "subject": "keyword",
+            "status": "passed",
+            "reason": null
+          },
+          {
+            "ordinal": 11,
+            "lines": [
+              20,
+              20
+            ],
+            "subject": "keyword",
+            "status": "passed",
+            "reason": null
+          }
+        ]
+      },
+      {
+        "check_id": "syntax_continuation",
+        "file_status": "ran",
+        "file_reason": null,
+        "records": [
+          {
+            "ordinal": 11,
+            "lines": [
+              20,
+              20
+            ],
+            "subject": "continuation",
+            "status": "passed",
+            "reason": null
+          }
+        ]
+      }
+    ],
+    "records_after": [
+      {
+        "check_id": "copy_sources",
+        "file_status": "ran",
+        "file_reason": null,
+        "records": [
+          {
+            "ordinal": 1,
+            "lines": [
+              3,
+              3
+            ],
+            "subject": "*",
+            "status": "skipped",
+            "reason": "COPY at line 3: --from source is checked in its stage or image, not the context"
+          },
+          {
+            "ordinal": 3,
+            "lines": [
+              7,
+              7
+            ],
+            "subject": "pyproject.toml",
+            "status": "passed",
+            "reason": null
+          },
+          {
+            "ordinal": 3,
+            "lines": [
+              7,
+              7
+            ],
+            "subject": "uv.lock",
+            "status": "passed",
+            "reason": null
+          },
+          {
+            "ordinal": 5,
+            "lines": [
+              10,
+              10
+            ],
+            "subject": "src/ci_build",
+            "status": "passed",
+            "reason": null
+          },
+          {
+            "ordinal": 6,
+            "lines": [
+              11,
+              11
+            ],
+            "subject": "docs/guide/setup.md",
+            "status": "passed",
+            "reason": null
+          }
+        ]
+      },
+      {
+        "check_id": "syntax_first_from",
+        "file_status": "ran",
+        "file_reason": null,
+        "records": [
+          {
+            "ordinal": 0,
+            "lines": [
+              1,
+              1
+            ],
+            "subject": "first_from",
+            "status": "passed",
+            "reason": null
+          }
+        ]
+      },
+      {
+        "check_id": "syntax_from_args",
+        "file_status": "ran",
+        "file_reason": null,
+        "records": [
+          {
+            "ordinal": 0,
+            "lines": [
+              1,
+              1
+            ],
+            "subject": "from_args",
+            "status": "passed",
+            "reason": null
+          }
+        ]
+      },
+      {
+        "check_id": "syntax_keyword",
+        "file_status": "ran",
+        "file_reason": null,
+        "records": [
+          {
+            "ordinal": 0,
+            "lines": [
+              1,
+              1
+            ],
+            "subject": "keyword",
+            "status": "passed",
+            "reason": null
+          },
+          {
+            "ordinal": 1,
+            "lines": [
+              3,
+              3
+            ],
+            "subject": "keyword",
+            "status": "passed",
+            "reason": null
+          },
+          {
+            "ordinal": 2,
+            "lines": [
+              5,
+              5
+            ],
+            "subject": "keyword",
+            "status": "passed",
+            "reason": null
+          },
+          {
+            "ordinal": 3,
+            "lines": [
+              7,
+              7
+            ],
+            "subject": "keyword",
+            "status": "passed",
+            "reason": null
+          },
+          {
+            "ordinal": 4,
+            "lines": [
+              8,
+              8
+            ],
+            "subject": "keyword",
+            "status": "passed",
+            "reason": null
+          },
+          {
+            "ordinal": 5,
+            "lines": [
+              10,
+              10
+            ],
+            "subject": "keyword",
+            "status": "passed",
+            "reason": null
+          },
+          {
+            "ordinal": 6,
+            "lines": [
+              11,
+              11
+            ],
+            "subject": "keyword",
+            "status": "passed",
+            "reason": null
+          },
+          {
+            "ordinal": 7,
+            "lines": [
+              13,
+              13
+            ],
+            "subject": "keyword",
+            "status": "passed",
+            "reason": null
+          },
+          {
+            "ordinal": 8,
+            "lines": [
+              15,
+              15
+            ],
+            "subject": "keyword",
+            "status": "passed",
+            "reason": null
+          },
+          {
+            "ordinal": 9,
+            "lines": [
+              16,
+              16
+            ],
+            "subject": "keyword",
+            "status": "passed",
+            "reason": null
+          },
+          {
+            "ordinal": 10,
+            "lines": [
+              18,
+              18
+            ],
+            "subject": "keyword",
+            "status": "passed",
+            "reason": null
+          },
+          {
+            "ordinal": 11,
+            "lines": [
+              20,
+              20
+            ],
+            "subject": "keyword",
+            "status": "passed",
+            "reason": null
+          }
+        ]
+      },
+      {
+        "check_id": "syntax_continuation",
+        "file_status": "ran",
+        "file_reason": null,
+        "records": [
+          {
+            "ordinal": 11,
+            "lines": [
+              20,
+              20
+            ],
+            "subject": "continuation",
+            "status": "passed",
+            "reason": null
+          }
+        ]
+      }
+    ],
+    "evidence": [
+      {
+        "template": "local/podman/copy",
+        "corrected_text": "COPY docs/guide/setup.md ./setup.md",
+        "evidence": "passed",
+        "detail": null,
+        "file": "build.stdout",
+        "lines": [
+          15,
+          17
+        ],
+        "image_pull": null
+      }
+    ],
+    "later_failure": null
+  },
+  "publication": {
+    "worktree": "/Users/Andrei_Shtanakov/labs/all_ai_orchestrators/deployer/.deployer-runs/36239373873/reproduction/attempt-1/fixes/001/worktree",
+    "branch": "deployer/fix/missing-copy-source/1b9ade27c685-001",
+    "fix_commit": "8f147d3aecfe6e7f1fb89186dfe6e78afeac6fcc",
+    "diff_ok": true,
+    "base": "polygon/fix-e2e-copy-base",
+    "pr_url": "https://github.com/andrei-shtanakov/deployer/pull/101",
+    "index_synced": true
+  },
+  "ci_attempts": [
+    {
+      "at": "2026-09-26T11:40:31+00:00",
+      "considered": [
+        {
+          "run_id": 36239524141,
+          "attempt": 1,
+          "job_key": "build",
+          "qualification": "qualified",
+          "reason": null
+        }
+      ],
+      "outcome": "ci_confirmed",
+      "reason": null,
+      "evidence": [
+        {
+          "run_id": 36239524141,
+          "attempt": 1,
+          "job_key": "build",
+          "job_id": 108397291744,
+          "positive": true,
+          "recurred": false,
+          "template": "passed",
+          "detail": null,
+          "lines": [],
+          "log_lines": [
+            {
+              "line": 189,
+              "text": "2026-09-26T11:39:59.8492459Z #14 [stage-0 7/9] COPY docs/guide/setup.md ./setup.md"
+            },
+            {
+              "line": 190,
+              "text": "2026-09-26T11:39:59.8493021Z #14 DONE 0.0s"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "last_operation": {
+    "command": "confirm",
+    "at": "2026-09-26T11:40:31+00:00",
+    "result": "ci_confirmed",
+    "reason": null
+  }
+}

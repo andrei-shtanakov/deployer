@@ -1,0 +1,5 @@
+fix: /Users/Andrei_Shtanakov/labs/all_ai_orchestrators/deployer/.deployer-runs/36239373873/reproduction/attempt-1/fixes/001/fix.json
+status: locally_confirmed
+worktree: /Users/Andrei_Shtanakov/labs/all_ai_orchestrators/deployer/.deployer-runs/36239373873/reproduction/attempt-1/fixes/001/worktree
+branch: deployer/fix/missing-copy-source/1b9ade27c685-001
+commit: 8f147d3aecfe6e7f1fb89186dfe6e78afeac6fcc

@@ -1,0 +1,4 @@
+status: fix_proposed
+branch: deployer/fix/from-argument-count/63f37f38b1d5-001
+base: polygon/fix-e2e-from-base
+pr: https://github.com/andrei-shtanakov/deployer/pull/102
