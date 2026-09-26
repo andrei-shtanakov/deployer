@@ -33,7 +33,7 @@ from pydantic import TypeAdapter
 
 from deployer.admission.fsread import read_in_tree
 from deployer.admission.model import Defect
-from deployer.admission.prepare import _as_r_reads, _head_listing
+from deployer.admission.prepare import decode_as_read_text, read_head_listing
 from deployer.author import deployer_version
 from deployer.fix.binding import Bound, bind_instruction, link_problem, splice
 from deployer.fix.chooser import SourceChooser, build_prompt, validate_answer
@@ -453,7 +453,7 @@ def _inputs(
     if isinstance(rebound, str):
         return rebound
     build, workflow_path, workflow_sha = rebound
-    listing, complete = _head_listing(source_dir.parent, target.head_sha)
+    listing, complete = read_head_listing(source_dir.parent, target.head_sha)
     stored = _admitted_input(
         session.doc.input, admitted, section, try_dir, build, workflow_sha
     )
@@ -484,7 +484,7 @@ def _build(
     if len(jobs) != 1 or run.workflow_path is None:
         return f"R's bound job {binding.job_id} or its workflow is not in the run"
     workflow = read_in_tree(source_dir, run.workflow_path)
-    shape = check_workflow(run, jobs[0], _as_r_reads(workflow))
+    shape = check_workflow(run, jobs[0], decode_as_read_text(workflow))
     if isinstance(shape, Refusal):
         return f"R's build configuration is not re-bound: {shape.reason}"
     bound = (shape.workflow_job, shape.build_step, shape.build.dockerfile)
@@ -642,7 +642,11 @@ def _propose_copy(
     if snapshot is None:
         return "the confirmed ownership carries no snapshot facts"
     prompt = build_prompt(
-        _as_r_reads(inputs.original), bound, absent, snapshot.facts, candidates.eligible
+        decode_as_read_text(inputs.original),
+        bound,
+        absent,
+        snapshot.facts,
+        candidates.eligible,
     )
     try:
         raw = chooser.choose(prompt)
@@ -683,7 +687,7 @@ def _ignore_rules(
 
 def _propose_from(inputs: _Inputs, bound: Bound) -> _Proposed | str:
     """F1/F2 (§4.2) with R's bound build args; a deterministic rationale."""
-    parsed = dockerfile.parse(_as_r_reads(inputs.original))
+    parsed = dockerfile.parse(decode_as_read_text(inputs.original))
     fix = propose_from(parsed, bound, inputs.build.build_args, inputs.original)
     if isinstance(fix, str):
         return fix

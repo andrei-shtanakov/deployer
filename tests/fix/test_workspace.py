@@ -996,7 +996,7 @@ def test_guarded_env_forbids_lazy_fetch(monkeypatch: pytest.MonkeyPatch) -> None
     """The shared guarded environment carries ``GIT_NO_LAZY_FETCH=1``, and
     ``workspace._run`` passes it to git even over an inherited ``0``."""
     monkeypatch.setenv("GIT_NO_LAZY_FETCH", "0")
-    assert gitrepo.no_replace_env({})["GIT_NO_LAZY_FETCH"] == "1"
+    assert gitrepo.guarded_git_env({})["GIT_NO_LAZY_FETCH"] == "1"
     seen: dict[str, str] = {}
 
     def fake_run(*_: Any, env: dict[str, str], **__: Any) -> Any:

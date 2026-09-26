@@ -26,7 +26,7 @@ its text, and only the one replaced slot is ever judged against the fix.
 from collections import Counter
 
 from deployer.admission.model import DefectClass
-from deployer.reproduce.checks import _norm
+from deployer.reproduce.checks import normalize_copy_path
 from deployer.reproduce.detail import COPY_SOURCES, CheckRecord, RecordRun
 
 _FROM_ARGS = "syntax_from_args"
@@ -50,7 +50,7 @@ def defect_check_passes(
 
     ``missing_copy_source``: the ``copy_sources`` record at
     ``replaced_position`` of the instruction at ``ordinal`` must be
-    ``passed`` **and** its subject must equal ``_norm(new_source)`` — a
+    ``passed`` **and** its subject must equal ``normalize_copy_path(new_source)`` — a
     passing record at that slot with some other subject means the slot was
     not actually rewritten to the intended source. ``from_argument_count``:
     the ``syntax_from_args`` record at ``ordinal`` must be ``passed`` —
@@ -153,7 +153,7 @@ def _copy_defect_passes(
             f"{COPY_SOURCES} record for ordinal {ordinal} position {position} "
             f"is {record.status}: {record.reason}"
         )
-    expected = _norm(new_source)
+    expected = normalize_copy_path(new_source)
     if record.subject != expected:
         return (
             f"{COPY_SOURCES} record for ordinal {ordinal} position {position} "

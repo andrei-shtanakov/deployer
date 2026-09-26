@@ -269,7 +269,7 @@ def test_chmod_failure_making_context_writable_is_a_try_dir_error(
     def boom(root: Path) -> None:
         raise OSError("operation not permitted")
 
-    monkeypatch.setattr(run_mod, "_make_writable", boom)
+    monkeypatch.setattr(run_mod, "restore_owner_write", boom)
     fake_containers.responses[("build",)] = proc(1)
     with pytest.raises(TryDirError, match="cannot make context/ writable"):
         _go(tmp_path, tree, fake_containers)
@@ -361,11 +361,11 @@ def test_write_text_is_utf8_with_untranslated_newlines(tmp_path: Path) -> None:
     code = (
         "import locale, sys\n"
         "from pathlib import Path\n"
-        "from deployer.reproduce.run import _write_text\n"
+        "from deployer.reproduce.run import write_utf8_record\n"
         "if locale.getencoding().upper().replace('-', '') != 'ISO88591':\n"
         "    sys.exit(77)\n"
         # ASCII-only source: the argv must decode under any locale.
-        "_write_text(Path(sys.argv[1]), '\\u0142 \\u20ac ok\\r\\nnext')\n"
+        "write_utf8_record(Path(sys.argv[1]), '\\u0142 \\u20ac ok\\r\\nnext')\n"
     )
     env = {**os.environ, "LC_ALL": "en_US.ISO8859-1", "PYTHONUTF8": "0"}
     done = subprocess.run(
@@ -380,7 +380,7 @@ def test_write_text_is_utf8_with_untranslated_newlines(tmp_path: Path) -> None:
 def test_unencodable_text_is_a_try_dir_error(tmp_path: Path) -> None:
     """T11 fix round 1: a lone surrogate cannot be encoded even as UTF-8; it
     is a try-directory write failure (exit 2), not a traceback."""
-    from deployer.reproduce.run import _write_text
+    from deployer.reproduce.run import write_utf8_record
 
     with pytest.raises(TryDirError, match="cannot write"):
-        _write_text(tmp_path / "ci.log", "bad \udc80 byte")
+        write_utf8_record(tmp_path / "ci.log", "bad \udc80 byte")

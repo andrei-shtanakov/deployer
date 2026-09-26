@@ -29,7 +29,7 @@ from deployer.admission.templates import (
     Ambiguous,
     CopyMatch,
     FromMatch,
-    _instruction_key,
+    instruction_compare_key,
     match_copy_ci,
     match_from_ci,
 )
@@ -42,7 +42,7 @@ from deployer.forge import (
     Completeness,
     FailedJob,
     StepInfo,
-    _build_job,
+    build_failed_job,
 )
 from deployer.reproduce.shape import job_text
 
@@ -402,8 +402,10 @@ def _recurrence(
             return AMBIGUOUS_MATCH
         if not isinstance(copy, CopyMatch) or copy.lines != lines:
             return None
-        key = _instruction_key(copy.step_text or "")
-        return copy.evidence_lines if key == _instruction_key(corrected) else None
+        key = instruction_compare_key(copy.step_text or "")
+        return (
+            copy.evidence_lines if key == instruction_compare_key(corrected) else None
+        )
     found = match_from_ci(text)
     if found == AMBIGUOUS_MATCH:
         return AMBIGUOUS_MATCH
@@ -423,7 +425,9 @@ def _rebuilt(job: FailedJob, log: str) -> FailedJob:
             for s in job.all_steps or []
         ],
     }
-    return _build_job(record, job.job_id, log, [], Completeness("present", "absent"))
+    return build_failed_job(
+        record, job.job_id, log, [], Completeness("present", "absent")
+    )
 
 
 def _undetermined(q: Qualified, reason: str) -> AttemptEvidence:

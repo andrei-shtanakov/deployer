@@ -35,10 +35,11 @@ from deployer.reproduce import dockerfile, endpoint, ignore
 from deployer.reproduce.buildline import BuildConfig
 from deployer.reproduce.detail import RecordRun, copy_source_records, syntax_records
 from deployer.reproduce.model import ReproductionSection
-
-# TODO: _make_writable, _relative_argv and _write_text should become public in
-# reproduce.run; they are imported here, not copied.
-from deployer.reproduce.run import _make_writable, _relative_argv, _write_text
+from deployer.reproduce.run import (
+    argv_relative_to,
+    restore_owner_write,
+    write_utf8_record,
+)
 from deployer.reproduce.shape import Refusal
 from deployer.runtime import probe_runtime_versions
 
@@ -217,7 +218,7 @@ def _prove(
     draft.records_before = [_run_record(run) for run in before]
     context = fix_dir / "context"
     shutil.copytree(source_dir, context, symlinks=True)
-    _make_writable(context)
+    restore_owner_write(context)
     write_reason = write_no_follow(context, build.dockerfile, corrected)
     if write_reason is not None:
         return write_reason
@@ -353,7 +354,7 @@ def _build_and_match(
     against the corrected bytes written and the build's own ``tag``."""
     run = build_mod.run_build(rt, context, build, tag, timeout)
     draft.build.update(
-        argv=_relative_argv(run.argv, fix_dir),
+        argv=argv_relative_to(run.argv, fix_dir),
         exit_code=run.exit_code,
         launch_error=run.launch_error,
         image_cleanup=build_mod.cleanup_image(rt, tag, built=run.exit_code == 0),
@@ -361,8 +362,8 @@ def _build_and_match(
             rt, finished=run.launch_error is None
         ),
     )
-    _write_text(fix_dir / STDOUT_FILE, run.stdout)
-    _write_text(fix_dir / STDERR_FILE, run.stderr)
+    write_utf8_record(fix_dir / STDOUT_FILE, run.stdout)
+    write_utf8_record(fix_dir / STDERR_FILE, run.stderr)
     draft.build.update(stdout=STDOUT_FILE, stderr=STDERR_FILE)
     if run.launch_error == "timeout":
         return "the build timed out"

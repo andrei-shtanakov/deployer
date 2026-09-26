@@ -296,7 +296,7 @@ def _read_block(lines: list[str], head: int) -> _Block | None:
     numbers = [n for n, _ in marked]
     return _Block(
         span=(min(numbers), max(numbers)),
-        text=_instruction_key("\n".join(t for _, t in marked)),
+        text=instruction_compare_key("\n".join(t for _, t in marked)),
         evidence=tuple(range(head + 1, end + 2)),
     )
 
@@ -310,7 +310,7 @@ def _step_headers(
         (m.group("k"), number)
         for number, line in enumerate(lines, start=1)
         if (m := _HEADER_RE.fullmatch(line))
-        and _instruction_key(m.group("instr")) == instruction
+        and instruction_compare_key(m.group("instr")) == instruction
     ]
     steps = {k for k, _ in hits}
     if len(steps) != 1:
@@ -345,7 +345,7 @@ def _summary_repeats(
     return tuple(repeats)
 
 
-def _instruction_key(text: str) -> str:
+def instruction_compare_key(text: str) -> str:
     """Normalised instruction text with an upper-case keyword, as R compares."""
     head, _, rest = normalise(text).partition(" ")
     return f"{head.upper()} {rest}".strip()

@@ -49,7 +49,7 @@ from deployer.admission.templates import (
     match_from_local,
 )
 from deployer.provenance.model import TreeRow
-from deployer.reproduce.checks import _is_modelled_source
+from deployer.reproduce.checks import is_modelled_source
 from deployer.reproduce.compare import REQUIRED_DIMENSIONS
 from deployer.reproduce.dockerfile import (
     Instruction,
@@ -364,7 +364,7 @@ def _source_form(keyword: str, source: str) -> str | None:
     """Why one source is not a literal local path (A §3.1), or ``None``."""
     if source.startswith(REMOTE_PREFIXES):
         return f"remote source {source}"
-    if not _is_modelled_source(source):
+    if not is_modelled_source(source):
         return f"source {source} outside the closed alphabet"
     if GLOB_CHARS & set(source):
         return f"glob source {source}"
@@ -671,7 +671,7 @@ def _bind_object(
 def _object_path(raw: str) -> str | None:
     """``<P>`` relative to the context root, or ``None`` when its reading is
     not certain (outside the alphabet, a glob, the root itself)."""
-    if not _is_modelled_source(raw) or GLOB_CHARS & set(raw):
+    if not is_modelled_source(raw) or GLOB_CHARS & set(raw):
         return None
     path = _norm(raw)
     return None if path == "." else path

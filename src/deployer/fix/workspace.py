@@ -40,7 +40,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from deployer.fix.binding import Bound, link_problem
-from deployer.provenance.gitrepo import NO_REPLACE_CONFIG, no_replace_env
+from deployer.provenance.gitrepo import NO_REPLACE_CONFIG, guarded_git_env
 from deployer.provenance.model import (
     POINTER,
     RECORD_FILE,
@@ -489,7 +489,7 @@ def _run(
     never a ``refs/replace/*`` substitute; and ``GIT_NO_LAZY_FETCH=1`` makes
     a missing object an error, never a network fetch."""
     environ = {k: v for k, v in os.environ.items() if k not in _REDIRECTING_ENV}
-    environ = no_replace_env({**environ, **(env or {})})
+    environ = guarded_git_env({**environ, **(env or {})})
     overrides = [arg for item in g for arg in ("-c", item)]
     command = ["git", *NO_REPLACE_CONFIG, *overrides, "-C", str(cwd), *args]
     try:

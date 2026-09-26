@@ -57,8 +57,10 @@ paragraph.
   coercion only reaches our own output; a hand-crafted signed snapshot with `"true"`
   would need a trusted key.
 - [ ] Lift the duplicated `_norm` / `_instruction_key` helpers into one shared helper (parked in A3 review) @owner:repo:deployer @id:admission-shared-instruction-key @epic:eco.dark-factory
-  `admission/decide.py` carries its own copies of `reproduce/checks.py:_norm` and
-  `admission/templates.py:_instruction_key`; one shared helper keeps them from drifting.
+  `admission/decide.py` carries its own private copies (`_norm`, `_instruction_key`) of
+  `reproduce/checks.py:normalize_copy_path` and
+  `admission/templates.py:instruction_compare_key`; one shared helper keeps them from
+  drifting.
 - [ ] Optionally refuse a trust root inside the git toplevel of the working directory (parked in A3 review) @owner:repo:deployer @id:admission-trust-root-git-toplevel @epic:eco.dark-factory
   Hardening beyond the spec's checked roots (A §2.3), not a known defect.
 - [ ] Real `docker build --check` recordings for the two synthetic reader fixtures @owner:repo:deployer @id:repro-check-output-real-recordings @epic:eco.dark-factory

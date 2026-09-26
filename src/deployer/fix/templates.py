@@ -64,7 +64,7 @@ import re
 from dataclasses import dataclass
 from typing import Literal, NamedTuple
 
-from deployer.admission.prepare import _as_r_reads
+from deployer.admission.prepare import decode_as_read_text
 from deployer.admission.templates import split_lines
 from deployer.fix.reading import (
     comment_reason,
@@ -273,7 +273,7 @@ def buildkit_steps(dockerfile: bytes) -> list[tuple[Instruction, Position]] | st
     steps are :data:`_BK_STEP_KEYWORDS`, and only
     :data:`_BK_METADATA_KEYWORDS` may appear besides. Refuse-only: a wrong
     model costs a refusal, never a confirmation."""
-    parsed = parse(_as_r_reads(dockerfile))
+    parsed = parse(decode_as_read_text(dockerfile))
     if unread_reason(parsed) is not None:
         return "split not read"
     instructions = parsed.instructions
@@ -357,13 +357,13 @@ def _unique_in_dockerfile(kind: Kind, text: str, dockerfile: bytes) -> Outcome |
     identical instruction in a skipped stage prints nothing and must not make
     the one printed line look unique.
 
-    Instructions are read as R reads them (``_as_r_reads``,
+    Instructions are read as R reads them (``decode_as_read_text``,
     ``dockerfile.parse``), which is sound only where the builders read alike:
     the whole file must pass the fix-wide reading checks (``fix.reading``),
     and every instruction of the kind's family must be in the modelled form
     (``_family_reason``). FROMs are compared by the line Podman rebuilds for
     them (``_from_display``); COPY/ADD by ``Instruction.text``."""
-    parsed = parse(_as_r_reads(dockerfile))
+    parsed = parse(decode_as_read_text(dockerfile))
     wanted = parse(text).instructions
     if len(wanted) != 1:
         return _outcome("binding_ambiguous", (), "corrected text is not one line")

@@ -21,7 +21,7 @@ from deployer.admission.consumer import Accepted, Target, accept_for_fix
 from deployer.admission.fsread import read_in_tree
 from deployer.admission.model import AdmissionSection
 from deployer.admission.ownership import OwnershipFacts, verify_ownership
-from deployer.admission.prepare import _head_listing
+from deployer.admission.prepare import read_head_listing
 from deployer.fix.document import FixDocument, Input, StoredFile, verify_inputs
 from deployer.fix.workspace import partial_clone_problem
 from deployer.provenance import gitrepo
@@ -315,7 +315,7 @@ def _r_state_problem(source_dir: Path, target: Target) -> str | None:
     admission's ``prepare`` reads it) and the restored artifact's bytes, read
     no-follow, hash to ``target.artifact_sha256``."""
     try:
-        _head_listing(source_dir.parent, target.head_sha)
+        read_head_listing(source_dir.parent, target.head_sha)
     except TryDirError as exc:
         return f"R's restoration is not the target's: {exc}"
     try:

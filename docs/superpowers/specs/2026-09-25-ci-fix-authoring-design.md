@@ -447,7 +447,7 @@ What the recordings and the reading show, and every rule below relies on:
   included (`l5`, `l7`). The matchers read the prefixed form and the unprefixed one.
 - **Uniqueness in the Dockerfile, first.** The corrected instruction's text must occur
   exactly once among the corrected Dockerfile's instructions, compared as the rest of the
-  fix compares them (A's `_as_r_reads`, R's `dockerfile.parse`, `Instruction.text`; a FROM
+  fix compares them (A's `decode_as_read_text`, R's `dockerfile.parse`, `Instruction.text`; a FROM
   by its rebuilt display form); otherwise → `binding ambiguous`, decided before any output
   is read. That comparison is sound only in the modelled form, so it is refused
   (`binding ambiguous`) when the whole corrected Dockerfile fails the fix-wide reading

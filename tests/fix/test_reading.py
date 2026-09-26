@@ -3,7 +3,7 @@ and Ruling O's strict-form gate."""
 
 import pytest
 
-from deployer.admission.prepare import _as_r_reads
+from deployer.admission.prepare import decode_as_read_text
 from deployer.fix.reading import heredoc_reason, join_reason, strict_form_reason
 from deployer.reproduce.dockerfile import parse
 
@@ -46,14 +46,14 @@ def test_n2_modelled_continuations_still_pass(data: bytes) -> None:
 )
 def test_n1_any_heredoc_refused(data: bytes) -> None:
     """Any instruction opening a heredoc by R's rule refuses the file."""
-    reason = heredoc_reason(parse(_as_r_reads(data)).instructions)
+    reason = heredoc_reason(parse(decode_as_read_text(data)).instructions)
     assert reason == "a heredoc at line 2 is not modelled"
 
 
 def test_n1_no_heredoc_passes() -> None:
     """A quoted ``<<`` opens nothing; a file without one passes."""
     data = b'FROM a\nLABEL x="<<EOF"\nRUN echo "<<EOF"\n'
-    assert heredoc_reason(parse(_as_r_reads(data)).instructions) is None
+    assert heredoc_reason(parse(decode_as_read_text(data)).instructions) is None
 
 
 # --- Ruling O: the strict-form gate ----------------------------------------

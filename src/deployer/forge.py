@@ -199,7 +199,7 @@ class AttemptRead:
     past its metadata) or when ``error`` is set. ``logs_state`` is per job
     id. ``error`` records any ``GhError`` — HTTP status or none — and any
     malformed or unparseable response; it is never raised. ``logs`` maps a
-    job id to the exact log text read for it (the text ``_build_job`` was
+    job id to the exact log text read for it (the text ``build_failed_job`` was
     given); a job whose log was not read (``logs_state`` other than
     ``"present"``) has no key, so a consumer never mistakes an absent log
     for an empty one.
@@ -392,7 +392,7 @@ def fetch_failed_run(
         log_text, logs_state = gh.logs(job_id)
         annotations, annotations_state = gh.annotations(job_id)
         jobs.append(
-            _build_job(
+            build_failed_job(
                 record,
                 job_id,
                 log_text,
@@ -593,13 +593,15 @@ def _read_all_jobs(
         if state == "present":
             texts[job_id] = log_text
         jobs.append(
-            _build_job(record, job_id, log_text, [], Completeness(state, "absent"))
+            build_failed_job(
+                record, job_id, log_text, [], Completeness(state, "absent")
+            )
         )
     return jobs, states, texts
 
 
 def _check_job_record(record: object) -> None:
-    """Refuse a job record ``_build_job`` could not read without guessing."""
+    """Refuse a job record ``build_failed_job`` could not read without guessing."""
     steps = record.get("steps") if isinstance(record, dict) else None
     ok = (
         isinstance(record, dict)
@@ -847,13 +849,19 @@ def _level_of(annotation: dict[str, Any]) -> str | None:
     return None if level is None else str(level)
 
 
-def _build_job(
+def build_failed_job(
     record: dict[str, Any],
     job_id: int,
     log_text: str,
     annotations: list[dict[str, Any]],
     completeness: Completeness,
 ) -> FailedJob:
+    """A :class:`FailedJob` built from a job ``record`` and its ``log_text``.
+
+    Only non-green steps are kept as ``steps`` (``all_steps`` keeps every
+    step); log blocks are bound to steps by exact title, and those bound to a
+    green step, plus ``annotations``, become job-level evidence.
+    """
     all_steps = list(record.get("steps") or [])
     step_infos = [
         StepInfo(

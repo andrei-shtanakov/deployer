@@ -26,10 +26,12 @@ REPLACE_REDIRECTING_ENV = ("GIT_REPLACE_REF_BASE",)
 """Inherited, this would point replace lookups at another ref namespace."""
 
 
-def no_replace_env(base: Mapping[str, str] | None = None) -> dict[str, str]:
-    """``base`` (the current environment by default) with replace objects
+def guarded_git_env(base: Mapping[str, str] | None = None) -> dict[str, str]:
+    """The guarded ``git`` environment of every object read.
+
+    ``base`` (the current environment by default) with replace objects
     disabled, ``GIT_REPLACE_REF_BASE`` dropped and lazy fetching of missing
-    objects forbidden: the guarded environment of every object read."""
+    objects in a partial clone forbidden (``GIT_NO_LAZY_FETCH=1``)."""
     source = os.environ if base is None else base
     environ = {k: v for k, v in source.items() if k not in REPLACE_REDIRECTING_ENV}
     environ.update(NO_REPLACE_ENV)
@@ -49,7 +51,7 @@ def _git(path: Path, *args: str) -> bytes:
             ["git", *NO_REPLACE_CONFIG, "-C", str(path), *args],
             capture_output=True,
             timeout=_TIMEOUT_S,
-            env=no_replace_env(),
+            env=guarded_git_env(),
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise GitError(f"git {args[0]} could not run: {exc}") from exc

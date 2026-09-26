@@ -2,7 +2,7 @@
 
 Run in a separate interpreter because a process's locale is fixed at
 startup (from ``LC_ALL``/``LANG``): the parent test's own locale cannot be
-changed mid-run to exercise ``admission.prepare._as_r_reads``'s locale
+changed mid-run to exercise ``admission.prepare.decode_as_read_text``'s locale
 dependence for real. All non-ASCII content is read from a file passed as
 ``sys.argv[1]``; the child's own command line stays pure ASCII, since a
 non-ASCII argv is not reliable across CI locales.

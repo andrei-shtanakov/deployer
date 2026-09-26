@@ -6,7 +6,7 @@ from collections.abc import Mapping
 import pytest
 
 from deployer.admission.model import Defect
-from deployer.admission.prepare import _as_r_reads
+from deployer.admission.prepare import decode_as_read_text
 from deployer.fix.binding import Bound, bind_instruction, link_problem, splice
 from deployer.fix.fromfix import (
     STAGE_NAME_RE,
@@ -25,7 +25,7 @@ def _propose(
     dockerfile: bytes, line: int = 1, build_args: Mapping[str, str] | None = None
 ) -> tuple[FromFix | str, Bound]:
     """Bind the FROM at ``line`` like Task 4 does and propose for it."""
-    text = _as_r_reads(dockerfile)
+    text = decode_as_read_text(dockerfile)
     parsed = parse(text)
     instruction = next(i for i in parsed.instructions if i.first_line == line)
     defect = Defect(
@@ -287,7 +287,7 @@ def test_refusal_earlier_value_of_a_duplicate_build_arg() -> None:
     """Ruling S: a name given twice is checked for both values, so an
     earlier value naming the token refuses even when the last does not."""
     dockerfile = b"FROM python:3.12-slim extra\n"
-    parsed = parse(_as_r_reads(dockerfile))
+    parsed = parse(decode_as_read_text(dockerfile))
     bound = bind_instruction(
         dockerfile,
         Defect.model_validate(
@@ -314,7 +314,7 @@ def test_unrelated_build_arg_allows_f1() -> None:
 def test_refusal_not_from() -> None:
     """A bound instruction that is not FROM is refused."""
     dockerfile = b"FROM python:3.12\nRUN a b\n"
-    parsed = parse(_as_r_reads(dockerfile))
+    parsed = parse(decode_as_read_text(dockerfile))
     bound = Bound(
         ordinal=1,
         lines=(2, 2),

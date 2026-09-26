@@ -43,7 +43,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from deployer.admission.ownership import verify_ownership
-from deployer.admission.prepare import _as_r_reads
+from deployer.admission.prepare import decode_as_read_text
 from deployer.fix.binding import Bound, link_problem
 from deployer.fix.chooser import _fence
 from deployer.fix.document import (
@@ -655,7 +655,7 @@ def _dockerfile_problem(doc: FixDocument, head_df: bytes, fix_df: bytes) -> str 
 
 def _bound(head_df: bytes, proposal: Proposal) -> Bound | str:
     """The stored proposal's instruction, re-bound over ``head_df``."""
-    instructions = parse(_as_r_reads(head_df)).instructions
+    instructions = parse(decode_as_read_text(head_df)).instructions
     if not 0 <= proposal.ordinal < len(instructions):
         return f"the proposal's ordinal {proposal.ordinal} is out of range"
     instruction = instructions[proposal.ordinal]

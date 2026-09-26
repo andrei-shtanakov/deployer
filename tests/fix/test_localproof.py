@@ -27,7 +27,7 @@ from deployer.fix.localproof import (
 from deployer.fix.workspace import new_fix_dir
 from deployer.models import ContainerRuntime
 from deployer.reproduce.buildline import BuildConfig
-from deployer.reproduce.run import _make_writable
+from deployer.reproduce.run import restore_owner_write
 from tests.admission.conftest import Replayed, replay_case
 from tests.fix.conftest import enable_for_test
 from tests.reproduce.conftest import FakeContainers, proc
@@ -439,7 +439,7 @@ def _link_dockerfile(case: Case, outside: Path) -> None:
     """Replace R's ``source/Dockerfile`` by an absolute symlink to
     ``outside``, which holds the original bytes."""
     source = case.r.source
-    _make_writable(source)
+    restore_owner_write(source)
     outside.write_bytes((source / "Dockerfile").read_bytes())
     (source / "Dockerfile").unlink()
     (source / "Dockerfile").symlink_to(outside)
@@ -475,7 +475,7 @@ def test_symlinked_ancestor_refused(copy_case: Case, tmp_path: Path) -> None:
     target = outside_dir / "Dockerfile"
     target.write_bytes((copy_case.r.source / "Dockerfile").read_bytes())
     original = target.read_bytes()
-    _make_writable(copy_case.r.source)
+    restore_owner_write(copy_case.r.source)
     (copy_case.r.source / "docker").symlink_to(outside_dir)
     copy_case.set_build(0, stdout=_copy_stdout())
     build = BuildConfig("docker/Dockerfile", (), None, None)

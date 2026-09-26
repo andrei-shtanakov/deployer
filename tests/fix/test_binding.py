@@ -90,7 +90,7 @@ def test_cross_check_failure_from_argument_count() -> None:
 
 
 def test_binds_under_a_real_non_utf8_locale(tmp_path: Path) -> None:
-    """``bind_instruction`` decodes the way R does (``_as_r_reads``'s locale
+    """``bind_instruction`` decodes the way R does (``decode_as_read_text``'s locale
     encoding), never a hardcoded UTF-8.
 
     Run in a child process under ``LC_ALL=en_US.ISO8859-1`` so the locale
