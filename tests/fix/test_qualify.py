@@ -286,13 +286,27 @@ def test_unreadable_workflow_is_undetermined() -> None:
     )
 
 
-def test_qualify_never_raises() -> None:
-    # A timestamp YAML accepts syntactically but cannot construct.
+def test_unconstructible_date_is_unreadable() -> None:
+    # A timestamp YAML accepts syntactically but cannot construct: shape's
+    # _load refuses it (it used to escape as a bare ValueError).
     bad = b"when: 2001-13-45\njobs: {}\n"
     result = _q(_read(), workflow=bad, original_sha=sha256_hex(bad))
-    assert result.status == "undetermined"
-    assert result.reason is not None
-    assert result.reason.startswith("qualification failed: ValueError")
+    assert (result.status, result.reason) == (
+        "undetermined",
+        "workflow at the fix commit: workflow not readable: ValueError",
+    )
+
+
+def test_qualify_never_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    def boom(*_: object) -> None:
+        raise ValueError("boom")
+
+    monkeypatch.setattr("deployer.fix.qualify._run_exclusion", boom)
+    result = _q(_read())
+    assert (result.status, result.reason) == (
+        "undetermined",
+        "qualification failed: ValueError: boom",
+    )
 
 
 def test_proven_config_difference_wins_over_missing_checkout() -> None:

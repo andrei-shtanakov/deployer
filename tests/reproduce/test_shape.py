@@ -14,7 +14,13 @@ from deployer.forge import (
     StepRef,
 )
 from deployer.reproduce.buildline import BuildConfig
-from deployer.reproduce.shape import Refusal, Shape, check_workflow, precheck
+from deployer.reproduce.shape import (
+    Refusal,
+    Shape,
+    check_workflow,
+    precheck,
+    workflow_jobs,
+)
 
 SHA = "d6e330fd8d85f761962d8a134f0ffdd0e914bf9b"
 CHECKOUT = "Run actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd"
@@ -297,3 +303,16 @@ def test_inert_steps_are_exact_strings():
     shape = check_workflow(_run(jobs=[job]), job, wf)
     assert isinstance(shape, Shape)
     assert shape.preceding_unmet == [f"step 4 ({names[1]}) is not on the inert list"]
+
+
+@pytest.mark.parametrize(
+    ("text", "exc_name"),
+    [
+        ("on: 2001-02-30\njobs: {}\n", "ValueError"),
+        ("2001-02-30: x\njobs: {}\n", "ValueError"),
+        ("[" * 5000 + "]" * 5000, "RecursionError"),
+    ],
+    ids=["date-value", "date-key", "deep-nest"],
+)
+def test_unreadable_yaml_is_a_refusal_not_a_raise(text, exc_name):
+    assert workflow_jobs(text) == Refusal(f"workflow not readable: {exc_name}")
