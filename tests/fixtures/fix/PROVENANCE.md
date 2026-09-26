@@ -9,7 +9,7 @@ stage-5 end-to-end acceptance of `deployer fix` for `missing_copy_source`.
 
 | Case | Added to `tree/` before signing | Expected |
 |---|---|---|
-| `copy-basename-unique` | `docs/guide/setup.md` | admitted; envelope passed; the prompt lists every eligible blob; the proposal is the model's choice (the bundle's labelled fake answer); without the test seam `no local confirmation: templates not enabled` |
+| `copy-basename-unique` | `docs/guide/setup.md` | admitted; envelope passed; the prompt lists every eligible blob; the proposal is the model's choice (the bundle's labelled fake answer); without the test seam `no local confirmation: templates not enabled` (as recorded 2026-09-25, before #99 enabled the local rows — see the note below) |
 | `copy-basename-ambiguous` | `docs/a/setup.md`, `docs/b/setup.md` | admitted; `fix method not established: 5 basename floor: 2 eligible files…`; the model not called |
 
 ## Two sources, never mixed
@@ -68,8 +68,10 @@ stage-5 end-to-end acceptance of `deployer fix` for `missing_copy_source`.
 replay; `defect`; `envelope` — `passed` or `stopped`; `model_called`; then either
 `prompt_lists` (the eligible blobs the prompt must list), `model_answer` (the fake
 answer's file, `fake: true`), `proposal` (`chosen_by: model`, transformation,
-original and replacement instruction) and `without_seam` (the stop when no template
-row is enabled), or `stop` (status, reason, the detail's prefix).
+original and replacement instruction), `without_seam` (the stop when no template
+row is enabled) and, in `copy-basename-unique` only, `without_seam_note` (a dated
+annotation that `without_seam` predates #99 — see the note below), or `stop` (status,
+reason, the detail's prefix).
 
 **Note (2026-09-26).** `copy-basename-unique`'s `without_seam` (`no local
 confirmation: templates not enabled`) was true when the bundle was recorded (#94),
