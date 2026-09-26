@@ -9,7 +9,7 @@ stage-5 end-to-end acceptance of `deployer fix` for `missing_copy_source`.
 
 | Case | Added to `tree/` before signing | Expected |
 |---|---|---|
-| `copy-basename-unique` | `docs/guide/setup.md` | admitted; envelope passed; the prompt lists every eligible blob; the proposal is the model's choice (the bundle's labelled fake answer); without the test seam `no local confirmation: templates not enabled` |
+| `copy-basename-unique` | `docs/guide/setup.md` | admitted; envelope passed; the prompt lists every eligible blob; the proposal is the model's choice (the bundle's labelled fake answer); without the test seam `no local confirmation: templates not enabled` (as recorded 2026-09-25, before #99 enabled the local rows — see the note below) |
 | `copy-basename-ambiguous` | `docs/a/setup.md`, `docs/b/setup.md` | admitted; `fix method not established: 5 basename floor: 2 eligible files…`; the model not called |
 
 ## Two sources, never mixed
