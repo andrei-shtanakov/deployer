@@ -1,20 +1,22 @@
 """Closed "passed" template tables (design §6.3, §7.3, §9, §10 test seam).
 
 The local (Podman) rows are backed by the L-recordings and replayed on them in
-``test_local_recordings.py``; the tests here pin their rules on synthetic
-lines. The CI (BuildKit) matchers are still **hypotheses**: these tests assert
-the negatives, and only that the matcher returns ``passed`` on the
-*synthetic* shape the pipeline tests use — never that this shape is what
-BuildKit actually prints.
+``test_local_recordings.py``; the CI (BuildKit) rows by the C-recordings,
+replayed in ``test_ci_recordings.py``. The tests here pin their rules on
+synthetic lines; a synthetic shape is never a claim about what a builder
+prints.
 """
 
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
 from deployer.fix import templates
 from deployer.fix.templates import ROWS, Outcome, enabled_rows, match_ci, match_local
 from tests.fix.conftest import enable_for_test
+from tests.fix.test_ci_recordings import EXPECTED as CI_RECORDED
+from tests.fix.test_ci_recordings import TEMPLATE as CI_TEMPLATE
 from tests.fix.test_local_recordings import EXPECTED as RECORDED
 from tests.fix.test_local_recordings import recorded_checks, replay
 
@@ -24,7 +26,12 @@ _COPY = "COPY docs/setup.md /app/docs/setup.md"
 _FROM = "FROM python:3.12-slim AS extra"
 _TAG = "localhost/deployer-fix-x"
 _DOCKERFILE = f'{_FROM}\nWORKDIR /app\n{_COPY}\nCMD ["python"]\n'.encode()
-_LOCAL_ROWS = ("copy-passed/podman", "from-parsed/podman")
+_ALL_ROWS = (
+    "copy-passed/podman",
+    "from-parsed/podman",
+    "copy-passed/buildkit",
+    "from-parsed/buildkit",
+)
 
 # Synthetic shapes (NOT recordings) ------------------------------------------
 
@@ -63,22 +70,26 @@ def test_rows_are_the_four_closed_rows() -> None:
 
 
 def test_no_row_enabled_without_recording() -> None:
-    """§9: a production row is enabled only with its recording. Exactly the
-    two local rows are; the cases under each one's ``Row.recording`` replay
-    through ``match_local`` to the replay test's table; the CI rows stay
-    disabled."""
+    """§9: a production row is enabled only with its recording. All four
+    are; each one's ``Row.recording`` holds cases of its kind, and they
+    replay to the replay tests' tables (local: ``match_local``; CI: the
+    replay test's table covers every case, with its own replay)."""
     enabled = enabled_rows()
-    assert tuple(row.id for row in enabled) == _LOCAL_ROWS
+    assert tuple(row.id for row in enabled) == _ALL_ROWS
     for row in enabled:
         assert row.recording is not None
         root = _ROOT / row.recording
         mine = [c for c in recorded_checks(root) if c[1] == row.kind]
         assert mine, row.id
+        if row.side == "ci":
+            names = sorted({name for name, _, _ in recorded_checks(root)})
+            assert names == sorted(CI_RECORDED), row.id
+            continue
         for check in mine:
             outcome = replay(root, check)
             got = (outcome.evidence, outcome.lines, outcome.detail)
             assert got == RECORDED[check], (row.id, check)
-    assert all(row.recording is None for row in ROWS if row.side == "ci")
+    assert set(CI_TEMPLATE) <= set(CI_RECORDED)
 
 
 def test_seam_enables_and_restores() -> None:
@@ -112,12 +123,36 @@ def test_registry_unreachable_from_src() -> None:
     assert "getenv" not in own
 
 
+def test_ci_enabled_by_default() -> None:
+    """The recording-backed CI rows need no seam."""
+    copy = match_ci("copy", _COPY, _BUILDKIT_COPY_OK, dockerfile=_DOCKERFILE)
+    from_ = match_ci("from", _FROM, _BUILDKIT_FROM_OK, dockerfile=_DOCKERFILE)
+    assert (copy.evidence, from_.evidence) == ("passed", "passed")
+
+
 @pytest.mark.parametrize("kind", ["copy", "from"])
-def test_ci_not_enabled_by_default(kind: str) -> None:
-    """Without the seam the CI matchers yield ``not_enabled``, even on text
-    that would otherwise pass."""
-    ci = match_ci(kind, _COPY, _BUILDKIT_COPY_OK)  # type: ignore[arg-type]
+def test_ci_row_without_recording_not_enabled(kind: str) -> None:
+    """A CI row with no recording yields ``not_enabled``, even on text that
+    would otherwise pass."""
+    with patch.object(templates, "ROWS", _without_recording("ci")):
+        ci = match_ci(
+            kind,  # type: ignore[arg-type]
+            _COPY,
+            _BUILDKIT_COPY_OK,
+            dockerfile=_DOCKERFILE,
+        )
     assert ci == Outcome("not_enabled", (), "templates not enabled", None)
+
+
+def _without_recording(side: str, kind: str | None = None) -> tuple[templates.Row, ...]:
+    """The production table with ``side``'s rows (of ``kind``, when given)
+    disabled."""
+    return tuple(
+        templates.Row(r.id, r.side, r.backend, r.kind, None)
+        if r.side == side and kind in (None, r.kind)
+        else r
+        for r in ROWS
+    )
 
 
 def test_local_enabled_by_default() -> None:
@@ -129,9 +164,10 @@ def test_local_enabled_by_default() -> None:
 
 
 def test_other_row_does_not_enable_kind() -> None:
-    """Enabling the CI COPY row leaves CI FROM disabled."""
-    with enable_for_test("copy-passed/buildkit"):
-        assert match_ci("from", _FROM, _BUILDKIT_FROM_OK).evidence == "not_enabled"
+    """The CI COPY row enabled does not enable a disabled CI FROM row."""
+    with patch.object(templates, "ROWS", _without_recording("ci", "from")):
+        outcome = match_ci("from", _FROM, _BUILDKIT_FROM_OK, dockerfile=_DOCKERFILE)
+    assert outcome.evidence == "not_enabled"
 
 
 def test_unknown_kind_is_not_enabled() -> None:
@@ -595,10 +631,9 @@ def test_podman_from_parse_error(stderr: str) -> None:
 # COPY / BuildKit ------------------------------------------------------------
 
 
-def _ci_copy(log: str, text: str = _COPY) -> Outcome:
-    """``match_ci`` for COPY with the seam on."""
-    with enable_for_test("copy-passed/buildkit"):
-        return match_ci("copy", text, log)
+def _ci_copy(log: str, text: str = _COPY, dockerfile: bytes = _DOCKERFILE) -> Outcome:
+    """``match_ci`` for COPY (a production row)."""
+    return match_ci("copy", text, log, dockerfile=dockerfile)
 
 
 def test_buildkit_copy_synthetic_shape_passes() -> None:
@@ -658,10 +693,9 @@ def test_buildkit_unknown_format() -> None:
 # FROM / BuildKit ------------------------------------------------------------
 
 
-def _ci_from(log: str) -> Outcome:
-    """``match_ci`` for FROM with the seam on."""
-    with enable_for_test("from-parsed/buildkit"):
-        return match_ci("from", _FROM, log)
+def _ci_from(log: str, dockerfile: bytes = _DOCKERFILE) -> Outcome:
+    """``match_ci`` for FROM (a production row)."""
+    return match_ci("from", _FROM, log, dockerfile=dockerfile)
 
 
 def test_buildkit_from_synthetic_shape_passes() -> None:
@@ -690,6 +724,99 @@ def test_buildkit_from_loading_steps_are_not_evidence() -> None:
         "#3 DONE 0.0s\n"
     )
     assert _ci_from(log).evidence == "not_confirmed"
+
+
+# BuildKit padding (owner, 2026-09-26; c4/c9) -------------------------------
+
+
+@pytest.mark.parametrize(
+    "bracket",
+    ["stage-0  7/10", "stage-0 10/10", "stage-0 7/9", " 7/10", "2/3", "a    7/1000"],
+)
+def test_buildkit_padded_step_passes(bracket: str) -> None:
+    """``k`` right-aligned to ``n``'s width, or unpadded when as wide."""
+    log = f"#5 [{bracket}] {_COPY}\n#5 DONE 0.1s\n"
+    assert _ci_copy(log).evidence == "passed"
+
+
+@pytest.mark.parametrize(
+    "bracket",
+    [
+        "stage-0   7/10",  # two spaces where one is due
+        "stage-0  7/9",  # padding where none is due
+        "stage-0  10/10",  # padding wider than len(str(n))
+        "stage-0 7/10",  # padding missing
+        "stage-0\t7/10",  # a tab
+        "stage-0 \t7/10",  # a tab as padding
+        "stage-0 07/10",  # a leading zero is not padding
+        "  7/10",  # unnamed, padding too wide
+    ],
+    ids=["two", "undue", "wide", "missing", "tab", "tabpad", "zero", "unnamed"],
+)
+def test_buildkit_bad_padding_refused(bracket: str) -> None:
+    """Any other run of spaces, or a tab, is not a stage header."""
+    log = f"#5 [{bracket}] {_COPY}\n#5 DONE 0.1s\n"
+    assert _ci_copy(log).evidence == "not_confirmed"
+
+
+def test_buildkit_from_padding_rule_applies() -> None:
+    """A FROM stage header is read by the same padding rule."""
+    good = "#4 [extra  1/10] FROM docker.io/library/python:3.12-slim\n#4 DONE\n"
+    bad = "#4 [extra   1/10] FROM docker.io/library/python:3.12-slim\n#4 DONE\n"
+    assert _ci_from(good).evidence == "passed"
+    assert _ci_from(bad).evidence == "not_confirmed"
+
+
+# BuildKit reads the corrected Dockerfile first (rulings P, Q) ---------------
+
+
+@pytest.mark.parametrize("kind", ["copy", "from"])
+def test_ci_strict_form_refused_before_the_log(kind: str) -> None:
+    """Ruling P: the strict form runs file-wide first, for both kinds."""
+    dockerfile = b"\xef\xbb\xbf" + _DOCKERFILE  # a BOM
+    log = _BUILDKIT_COPY_OK if kind == "copy" else _BUILDKIT_FROM_OK
+    text = _COPY if kind == "copy" else _FROM
+    outcome = match_ci(kind, text, log, dockerfile=dockerfile)  # type: ignore[arg-type]
+    assert outcome.evidence == "binding_ambiguous"
+    assert outcome.lines == ()
+    assert outcome.detail is not None and outcome.detail.startswith("Dockerfile: ")
+
+
+def test_ci_copy_dockerfile_duplicate_ambiguous() -> None:
+    """Ruling Q: an identical COPY in a stage BuildKit may skip refuses
+    before the log is read, even when one header would pass."""
+    dockerfile = f"FROM a AS x\n{_COPY}\nFROM b\n{_COPY}\n".encode()
+    outcome = _ci_copy(_BUILDKIT_COPY_OK, dockerfile=dockerfile)
+    assert outcome == Outcome(
+        "binding_ambiguous",
+        (),
+        "Dockerfile: corrected instruction repeated at lines 2, 4",
+        None,
+    )
+
+
+@pytest.mark.parametrize(
+    "other", ['COPY "docs/setup.md" /x', "ADD $SRC /x", 'COPY ["a", "/x"]']
+)
+def test_ci_copy_family_unmodelled_refused(other: str) -> None:
+    """Ruling Q: a ``$``, quote or unmodelled form in the COPY/ADD family."""
+    dockerfile = f"FROM a AS x\n{other}\nFROM b\n{_COPY}\n".encode()
+    outcome = _ci_copy(_BUILDKIT_COPY_OK, dockerfile=dockerfile)
+    assert outcome.evidence == "binding_ambiguous"
+    assert outcome.detail is not None and "unprovable" in outcome.detail
+
+
+def test_ci_copy_absent_from_dockerfile() -> None:
+    """A corrected text that is no instruction of the Dockerfile."""
+    outcome = _ci_copy(_BUILDKIT_COPY_OK, dockerfile=b"FROM a\nRUN x\n")
+    assert outcome.detail == "Dockerfile: corrected instruction absent"
+
+
+def test_ci_from_stays_file_wide() -> None:
+    """FROM on CI keeps the file-wide rule (c8): a repeated FROM does not
+    refuse it, the parse error decides."""
+    dockerfile = f"{_FROM}\nRUN x\n{_FROM}\nRUN y\n".encode()
+    assert _ci_from(_BUILDKIT_FROM_OK, dockerfile=dockerfile).evidence == "passed"
 
 
 # Never raise ----------------------------------------------------------------
@@ -737,8 +864,18 @@ def test_matchers_never_raise(text: str, kind: str) -> None:
                 dockerfile=text.encode(),
                 tag=_TAG,
             ),
-            match_ci(kind, text, text),  # type: ignore[arg-type]
-            match_ci(kind, _COPY, text),  # type: ignore[arg-type]
+            match_ci(
+                kind,  # type: ignore[arg-type]
+                text,
+                text,
+                dockerfile=text.encode(),
+            ),
+            match_ci(
+                kind,  # type: ignore[arg-type]
+                _COPY,
+                text,
+                dockerfile=_DOCKERFILE,
+            ),
         ]
     assert all(isinstance(result, Outcome) for result in results)
     assert all(result.evidence != "passed" for result in results[2:])

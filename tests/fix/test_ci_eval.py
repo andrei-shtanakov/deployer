@@ -1,14 +1,18 @@
 """F §7.3–§7.4: CI evidence of an attempt, recurrence, and the evaluation.
 
-The BuildKit "passed" shapes here are synthetic (NOT recordings), reached
-through the test seam exactly as ``tests/fix/test_templates.py`` does.
+The BuildKit "passed" shapes here are synthetic (NOT recordings); the CI
+rows are enabled on the C-recordings (``tests/fix/test_ci_recordings.py``).
+Every attempt is read against :data:`DOCKERFILE`, the corrected Dockerfile
+holding ``FROM`` at line 1 and ``COPY`` at line 11.
 """
 
 from dataclasses import replace
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 
+from deployer.fix import templates
 from deployer.fix.ci_eval import (
     AttemptEvidence,
     attempt_evidence,
@@ -28,6 +32,9 @@ FROM_LINES = (1, 1)
 REF = "a4efb8b6-20f9-46f4-b827-91ac0547be3a::t0jkpmm4mq76x0tyiprh1w5o7"
 BUILD_STEP = "Run docker build ."
 BUILD = BuildConfig("Dockerfile", (), None, "t")
+DOCKERFILE = (FROM + "\n" + "RUN true\n" * 9 + COPY + "\n").encode()
+"""The corrected Dockerfile the attempts are read against: FROM at line 1,
+COPY at line 11 (``COPY_LINES``)."""
 
 COPY_OK = (
     "#1 [internal] load build definition from Dockerfile\n"
@@ -95,11 +102,15 @@ def _q(
 
 
 def _copy(log: str, q: Qualified | None = None) -> AttemptEvidence:
-    """COPY evidence with the CI COPY row enabled, the log as qualified."""
-    with enable_for_test("copy-passed/buildkit"):
-        return attempt_evidence(
-            q or _q(log), "missing_copy_source", COPY, COPY_LINES, log
-        )
+    """COPY evidence on the production CI COPY row, the log as qualified."""
+    return attempt_evidence(
+        q or _q(log),
+        "missing_copy_source",
+        COPY,
+        COPY_LINES,
+        log,
+        dockerfile=DOCKERFILE,
+    )
 
 
 def _ev(
@@ -142,9 +153,26 @@ def test_key_and_positive_copy() -> None:
     ]
 
 
+def _ci_disabled() -> Any:
+    """The production table with both CI rows disabled (no recording)."""
+    rows = tuple(
+        replace(row, recording=None) if row.side == "ci" else row
+        for row in templates.ROWS
+    )
+    return patch.object(templates, "ROWS", rows)
+
+
 def test_rows_disabled_is_not_enabled() -> None:
-    """Production rows are disabled: no positive, ``not_enabled``."""
-    got = attempt_evidence(_q(), "missing_copy_source", COPY, COPY_LINES, COPY_OK)
+    """A CI row without a recording: no positive, ``not_enabled``."""
+    with _ci_disabled():
+        got = attempt_evidence(
+            _q(),
+            "missing_copy_source",
+            COPY,
+            COPY_LINES,
+            COPY_OK,
+            dockerfile=DOCKERFILE,
+        )
     assert (got.positive, got.template, got.detail) == (
         False,
         "not_enabled",
@@ -156,7 +184,12 @@ def test_positive_from() -> None:
     """A passed FROM template is positive."""
     with enable_for_test("from-parsed/buildkit"):
         got = attempt_evidence(
-            _q(FROM_OK), "from_argument_count", FROM, FROM_LINES, FROM_OK
+            _q(FROM_OK),
+            "from_argument_count",
+            FROM,
+            FROM_LINES,
+            FROM_OK,
+            dockerfile=DOCKERFILE,
         )
     assert (got.positive, got.recurred, got.template) == (True, False, "passed")
 
@@ -199,7 +232,9 @@ def test_ambiguous_copy_blocks_but_does_not_recur() -> None:
 def test_ambiguous_from_blocks() -> None:
     """Parse errors naming two lines are ambiguous for FROM: flagged."""
     log = FROM_RECUR.format(n=1) + FROM_RECUR.format(n=2).split("\n", 1)[1]
-    got = attempt_evidence(_q(log), "from_argument_count", FROM, FROM_LINES, log)
+    got = attempt_evidence(
+        _q(log), "from_argument_count", FROM, FROM_LINES, log, dockerfile=DOCKERFILE
+    )
     assert (got.recurred, got.ambiguous_recurrence) == (False, True)
 
 
@@ -213,17 +248,23 @@ def test_recurrence_outranks_ambiguous() -> None:
 def test_from_recurrence_same_line() -> None:
     """A FROM parse error naming the corrected line recurs as ``(N, N)``."""
     log = FROM_RECUR.format(n=1)
-    got = attempt_evidence(_q(log), "from_argument_count", FROM, FROM_LINES, log)
+    got = attempt_evidence(
+        _q(log), "from_argument_count", FROM, FROM_LINES, log, dockerfile=DOCKERFILE
+    )
     assert got.recurred
     other = FROM_RECUR.format(n=2)
-    got = attempt_evidence(_q(other), "from_argument_count", FROM, FROM_LINES, other)
+    got = attempt_evidence(
+        _q(other), "from_argument_count", FROM, FROM_LINES, other, dockerfile=DOCKERFILE
+    )
     assert not got.recurred
 
 
 def test_recurrence_ignores_other_class() -> None:
     """Only the admitted class's matcher counts."""
     log = FROM_RECUR.format(n=11)
-    got = attempt_evidence(_q(log), "missing_copy_source", COPY, COPY_LINES, log)
+    got = attempt_evidence(
+        _q(log), "missing_copy_source", COPY, COPY_LINES, log, dockerfile=DOCKERFILE
+    )
     assert not got.recurred
 
 
@@ -231,7 +272,9 @@ def test_recurrence_ignores_other_class() -> None:
 def test_non_qualified_is_carried(status: Qualification) -> None:
     """A non-qualified attempt keeps its qualification and reason."""
     q = _q(status=status, reason="why")
-    got = attempt_evidence(q, "missing_copy_source", COPY, COPY_LINES, COPY_OK)
+    got = attempt_evidence(
+        q, "missing_copy_source", COPY, COPY_LINES, COPY_OK, dockerfile=DOCKERFILE
+    )
     assert got == from_qualification(q)
     assert got == AttemptEvidence((7, 1, "image"), status, False, False, "why", ())
 
@@ -261,7 +304,7 @@ def test_job_without_steps_is_undetermined() -> None:
 def test_failure_is_undetermined() -> None:
     """An unknown class is a reason, never an exception."""
     bad: Any = "nope"
-    got = attempt_evidence(_q(), bad, COPY, COPY_LINES, COPY_OK)
+    got = attempt_evidence(_q(), bad, COPY, COPY_LINES, COPY_OK, dockerfile=DOCKERFILE)
     assert got.qualification == "undetermined"
     assert (got.detail or "").startswith("evidence failed: KeyError")
 
@@ -447,6 +490,7 @@ def test_pipeline_positive_and_undetermined() -> None:
         COPY,
         COPY_LINES,
         "",
+        dockerfile=DOCKERFILE,
     )
     assert evaluate([positive, unread], True) == (
         INSUFFICIENT,
@@ -461,20 +505,36 @@ def test_pipeline_positive_and_undetermined() -> None:
 def test_multiline_from_recurs_at_first_line() -> None:
     """A §4.2: a FROM spanning lines 3-4 recurs at its first line only."""
     at3 = FROM_RECUR.format(n=3)
-    got = attempt_evidence(_q(at3), "from_argument_count", FROM, (3, 4), at3)
+    got = attempt_evidence(
+        _q(at3), "from_argument_count", FROM, (3, 4), at3, dockerfile=DOCKERFILE
+    )
     assert got.recurred
     at4 = FROM_RECUR.format(n=4)
-    got = attempt_evidence(_q(at4), "from_argument_count", FROM, (3, 4), at4)
+    got = attempt_evidence(
+        _q(at4), "from_argument_count", FROM, (3, 4), at4, dockerfile=DOCKERFILE
+    )
     assert not got.recurred
 
 
 def test_positive_and_multiline_from_recurrence_contradict() -> None:
     """A positive attempt and a multi-line FROM recurrence contradict."""
     with enable_for_test("from-parsed/buildkit"):
-        a = attempt_evidence(_q(FROM_OK), "from_argument_count", FROM, (3, 4), FROM_OK)
+        a = attempt_evidence(
+            _q(FROM_OK),
+            "from_argument_count",
+            FROM,
+            (3, 4),
+            FROM_OK,
+            dockerfile=DOCKERFILE,
+        )
     b_log = FROM_RECUR.format(n=3)
     b = attempt_evidence(
-        _q(b_log, attempt=2), "from_argument_count", FROM, (3, 4), b_log
+        _q(b_log, attempt=2),
+        "from_argument_count",
+        FROM,
+        (3, 4),
+        b_log,
+        dockerfile=DOCKERFILE,
     )
     assert (a.positive, b.recurred) == (True, True)
     assert evaluate([a, b], True) == (INSUFFICIENT, "contradictory runs")
@@ -489,6 +549,7 @@ def test_copy_other_text_is_not_recurrence() -> None:
         "COPY docs/other.md ./setup.md",
         COPY_LINES,
         _copy_recur(),
+        dockerfile=DOCKERFILE,
     )
     assert not got.recurred
 
@@ -533,7 +594,9 @@ def test_from_qualification_of_qualified_is_undetermined() -> None:
 def test_malformed_attempt_never_raises() -> None:
     """M-1: even reading ``q.status`` is inside the totality guard."""
     bad: Any = None
-    got = attempt_evidence(bad, "missing_copy_source", COPY, COPY_LINES, COPY_OK)
+    got = attempt_evidence(
+        bad, "missing_copy_source", COPY, COPY_LINES, COPY_OK, dockerfile=DOCKERFILE
+    )
     assert (got.key, got.qualification) == ((0, 0, ""), "undetermined")
 
 
@@ -541,7 +604,9 @@ def test_lines_as_list_still_recurs() -> None:
     """M-2: spans compare as tuples whatever sequence the caller passes."""
     lines: Any = [11, 11]
     log = _copy_recur()
-    got = attempt_evidence(_q(log), "missing_copy_source", COPY, lines, log)
+    got = attempt_evidence(
+        _q(log), "missing_copy_source", COPY, lines, log, dockerfile=DOCKERFILE
+    )
     assert got.recurred
 
 
@@ -559,16 +624,23 @@ def test_multiline_copy_recurs() -> None:
         "--------------------\n"
     )
     corrected = "COPY docs/setup.md \\\n    ./setup.md"
-    got = attempt_evidence(_q(log), "missing_copy_source", corrected, (11, 12), log)
+    got = attempt_evidence(
+        _q(log), "missing_copy_source", corrected, (11, 12), log, dockerfile=DOCKERFILE
+    )
     assert got.recurred
-    got = attempt_evidence(_q(log), "missing_copy_source", corrected, (11, 11), log)
+    got = attempt_evidence(
+        _q(log), "missing_copy_source", corrected, (11, 11), log, dockerfile=DOCKERFILE
+    )
     assert not got.recurred
 
 
 def test_copy_recurrence_with_rows_disabled() -> None:
-    """M-4: production rows disabled — recurrence uses the admission
-    matchers, so the result is still ``defect recurred``."""
+    """M-4: CI rows disabled — recurrence uses the admission matchers, so
+    the result is still ``defect recurred``."""
     log = _copy_recur()
-    got = attempt_evidence(_q(log), "missing_copy_source", COPY, COPY_LINES, log)
+    with _ci_disabled():
+        got = attempt_evidence(
+            _q(log), "missing_copy_source", COPY, COPY_LINES, log, dockerfile=DOCKERFILE
+        )
     assert (got.template, got.recurred) == ("not_enabled", True)
     assert evaluate([got], True) == (INSUFFICIENT, "defect recurred")

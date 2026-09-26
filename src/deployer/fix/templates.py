@@ -5,8 +5,9 @@ Four rows: COPY/ADD and FROM, on the local side (Podman) and the CI side
 against its committed recording (§9): ``Row.recording`` names it, and a row
 with ``recording=None`` is disabled and yields ``not_enabled``. The two local
 rows are backed by the L-recordings (``tests/fixtures/recordings/local``,
-replayed by ``tests/fix/test_local_recordings.py``); the two CI rows are still
-hypotheses and stay disabled.
+replayed by ``tests/fix/test_local_recordings.py``); the two CI rows by the
+C-recordings (``tests/fixtures/recordings/ci``, replayed by
+``tests/fix/test_ci_recordings.py``).
 
 Tests reach a disabled row through a module-private registry (§10 "Test
 seam"); the only code that touches it is a context manager in the test tree.
@@ -33,7 +34,14 @@ reading checks and every instruction of the kind's family must be in the
 modelled form, else ``binding_ambiguous``. A completion line binds only when
 it names the build's own tag.
 
-BuildKit FROM evidence is file-wide ("the Dockerfile was parsed"): it binds no
+CI (BuildKit) evidence reads the corrected Dockerfile first too (§7.3): the
+strict form (``strict_form_reason``) file-wide for both kinds; for COPY/ADD
+the same uniqueness rule as the local side, since BuildKit also skips a stage
+nothing depends on and an identical COPY there prints no header. BuildKit
+right-aligns a step number to the width of the step count
+(``[stage-0  7/10]``, ``c4``/``c9``): exactly that padding is read, no other
+run of spaces. BuildKit FROM evidence is file-wide ("the Dockerfile was
+parsed"; BuildKit parses the whole file before any stage, ``c8``): it binds no
 step line to the corrected FROM text. The optional image-pull record needs
 that binding, and both builders print the pulled reference normalised
 (``docker.io/library/…``), so no pull line binds unambiguously before
@@ -100,15 +108,17 @@ class Row:
 
 LOCAL_RECORDING = "tests/fixtures/recordings/local"
 """The L-recordings backing the two local rows (repository-relative)."""
+CI_RECORDING = "tests/fixtures/recordings/ci"
+"""The C-recordings backing the two CI rows (repository-relative)."""
 
 ROWS: tuple[Row, ...] = (
     Row("copy-passed/podman", "local", "podman", "copy", LOCAL_RECORDING),
     Row("from-parsed/podman", "local", "podman", "from", LOCAL_RECORDING),
-    Row("copy-passed/buildkit", "ci", "buildkit", "copy", None),
-    Row("from-parsed/buildkit", "ci", "buildkit", "from", None),
+    Row("copy-passed/buildkit", "ci", "buildkit", "copy", CI_RECORDING),
+    Row("from-parsed/buildkit", "ci", "buildkit", "from", CI_RECORDING),
 )
 """The four rows of §6.3/§7.3: the local ones backed by the L-recordings, the
-CI ones still hypotheses."""
+CI ones by the C-recordings."""
 
 # TODO: spec §7.3 says the FROM image-pull result "is recorded when visible";
 # ``Outcome.image_pull`` deliberately stays ``None`` until recordings show a
@@ -172,12 +182,29 @@ def match_local(
     return _podman_copy(corrected_text, out, err, _tag_names(tag))
 
 
-def match_ci(kind: Kind, corrected_text: str, log: str) -> Outcome:
-    """CI (BuildKit plain progress) positive evidence (§7.3)."""
+def match_ci(
+    kind: Kind, corrected_text: str, log: str, *, dockerfile: bytes
+) -> Outcome:
+    """CI (BuildKit plain progress) positive evidence (§7.3).
+
+    ``dockerfile`` holds the corrected Dockerfile's bytes at the fix commit.
+    The strict form is checked file-wide, and for COPY/ADD the corrected
+    text's uniqueness among the Dockerfile's instructions, before the log is
+    read; FROM stays file-wide (BuildKit parses the whole file first)."""
     if not _enabled("ci", kind):
         return _NOT_ENABLED
+    strict = strict_form_reason(dockerfile)
+    if strict is not None:
+        return _outcome("binding_ambiguous", (), f"Dockerfile: {strict}")
     if _overlong(log) or len(corrected_text) > MAX_LINE:
         return _outcome("unknown_format", (), "a line exceeds the read bound")
+    if kind == "copy":
+        if not _bindable(corrected_text):
+            detail = "corrected text is not one line"
+            return _outcome("binding_ambiguous", (), detail)
+        unique = _unique_in_dockerfile(kind, corrected_text, dockerfile)
+        if unique is not None:
+            return unique
     lines = _lines(log)
     if not any(_BK_ANY_RE.fullmatch(line) for line in lines):
         return _outcome("unknown_format", (), "no BuildKit progress lines")
@@ -186,8 +213,6 @@ def match_ci(kind: Kind, corrected_text: str, log: str) -> Outcome:
         return several
     if kind == "from":
         return _buildkit_from(lines)
-    if not _bindable(corrected_text):
-        return _outcome("binding_ambiguous", (), "corrected text is not one line")
     return _buildkit_copy(corrected_text, lines)
 
 
@@ -201,7 +226,9 @@ _PODMAN_FROM_ARGS = "FROM requires either one argument, or three"
 _BK_ANY_RE = re.compile(r"#(?P<k>[0-9]{1,9}) .*")
 _BK_DEFINITION_RE = re.compile(r"#[0-9]{1,9} \[internal\] load build definition\b.*")
 _BK_HEADER_RE = re.compile(r"#(?P<k>[0-9]{1,9}) \[(?P<bracket>[^\]]*)\] (?P<text>.*)")
-_BK_STAGE_RE = re.compile(r"(?:[^\s\]]+ )?[0-9]{1,9}/[0-9]{1,9}")
+_BK_STAGE_RE = re.compile(
+    r"(?:[^\s\]]+ )?(?P<pad> *)(?P<k>[0-9]{1,9})/(?P<n>[0-9]{1,9})"
+)
 _BK_DONE_RE = re.compile(r"#(?P<k>[0-9]{1,9}) DONE(?: [0-9]{1,9}(?:\.[0-9]{1,9})?s)?")
 _BK_CACHED_RE = re.compile(r"#(?P<k>[0-9]{1,9}) CACHED")
 _BK_ERROR_RE = re.compile(r"#(?P<k>[0-9]{1,9}) (?:ERROR|CANCELED)(?:[: ].*)?")
@@ -210,9 +237,10 @@ _PARSE_ERROR = "parse error"
 
 def _unique_in_dockerfile(kind: Kind, text: str, dockerfile: bytes) -> Outcome | None:
     """``binding_ambiguous`` unless the corrected text is provably exactly one
-    of the corrected Dockerfile's instructions as Podman prints them. Decided
-    before any output is read: an identical instruction in a skipped stage
-    prints nothing and must not make the one printed line look unique.
+    of the corrected Dockerfile's instructions as the builder prints them
+    (Podman; BuildKit for COPY/ADD). Decided before any output is read: an
+    identical instruction in a skipped stage prints nothing and must not make
+    the one printed line look unique.
 
     Instructions are read as R reads them (``_as_r_reads``,
     ``dockerfile.parse``), which is sound only where the builders read alike:
@@ -573,8 +601,17 @@ def _bindable(text: str) -> bool:
 
 
 def _is_stage(header: re.Match[str]) -> bool:
-    """A header's bracket names a build stage step (``[name i/n]``/``[i/n]``)."""
-    return _BK_STAGE_RE.fullmatch(header.group("bracket")) is not None
+    """A header's bracket names a build stage step (``[name k/n]``/``[k/n]``).
+
+    BuildKit right-aligns ``k`` to the width of ``n`` (``[stage-0  7/10]``,
+    ``c4``/``c9``): the spaces before ``k`` plus its digits must be exactly
+    ``len(n)`` wide, and ``k`` carries no leading zero. No other run of
+    spaces, and no tab, is read."""
+    m = _BK_STAGE_RE.fullmatch(header.group("bracket"))
+    if m is None:
+        return False
+    k, n = m.group("k"), m.group("n")
+    return str(int(k)) == k and len(m.group("pad")) + len(k) == len(n)
 
 
 def _is_podman_parse_error(line: str) -> bool:

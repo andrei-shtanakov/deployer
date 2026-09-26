@@ -97,21 +97,15 @@ paragraph.
   F1a–F1c, #90–#93), the derived run-1 fix-bundle data (F1d, #94, owner review), and
   reading CI runs, qualification and `deployer fix confirm` with templates disabled (F2,
   #95). Stage 3 is shipped: the L-recordings (#97) back the two local rows, which are
-  enabled (F3b), so `locally_confirmed` and publication are reachable. Still open: the
-  CI rows stay disabled until the C-recordings back them (§9), so `ci_confirmed` is
-  unreachable in practice — see the gated follow-up below — and stage 5's end-to-end
-  acceptance has not run.
-- [ ] C-recordings: real CI `push` runs of fix commits on the polygon repository, backing the CI template rows @owner:github:andrei-shtanakov @id:fix-c-recordings @trigger:"owner permits real CI recording runs" @epic:eco.dark-factory
-  Design §9: successful BuildKit forms (the COPY header + `DONE`, `CACHED`, the FROM
-  stage header), a run with a later independent failure, and a re-run. Without these a
-  published proposal is never CI-confirmed — `deployer fix confirm` reports
-  `ci_confirmation_insufficient: templates not enabled`.
-- [ ] End-to-end acceptance of `ci-fix-authoring` and closing the item (design §11 stage 5) @owner:repo:deployer @id:ci-fix-authoring-e2e-acceptance @blocked_by:todo://deployer/fix-c-recordings @epic:eco.dark-factory
-  Needs both recording classes enabled first: the L-recording rows are enabled (F3b), so
-  a real local proof can run; the C-recording rows are not, so a real CI confirmation
-  cannot yet, and the tag now names that stage (`fix-l-recordings` is shipped). Then the
-  acceptance run itself. `ci-fix-authoring` stays open until this closes it (design §11:
-  "the item stays open until stage 5").
+  enabled (F3b), so `locally_confirmed` and publication are reachable. Stage 4 is
+  shipped: the C-recordings (#98) back the two CI rows, which are enabled (F4b), so
+  `ci_confirmed` is reachable. Still open: stage 5's end-to-end acceptance has not run.
+- [ ] End-to-end acceptance of `ci-fix-authoring` and closing the item (design §11 stage 5) @owner:repo:deployer @id:ci-fix-authoring-e2e-acceptance @epic:eco.dark-factory
+  Unblocked: both recording classes are enabled — the L-recording rows (F3b) and the
+  C-recording rows (F4b; `fix-c-recordings` is shipped), so a real local proof and a real
+  CI confirmation can both run. What remains is the acceptance run itself.
+  `ci-fix-authoring` stays open until this closes it (design §11: "the item stays open
+  until stage 5").
 - [ ] `fix confirm` has no lock: two concurrent confirms can drop an appended attempt @id:fix-confirm-concurrent-lock @epic:eco.dark-factory
   `fix/confirm.py` loads `fix.json`, appends one attempt to `ci_attempts` and saves —
   read-modify-write with no lock. Two `deployer fix confirm` runs racing on the same
@@ -255,6 +249,15 @@ them is the next thing to pick up.
 
 ## Shipped
 
+- [x] C-recordings: real CI `push` runs of fix commits on the polygon repository, backing the CI template rows @owner:github:andrei-shtanakov @id:fix-c-recordings @epic:eco.dark-factory
+  Design §9, §11 stage 4. Recorded by the owner's permission 2026-09-25 (#98: `c1`–`c9`
+  plus `c2b`, real `workflow_dispatch` runs on `polygon/fix-c-*`). The two CI rows
+  (COPY/ADD, FROM) are enabled on them (F4b): the matchers read BuildKit's padded step
+  numbers strictly (`c4`, `c9`), check the corrected Dockerfile's strict form and, for
+  COPY/ADD, its uniqueness before the log, and keep FROM file-wide (`c8`: BuildKit
+  parses the whole file first). `tests/fix/test_ci_recordings.py` replays every case
+  through forge, qualification, evidence and `fix confirm`. `deployer fix confirm` now
+  reaches `ci_confirmed`.
 - [x] L-recordings: real local Podman builds backing the fix's local template rows @owner:github:andrei-shtanakov @id:fix-l-recordings @epic:eco.dark-factory
   Design §9, §11 stage 3. Recorded by the owner's permission 2026-09-25 (#97: `l1`–`l9`,
   Podman 5.7.0 / Buildah 1.42.0) with the pinned Buildah reading

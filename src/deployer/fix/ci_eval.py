@@ -107,11 +107,16 @@ def attempt_evidence(
     corrected_text: str,
     lines: tuple[int, int],
     log: str,
+    *,
+    dockerfile: bytes,
 ) -> AttemptEvidence:
     """Positive evidence and recurrence of one attempt (§7.3).
 
     ``log`` is the bound job's log as GitHub returns it (``_Gh.logs``);
-    ``lines`` the corrected instruction's Dockerfile span. A non-qualified
+    ``lines`` the corrected instruction's Dockerfile span; ``dockerfile``
+    the corrected Dockerfile's bytes at the fix commit (the CI template reads
+    its strict form and, for COPY/ADD, the corrected text's uniqueness in
+    it). A non-qualified
     attempt is :func:`from_qualification`. When the job text cannot be
     rebuilt from ``log`` — blank, not the text the attempt was qualified on,
     or any failure — the evidence is ``undetermined`` with the reason.
@@ -119,7 +124,7 @@ def attempt_evidence(
     try:
         if q.status != "qualified":
             return from_qualification(q)
-        return _read(q, cls, corrected_text, lines, log)
+        return _read(q, cls, corrected_text, lines, log, dockerfile)
     except Exception as exc:  # noqa: BLE001 — totality: never raise
         return _undetermined(q, f"evidence failed: {type(exc).__name__}: {exc}")
 
@@ -171,6 +176,7 @@ def _read(
     corrected_text: str,
     lines: tuple[int, int],
     log: str,
+    dockerfile: bytes,
 ) -> AttemptEvidence:
     """The job text from ``log``, then the template and the recurrence."""
     job = q.job
@@ -183,7 +189,9 @@ def _read(
         return _undetermined(
             q, f"log of job {job.job_id} is not the one it was qualified on"
         )
-    outcome = templates.match_ci(_KINDS[cls], corrected_text, text)
+    outcome = templates.match_ci(
+        _KINDS[cls], corrected_text, text, dockerfile=dockerfile
+    )
     recurrence = _recurrence(cls, text, corrected_text, tuple(lines))
     ambiguous = recurrence == AMBIGUOUS_MATCH
     detail = outcome.detail
