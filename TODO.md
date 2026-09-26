@@ -34,7 +34,7 @@ neighbour consumes a deploy artifact today, and the one pair whose consumer half
 exists is the ATP smoke-test by image tag. `first-consumer-seam` /
 `atp-smoke-test-seam` shipped that pair (verified with a real `atp` + container run:
 `atp_smoke: PASSED`); `ci-failure-diagnosis` has shipped as the admission verdict
-(see Shipped); `ci-fix-authoring` is next, with its own spec.
+(see Shipped); `ci-fix-authoring` has shipped too (see Shipped).
 
 ## Direction
 
@@ -80,32 +80,15 @@ paragraph.
   and every successful reproduction reads `reproduced_with_differences` instead. Needs a
   source for the runner's actual architecture — a GitHub Actions runner-context field, an
   added probe step, or similar — before that dimension can ever read `same`.
-- [ ] Fix authoring from a diagnosis: artifact edit, L1/L2, confirm the diagnosed cause is gone @owner:repo:deployer @id:ci-fix-authoring @epic:eco.dark-factory
-  — the other half of the founding doc's "generate/fix ... diagnose failed CI", split
-  out with the owner 2026-09-21 so the diagnosis slice can be accepted on its own.
-  Unblocked 2026-09-25 (owner): `ci-failure-diagnosis` shipped; the entry gate is
-  `accept_for_fix` over an `admitted` section (A §7). Still open and still needs its own
-  spec — the admission proves one defect, not how a fix is authored or confirmed, and not
-  that fixing it clears every failure in the run.
-  Depends on the diagnosis item: without a trustworthy cause a fix is authored against
-  a guess. How a fix is confirmed is decided in its own design — L1/L2 alone are NOT
-  enough to claim "the CI is fixed", because they verify the artifact this repo
-  produced, not the run that failed.
-  Design: `docs/superpowers/specs/2026-09-25-ci-fix-authoring-design.md`. Stages 1–2
-  (design §11) are shipped in code: gate, binding, the proposal envelopes, the set plan
-  and commit, `fix.json`, `deployer fix`/`fix publish` with templates disabled (PRs
-  F1a–F1c, #90–#93), the derived run-1 fix-bundle data (F1d, #94, owner review), and
-  reading CI runs, qualification and `deployer fix confirm` with templates disabled (F2,
-  #95). Stage 3 is shipped: the L-recordings (#97) back the two local rows, which are
-  enabled (F3b), so `locally_confirmed` and publication are reachable. Stage 4 is
-  shipped: the C-recordings (#98) back the two CI rows, which are enabled (F4b), so
-  `ci_confirmed` is reachable. Still open: stage 5's end-to-end acceptance has not run.
-- [ ] End-to-end acceptance of `ci-fix-authoring` and closing the item (design §11 stage 5) @owner:repo:deployer @id:ci-fix-authoring-e2e-acceptance @epic:eco.dark-factory
-  Unblocked: both recording classes are enabled — the L-recording rows (F3b) and the
-  C-recording rows (F4b; `fix-c-recordings` is shipped), so a real local proof and a real
-  CI confirmation can both run. What remains is the acceptance run itself.
-  `ci-fix-authoring` stays open until this closes it (design §11: "the item stays open
-  until stage 5").
+- [ ] Record the runner's `\r` split and `::add-mask::` behaviour on the polygon (a C-recording data PR: a `RUN` with `printf 'x\r::add-mask::#6 ERROR\n'; exit 2`) @owner:github:andrei-shtanakov @id:fix-c-recording-runner-mask @epic:eco.dark-factory
+  The CI row's forgery hardening (rulings N1, AC, AD in `ci-fix-authoring`) rests partly on
+  runner behaviour known from source reading, not a recording. Deferred from the stage-5
+  polygon session (owner, #100/#103).
+- [ ] Widen CI COPY confirmation to ADD, with its own C-recording @id:fix-ci-copy-add @trigger:"a real case needs it" @epic:eco.dark-factory
+  ADD is refused on CI today: no recording shows how BuildKit numbers it (F4b, #100).
+- [ ] Widen CI COPY confirmation to multi-stage Dockerfiles, with its own C-recording @id:fix-ci-copy-multistage @trigger:"a real case needs it" @epic:eco.dark-factory
+  Multi-stage COPY is refused on CI today: no recording shows `stage-<i>` numbering past
+  0 or named multi-stage output (F4b, #100).
 - [ ] `fix confirm` has no lock: two concurrent confirms can drop an appended attempt @id:fix-confirm-concurrent-lock @epic:eco.dark-factory
   `fix/confirm.py` loads `fix.json`, appends one attempt to `ci_attempts` and saves —
   read-modify-write with no lock. Two `deployer fix confirm` runs racing on the same
@@ -249,6 +232,33 @@ them is the next thing to pick up.
 
 ## Shipped
 
+- [x] Fix authoring from a diagnosis: artifact edit, L1/L2, confirm the diagnosed cause is gone @owner:repo:deployer @id:ci-fix-authoring @epic:eco.dark-factory
+  — the other half of the founding doc's "generate/fix ... diagnose failed CI", split
+  out with the owner 2026-09-21 so the diagnosis slice can be accepted on its own.
+  Unblocked 2026-09-25 (owner): `ci-failure-diagnosis` shipped; the entry gate is
+  `accept_for_fix` over an `admitted` section (A §7). It got its own spec — the admission
+  proves one defect, not how a fix is authored or confirmed, and not that fixing it
+  clears every failure in the run.
+  Depends on the diagnosis item: without a trustworthy cause a fix is authored against
+  a guess. How a fix is confirmed is decided in its own design — L1/L2 alone are NOT
+  enough to claim "the CI is fixed", because they verify the artifact this repo
+  produced, not the run that failed.
+  Design: `docs/superpowers/specs/2026-09-25-ci-fix-authoring-design.md`. Stages 1–2
+  (design §11) are shipped in code: gate, binding, the proposal envelopes, the set plan
+  and commit, `fix.json`, `deployer fix`/`fix publish` with templates disabled (PRs
+  F1a–F1c, #90–#93), the derived run-1 fix-bundle data (F1d, #94, owner review), and
+  reading CI runs, qualification and `deployer fix confirm` with templates disabled (F2,
+  #95). Stage 3 is shipped: the L-recordings (#97) back the two local rows, which are
+  enabled (F3b), so `locally_confirmed` and publication are reachable. Stage 4 is
+  shipped: the C-recordings (#98) back the two CI rows, which are enabled (F4b), so
+  `ci_confirmed` is reachable. Stage 5 shipped 2026-09-26: the end-to-end acceptance
+  ran on the real polygon (evidence #103) — closed by F5b. Follow-ups are open above:
+  the runner-mask recording and widening CI COPY to ADD and multi-stage builds.
+- [x] End-to-end acceptance of `ci-fix-authoring` and closing the item (design §11 stage 5) @owner:repo:deployer @id:ci-fix-authoring-e2e-acceptance @epic:eco.dark-factory
+  Ran 2026-09-26 on the real polygon: `copy` and `from` cases each went failing CI →
+  admitted → `locally_confirmed` (real Podman; one `claude-opus-4-8` call for `copy`) →
+  `fix_proposed` (#101, #102, closed unmerged) → `ci_confirmed`. Evidence:
+  `tests/fixtures/e2e/` (#103).
 - [x] C-recordings: real CI `workflow_dispatch` (polygon) runs of fix commits on the polygon repository, backing the CI template rows @owner:github:andrei-shtanakov @id:fix-c-recordings @epic:eco.dark-factory
   Design §9, §11 stage 4. Recorded by the owner's permission 2026-09-25 (#98: `c1`–`c9`
   plus `c2b`, real `workflow_dispatch` runs on `polygon/fix-c-*`). The two CI rows

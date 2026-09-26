@@ -170,6 +170,12 @@ CASES: dict[str, Case] = {
                 "reason": "no local confirmation",
                 "detail": "templates not enabled",
             },
+            "without_seam_note": (
+                "recorded 2026-09-25 with every template row disabled; true then. "
+                "Since #99 (2026-09-26) enabled the local rows, this case reaches "
+                "locally_confirmed without the seam. Kept as recorded, not "
+                "regenerated (owner, #103)."
+            ),
         },
         FAKE_MODEL_ANSWER,
         "the envelope passes, the prompt lists every eligible blob, and the "

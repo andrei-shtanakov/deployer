@@ -285,8 +285,10 @@ project; its `status` is one of `in_progress`, `stopped`, `locally_confirmed`,
 admission`, `fix method not established`, `no proposal`, `no local confirmation`,
 `commit blocked`.
 
-**Local and CI confirmation are both available; the end-to-end acceptance run (design
-§11 stage 5) is not yet.** Both proof stages read
+**Local and CI confirmation are both available, and the end-to-end acceptance ran on
+the real polygon (design §11 stage 5, 2026-09-26): a COPY case and a FROM case each went
+from a failing CI run through `diagnose --reproduce`, `fix`, `fix publish` and `fix
+confirm` to `ci_confirmed` (evidence: `tests/fixtures/e2e/`).** Both proof stages read
 their positive evidence off a closed table of template rows, and a row is enabled only
 together with the test that checks it against a real recording of that build (design
 §9). The two local (Podman) rows, COPY/ADD and FROM, are backed by the L-recordings
