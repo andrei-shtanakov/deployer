@@ -849,6 +849,20 @@ def test_n1_runner_split_forgery_refused() -> None:
     assert evaluate([got], True) == (INSUFFICIENT, "binding ambiguous")
 
 
+def test_masked_real_error_refused() -> None:
+    """Round-5 re-review: ``::add-mask::#6 ERROR`` makes the runner log the
+    real failure as ``***``; with a forged later vertex the log would show
+    one failing vertex after the COPY. Any ``***`` refuses (ruling AC)."""
+    log = _n1("#6 [stage-0 2/3] RUN make", "#9 [stage-0 4/4] RUN y\n#9 ERROR: x\n")
+    log = log.replace("#6 ERROR:", "***:")
+    got = _forged(log)
+    assert (got.positive, got.template, got.detail) == (
+        False,
+        "binding_ambiguous",
+        "runner-masked text in the log",
+    )
+
+
 @pytest.mark.parametrize(
     ("run", "extra"),
     [

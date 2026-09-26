@@ -346,6 +346,8 @@ _BK_DONE_RE = re.compile(r"#(?P<k>[0-9]{1,9}) DONE(?: [0-9]{1,9}(?:\.[0-9]{1,9})
 _BK_CACHED_RE = re.compile(r"#(?P<k>[0-9]{1,9}) CACHED")
 _BK_ERROR_RE = re.compile(r"#(?P<k>[0-9]{1,9}) (?:ERROR|CANCELED)(?:[: ].*)?")
 _PARSE_ERROR = "parse error"
+_MASK = "***"
+"""What the runner writes for a masked value (``::add-mask::``)."""
 
 
 def _unique_in_dockerfile(kind: Kind, text: str, dockerfile: bytes) -> Outcome | None:
@@ -658,6 +660,12 @@ def _bound_to_conclusion(
     failing vertex, provably after the COPY (:func:`_failure_after`). Any
     other conclusion (``cancelled``, ``timed_out``, ``skipped``, ``None``,
     unknown) → ``binding_ambiguous`` naming it. ``None`` when it holds."""
+    if any(_MASK in line for line in lines):
+        # A step can print ``::add-mask::<text>``; the runner then logs that
+        # text as ``***`` everywhere after it, so any line the checks rely
+        # on (a real ``#k ERROR``, a real header) can be erased (breaker
+        # ruling AC, round-5 re-review).
+        return _outcome("binding_ambiguous", (), "runner-masked text in the log")
     failed = any(_BK_ERROR_RE.fullmatch(line) for line in lines)
     if conclusion == "success":
         if not failed:

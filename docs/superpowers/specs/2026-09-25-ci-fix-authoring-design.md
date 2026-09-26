@@ -645,7 +645,10 @@ every rule below relies on:
   after-the-COPY rule above; `success` with a failing vertex, `failure` without one, any
   other conclusion (`cancelled`, `timed_out`, `skipped`, none) or a build step that is
   not uniquely identified → `binding ambiguous` (a killed or truncated build prints no
-  `#k ERROR`). BuildKit re-prints a vertex header when progress interleaves (`c1` prints
+  `#k ERROR`). A step can print `::add-mask::<text>`, after which the runner logs that
+  text as `***` everywhere: any line the rules above rely on could be erased, so `***`
+  anywhere from the section start to the end of the log → `binding ambiguous` (ruling
+  AC; legitimately masked secrets refuse too). BuildKit re-prints a vertex header when progress interleaves (`c1` prints
   `#7 [stage-0 1/9] FROM …` twice). A corrected COPY re-printed this way reads as a
   repeated header or `k` → `binding ambiguous`. That is a known, conservative false
   negative; no C-recording shows it for the corrected COPY.
