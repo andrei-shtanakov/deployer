@@ -28,7 +28,7 @@ from deployer.fix.document import FixDocument, load, save
 from deployer.fix.qualify import Qualified
 from deployer.forge import AttemptRead, Evidence, FailedJob, GhError
 from tests.fix.conftest import enable_for_test
-from tests.fix.test_ci_eval import FROM_BODY, FROM_RECUR_BODY
+from tests.fix.test_ci_eval import FROM_BODY, FROM_RECUR_BODY, stamp
 from tests.fix.test_publish import _published
 
 AT = "2026-09-25T12:00:00+00:00"
@@ -43,18 +43,21 @@ _LOGS_RE = re.compile(r"/actions/jobs/(\d+)/logs$")
 
 
 def ci_log(sha: str, build: str = FROM_BODY) -> str:
-    """A job log: the checkout printing ``sha``, the build step, ``build``."""
-    return "\n".join(
-        [
-            f"##[group]{CHECKOUT}",
-            "[command]/usr/bin/git log -1 --format=%H",
-            sha,
-            "##[endgroup]",
-            f"##[group]{BUILD}",
-            "docker build --file ./Dockerfile .",
-            "##[endgroup]",
-            build,
-        ]
+    """A job log, runner-timestamped: the checkout printing ``sha``, the
+    build step, ``build``."""
+    return stamp(
+        "\n".join(
+            [
+                f"##[group]{CHECKOUT}",
+                "[command]/usr/bin/git log -1 --format=%H",
+                sha,
+                "##[endgroup]",
+                f"##[group]{BUILD}",
+                "docker build --file ./Dockerfile .",
+                "##[endgroup]",
+                build,
+            ]
+        )
     )
 
 

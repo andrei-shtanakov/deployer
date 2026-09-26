@@ -38,14 +38,26 @@ DOCKERFILE = (FROM + "\n" + "RUN true\n" * 9 + COPY + "\n").encode()
 COPY at line 11 (``COPY_LINES``)."""
 
 HEADER = f"##[group]{BUILD_STEP}\n##[endgroup]\n"
-"""The build step's runner group header: its section starts after it."""
+"""The build step's runner group header and its end: the section starts
+after the ``##[endgroup]``."""
+TS = "2026-09-25T14:30:21.1506466Z "
+"""The runner's timestamp, in the recordings' exact form."""
 
-COPY_OK = HEADER + (
+
+def stamp(text: str, ts: str = TS) -> str:
+    """``text`` with the runner timestamp ``ts`` on every ``\\n`` line, as
+    the runner writes a job log (a final newline opens no line)."""
+    body, end = (text[:-1], "\n") if text.endswith("\n") else (text, "")
+    return "\n".join(ts + line for line in body.split("\n")) + end
+
+
+_COPY_TEXT = HEADER + (
     "#1 [internal] load build definition from Dockerfile\n"
     "#1 DONE 0.0s\n"
     f"#5 [stage-0 7/9] {COPY}\n"
     "#5 DONE 0.1s\n"
 )
+COPY_OK = stamp(_COPY_TEXT)
 FROM_BODY = (
     "#1 [internal] load build definition from Dockerfile\n"
     "#1 DONE 0.0s\n"
@@ -57,21 +69,24 @@ FROM_RECUR_BODY = (
     "ERROR: failed to build: failed to solve: dockerfile parse error on line "
     "{n}: FROM requires either one or three arguments\n"
 )
-FROM_OK = HEADER + FROM_BODY
-FROM_RECUR = HEADER + FROM_RECUR_BODY
+FROM_OK = stamp(HEADER + FROM_BODY)
+FROM_RECUR = stamp(HEADER + FROM_RECUR_BODY)
 
 
 def _copy_recur(line: int = 11, path: str = "docs/setup.md") -> str:
     """A copy-missing/buildkit log whose ``>>>`` block is at ``line``."""
-    return HEADER + (
-        "#1 [internal] load build definition from Dockerfile\n"
-        f"#12 [stage-0 7/9] {COPY}\n"
-        f'#12 ERROR: failed to calculate checksum of ref {REF}: "/{path}": '
-        "not found\n"
-        f"Dockerfile:{line}\n"
-        "--------------------\n"
-        f"  {line} | >>> {COPY}\n"
-        "--------------------\n"
+    return stamp(
+        HEADER
+        + (
+            "#1 [internal] load build definition from Dockerfile\n"
+            f"#12 [stage-0 7/9] {COPY}\n"
+            f'#12 ERROR: failed to calculate checksum of ref {REF}: "/{path}": '
+            "not found\n"
+            f"Dockerfile:{line}\n"
+            "--------------------\n"
+            f"  {line} | >>> {COPY}\n"
+            "--------------------\n"
+        )
     )
 
 
@@ -155,8 +170,8 @@ def test_key_and_positive_copy() -> None:
     assert got.lines == ()
     log = COPY_OK.split("\n")
     assert [log[n - 1] for n in got.log_lines] == [
-        f"#5 [stage-0 7/9] {COPY}",
-        "#5 DONE 0.1s",
+        f"{TS}#5 [stage-0 7/9] {COPY}",
+        f"{TS}#5 DONE 0.1s",
     ]
 
 
@@ -320,8 +335,17 @@ def test_failure_is_undetermined() -> None:
 
 def test_timestamped_log_reads_as_qualified() -> None:
     """The raw log with runner timestamps rebuilds to the qualified text."""
-    raw = "".join(f"2026-09-25T10:00:00.1Z {line}\n" for line in COPY_OK.splitlines())
+    raw = stamp(_COPY_TEXT, "2026-09-25T10:00:00.1000000Z ")
     assert _copy(raw, q=_q(raw)).positive
+
+
+def test_section_timestamp_must_be_the_runner_form() -> None:
+    """Ruling Y: a section line whose timestamp is not the recordings' form
+    (seven fraction digits) is refused."""
+    raw = stamp(_COPY_TEXT, "2026-09-25T10:00:00.1Z ")
+    got = _copy(raw, q=_q(raw))
+    assert (got.positive, got.template) == (False, "binding_ambiguous")
+    assert got.detail == "log line 3: section line without a runner timestamp"
 
 
 # evaluate ---------------------------------------------------------------------
@@ -565,15 +589,15 @@ def test_copy_other_text_is_not_recurrence() -> None:
 
 def test_failed_before_build_reason() -> None:
     """A failed step before the build step, template not passed."""
-    q = _q(COPY_OK + "#5 CACHED\n", setup="failure")
-    got = _copy(COPY_OK + "#5 CACHED\n", q=q)
+    q = _q(COPY_OK + stamp("#5 CACHED\n"), setup="failure")
+    got = _copy(COPY_OK + stamp("#5 CACHED\n"), q=q)
     assert (got.template, got.failed_before_build) == ("not_confirmed", True)
     assert evaluate([got], True) == (INSUFFICIENT, "CI failed before the build")
 
 
 def test_failed_after_build_is_not_before() -> None:
     """The failed smoke step after the build step does not count."""
-    got = _copy(COPY_OK + "#5 CACHED\n")
+    got = _copy(COPY_OK + stamp("#5 CACHED\n"))
     assert not got.failed_before_build
     assert evaluate([got], True) == (INSUFFICIENT, "build step not reached")
 
@@ -621,8 +645,8 @@ def test_lines_as_list_still_recurs() -> None:
 
 def test_multiline_copy_recurs() -> None:
     """M-4: a COPY spanning lines 11-12 recurs at its whole span."""
-    log = HEADER + (
-        "#1 [internal] load build definition from Dockerfile\n"
+    log = stamp(
+        HEADER + "#1 [internal] load build definition from Dockerfile\n"
         f"#12 [stage-0 7/9] {COPY}\n"
         f'#12 ERROR: failed to calculate checksum of ref {REF}: "/docs/setup.md": '
         "not found\n"
@@ -676,7 +700,7 @@ def test_c1_forged_header_in_another_step_refused() -> None:
     """Review C1, vector 2: a non-build step prints the corrected header and
     ``#0 DONE``; the build then fails at ``RUN make``, never reaching the
     COPY. Only the build step's section is read: not confirmed."""
-    log = (
+    log = stamp(
         "##[group]Run make lint\n##[endgroup]\n"
         f"{_FORGED}\n#0 DONE 0.0s\n"
         + HEADER
@@ -693,15 +717,15 @@ def test_c1_forged_header_in_another_step_refused() -> None:
 
 @pytest.mark.parametrize(
     "sep",
-    ["\r", "\x0b", "\x0c", "\x1c", "\x1d", "\x1e", "\x85", " ", " "],
+    ["\r", "\x0b", "\x0c", "\x1c", "\x1d", "\x1e", "\x85", "\u2028", "\u2029"],
     ids=["cr", "vt", "ff", "fs", "gs", "rs", "nel", "ls", "ps"],
 )
 def test_c1_forged_header_in_run_output_refused(sep: str) -> None:
     """Review C1, vector 1: RUN output smuggles the header and ``#0 DONE``
     behind a line break other than ``\\n``. It is refused, naming the
     character, never re-split."""
-    log = HEADER + (
-        _BUILDING + "#1 [internal] load build definition from Dockerfile\n"
+    log = stamp(
+        HEADER + _BUILDING + "#1 [internal] load build definition from Dockerfile\n"
         "#6 [stage-0 2/3] RUN make\n"
         f"#6 0.100 x{sep}{_FORGED}{sep}#0 DONE 0.0s\n"
         '#6 ERROR: process "/bin/sh -c make" did not complete successfully\n'
@@ -723,8 +747,8 @@ def test_crlf_lines_are_accepted() -> None:
 @pytest.mark.parametrize("headers", [0, 2], ids=["none", "two"])
 def test_build_header_not_once_is_ambiguous(headers: int) -> None:
     """No runner group header for the build step, or several."""
-    body = COPY_OK.removeprefix(HEADER)
-    log = HEADER * headers + body
+    body = COPY_OK.removeprefix(stamp(HEADER))
+    log = stamp(HEADER) * headers + body
     got = _copy(log, q=_q(log))
     assert (got.positive, got.template) == (False, "binding_ambiguous")
     assert f"{headers} runner group headers" in (got.detail or "")
@@ -732,9 +756,8 @@ def test_build_header_not_once_is_ambiguous(headers: int) -> None:
 
 def test_section_ends_at_next_run_group() -> None:
     """Evidence after the next ``##[group]Run `` header is another step's."""
-    body = COPY_OK.removeprefix(HEADER)
-    head, done = body.rsplit("#5 DONE", 1)
-    log = HEADER + head + "##[group]Run echo later\n##[endgroup]\n#5 DONE" + done
+    head, done = _COPY_TEXT.rsplit("#5 DONE", 1)
+    log = stamp(head + "##[group]Run echo later\n##[endgroup]\n#5 DONE" + done)
     got = _copy(log, q=_q(log))
     assert (got.positive, got.template) == (False, "binding_ambiguous")
 
@@ -742,7 +765,9 @@ def test_section_ends_at_next_run_group() -> None:
 def test_build_section_is_total() -> None:
     """``build_section`` returns a reason, never raises."""
     assert isinstance(build_section("", "Run x"), str)
-    assert build_section("##[group]Run x\n#1 a\n", "Run x") == (1, "#1 a\n")
+    assert isinstance(build_section("##[group]Run x\n#1 a\n", "Run x"), str)
+    log = stamp("##[group]Run x\n##[endgroup]\n#1 a\n")
+    assert build_section(log, "Run x") == (2, "#1 a")
 
 
 @pytest.mark.parametrize(
@@ -757,8 +782,8 @@ def test_build_section_is_total() -> None:
 def test_forged_header_after_the_build_step_refused(boundary: str) -> None:
     """Round 2: a forged header and ``#0 DONE`` printed after the build step
     (the post phase, a post step, any runner group) are not the build's."""
-    log = HEADER + (
-        _BUILDING + "#1 [internal] load build definition from Dockerfile\n"
+    log = stamp(
+        HEADER + _BUILDING + "#1 [internal] load build definition from Dockerfile\n"
         "#6 [stage-0 2/3] RUN make\n"
         '#6 ERROR: process "/bin/sh -c make" did not complete successfully\n'
         "##[error]Process completed with exit code 1.\n"
@@ -779,3 +804,128 @@ def test_forged_header_after_the_build_step_refused(boundary: str) -> None:
     )
     assert (got.positive, got.template) == (False, "not_confirmed")
     assert got.detail == "corrected step header absent"
+
+
+# Round 3, ruling X (N1): a failure must provably follow the corrected COPY ---
+
+_NOT_AFTER = "failure not provably after the corrected step"
+
+
+def _n1(run: str = "#6 [stage-0 2/3] RUN make", extra_error: str = "") -> str:
+    """The reviewer's N1 log: ``RUN make`` prints ``x\\r<header>\\n\\r#0
+    DONE``, which the runner stores as clean timestamped lines, then fails;
+    the real COPY never runs. ``run`` is the failing vertex's header;
+    ``extra_error`` adds a second failing vertex."""
+    filler = "\n".join(f"#6 0.{200 + i} filler {i}" for i in range(5))
+    return stamp(
+        HEADER + _BUILDING + "\n#1 [internal] load build definition from Dockerfile\n"
+        "#1 DONE 0.0s\n\n"
+        f"{run}\n#6 0.100 x\n{_FORGED}\n"
+        f"#6 0.101 \n#0 DONE 0.0s\n{filler}\n{extra_error}"
+        '#6 ERROR: process "/bin/sh -c make" did not complete successfully: '
+        "exit code: 2\n"
+        'ERROR: failed to build: failed to solve: process "/bin/sh -c make"\n'
+        "##[error]Process completed with exit code 1.\nPost job cleanup.\n"
+    )
+
+
+def test_n1_runner_split_forgery_refused() -> None:
+    """Review N1: the failing ``#6`` is ``[stage-0 2/3]``, before the COPY's
+    ``3/3``, so the forged pair cannot pass."""
+    got = _forged(_n1())
+    assert (got.positive, got.template, got.detail) == (
+        False,
+        "binding_ambiguous",
+        _NOT_AFTER,
+    )
+    assert evaluate([got], True) == (INSUFFICIENT, "binding ambiguous")
+
+
+@pytest.mark.parametrize(
+    ("run", "extra"),
+    [
+        ("#6 [other 4/5] RUN make", ""),
+        ("#6 [stage-0 3/3] RUN make", ""),
+        ("#6 RUN make", ""),
+        (
+            "#6 [stage-0 4/4] RUN make",
+            '#7 ERROR: process "x" did not complete successfully\n',
+        ),
+    ],
+    ids=["other-stage", "same-step", "unmapped", "two-errors"],
+)
+def test_n1_failure_not_after_refused(run: str, extra: str) -> None:
+    """The failing vertex in another stage, at the COPY's own step, with no
+    stage header, or a second failing vertex: not provably after the COPY."""
+    got = _forged(_n1(run, extra))
+    assert (got.positive, got.template, got.detail) == (
+        False,
+        "binding_ambiguous",
+        _NOT_AFTER,
+    )
+
+
+@pytest.mark.parametrize(
+    ("failing", "passed"),
+    [
+        ("#9 [stage-0 4/4] RUN false", True),
+        ("#9 [other 4/4] RUN false", False),
+        ("#9 [stage-0 3/4] RUN false", False),
+        ("#9 [stage-0 2/4] RUN false", False),
+    ],
+    ids=["after", "other-stage", "same-step", "before"],
+)
+def test_failure_after_the_copy_only(failing: str, passed: bool) -> None:
+    """Only a failing vertex of the COPY's stage at a later step leaves the
+    COPY passed (``c4``'s shape); a successful build is unchanged."""
+    df = f"FROM python:3.12-slim\nRUN make\n{_FORGED_COPY}\nRUN false\n".encode()
+    log = stamp(
+        HEADER + _BUILDING + f"#8 [stage-0 3/4] {_FORGED_COPY}\n#8 DONE 0.0s\n"
+        f"{failing}\n#9 ERROR: process did not complete successfully\n"
+    )
+    got = attempt_evidence(
+        _q(log), "missing_copy_source", _FORGED_COPY, (3, 3), log, dockerfile=df
+    )
+    assert got.positive is passed
+    if not passed:
+        assert got.detail == _NOT_AFTER
+
+
+# Round 3, ruling Y (N2): the section starts after the endgroup, timestamped --
+
+
+@pytest.mark.parametrize("stamped", [False, True], ids=["bare", "stamped"])
+def test_n2_env_continuation_refused(stamped: bool) -> None:
+    """Review N2: an ``env:`` value with newlines echoes continuation lines
+    inside the runner's group, before ``##[endgroup]``; with or without a
+    timestamp they are not the build's section."""
+    forged = f"{_FORGED}\n#0 DONE 0.0s\n"
+    echo = stamp(
+        f"##[group]{BUILD_STEP}\n\x1b[36;1mdocker build .\x1b[0m\n"
+        "shell: /usr/bin/bash -e {0}\nenv:\n  X: a\n"
+    )
+    rest = stamp(
+        "##[endgroup]\n" + _BUILDING + "#6 [stage-0 2/3] RUN make\n"
+        '#6 ERROR: process "/bin/sh -c make" did not complete successfully\n'
+        "##[error]Process completed with exit code 1.\nPost job cleanup.\n"
+    )
+    log = echo + (stamp(forged) if stamped else forged) + rest
+    got = _forged(log)
+    assert (got.positive, got.template) == (False, "not_confirmed")
+
+
+def test_n2_forged_endgroup_in_env_refused() -> None:
+    """An ``env:`` value that ends the group early leaves the runner's real
+    ``##[endgroup]`` inside the section, or an untimestamped line: refused."""
+    log = stamp(
+        f"##[group]{BUILD_STEP}\nenv:\n  X: a\n##[endgroup]\n{_FORGED}\n"
+        "#0 DONE 0.0s\n##[endgroup]\n" + _BUILDING
+    )
+    got = _forged(log)
+    assert (got.positive, got.template) == (False, "binding_ambiguous")
+    assert got.detail == (
+        "log line 7: a second ##[endgroup] inside the build step's section"
+    )
+    bare = log.replace(TS + _FORGED, _FORGED)
+    got = _forged(bare)
+    assert got.detail == "log line 5: section line without a runner timestamp"

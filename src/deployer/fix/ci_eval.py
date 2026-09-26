@@ -17,6 +17,7 @@ into ``ci_confirmed`` or ``ci_confirmation_insufficient`` with one reason
 from the closed §7.5 list. Neither function raises.
 """
 
+import re
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -63,6 +64,14 @@ _KINDS: dict[str, templates.Kind] = {
 }
 _GREEN = frozenset({"success", "skipped", "neutral"})
 _RUN = "Run "
+_ENDGROUP = "##[endgroup]"
+_RUNNER_TS_RE = re.compile(
+    r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{7}Z(?: |$)"
+)
+"""The runner's timestamp on every line it writes, exactly as every
+C-recording shows it (``2026-09-25T14:30:21.1506466Z #0 building with …``,
+``c1`` line 109; an empty output line is the timestamp and one space). Lines
+of an ``env:`` value echoed by the runner carry none (review N2)."""
 _POST = "Post "
 _POST_JOB = "Post job cleanup."
 _BREAKS = frozenset("\r\x0b\x0c\x1c\x1d\x1e\x85\u2028\u2029")
@@ -277,20 +286,30 @@ def build_section(
 ) -> tuple[int, str] | str:
     """The bound build step's own section of the job log as read.
 
-    ``log`` is split on ``\\n`` only (a leading BOM dropped); each line is
-    read as forge reads it (one trailing ``\\r`` of a CRLF ending, the runner
-    timestamp and ANSI sequences removed). The section is the lines after the
-    one line ``##[group]<title>``, up to the first line that ends the build
-    step's output (:func:`_ends_section`; ``steps`` are the job's step names)
-    or the end. Returns ``(offset, text)`` — section line ``n`` is line
+    ``log`` is split on ``\\n`` only (a leading BOM dropped — the recordings
+    carry one before the first line's timestamp; a final newline opens no
+    line); each line is read as forge reads it (one trailing ``\\r`` of a CRLF
+    ending, the runner timestamp and ANSI sequences removed). The section is
+    the lines after the first ``##[endgroup]`` that follows the one line
+    ``##[group]<title>`` — the runner's echo of the script, ``shell:`` and
+    ``env:`` is not the build's output — up to the first line that ends the
+    build step's output (:func:`_ends_section`; ``steps`` are the job's step
+    names) or the end. Returns ``(offset, text)`` — section line ``n`` is line
     ``offset + n`` of ``log`` — or the reason there is no such section: no
-    header or several, or a line break other than ``\\n`` (a lone ``\\r``,
-    ``\\x0b``, ``\\x0c``, ``\\x1c``-``\\x1e``, ``\\x85``, U+2028, U+2029) on a
-    section line, which forge's own reading would have split."""
+    header or several; no ``##[endgroup]`` after it; another
+    ``##[endgroup]`` inside the section; a section line without the runner's
+    timestamp (:data:`_RUNNER_TS_RE`); or a line break other than ``\\n`` (a
+    lone ``\\r``, ``\\x0b``, ``\\x0c``, ``\\x1c``-``\\x1e``, ``\\x85``,
+    U+2028, U+2029) on a section line, which forge's own reading would have
+    split."""
     raw = log.removeprefix("\ufeff").split("\n")
+    if raw and raw[-1] == "" and len(raw) > 1:
+        raw.pop()
+    ended = log.endswith("\n")
     last = len(raw) - 1
     lines = [
-        line.removesuffix("\r") if i < last else line for i, line in enumerate(raw)
+        line.removesuffix("\r") if ended or i < last else line
+        for i, line in enumerate(raw)
     ]
     read = [
         _ANSI_RE.sub("", _LOG_TIMESTAMP_RE.sub("", line, count=1)) for line in lines
@@ -299,19 +318,33 @@ def build_section(
     at = [i for i, line in enumerate(read) if line == header]
     if len(at) != 1:
         return f"{len(at)} runner group headers {header!r} in the log (need one)"
-    start = at[0] + 1
+    closed = next(
+        (i for i in range(at[0] + 1, len(read)) if read[i] == _ENDGROUP), None
+    )
+    if closed is None:
+        return f"no {_ENDGROUP} after {header!r}"
+    start = closed + 1
     end = next(
         (i for i in range(start, len(read)) if _ends_section(read[i], steps)),
         len(read),
     )
     for i in range(start, end):
-        bad = next((c for c in lines[i] if c in _BREAKS), None)
-        if bad is not None:
-            return (
-                f"log line {i + 1}: line break U+{ord(bad):04X} inside the "
-                "build step's section"
-            )
+        problem = _section_line_problem(lines[i], read[i])
+        if problem is not None:
+            return f"log line {i + 1}: {problem}"
     return start, "\n".join(read[start:end])
+
+
+def _section_line_problem(line: str, read: str) -> str | None:
+    """Why a build-section line cannot be read as the runner wrote it."""
+    bad = next((c for c in line if c in _BREAKS), None)
+    if bad is not None:
+        return f"line break U+{ord(bad):04X} inside the build step's section"
+    if _RUNNER_TS_RE.match(line) is None:
+        return "section line without a runner timestamp"
+    if read == _ENDGROUP:
+        return f"a second {_ENDGROUP} inside the build step's section"
+    return None
 
 
 def _failed_before(q: Qualified) -> bool:

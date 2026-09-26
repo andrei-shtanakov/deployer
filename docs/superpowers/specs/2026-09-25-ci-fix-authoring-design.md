@@ -579,13 +579,20 @@ every rule below relies on:
   skips a stage nothing depends on and prints no header for it, so an identical COPY in
   a skipped stage must never make one printed header look unique.
 - **The bound build step's own section only.** The template reads only the part of the
-  job log that the build step printed: the lines after exactly one runner group header
-  `##[group]Run <bound build line>` (the build step's name as the jobs API gives it),
-  up to the first line that starts what follows the build step: any `##[group]` line,
+  job log that the build step printed. The bound header is exactly one runner group
+  header `##[group]Run <bound build line>` (the build step's name as the jobs API gives
+  it). The section is the lines after the first `##[endgroup]` that follows that header:
+  the runner's echo of the script, `shell:` and `env:` is not build output, and an
+  `env:` value with newlines prints untimestamped continuation lines there (review N2).
+  The section runs the first line that starts what follows the build step: any `##[group]` line,
   the runner's post phase `Post job cleanup.` (every C-recording prints it right after
   the build output: `c1` line 208, `c4` line 213), or `Post <step name>` for a step of
   the job. If none of these comes, the section runs to the end of the log. Post-job
-  output never supplies evidence. It works on the raw log
+  output never supplies evidence. Every section line must start with the runner's
+  timestamp, exactly as the recordings show it (`2026-09-25T14:30:21.1506466Z `, seven
+  fraction digits, `c1` line 109). The recordings carry a BOM only before the log's
+  first line, which is never in the section. A line without the timestamp, or a second
+  `##[endgroup]` inside the section → `binding ambiguous`. It works on the raw log
   as read, split on `\n` only; a CRLF ending counts as one `\n` break. No such header,
   or several → `binding ambiguous`. A section line that holds any other line break
   `str.splitlines` would split on is also `binding ambiguous`, and the character is
@@ -609,7 +616,16 @@ every rule below relies on:
   corrected instruction, and `#k DONE` for the same `k`. `#k CACHED` is **not** accepted
   automatically. A missing or repeated `k` → `binding ambiguous`. A later failure of
   another step (`c4`: `RUN false` after the corrected `COPY … DONE`) does not refute it
-  (§7.4). BuildKit re-prints a vertex header when progress interleaves (`c1` prints
+  (§7.4) — but only when it provably follows the COPY. The runner reads step output
+  with .NET `ReadLine()`, which also splits on `\r` and stores each piece as a clean
+  timestamped line, so a failing RUN can print its own header / `#0 DONE` pair for a
+  COPY the build never reached (review N1). Had the real COPY run, its header would
+  repeat. So when the section holds any `#k ERROR`, the COPY passes only if there is
+  exactly one erroring vertex and its stage headers give one step, in the COPY's stage,
+  numbered higher than the COPY's (`c4`: `#15 ERROR` at `[stage-0  8/10]` after the
+  COPY at `7/10`). An error in another stage, at an equal or lower step, unmapped, or
+  more than one erroring vertex → `binding ambiguous` ("failure not provably after the
+  corrected step"). Successful builds are unchanged. BuildKit re-prints a vertex header when progress interleaves (`c1` prints
   `#7 [stage-0 1/9] FROM …` twice). A corrected COPY re-printed this way reads as a
   repeated header or `k` → `binding ambiguous`. That is a known, conservative false
   negative; no C-recording shows it for the corrected COPY.

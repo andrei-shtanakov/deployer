@@ -226,10 +226,13 @@ _PODMAN_FROM_ARGS = "FROM requires either one argument, or three"
 _BK_ANY_RE = re.compile(r"#(?P<k>[0-9]{1,9}) .*")
 _BK_DEFINITION_RE = re.compile(r"#[0-9]{1,9} \[internal\] load build definition\b.*")
 _BK_HEADER_RE = re.compile(r"#(?P<k>[0-9]{1,9}) \[(?P<bracket>[^\]]*)\] (?P<text>.*)")
-_BK_STAGE_RE = re.compile(r"[^\s\]]+ (?P<pad> *)(?P<k>[0-9]{1,9})/(?P<n>[0-9]{1,9})")
+_BK_STAGE_RE = re.compile(
+    r"(?P<name>[^\s\]]+) (?P<pad> *)(?P<k>[0-9]{1,9})/(?P<n>[0-9]{1,9})"
+)
 _BK_DONE_RE = re.compile(r"#(?P<k>[0-9]{1,9}) DONE(?: [0-9]{1,9}(?:\.[0-9]{1,9})?s)?")
 _BK_CACHED_RE = re.compile(r"#(?P<k>[0-9]{1,9}) CACHED")
 _BK_ERROR_RE = re.compile(r"#(?P<k>[0-9]{1,9}) (?:ERROR|CANCELED)(?:[: ].*)?")
+_BK_FAILED_RE = re.compile(r"#(?P<k>[0-9]{1,9}) ERROR(?:[: ].*)?")
 _PARSE_ERROR = "parse error"
 
 
@@ -513,7 +516,48 @@ def _buildkit_copy(text: str, lines: list[str]) -> Outcome:
     reused = [n for n, m in headers if m.group("k") == k and n != number]
     if reused:
         return _outcome("binding_ambiguous", (number, *reused), f"#{k} repeated")
-    return _buildkit_result(lines, number, k)
+    result = _buildkit_result(lines, number, k)
+    if result.evidence != "passed":
+        return result
+    return _failure_after(lines, headers, header) or result
+
+
+def _failure_after(
+    lines: list[str],
+    headers: list[tuple[int, re.Match[str]]],
+    copy: re.Match[str],
+) -> Outcome | None:
+    """``binding_ambiguous`` unless every ``#k ERROR`` of the build is
+    provably after the corrected COPY (ruling X, review N1): exactly one
+    erroring vertex, whose stage headers all give one step of the COPY's
+    stage, numbered higher than the COPY's. A header and ``#k DONE`` printed
+    by a failing step itself (the runner splits output on ``\r`` too) would
+    otherwise pass a COPY the build never reached; had the real COPY run, its
+    header would repeat. ``None`` when no vertex errored (a successful
+    build) or the failure follows the COPY (``c4``: ``#15 ERROR`` at
+    ``[stage-0  8/10]`` after the COPY at ``7/10``)."""
+    failed = {m.group("k") for line in lines if (m := _BK_FAILED_RE.fullmatch(line))}
+    if not failed:
+        return None
+    detail = "failure not provably after the corrected step"
+    where = _stage_step(copy)
+    if len(failed) != 1 or where is None:
+        return _outcome("binding_ambiguous", (), detail)
+    (k,) = failed
+    steps = {_stage_step(m) for _, m in headers if m.group("k") == k}
+    step = steps.pop() if len(steps) == 1 else None
+    if step is None or step[0] != where[0] or step[1] <= where[1]:
+        return _outcome("binding_ambiguous", (), detail)
+    return None
+
+
+def _stage_step(header: re.Match[str]) -> tuple[str, int] | None:
+    """A stage header's ``(stage name, step number)``, or ``None`` when its
+    bracket is not a stage header."""
+    m = _BK_STAGE_RE.fullmatch(header.group("bracket"))
+    if m is None or not _is_stage(header):
+        return None
+    return m.group("name"), int(m.group("k"))
 
 
 def _buildkit_result(lines: list[str], number: int, k: str) -> Outcome:
