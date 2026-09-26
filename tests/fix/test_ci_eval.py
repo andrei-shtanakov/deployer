@@ -851,8 +851,9 @@ def test_n1_runner_split_forgery_refused() -> None:
             "#6 [stage-0 4/4] RUN make",
             '#7 ERROR: process "x" did not complete successfully\n',
         ),
+        ("#6 [stage-0 4/4] RUN make", "#9 CANCELED\n"),
     ],
-    ids=["other-stage", "same-step", "unmapped", "two-errors"],
+    ids=["other-stage", "same-step", "unmapped", "two-errors", "canceled"],
 )
 def test_n1_failure_not_after_refused(run: str, extra: str) -> None:
     """The failing vertex in another stage, at the COPY's own step, with no

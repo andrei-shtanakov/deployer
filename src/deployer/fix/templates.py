@@ -232,7 +232,6 @@ _BK_STAGE_RE = re.compile(
 _BK_DONE_RE = re.compile(r"#(?P<k>[0-9]{1,9}) DONE(?: [0-9]{1,9}(?:\.[0-9]{1,9})?s)?")
 _BK_CACHED_RE = re.compile(r"#(?P<k>[0-9]{1,9}) CACHED")
 _BK_ERROR_RE = re.compile(r"#(?P<k>[0-9]{1,9}) (?:ERROR|CANCELED)(?:[: ].*)?")
-_BK_FAILED_RE = re.compile(r"#(?P<k>[0-9]{1,9}) ERROR(?:[: ].*)?")
 _PARSE_ERROR = "parse error"
 
 
@@ -527,7 +526,7 @@ def _failure_after(
     headers: list[tuple[int, re.Match[str]]],
     copy: re.Match[str],
 ) -> Outcome | None:
-    """``binding_ambiguous`` unless every ``#k ERROR`` of the build is
+    """``binding_ambiguous`` unless every ``#k ERROR``/``CANCELED`` of the build is
     provably after the corrected COPY (ruling X, review N1): exactly one
     erroring vertex, whose stage headers all give one step of the COPY's
     stage, numbered higher than the COPY's. A header and ``#k DONE`` printed
@@ -536,7 +535,7 @@ def _failure_after(
     header would repeat. ``None`` when no vertex errored (a successful
     build) or the failure follows the COPY (``c4``: ``#15 ERROR`` at
     ``[stage-0  8/10]`` after the COPY at ``7/10``)."""
-    failed = {m.group("k") for line in lines if (m := _BK_FAILED_RE.fullmatch(line))}
+    failed = {m.group("k") for line in lines if (m := _BK_ERROR_RE.fullmatch(line))}
     if not failed:
         return None
     detail = "failure not provably after the corrected step"
