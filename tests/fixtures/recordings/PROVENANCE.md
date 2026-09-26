@@ -59,3 +59,53 @@ matcher change for the `[i/n] ` form is code and goes through the ordinary revie
 These recordings stay as they are.
 
 Checksums: `CHECKSUMS.sha256` covers every file except itself and the recorder.
+
+## `ci/` — polygon runs on GitHub Actions (C-recordings)
+
+- **When and where:** 2026-09-25, on the polygon of `andrei-shtanakov/deployer`. Each
+  case is an **orphan** commit on its own branch, `polygon/fix-c-<case>`, like the
+  `polygon/run-*` branches. The branch holds:
+  - the project files of `polygon/run-5` (`937d465`);
+  - the case's `Dockerfile` and added files;
+  - a `workflow_dispatch`-only `.github/workflows/diagnosis-polygon.yml`. Its one
+    `ubuntu-24.04` job runs the pinned `actions/checkout`, then
+    `docker build --file ./Dockerfile .`, the build line of `polygon/run-1`.
+
+  `c6` has that build step twice. The branches stay on origin as evidence.
+- **How:** `tests/fixtures/recordings/record_ci.py`. For each case it:
+  - pushes the branch, refusing a branch that already exists;
+  - checks that the SHA is not the head of any open PR (diagnosis spec §6.3);
+  - runs `gh workflow run`;
+  - reads the run through `deployer.forge.list_runs_for_sha` and `read_attempt`.
+
+  These reads go through a runner that records **every `gh api` call verbatim** into
+  `gh-calls.json`: the argv, plus stdout or the error. A replay serves those bytes back
+  to forge's own parsing.
+- **Written by the recorder:** `environment.json` (repo, branch, SHA, run id and URL,
+  workflow path, UTC time) and `checks.json` (the questions: kind, corrected text,
+  Dockerfile line span).
+- **`expected.json`:** for each attempt and job, the outcome of the current hypothesis CI
+  matchers (not yet enabled) over forge's reading, next to the plan's hypothesis.
+
+| Case | Run | What it shows |
+|---|---|---|
+| `c1-copy-done` | 36147902215, success | `#14 [stage-0 7/9] COPY docs/guide/setup.md ./setup.md` then `#14 DONE`; COPY `passed` |
+| `c2-copy-rerun` | the same run, re-run (`gh run rerun`) | Attempt 2 was read, but the read of its **job log failed with a transient `TLS handshake timeout`**. It was recorded as it happened, so this is a real case of an unavailable log. |
+| `c2b-copy-rerun-reread` | the same run, read again (no new run) | both attempts read; attempt 2's job has a new job id and passes the same way |
+| `c3-from-parsed` | 36148249976, success | `#8 [extra 1/8] FROM docker.io/library/python:3.12-slim@sha256:…` — BuildKit prints the normalised reference; FROM `passed` |
+| `c4-copy-later-failure` | 36148351176, failure | the COPY is `#14 … DONE`, then `RUN false` fails. **BuildKit pads step numbers** once there are ten or more steps (`[stage-0  7/10]`, two spaces), and the hypothesis matcher misses that form: COPY `not_confirmed` |
+| `c5-copy-recurred` | 36148493985, failure | the corrected source is still absent: `#12 [stage-0 7/9] COPY …` fails at the corrected span (the recurrence form) |
+| `c6-copy-cached` | 36148650524, success | two builds in one job: the second shows `#11 [stage-0 7/9] COPY …` / `#11 CACHED`. The log is `binding_ambiguous` (several builds) |
+| `c7-copy-done-padded` | 36149311829, success | Meant to show padding, but `LABEL` is **not** a build step, so there are still 9 steps and no padding. Kept as recorded. |
+| `c8-from-bad-in-skipped-stage` | 36149389171, failure | A bad FROM in a stage nothing depends on fails **before any stage**: `dockerfile parse error on line 1`. BuildKit parses the whole file first, unlike Podman (`l9`), as §6.3/§7.3 assume. |
+| `c9-copy-done-padded-run` | 36149545526, success | 10 steps, a passing padded `#14 [stage-0  7/10] COPY …` / `#14 DONE`. The hypothesis matcher misses it: `not_confirmed` |
+
+### What disagrees with the hypothesis (CI)
+
+- **Padded step numbers** (`c4`, `c9`): `_BK_STAGE_RE` accepts one space between the
+  stage name and `k/n`. BuildKit right-aligns `k` to the width of `n`. A passing COPY in
+  any build with ten or more steps reads as "corrected step header absent". This is the
+  conservative direction, but most real Dockerfiles would never confirm. A matcher change
+  is code, for review (§9).
+- Everything else agrees. The CI FROM hypothesis (whole-file parse) holds on BuildKit
+  (`c8`).
