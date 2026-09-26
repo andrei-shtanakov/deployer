@@ -1,0 +1,2 @@
+Error: building at STEP "COPY docs/setup.md ./setup.md": checking on sources under "/Users/Andrei_Shtanakov/labs/all_ai_orchestrators/deployer/.deployer-runs/36239373873/reproduction/attempt-1/tries/001/context": copier: stat: "/docs/setup.md": no such file or directory
+

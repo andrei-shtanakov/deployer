@@ -1,0 +1,146 @@
+{
+  "repo": "andrei-shtanakov/deployer",
+  "run_id": 36239375530,
+  "attempt": 1,
+  "head_sha": "63f37f38b1d59be93d49763ddbd68fcb8c10b0a9",
+  "archive_bytes": 2554,
+  "listing": {
+    "sha": "63f37f38b1d59be93d49763ddbd68fcb8c10b0a9",
+    "truncated": false,
+    "entries": [
+      {
+        "path": ".deployer",
+        "mode": "040000",
+        "type": "tree",
+        "sha": "5e190cf345f7b2a3e3a4c5b116e865335d326651"
+      },
+      {
+        "path": ".deployer/authoring",
+        "mode": "040000",
+        "type": "tree",
+        "sha": "ea5b0912adb543f1a8b372d2fc768610584c69bc"
+      },
+      {
+        "path": ".deployer/authoring/Dockerfile.current",
+        "mode": "100644",
+        "type": "blob",
+        "sha": "7d9b997e086059c38a0d3770028a385c8b586d68"
+      },
+      {
+        "path": ".deployer/authoring/Dockerfile",
+        "mode": "040000",
+        "type": "tree",
+        "sha": "3ea4d9939e1b0a31115d846fe4ed7f9b952b0a95"
+      },
+      {
+        "path": ".deployer/authoring/Dockerfile/3b4aa6e732d242736cdec1e0062f7f6c252b9f7f160bacb647e2b5985cc6a370",
+        "mode": "040000",
+        "type": "tree",
+        "sha": "a37f2f969bfb70d63b6fc58a3717f6ccd308e71b"
+      },
+      {
+        "path": ".deployer/authoring/Dockerfile/3b4aa6e732d242736cdec1e0062f7f6c252b9f7f160bacb647e2b5985cc6a370/record.json",
+        "mode": "100644",
+        "type": "blob",
+        "sha": "ac32e7683d4880899576a40c07222c1d8bcb2b17"
+      },
+      {
+        "path": ".deployer/authoring/Dockerfile/3b4aa6e732d242736cdec1e0062f7f6c252b9f7f160bacb647e2b5985cc6a370/record.json.sig",
+        "mode": "100644",
+        "type": "blob",
+        "sha": "7d06b35d3af3e19cc63c3e85a4fc29aa874f63cd"
+      },
+      {
+        "path": ".deployer/authoring/Dockerfile/3b4aa6e732d242736cdec1e0062f7f6c252b9f7f160bacb647e2b5985cc6a370/snapshot.json",
+        "mode": "100644",
+        "type": "blob",
+        "sha": "5188c012b5aa5cc771e27815f270c6ba57ca2635"
+      },
+      {
+        "path": ".dockerignore",
+        "mode": "100644",
+        "type": "blob",
+        "sha": "e8e840b33919f874646c3ce6916687b7a44590e5"
+      },
+      {
+        "path": ".github",
+        "mode": "040000",
+        "type": "tree",
+        "sha": "ea7f8e977a2dad6dc424d53c081092ff4ce8faf3"
+      },
+      {
+        "path": ".github/workflows",
+        "mode": "040000",
+        "type": "tree",
+        "sha": "9812c4fe43605918f92eda60c71a57cd9ccc0db2"
+      },
+      {
+        "path": ".github/workflows/diagnosis-polygon.yml",
+        "mode": "100644",
+        "type": "blob",
+        "sha": "fc63131b602c4dd7f3656edf0d6b5bf78284b66a"
+      },
+      {
+        "path": "Dockerfile",
+        "mode": "100644",
+        "type": "blob",
+        "sha": "45125eac224278954813846a35f7e716f3ba6d00"
+      },
+      {
+        "path": "pyproject.toml",
+        "mode": "100644",
+        "type": "blob",
+        "sha": "a4c243ad5cce5607350c7e865400cd577910b704"
+      },
+      {
+        "path": "src",
+        "mode": "040000",
+        "type": "tree",
+        "sha": "523e8ce7ed3fe87097dd62f71982280b482676ce"
+      },
+      {
+        "path": "src/ci_build",
+        "mode": "040000",
+        "type": "tree",
+        "sha": "8a577034737b162d2235a3c6cd6f38f0d5f42814"
+      },
+      {
+        "path": "src/ci_build/__init__.py",
+        "mode": "100644",
+        "type": "blob",
+        "sha": "8e3fe2ab830313364e8df2bf88c2e13e34121a37"
+      },
+      {
+        "path": "tests",
+        "mode": "040000",
+        "type": "tree",
+        "sha": "f611679aba4f1c3aa5634a84ca54cf1786415053"
+      },
+      {
+        "path": "tests/test_greeting.py",
+        "mode": "100644",
+        "type": "blob",
+        "sha": "84b6d03da23ffef8758afe396c87d430d998c582"
+      },
+      {
+        "path": "uv.lock",
+        "mode": "100644",
+        "type": "blob",
+        "sha": "ab6178519f72e1aef5b229ff241c099e6af1b440"
+      }
+    ]
+  },
+  "tree": [
+    ".deployer/authoring/Dockerfile.current",
+    ".deployer/authoring/Dockerfile/3b4aa6e732d242736cdec1e0062f7f6c252b9f7f160bacb647e2b5985cc6a370/record.json",
+    ".deployer/authoring/Dockerfile/3b4aa6e732d242736cdec1e0062f7f6c252b9f7f160bacb647e2b5985cc6a370/record.json.sig",
+    ".deployer/authoring/Dockerfile/3b4aa6e732d242736cdec1e0062f7f6c252b9f7f160bacb647e2b5985cc6a370/snapshot.json",
+    ".dockerignore",
+    ".github/workflows/diagnosis-polygon.yml",
+    "Dockerfile",
+    "pyproject.toml",
+    "src/ci_build/__init__.py",
+    "tests/test_greeting.py",
+    "uv.lock"
+  ]
+}

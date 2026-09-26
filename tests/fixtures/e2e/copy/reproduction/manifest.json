@@ -1,0 +1,172 @@
+{
+  "status": "attempted",
+  "try_dir": ".deployer-runs/36239373873/reproduction/attempt-1/tries/001",
+  "refusal": null,
+  "restoration": {
+    "state": "exact",
+    "sha": "1b9ade27c6857c1f9e3eb6119a5c10a0e57949c2",
+    "unmet": []
+  },
+  "binding": {
+    "job_id": 108396889260,
+    "workflow_job": "build",
+    "build_step": 3,
+    "dockerfile": "Dockerfile",
+    "context": "."
+  },
+  "environment": {
+    "backend": "podman",
+    "backend_version": "5.7.0",
+    "endpoint": "ssh://core@127.0.0.1:56907/run/user/501/podman/podman.sock",
+    "endpoint_source": "podman_default_connection",
+    "buildx_version": null,
+    "host_arch": "arm64",
+    "syntax_directive": null
+  },
+  "checks": [
+    {
+      "check_id": "syntax_first_from",
+      "status": "passed",
+      "finding": null,
+      "reason": null,
+      "location": null,
+      "evidence": []
+    },
+    {
+      "check_id": "syntax_from_args",
+      "status": "passed",
+      "finding": null,
+      "reason": null,
+      "location": null,
+      "evidence": []
+    },
+    {
+      "check_id": "syntax_keyword",
+      "status": "passed",
+      "finding": null,
+      "reason": null,
+      "location": null,
+      "evidence": []
+    },
+    {
+      "check_id": "syntax_continuation",
+      "status": "passed",
+      "finding": null,
+      "reason": null,
+      "location": null,
+      "evidence": []
+    },
+    {
+      "check_id": "builder_check",
+      "status": "skipped",
+      "finding": null,
+      "reason": "backend has no build check",
+      "location": null,
+      "evidence": []
+    },
+    {
+      "check_id": "copy_sources",
+      "status": "failed",
+      "finding": "source docs/setup.md absent from the context",
+      "reason": null,
+      "location": {
+        "file": "Dockerfile",
+        "lines": [
+          11,
+          11
+        ]
+      },
+      "evidence": [
+        {
+          "kind": "path_absent",
+          "path": "docs/setup.md",
+          "listing": "../../source.json#tree",
+          "text": null
+        },
+        {
+          "kind": "ignore_file",
+          "path": ".dockerignore",
+          "listing": null,
+          "text": null
+        }
+      ]
+    },
+    {
+      "check_id": "copy_sources",
+      "status": "skipped",
+      "finding": null,
+      "reason": "COPY at line 3: --from source is checked in its stage or image, not the context",
+      "location": null,
+      "evidence": []
+    },
+    {
+      "check_id": "from_ref",
+      "status": "observation",
+      "finding": "--from=ghcr.io/astral-sh/uv:0.5.11 is an external image dependency",
+      "reason": null,
+      "location": null,
+      "evidence": []
+    }
+  ],
+  "build": {
+    "argv": [
+      "podman",
+      "build",
+      "--file",
+      "context/Dockerfile",
+      "--tag",
+      "localhost/deployer-repro-36239373873-001",
+      "--force-rm",
+      "context"
+    ],
+    "exit_code": 125,
+    "launch_error": null,
+    "failed_instruction": {
+      "kind": "span",
+      "lines": [
+        11,
+        11
+      ],
+      "bound_by": "step_text"
+    },
+    "signature": null,
+    "stdout": "build.stdout",
+    "stderr": "build.stderr",
+    "image_cleanup": "not_attempted",
+    "build_containers": "removed_by_builder"
+  },
+  "comparison": {
+    "state": "reproduced_with_differences",
+    "reason": null,
+    "ci_instruction": {
+      "kind": "span",
+      "lines": [
+        11,
+        11
+      ],
+      "bound_by": "buildkit_error_block"
+    },
+    "signature_match": "not_compared",
+    "dimensions": {
+      "backend": "differs",
+      "host_arch": "unknown",
+      "base_image_digests": "unknown",
+      "ignore_file": "same",
+      "restoration": "same"
+    },
+    "values": {
+      "backend": [
+        "docker",
+        "podman"
+      ],
+      "host_arch": [
+        null,
+        "arm64"
+      ],
+      "ignore_file": [
+        ".dockerignore",
+        ".dockerignore"
+      ]
+    }
+  }
+}

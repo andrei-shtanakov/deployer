@@ -1,0 +1,92 @@
+From c5bb893820c9c180a154576ef7f9ce2d27709ba5 Mon Sep 17 00:00:00 2001
+From: deployer <deployer@localhost>
+Date: Sat, 26 Sep 2026 15:38:22 +0400
+Subject: [PATCH] deployer fix: from_argument_count in Dockerfile (lines 1-1)
+
+F1: FROM python:3.12-slim extra
+    -> FROM python:3.12-slim AS extra
+
+Locally confirmed: the diagnosed defect's check passes and the local
+build passed the corrected instruction. A proposal for review, not
+evidence of the author's intent.
+
+Fix-Id: f7662bf6-1ac4-416b-ad30-648f49eab935
+---
+ .deployer/authoring/Dockerfile.current                        | 2 +-
+ .../record.json                                               | 1 -
+ .../snapshot.json                                             | 1 -
+ .../record.json                                               | 1 +
+ .../record.json.sig                                           | 4 ++--
+ .../snapshot.json                                             | 1 +
+ Dockerfile                                                    | 2 +-
+ 7 files changed, 6 insertions(+), 6 deletions(-)
+ delete mode 100644 .deployer/authoring/Dockerfile/3b4aa6e732d242736cdec1e0062f7f6c252b9f7f160bacb647e2b5985cc6a370/record.json
+ delete mode 100644 .deployer/authoring/Dockerfile/3b4aa6e732d242736cdec1e0062f7f6c252b9f7f160bacb647e2b5985cc6a370/snapshot.json
+ create mode 100644 .deployer/authoring/Dockerfile/8de05a18a020df3f370de159ce676119fb6ccb1ef8904ea01e16e17781418086/record.json
+ rename .deployer/authoring/Dockerfile/{3b4aa6e732d242736cdec1e0062f7f6c252b9f7f160bacb647e2b5985cc6a370 => 8de05a18a020df3f370de159ce676119fb6ccb1ef8904ea01e16e17781418086}/record.json.sig (63%)
+ create mode 100644 .deployer/authoring/Dockerfile/8de05a18a020df3f370de159ce676119fb6ccb1ef8904ea01e16e17781418086/snapshot.json
+
+diff --git a/.deployer/authoring/Dockerfile.current b/.deployer/authoring/Dockerfile.current
+index 7d9b997..d7c92ac 100644
+--- a/.deployer/authoring/Dockerfile.current
++++ b/.deployer/authoring/Dockerfile.current
+@@ -1 +1 @@
+-Dockerfile/3b4aa6e732d242736cdec1e0062f7f6c252b9f7f160bacb647e2b5985cc6a370
++Dockerfile/8de05a18a020df3f370de159ce676119fb6ccb1ef8904ea01e16e17781418086
+diff --git a/.deployer/authoring/Dockerfile/3b4aa6e732d242736cdec1e0062f7f6c252b9f7f160bacb647e2b5985cc6a370/record.json b/.deployer/authoring/Dockerfile/3b4aa6e732d242736cdec1e0062f7f6c252b9f7f160bacb647e2b5985cc6a370/record.json
+deleted file mode 100644
+index ac32e76..0000000
+--- a/.deployer/authoring/Dockerfile/3b4aa6e732d242736cdec1e0062f7f6c252b9f7f160bacb647e2b5985cc6a370/record.json
++++ /dev/null
+@@ -1 +0,0 @@
+-{"artifact_path":"Dockerfile","artifact_sha256":"2f3d1aef9395fd271334a659838c4d49046bcccbacb5320c747a397b005f834a","deployer_version":"0.1.0","format_version":"1","repo":"andrei-shtanakov/deployer","snapshot_sha256":"46af0d61b89217a44b529d96032e2388b530bc88aeb6992ae778fb677d5c21d8","source_commit":"baa69e964ded06c1906cd813cb70b548ba71eb1f"}
+diff --git a/.deployer/authoring/Dockerfile/3b4aa6e732d242736cdec1e0062f7f6c252b9f7f160bacb647e2b5985cc6a370/snapshot.json b/.deployer/authoring/Dockerfile/3b4aa6e732d242736cdec1e0062f7f6c252b9f7f160bacb647e2b5985cc6a370/snapshot.json
+deleted file mode 100644
+index 5188c01..0000000
+--- a/.deployer/authoring/Dockerfile/3b4aa6e732d242736cdec1e0062f7f6c252b9f7f160bacb647e2b5985cc6a370/snapshot.json
++++ /dev/null
+@@ -1 +0,0 @@
+-{"facts":{"dependencies":[],"entrypoints":{},"has_build_system":true,"has_poetry_lock":false,"has_uv_lock":true,"name":"ci-build","optional_dependencies":{},"package_dirs":["src/ci_build"],"package_manager":"uv","python_version":null,"requirements_files":{},"requires_python":">=3.12","root_modules":[],"script_entrypoint":null},"format_version":"1","source_commit":"baa69e964ded06c1906cd813cb70b548ba71eb1f","tree":[{"mode":"040000","path":".github","sha":"ea7f8e977a2dad6dc424d53c081092ff4ce8faf3","type":"tree"},{"mode":"040000","path":".github/workflows","sha":"9812c4fe43605918f92eda60c71a57cd9ccc0db2","type":"tree"},{"mode":"100644","path":".github/workflows/diagnosis-polygon.yml","sha":"fc63131b602c4dd7f3656edf0d6b5bf78284b66a","type":"blob"},{"mode":"100644","path":"Dockerfile","sha":"45125eac224278954813846a35f7e716f3ba6d00","type":"blob"},{"mode":"100644","path":"pyproject.toml","sha":"a4c243ad5cce5607350c7e865400cd577910b704","type":"blob"},{"mode":"040000","path":"src","sha":"523e8ce7ed3fe87097dd62f71982280b482676ce","type":"tree"},{"mode":"040000","path":"src/ci_build","sha":"8a577034737b162d2235a3c6cd6f38f0d5f42814","type":"tree"},{"mode":"100644","path":"src/ci_build/__init__.py","sha":"8e3fe2ab830313364e8df2bf88c2e13e34121a37","type":"blob"},{"mode":"040000","path":"tests","sha":"f611679aba4f1c3aa5634a84ca54cf1786415053","type":"tree"},{"mode":"100644","path":"tests/test_greeting.py","sha":"84b6d03da23ffef8758afe396c87d430d998c582","type":"blob"},{"mode":"100644","path":"uv.lock","sha":"ab6178519f72e1aef5b229ff241c099e6af1b440","type":"blob"}],"tree_complete":true}
+diff --git a/.deployer/authoring/Dockerfile/8de05a18a020df3f370de159ce676119fb6ccb1ef8904ea01e16e17781418086/record.json b/.deployer/authoring/Dockerfile/8de05a18a020df3f370de159ce676119fb6ccb1ef8904ea01e16e17781418086/record.json
+new file mode 100644
+index 0000000..5157f53
+--- /dev/null
++++ b/.deployer/authoring/Dockerfile/8de05a18a020df3f370de159ce676119fb6ccb1ef8904ea01e16e17781418086/record.json
+@@ -0,0 +1 @@
++{"artifact_path":"Dockerfile","artifact_sha256":"959ba109e612d22273579437666d336fa9dfb9e5b02624907b30f41b02156f3b","deployer_version":"0.1.0","format_version":"1","repo":"andrei-shtanakov/deployer","snapshot_sha256":"155e51a096b72a6147dab6bb8f6b2ae44fab91e92677e4ca7917a7feb131a1a8","source_commit":"63f37f38b1d59be93d49763ddbd68fcb8c10b0a9"}
+diff --git a/.deployer/authoring/Dockerfile/3b4aa6e732d242736cdec1e0062f7f6c252b9f7f160bacb647e2b5985cc6a370/record.json.sig b/.deployer/authoring/Dockerfile/8de05a18a020df3f370de159ce676119fb6ccb1ef8904ea01e16e17781418086/record.json.sig
+similarity index 63%
+rename from .deployer/authoring/Dockerfile/3b4aa6e732d242736cdec1e0062f7f6c252b9f7f160bacb647e2b5985cc6a370/record.json.sig
+rename to .deployer/authoring/Dockerfile/8de05a18a020df3f370de159ce676119fb6ccb1ef8904ea01e16e17781418086/record.json.sig
+index 7d06b35..22cf466 100644
+--- a/.deployer/authoring/Dockerfile/3b4aa6e732d242736cdec1e0062f7f6c252b9f7f160bacb647e2b5985cc6a370/record.json.sig
++++ b/.deployer/authoring/Dockerfile/8de05a18a020df3f370de159ce676119fb6ccb1ef8904ea01e16e17781418086/record.json.sig
+@@ -1,6 +1,6 @@
+ -----BEGIN SSH SIGNATURE-----
+ U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgsIGWcJ6/+hfTT9Lnr8gsWktq7o
+ 7MFXviJDPEIRNsiT0AAAASZGVwbG95ZXItYXV0aG9yaW5nAAAAAAAAAAZzaGE1MTIAAABT
+-AAAAC3NzaC1lZDI1NTE5AAAAQLR9FWHjqk9EiEw2bGV5HEFFThu5gVIsn70MjOEgaxnIJy
+-OQKo3jPaL3YbjdS4+gAUFIX4tnYKueWG9fx0zU4gI=
++AAAAC3NzaC1lZDI1NTE5AAAAQCcAmnYlAv/x3g16NRI3ttSEKlfjHzdNl5jxYC+pM1Ajr4
++4Z9g1SXHzcX0MgYwyrsl9LX05yyR0jJpGB6YGOjgs=
+ -----END SSH SIGNATURE-----
+diff --git a/.deployer/authoring/Dockerfile/8de05a18a020df3f370de159ce676119fb6ccb1ef8904ea01e16e17781418086/snapshot.json b/.deployer/authoring/Dockerfile/8de05a18a020df3f370de159ce676119fb6ccb1ef8904ea01e16e17781418086/snapshot.json
+new file mode 100644
+index 0000000..d0e80e4
+--- /dev/null
++++ b/.deployer/authoring/Dockerfile/8de05a18a020df3f370de159ce676119fb6ccb1ef8904ea01e16e17781418086/snapshot.json
+@@ -0,0 +1 @@
++{"facts":{"dependencies":[],"entrypoints":{},"has_build_system":true,"has_poetry_lock":false,"has_uv_lock":true,"name":"ci-build","optional_dependencies":{},"package_dirs":["src/ci_build"],"package_manager":"uv","python_version":null,"requirements_files":{},"requires_python":">=3.12","root_modules":[],"script_entrypoint":null},"format_version":"1","source_commit":"63f37f38b1d59be93d49763ddbd68fcb8c10b0a9","tree":[{"mode":"040000","path":".deployer","sha":"5e190cf345f7b2a3e3a4c5b116e865335d326651","type":"tree"},{"mode":"040000","path":".deployer/authoring","sha":"ea5b0912adb543f1a8b372d2fc768610584c69bc","type":"tree"},{"mode":"100644","path":".deployer/authoring/Dockerfile.current","sha":"7d9b997e086059c38a0d3770028a385c8b586d68","type":"blob"},{"mode":"040000","path":".deployer/authoring/Dockerfile","sha":"3ea4d9939e1b0a31115d846fe4ed7f9b952b0a95","type":"tree"},{"mode":"040000","path":".deployer/authoring/Dockerfile/3b4aa6e732d242736cdec1e0062f7f6c252b9f7f160bacb647e2b5985cc6a370","sha":"a37f2f969bfb70d63b6fc58a3717f6ccd308e71b","type":"tree"},{"mode":"100644","path":".deployer/authoring/Dockerfile/3b4aa6e732d242736cdec1e0062f7f6c252b9f7f160bacb647e2b5985cc6a370/record.json","sha":"ac32e7683d4880899576a40c07222c1d8bcb2b17","type":"blob"},{"mode":"100644","path":".deployer/authoring/Dockerfile/3b4aa6e732d242736cdec1e0062f7f6c252b9f7f160bacb647e2b5985cc6a370/record.json.sig","sha":"7d06b35d3af3e19cc63c3e85a4fc29aa874f63cd","type":"blob"},{"mode":"100644","path":".deployer/authoring/Dockerfile/3b4aa6e732d242736cdec1e0062f7f6c252b9f7f160bacb647e2b5985cc6a370/snapshot.json","sha":"5188c012b5aa5cc771e27815f270c6ba57ca2635","type":"blob"},{"mode":"100644","path":".dockerignore","sha":"e8e840b33919f874646c3ce6916687b7a44590e5","type":"blob"},{"mode":"040000","path":".github","sha":"ea7f8e977a2dad6dc424d53c081092ff4ce8faf3","type":"tree"},{"mode":"040000","path":".github/workflows","sha":"9812c4fe43605918f92eda60c71a57cd9ccc0db2","type":"tree"},{"mode":"100644","path":".github/workflows/diagnosis-polygon.yml","sha":"fc63131b602c4dd7f3656edf0d6b5bf78284b66a","type":"blob"},{"mode":"100644","path":"Dockerfile","sha":"45125eac224278954813846a35f7e716f3ba6d00","type":"blob"},{"mode":"100644","path":"pyproject.toml","sha":"a4c243ad5cce5607350c7e865400cd577910b704","type":"blob"},{"mode":"040000","path":"src","sha":"523e8ce7ed3fe87097dd62f71982280b482676ce","type":"tree"},{"mode":"040000","path":"src/ci_build","sha":"8a577034737b162d2235a3c6cd6f38f0d5f42814","type":"tree"},{"mode":"100644","path":"src/ci_build/__init__.py","sha":"8e3fe2ab830313364e8df2bf88c2e13e34121a37","type":"blob"},{"mode":"040000","path":"tests","sha":"f611679aba4f1c3aa5634a84ca54cf1786415053","type":"tree"},{"mode":"100644","path":"tests/test_greeting.py","sha":"84b6d03da23ffef8758afe396c87d430d998c582","type":"blob"},{"mode":"100644","path":"uv.lock","sha":"ab6178519f72e1aef5b229ff241c099e6af1b440","type":"blob"}],"tree_complete":true}
+diff --git a/Dockerfile b/Dockerfile
+index 45125ea..7fb1857 100644
+--- a/Dockerfile
++++ b/Dockerfile
+@@ -1,4 +1,4 @@
+-FROM python:3.12-slim extra
++FROM python:3.12-slim AS extra
+ 
+ COPY --from=ghcr.io/astral-sh/uv:0.5.11 /uv /uvx /bin/
+ 
+-- 
+2.54.0 (Apple Git-157)
+
