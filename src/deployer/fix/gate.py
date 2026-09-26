@@ -1,12 +1,12 @@
 """The gate (design §2, §8.3): may fix authoring start, or a fix be published?
 
 :func:`gate` runs for ``deployer fix``: the user's clone is checked as a whole
-(a checkout at its toplevel, with an ``origin``, ``HEAD`` at the admitted
-``head_sha``, a clean working tree), the target is derived from it, the
-verdict must pass :func:`accept_for_fix`, and ownership is re-verified with
-the **current** trust directory. :func:`recheck_admission` runs for
-``fix publish``: the same two checks over the inputs stored in ``fix.json``
-only, never over the clone's current state.
+(a checkout at its toplevel, not a partial clone, with an ``origin``,
+``HEAD`` at the admitted ``head_sha``, a clean working tree), the target is
+derived from it, the verdict must pass :func:`accept_for_fix`, and ownership
+is re-verified with the **current** trust directory.
+:func:`recheck_admission` runs for ``fix publish``: the same two checks over
+the inputs stored in ``fix.json`` only, never over the clone's current state.
 
 Both functions are total: every failure, an I/O or Git error included, is a
 reason string; neither raises.
@@ -23,6 +23,7 @@ from deployer.admission.model import AdmissionSection
 from deployer.admission.ownership import OwnershipFacts, verify_ownership
 from deployer.admission.prepare import _head_listing
 from deployer.fix.document import FixDocument, Input, StoredFile, verify_inputs
+from deployer.fix.workspace import partial_clone_problem
 from deployer.provenance import gitrepo
 from deployer.provenance.model import sha256_hex
 from deployer.provenance.trust import trust_dir
@@ -126,6 +127,9 @@ def _clone_state(clone: Path) -> tuple[str, str] | str:
     top = gitrepo.toplevel(clone)
     if not top.samefile(clone):
         return f"{clone} is not the repository root ({top})"
+    partial = partial_clone_problem(clone)
+    if partial is not None:
+        return partial
     slug = gitrepo.origin_slug(clone)
     if slug is None:
         return f"{clone} has no parseable origin remote"

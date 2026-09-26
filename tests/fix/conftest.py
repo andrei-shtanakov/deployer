@@ -9,6 +9,7 @@ flag, environment variable or configuration names the registry.
 
 import copy
 import json
+import os
 import shutil
 import subprocess
 from collections.abc import Callable, Iterator
@@ -65,6 +66,42 @@ def commit_all(repo: Path, message: str) -> str:
     git(repo, "add", "-A")
     git(repo, "commit", "-q", "--allow-empty", "-m", message)
     return git(repo, "rev-parse", "HEAD")
+
+
+def partial_clone(source: Path, dest: Path) -> str:
+    """A REAL ``--filter=blob:none`` clone of ``source`` at ``dest`` over
+    ``file://`` (offline), with a blob that only a side branch holds; asserts
+    the clone is partial (a promisor remote, or ``extensions.partialClone``)
+    and that the blob is missing locally, and returns that blob's id."""
+    git(source, "config", "uploadpack.allowFilter", "true")
+    git(source, "config", "uploadpack.allowAnySHA1InWant", "true")
+    head = git(source, "rev-parse", "HEAD")
+    git(source, "switch", "-q", "-c", "side")
+    (source / "side-only.txt").write_text("only on the side branch\n")
+    commit_all(source, "side")
+    blob = git(source, "rev-parse", "HEAD:side-only.txt")
+    git(source, "switch", "-q", "--detach", head)
+    subprocess.run(
+        ["git", "clone", "-q", "--filter=blob:none", source.resolve().as_uri(), dest],
+        check=True,
+        capture_output=True,
+        timeout=60,
+    )
+    config = git(dest, "config", "--list")
+    assert "remote.origin.promisor=true" in config or (
+        "extensions.partialclone=" in config
+    ), config
+    missing = git(dest, "rev-list", "--missing=print", "--objects", "--all")
+    assert f"?{blob}" in missing.splitlines()
+    no_fetch = {**os.environ, "GIT_NO_LAZY_FETCH": "1"}
+    probe = subprocess.run(
+        ["git", "-C", str(dest), "cat-file", "-e", blob],
+        capture_output=True,
+        timeout=60,
+        env=no_fetch,
+    )
+    assert probe.returncode != 0  # really absent, not merely unreferenced
+    return blob
 
 
 def at_head(document: dict[str, Any], head: str) -> dict[str, Any]:

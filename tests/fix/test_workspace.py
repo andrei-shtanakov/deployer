@@ -31,6 +31,7 @@ from deployer.fix.workspace import (
     outside,
 )
 from deployer.provenance import gitrepo
+from tests.fix.conftest import partial_clone
 
 _DOCKERFILE = b"FROM python:3.12-slim\nCOPY app.py /app/\nRUN echo hi\n"
 _CORRECTED = b"FROM python:3.12-slim\nCOPY main.py /app/\nRUN echo hi\n"
@@ -986,3 +987,71 @@ def test_gitrepo_read_ignores_replace_refs(tmp_path: Path) -> None:
     """``provenance.gitrepo._git`` (``blob_bytes``) ignores replace refs too."""
     repo, a = _replaced_repo(tmp_path)
     assert gitrepo.blob_bytes(repo, a, "Dockerfile") == b"real\n"
+
+
+# Partial clones: no lazy fetch, and refused outright --------------------------
+
+
+def test_guarded_env_forbids_lazy_fetch(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The shared guarded environment carries ``GIT_NO_LAZY_FETCH=1``, and
+    ``workspace._run`` passes it to git even over an inherited ``0``."""
+    monkeypatch.setenv("GIT_NO_LAZY_FETCH", "0")
+    assert gitrepo.no_replace_env({})["GIT_NO_LAZY_FETCH"] == "1"
+    seen: dict[str, str] = {}
+
+    def fake_run(*_: Any, env: dict[str, str], **__: Any) -> Any:
+        seen.update(env)
+        return subprocess.CompletedProcess([], 0, b"", b"")
+
+    monkeypatch.setattr(workspace.subprocess, "run", fake_run)
+    workspace._run(Path("."), "status", g=())
+    assert seen["GIT_NO_LAZY_FETCH"] == "1"
+    assert seen["GIT_NO_REPLACE_OBJECTS"] == "1"
+
+
+def _plain_repo(tmp_path: Path) -> Path:
+    """An empty non-partial repository."""
+    repo = tmp_path / "plain"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True, timeout=60)
+    return repo
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "refused"),
+    [
+        ("extensions.partialClone", "origin", True),
+        ("remote.origin.promisor", "true", True),
+        ("remote.origin.promisor", "false", False),
+    ],
+    ids=["ext", "promisor", "promisor-off"],
+)
+def test_partial_clone_config(
+    tmp_path: Path, key: str, value: str, refused: bool
+) -> None:
+    repo = _plain_repo(tmp_path)
+    assert workspace.partial_clone_problem(repo) is None
+    _git(repo, "config", key, value)
+    reason = workspace.partial_clone_problem(repo)
+    assert (reason is not None) == refused
+    if refused:
+        assert reason is not None and "is a partial clone" in reason
+
+
+def test_real_partial_clone_refused_by_guards(tmp_path: Path) -> None:
+    """``_guards`` — which every publish/confirm/workspace git command reads
+    first — refuses a real partial clone and a linked worktree of it."""
+    source = _plain_repo(tmp_path)
+    (source / "Dockerfile").write_text("FROM scratch\n")
+    _git(source, "add", "Dockerfile")
+    _git(source, "config", "user.name", "t")
+    _git(source, "config", "user.email", "t@x")
+    _git(source, "commit", "-qm", "a")
+    partial = tmp_path / "partial"
+    partial_clone(source, partial)
+    reason = workspace._guards(partial)
+    assert isinstance(reason, str) and "is a partial clone" in reason
+    linked = tmp_path / "linked"
+    _git(partial, "worktree", "add", "-q", "--detach", str(linked))
+    reason = workspace._guards(linked)
+    assert isinstance(reason, str) and "is a partial clone" in reason

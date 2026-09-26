@@ -25,9 +25,10 @@ from deployer.fix.document import FixDocument, Input, Publication, StoredFile
 from deployer.fix.gate import Admitted, gate, recheck_admission
 from deployer.provenance import trust
 from deployer.provenance.model import sha256_hex
-from tests.fix.conftest import Scenario, admitted_scenario
+from tests.fix.conftest import ORIGIN, Scenario, admitted_scenario
 from tests.fix.conftest import commit_all as _commit_all
 from tests.fix.conftest import git as _git
+from tests.fix.conftest import partial_clone as _partial_clone
 from tests.fix.conftest import restored_at as _restored_at
 from tests.reproduce.conftest import FakeContainers
 
@@ -153,6 +154,20 @@ def test_gate_refuses_a_clone_without_origin(scenario: Scenario) -> None:
     _git(scenario.clone, "remote", "remove", "origin")
     reason = scenario.gate()
     assert isinstance(reason, str) and "no parseable origin" in reason
+
+
+def test_gate_refuses_a_partial_clone(scenario: Scenario, tmp_path: Path) -> None:
+    """A real ``--filter=blob:none`` clone is refused by name: a missing blob
+    would be fetched lazily. Without the promisor mark the same clone is
+    admitted, so the partial-clone check is what refuses."""
+    partial = tmp_path / "partial"
+    _partial_clone(scenario.clone, partial)
+    _git(partial, "remote", "set-url", "origin", ORIGIN)
+    reason = scenario.gate(clone=partial)
+    assert isinstance(reason, str), reason
+    assert f"{partial} is a partial clone (remote.origin.promisor=true)" in reason
+    _git(partial, "config", "--unset", "remote.origin.promisor")
+    assert isinstance(scenario.gate(clone=partial), Admitted)
 
 
 def test_gate_refuses_untracked_only_dirt(scenario: Scenario) -> None:

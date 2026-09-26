@@ -19,16 +19,21 @@ NO_REPLACE_CONFIG = ("-c", "core.useReplaceRefs=false")
 a ``refs/replace/*`` substitute."""
 NO_REPLACE_ENV = {"GIT_NO_REPLACE_OBJECTS": "1"}
 """The same, as the environment ``git`` honours for it."""
+NO_LAZY_FETCH_ENV = {"GIT_NO_LAZY_FETCH": "1"}
+"""In a partial clone, a missing object read fails instead of being fetched
+from the promisor remote (git >= 2.44; older git ignores it)."""
 REPLACE_REDIRECTING_ENV = ("GIT_REPLACE_REF_BASE",)
 """Inherited, this would point replace lookups at another ref namespace."""
 
 
 def no_replace_env(base: Mapping[str, str] | None = None) -> dict[str, str]:
     """``base`` (the current environment by default) with replace objects
-    disabled and ``GIT_REPLACE_REF_BASE`` dropped."""
+    disabled, ``GIT_REPLACE_REF_BASE`` dropped and lazy fetching of missing
+    objects forbidden: the guarded environment of every object read."""
     source = os.environ if base is None else base
     environ = {k: v for k, v in source.items() if k not in REPLACE_REDIRECTING_ENV}
     environ.update(NO_REPLACE_ENV)
+    environ.update(NO_LAZY_FETCH_ENV)
     return environ
 
 
