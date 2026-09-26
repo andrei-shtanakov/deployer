@@ -317,7 +317,9 @@ right-aligned to the step count, as in `[stage-0  7/10]`) and that step's `#k DO
 the Dockerfile (single stage, only recorded instructions; anything else refuses), and
 the build step must have concluded `success` in the GitHub API with no failing vertex
 anywhere in the log: a failed build's output cannot prove the COPY ran, because a
-failing `RUN` can print every line that would. Any `***` (a runner mask) refuses too.
+failing `RUN` can print every line that would. Any `***` (a runner mask) refuses too,
+as does a workflow using `continue-on-error`; a build step with its own `name:` is not
+read and never confirms (known limitation).
 FROM is file-wide: a named build-stage header and no `dockerfile parse error` (BuildKit
 parses the whole file first). Any `undetermined` attempt, a recurrence or an ambiguous
 binding makes the result insufficient (design §7.3–§7.4).

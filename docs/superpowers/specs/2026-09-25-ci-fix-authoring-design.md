@@ -648,7 +648,11 @@ every rule below relies on:
   `#k ERROR` (#100 review). So `failure`, `success` with a failing vertex, any other
   conclusion (`cancelled`, `timed_out`, `skipped`, none) and a build step that is not
   uniquely identified → `binding ambiguous`. The after-the-COPY rule above is thereby
-  superseded for confirmation; `c4` is insufficient. A step can print `::add-mask::<text>`, after which the runner logs that
+  superseded for confirmation; `c4` is insufficient. A workflow that uses
+  `continue-on-error` is `undetermined` (the API may then report a failed step as
+  `success`). Known limitation: the build step is found by its runner group title
+  `Run <build line>`; a build step with a workflow `name:` is titled by that name and
+  is not read, so it never confirms (`binding ambiguous`). A step can print `::add-mask::<text>`, after which the runner logs that
   text as `***` everywhere: any line the rules above rely on could be erased, so `***`
   anywhere from the section start to the end of the log → `binding ambiguous` (ruling
   AC; legitimately masked secrets refuse too). BuildKit re-prints a vertex header when progress interleaves (`c1` prints

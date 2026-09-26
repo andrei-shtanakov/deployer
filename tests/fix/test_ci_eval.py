@@ -1108,7 +1108,10 @@ def test_ab_success_with_a_failing_vertex_refused() -> None:
 
 
 def test_ab_build_step_not_unique_refused() -> None:
-    """Two listed steps with the build step's number: no conclusion binds."""
+    """Two listed steps with the build step's number: ``_build_step`` binds
+    no conclusion. End to end this refuses earlier, at the job-text rebuild
+    (``undetermined``); the assertion pins which path is reached so a change
+    that let a twin supply a conclusion would show here (#100 review)."""
     job = _job(COPY_OK)
     assert job.all_steps is not None
     twin = replace(job.all_steps[2], conclusion="success")
@@ -1116,4 +1119,5 @@ def test_ab_build_step_not_unique_refused() -> None:
     assert ci_eval._build_step(q) is None
     got = _copy(COPY_OK, q=q)
     assert not got.positive
+    assert got.qualification == "undetermined"
     assert evaluate([got], True)[0] == INSUFFICIENT

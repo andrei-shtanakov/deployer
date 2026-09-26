@@ -38,6 +38,7 @@ from deployer.reproduce.shape import (
 
 Qualification = Literal["qualified", "excluded", "undetermined"]
 _EVENTS = ("push", "workflow_dispatch")
+_CONTINUE_ON_ERROR = "continue-on-error"
 # No context field: buildline.parse_build_line admits only the context ".".
 _COMPARED = ("dockerfile", "build_args", "platform")
 
@@ -205,6 +206,13 @@ def _judge_job(
         return _Verdict("undetermined", "checkout SHA not established", key)
     if isinstance(shape, Refusal):
         return _Verdict("undetermined", f"build not bound: {shape.reason}", key)
+    if _CONTINUE_ON_ERROR in text:
+        # ``continue-on-error`` can make the API report a failed step as
+        # ``success``, and the CI COPY row trusts that conclusion (ruling
+        # AB/AD); the workflow text is the project's own, so any occurrence
+        # refuses (#100 review).
+        reason = f"workflow uses {_CONTINUE_ON_ERROR}; step conclusions unproven"
+        return _Verdict("undetermined", reason, key)
     return _Verdict("qualified", None, key, job, shape)
 
 
