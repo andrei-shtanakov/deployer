@@ -36,9 +36,9 @@ from deployer.admission.templates import (
 from deployer.fix import templates
 from deployer.fix.qualify import Qualification, Qualified
 from deployer.forge import (
-    _ANSI_RE,
-    _GROUP_PREFIX,
-    _LOG_TIMESTAMP_RE,
+    ANSI_CSI_RE,
+    RUNNER_GROUP_PREFIX,
+    RUNNER_LOG_TIMESTAMP_RE,
     Completeness,
     FailedJob,
     StepInfo,
@@ -278,7 +278,7 @@ def _ends_section(line: str, steps: frozenset[str]) -> bool:
     completed with exit code 1.``), or ``Post <step name>`` for a step of the
     job (the form of a post step's title; the recordings' one post step,
     ``Post Run actions/checkout@…``, prints only ``Post job cleanup.``)."""
-    if line.startswith(_GROUP_PREFIX) or line == _POST_JOB:
+    if line.startswith(RUNNER_GROUP_PREFIX) or line == _POST_JOB:
         return True
     return line.startswith(_POST) and (line in steps or line[len(_POST) :] in steps)
 
@@ -337,9 +337,10 @@ def _section(
         for i, line in enumerate(raw)
     ]
     read = [
-        _ANSI_RE.sub("", _LOG_TIMESTAMP_RE.sub("", line, count=1)) for line in lines
+        ANSI_CSI_RE.sub("", RUNNER_LOG_TIMESTAMP_RE.sub("", line, count=1))
+        for line in lines
     ]
-    header = f"{_GROUP_PREFIX}{title}"
+    header = f"{RUNNER_GROUP_PREFIX}{title}"
     at = [i for i, line in enumerate(read) if line == header]
     if len(at) != 1:
         return f"{len(at)} runner group headers {header!r} in the log (need one)"

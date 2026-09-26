@@ -31,11 +31,16 @@ _PER_PAGE = 100
 _FAILED_CONCLUSIONS = frozenset({"failure", "timed_out"})
 _GREEN_CONCLUSIONS = frozenset({"success", "skipped", "neutral"})
 _HTTP_STATUS_RE = re.compile(r"\(HTTP (\d{3})\)")
-_LOG_TIMESTAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z ?")
+RUNNER_LOG_TIMESTAMP_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z ?"
+)
+"""The ISO-8601 UTC timestamp (and one space) a runner prefixes to each log line."""
 # The runner colours some lines (e.g. echoing the step command) with ANSI CSI
 # sequences; stripping is mechanical framing removal, not interpretation.
-_ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
-_GROUP_PREFIX = "##[group]"
+ANSI_CSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+"""An ANSI CSI escape sequence (colour and cursor control) in a runner log."""
+RUNNER_GROUP_PREFIX = "##[group]"
+"""The runner's marker that opens a collapsible log group; the title follows it."""
 _ENDGROUP = "##[endgroup]"
 
 LogsState = Literal["present", "unavailable", "error"]
@@ -944,11 +949,11 @@ def _split_blocks(log_text: str) -> list[tuple[str | None, list[str]]]:
             blocks.append((title, current))
 
     for raw in log_text.splitlines():
-        line = _LOG_TIMESTAMP_RE.sub("", raw, count=1)
-        line = _ANSI_RE.sub("", line)
-        if line.startswith(_GROUP_PREFIX):
+        line = RUNNER_LOG_TIMESTAMP_RE.sub("", raw, count=1)
+        line = ANSI_CSI_RE.sub("", line)
+        if line.startswith(RUNNER_GROUP_PREFIX):
             flush()
-            title = line.removeprefix(_GROUP_PREFIX)
+            title = line.removeprefix(RUNNER_GROUP_PREFIX)
             current = [line]
         elif line == _ENDGROUP:
             current.append(line)
