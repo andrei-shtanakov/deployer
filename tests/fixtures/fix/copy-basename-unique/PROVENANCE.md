@@ -38,3 +38,12 @@ real build saw the files added below.
 
 `tree-listing.json` is `git ls-tree -r -t --full-tree` of this `tree/`; its
 `sha` stays the run's `head_sha`. `expected.json` and this file are new.
+
+## Note on `without_seam` (2026-09-26)
+
+`expected.json`'s `without_seam` (`no local confirmation: templates not enabled`)
+was true when this bundle was recorded (#94): then no template row was enabled.
+Since F3b (#99) the local rows are enabled on the L-recordings, and since F4b the
+CI rows on the C-recordings, so production no longer stops that way. The value is
+kept as recorded, not regenerated: it states the stop with **no** template row
+enabled, a configuration that production no longer has.

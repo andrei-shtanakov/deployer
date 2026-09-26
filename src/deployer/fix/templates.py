@@ -5,8 +5,9 @@ Four rows: COPY/ADD and FROM, on the local side (Podman) and the CI side
 against its committed recording (§9): ``Row.recording`` names it, and a row
 with ``recording=None`` is disabled and yields ``not_enabled``. The two local
 rows are backed by the L-recordings (``tests/fixtures/recordings/local``,
-replayed by ``tests/fix/test_local_recordings.py``); the two CI rows are still
-hypotheses and stay disabled.
+replayed by ``tests/fix/test_local_recordings.py``); the two CI rows by the
+C-recordings (``tests/fixtures/recordings/ci``, replayed by
+``tests/fix/test_ci_recordings.py``).
 
 Tests reach a disabled row through a module-private registry (§10 "Test
 seam"); the only code that touches it is a context manager in the test tree.
@@ -33,7 +34,14 @@ reading checks and every instruction of the kind's family must be in the
 modelled form, else ``binding_ambiguous``. A completion line binds only when
 it names the build's own tag.
 
-BuildKit FROM evidence is file-wide ("the Dockerfile was parsed"): it binds no
+CI (BuildKit) evidence reads the corrected Dockerfile first too (§7.3): the
+strict form (``strict_form_reason``) file-wide for both kinds; for COPY/ADD
+the same uniqueness rule as the local side, since BuildKit also skips a stage
+nothing depends on and an identical COPY there prints no header. BuildKit
+right-aligns a step number to the width of the step count
+(``[stage-0  7/10]``, ``c4``/``c9``): exactly that padding is read, no other
+run of spaces. BuildKit FROM evidence is file-wide ("the Dockerfile was
+parsed"; BuildKit parses the whole file before any stage, ``c8``): it binds no
 step line to the corrected FROM text. The optional image-pull record needs
 that binding, and both builders print the pulled reference normalised
 (``docker.io/library/…``), so no pull line binds unambiguously before
@@ -54,7 +62,7 @@ vertices in increasing order).
 
 import re
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, NamedTuple
 
 from deployer.admission.prepare import _as_r_reads
 from deployer.admission.templates import split_lines
@@ -100,15 +108,17 @@ class Row:
 
 LOCAL_RECORDING = "tests/fixtures/recordings/local"
 """The L-recordings backing the two local rows (repository-relative)."""
+CI_RECORDING = "tests/fixtures/recordings/ci"
+"""The C-recordings backing the two CI rows (repository-relative)."""
 
 ROWS: tuple[Row, ...] = (
     Row("copy-passed/podman", "local", "podman", "copy", LOCAL_RECORDING),
     Row("from-parsed/podman", "local", "podman", "from", LOCAL_RECORDING),
-    Row("copy-passed/buildkit", "ci", "buildkit", "copy", None),
-    Row("from-parsed/buildkit", "ci", "buildkit", "from", None),
+    Row("copy-passed/buildkit", "ci", "buildkit", "copy", CI_RECORDING),
+    Row("from-parsed/buildkit", "ci", "buildkit", "from", CI_RECORDING),
 )
 """The four rows of §6.3/§7.3: the local ones backed by the L-recordings, the
-CI ones still hypotheses."""
+CI ones by the C-recordings."""
 
 # TODO: spec §7.3 says the FROM image-pull result "is recorded when visible";
 # ``Outcome.image_pull`` deliberately stays ``None`` until recordings show a
@@ -172,23 +182,151 @@ def match_local(
     return _podman_copy(corrected_text, out, err, _tag_names(tag))
 
 
-def match_ci(kind: Kind, corrected_text: str, log: str) -> Outcome:
-    """CI (BuildKit plain progress) positive evidence (§7.3)."""
+def match_ci(
+    kind: Kind,
+    corrected_text: str,
+    log: str,
+    *,
+    dockerfile: bytes,
+    after: str = "",
+    conclusion: str | None = None,
+) -> Outcome:
+    """CI (BuildKit plain progress) positive evidence (§7.3).
+
+    ``dockerfile`` holds the corrected Dockerfile's bytes at the fix commit.
+    The strict form is checked file-wide, and for COPY/ADD the corrected
+    text's uniqueness among the Dockerfile's instructions and its BuildKit
+    position (:func:`buildkit_steps`), before the log is read; FROM stays
+    file-wide (BuildKit parses the whole file first). ``after`` is the rest
+    of the job log after ``log`` (to its end): read only for failing
+    vertices, which a section end printed by a failing step must not hide
+    (ruling AA). ``conclusion`` is the jobs API conclusion of the bound build
+    step, which no build output can forge: COPY evidence holds only for
+    ``success`` with no failing vertex or ``failure`` with one after the COPY
+    (ruling AB); FROM ignores it."""
     if not _enabled("ci", kind):
         return _NOT_ENABLED
-    if _overlong(log) or len(corrected_text) > MAX_LINE:
+    strict = strict_form_reason(dockerfile)
+    if strict is not None:
+        return _outcome("binding_ambiguous", (), f"Dockerfile: {strict}")
+    if _overlong(log) or _overlong(after) or len(corrected_text) > MAX_LINE:
         return _outcome("unknown_format", (), "a line exceeds the read bound")
+    position: Position | None = None
+    if kind == "copy":
+        if not _bindable(corrected_text):
+            detail = "corrected text is not one line"
+            return _outcome("binding_ambiguous", (), detail)
+        unique = _unique_in_dockerfile(kind, corrected_text, dockerfile)
+        if unique is not None:
+            return unique
+        found = _copy_position(corrected_text, dockerfile)
+        if isinstance(found, Outcome):
+            return found
+        position = found
     lines = _lines(log)
     if not any(_BK_ANY_RE.fullmatch(line) for line in lines):
         return _outcome("unknown_format", (), "no BuildKit progress lines")
     several = _several_builds(lines)
     if several is not None:
         return several
-    if kind == "from":
+    if kind == "from" or position is None:
         return _buildkit_from(lines)
-    if not _bindable(corrected_text):
-        return _outcome("binding_ambiguous", (), "corrected text is not one line")
-    return _buildkit_copy(corrected_text, lines)
+    return _buildkit_copy(corrected_text, lines, position, _lines(after), conclusion)
+
+
+class Position(NamedTuple):
+    """Where BuildKit prints a step: its stage's display name, the step
+    number ``k`` and the stage's step count ``n``; ``bracket`` is the header
+    bracket BuildKit prints for it (``stage-0  7/10``)."""
+
+    name: str
+    k: int
+    n: int
+
+    @property
+    def bracket(self) -> str:
+        """``<name> <k right-aligned to n's width>/<n>``."""
+        return f"{self.name} {self.k:>{len(str(self.n))}}/{self.n}"
+
+
+_BK_STEP_KEYWORDS = frozenset({"FROM", "RUN", "COPY", "WORKDIR"})
+"""Instructions BuildKit numbers as steps, each one shown in the
+C-recordings (``c1``: ``FROM`` 1/9, ``COPY --from=<image>`` 2/9, ``WORKDIR``
+3/9, ``COPY`` 4/9, ``RUN`` 5/9, …; ``c3``, ``c4``, ``c7``, ``c9`` alike)."""
+_BK_METADATA_KEYWORDS = frozenset({"ENV", "USER", "CMD", "LABEL"})
+"""Instructions the C-recordings show BuildKit does not number: ``c1``'s
+``USER``, ``ENV`` and ``CMD`` leave its count at 9, ``c7``'s ``LABEL`` too.
+Every other instruction (``ADD``, ``ARG``, ``ENTRYPOINT``, ``EXPOSE``,
+``SHELL``, ``ONBUILD``, …) is unrecorded, and the numbering is refused."""
+_BK_STAGE_NAME_RE = re.compile(r"[a-z][a-z0-9-]{0,62}")
+_UNNAMED_STAGE = "stage-0"
+
+
+def buildkit_steps(dockerfile: bytes) -> list[tuple[Instruction, Position]] | str:
+    """Every step BuildKit numbers in the corrected Dockerfile with the
+    position it prints for it, or the reason the numbering is not modelled.
+
+    Modelled only as far as the C-recordings show it: a single stage (one
+    ``FROM``, the first instruction; ``c8``'s two stages never reached a step
+    header), displayed as ``stage-0`` when unnamed (``c1``) or by its name
+    for ``FROM <image> AS <name>`` (``c3``: ``extra``); no ``FROM`` flag;
+    steps are :data:`_BK_STEP_KEYWORDS`, and only
+    :data:`_BK_METADATA_KEYWORDS` may appear besides. Refuse-only: a wrong
+    model costs a refusal, never a confirmation."""
+    parsed = parse(_as_r_reads(dockerfile))
+    if unread_reason(parsed) is not None:
+        return "split not read"
+    instructions = parsed.instructions
+    froms = [i for i in instructions if i.keyword == "FROM"]
+    if len(froms) != 1 or instructions[0] is not froms[0]:
+        return (
+            f"{len(froms)} FROM instructions; BuildKit step numbering is "
+            "recorded for one stage that starts the file"
+        )
+    for instruction in instructions:
+        if instruction.keyword not in _BK_STEP_KEYWORDS | _BK_METADATA_KEYWORDS:
+            return (
+                f"{instruction.keyword} at line {instruction.first_line}: its "
+                "BuildKit step numbering is not recorded"
+            )
+    name = _bk_stage_name(froms[0].args)
+    if name is None:
+        return (
+            f"FROM at line {froms[0].first_line}: its BuildKit stage display "
+            "is not recorded"
+        )
+    steps = [i for i in instructions if i.keyword in _BK_STEP_KEYWORDS]
+    return [(i, Position(name, k, len(steps))) for k, i in enumerate(steps, 1)]
+
+
+def _bk_stage_name(args: str) -> str | None:
+    """The stage name BuildKit prints for a FROM of the recorded forms
+    ``<image>`` (``stage-0``) and ``<image> AS <name>`` (``<name>``), else
+    ``None``."""
+    words = args.split()
+    if not words or any(word.startswith("-") for word in words):
+        return None
+    if len(words) == 1:
+        return _UNNAMED_STAGE
+    if len(words) == 3 and words[1] == "AS":
+        name = words[2]
+        return name if _BK_STAGE_NAME_RE.fullmatch(name) else None
+    return None
+
+
+def _copy_position(text: str, dockerfile: bytes) -> Position | Outcome:
+    """The corrected COPY's BuildKit position derived from the Dockerfile
+    (ruling Z), or ``binding_ambiguous`` when it is not modelled."""
+    steps = buildkit_steps(dockerfile)
+    if isinstance(steps, str):
+        return _outcome("binding_ambiguous", (), f"Dockerfile: {steps}")
+    wanted = parse(text).instructions
+    key = _instruction_text(wanted[0]) if len(wanted) == 1 else None
+    at = [p for i, p in steps if _instruction_text(i) == key]
+    if len(at) != 1:
+        detail = "Dockerfile: the corrected instruction is not one BuildKit step"
+        return _outcome("binding_ambiguous", (), detail)
+    return at[0]
 
 
 _PREFIX = r"(?:\[(?P<stage>[0-9]{1,9}/[0-9]{1,9})\] )?"
@@ -201,18 +339,23 @@ _PODMAN_FROM_ARGS = "FROM requires either one argument, or three"
 _BK_ANY_RE = re.compile(r"#(?P<k>[0-9]{1,9}) .*")
 _BK_DEFINITION_RE = re.compile(r"#[0-9]{1,9} \[internal\] load build definition\b.*")
 _BK_HEADER_RE = re.compile(r"#(?P<k>[0-9]{1,9}) \[(?P<bracket>[^\]]*)\] (?P<text>.*)")
-_BK_STAGE_RE = re.compile(r"(?:[^\s\]]+ )?[0-9]{1,9}/[0-9]{1,9}")
+_BK_STAGE_RE = re.compile(
+    r"(?P<name>[^\s\]]+) (?P<pad> *)(?P<k>[0-9]{1,9})/(?P<n>[0-9]{1,9})"
+)
 _BK_DONE_RE = re.compile(r"#(?P<k>[0-9]{1,9}) DONE(?: [0-9]{1,9}(?:\.[0-9]{1,9})?s)?")
 _BK_CACHED_RE = re.compile(r"#(?P<k>[0-9]{1,9}) CACHED")
 _BK_ERROR_RE = re.compile(r"#(?P<k>[0-9]{1,9}) (?:ERROR|CANCELED)(?:[: ].*)?")
 _PARSE_ERROR = "parse error"
+_MASK = "***"
+"""What the runner writes for a masked value (``::add-mask::``)."""
 
 
 def _unique_in_dockerfile(kind: Kind, text: str, dockerfile: bytes) -> Outcome | None:
     """``binding_ambiguous`` unless the corrected text is provably exactly one
-    of the corrected Dockerfile's instructions as Podman prints them. Decided
-    before any output is read: an identical instruction in a skipped stage
-    prints nothing and must not make the one printed line look unique.
+    of the corrected Dockerfile's instructions as the builder prints them
+    (Podman; BuildKit for COPY/ADD). Decided before any output is read: an
+    identical instruction in a skipped stage prints nothing and must not make
+    the one printed line look unique.
 
     Instructions are read as R reads them (``_as_r_reads``,
     ``dockerfile.parse``), which is sound only where the builders read alike:
@@ -466,10 +609,19 @@ def _podman_from(text: str, out: list[str], err: list[str]) -> Outcome:
     return _outcome("passed", (number,), None)
 
 
-def _buildkit_copy(text: str, lines: list[str]) -> Outcome:
+def _buildkit_copy(
+    text: str,
+    lines: list[str],
+    position: Position,
+    after: list[str],
+    conclusion: str | None,
+) -> Outcome:
     """COPY/ADD: exactly one stage header ``#k [...] <text>`` and ``#k DONE``;
     ``#k CACHED`` or an error is not confirmed; a missing or repeated ``k``
-    is ambiguous."""
+    is ambiguous. The header's bracket must be exactly the ``position``
+    derived from the Dockerfile (ruling Z): a failing step can print its own
+    header, but not choose where the COPY is. A pass is then bound to the
+    build step's API ``conclusion`` (:func:`_bound_to_conclusion`)."""
     headers = [
         (n, m)
         for n, line in enumerate(lines, 1)
@@ -483,11 +635,50 @@ def _buildkit_copy(text: str, lines: list[str]) -> Outcome:
             "binding_ambiguous", tuple(n for n, _ in hits), "step header repeated"
         )
     number, header = hits[0]
+    if header.group("bracket") != position.bracket:
+        detail = (
+            f"step header [{header.group('bracket')}] is not the Dockerfile's "
+            f"[{position.bracket}]"
+        )
+        return _outcome("binding_ambiguous", (number,), detail)
     k = header.group("k")
     reused = [n for n, m in headers if m.group("k") == k and n != number]
     if reused:
         return _outcome("binding_ambiguous", (number, *reused), f"#{k} repeated")
-    return _buildkit_result(lines, number, k)
+    result = _buildkit_result(lines, number, k)
+    if result.evidence != "passed":
+        return result
+    return _bound_to_conclusion([*lines, *after], position, conclusion) or result
+
+
+def _bound_to_conclusion(
+    lines: list[str], copy: Position, conclusion: str | None
+) -> Outcome | None:
+    """Rulings AB/AD: the COPY's pass against the bound build step's API
+    conclusion, which a RUN cannot forge. Only ``success`` can confirm, and
+    then with no failing vertex anywhere from the section start to the end of
+    the log. A failed step never proves the corrected COPY ran: every line
+    that could show it — the header, ``#k DONE``, a later ``#k ERROR`` — is
+    build output a failing RUN can print (the runner splits output on ``\r``
+    too), and a killed build prints no real ``#k ERROR`` at all (#100
+    review). §7.4 keeps only *proven* passage, so ``failure`` and every other
+    conclusion → ``binding_ambiguous`` naming it. ``copy`` is unused here
+    and kept for the caller's shape. ``None`` when the pass holds."""
+    del copy
+    if any(_MASK in line for line in lines):
+        # A step can print ``::add-mask::<text>``; the runner then logs that
+        # text as ``***`` everywhere after it, so any line the checks rely
+        # on can be erased (breaker ruling AC, round-5 re-review).
+        return _outcome("binding_ambiguous", (), "runner-masked text in the log")
+    if conclusion != "success":
+        detail = (
+            f"build step conclusion is {conclusion!r}; only success proves the COPY ran"
+        )
+        return _outcome("binding_ambiguous", (), detail)
+    if any(_BK_ERROR_RE.fullmatch(line) for line in lines):
+        detail = "failing vertex in a build step concluded success"
+        return _outcome("binding_ambiguous", (), detail)
+    return None
 
 
 def _buildkit_result(lines: list[str], number: int, k: str) -> Outcome:
@@ -573,8 +764,21 @@ def _bindable(text: str) -> bool:
 
 
 def _is_stage(header: re.Match[str]) -> bool:
-    """A header's bracket names a build stage step (``[name i/n]``/``[i/n]``)."""
-    return _BK_STAGE_RE.fullmatch(header.group("bracket")) is not None
+    """A header's bracket names a build stage step: ``[name k/n]``. A bracket
+    without a stage name (``[k/n]``, ``[ k/n]``) is not read: every recorded
+    header is named (``stage-0``, ``extra``).
+
+    BuildKit right-aligns ``k`` to the width of ``n`` (``[stage-0  7/10]``,
+    ``c4``/``c9``): the spaces before ``k`` plus its digits must be exactly
+    ``len(n)`` wide, ``k`` carries no leading zero, and ``1 <= k <= n``
+    (a step 0 or past the count is never printed). No other run of
+    spaces, and no tab, is read."""
+    m = _BK_STAGE_RE.fullmatch(header.group("bracket"))
+    if m is None:
+        return False
+    k, n = m.group("k"), m.group("n")
+    shaped = str(int(k)) == k and len(m.group("pad")) + len(k) == len(n)
+    return shaped and 1 <= int(k) <= int(n)
 
 
 def _is_podman_parse_error(line: str) -> bool:

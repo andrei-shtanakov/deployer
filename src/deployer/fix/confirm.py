@@ -8,18 +8,26 @@ must be writable. Then every input comes from the document, never from the
 clone: the fix commit and worktree (``publication``), the workflow path and
 its SHA-256, R's workflow job key and build (``input``), the repository
 slug (``input.target["repo"]`` as ``fix publish`` reads it, which must
-agree with ``input.origin``), the class, corrected text and line span
-(``proposal``).
+agree with ``input.origin``), the Dockerfile path
+(``input.target["artifact_path"]``, as ``fix publish`` reads it), the class,
+corrected text and line span (``proposal``).
 
-The workflow is read at the fix commit in the fix worktree through
-``fix.workspace``'s guarded chokepoint (``git cat-file blob``, hooks,
-filters and fsmonitor off; nothing is written to the clone or the
-worktree). The runs of the fix commit are listed; **every** attempt
-``1..attempts`` of every listed run is read, qualified (§7.2) and turned
-into evidence (§7.3) with exactly the log text that read returned — nothing
-is fetched twice and nothing is dropped between the listing and
+The workflow and the corrected Dockerfile are read at the fix commit in the
+fix worktree through ``fix.workspace``'s guarded chokepoint (``git cat-file
+blob``, hooks, filters and fsmonitor off; nothing is written to the clone or
+the worktree); the CI template reads the Dockerfile's bytes (§7.3). The
+Dockerfile path must be the bound build's (``input.build["dockerfile"]``) and
+the bytes read must hash to ``local_proof.dockerfile_sha256`` — the file CI
+built is the one proved locally — else the attempt is ``qualification
+undetermined`` with the reason.
+
+The runs of the fix commit are listed; **every** attempt ``1..attempts`` of
+every listed run is read, qualified (§7.2) and turned into evidence (§7.3)
+with exactly the log text that read returned — nothing is fetched twice and
+nothing is dropped between the listing and
 :func:`deployer.fix.ci_eval.evaluate`. An incomplete listing, an
-unreadable workflow or any failure is ``qualification undetermined``.
+unreadable workflow or Dockerfile, or any failure is ``qualification
+undetermined``.
 
 The attempt is appended to ``ci_attempts`` (never replacing an earlier
 one); the status mirrors it (``ci_confirmed`` or ``fix_proposed``); the
@@ -50,6 +58,7 @@ from deployer.fix.localproof import build_config
 from deployer.fix.qualify import Qualified, qualify
 from deployer.fix.workspace import _guards, _run, outside
 from deployer.forge import GhRunner, RunSummary, list_runs_for_sha, read_attempt
+from deployer.provenance.model import sha256_hex
 from deployer.reproduce.buildline import BuildConfig
 from deployer.reproduce.shape import job_text
 
@@ -78,6 +87,8 @@ class _Inputs:
     worktree: Path
     workflow_path: str
     workflow_sha256: str
+    dockerfile_path: str
+    dockerfile_sha256: str
     job_key: str
     build: BuildConfig
     cls: DefectClass
@@ -129,9 +140,17 @@ def _confirm(doc: FixDocument, doc_path: Path, gh: GhRunner) -> _Result:
     inputs = _inputs(doc, doc_path)
     if isinstance(inputs, str):
         return _undetermined(inputs)
-    workflow = _workflow(inputs)
+    workflow = _blob(inputs, inputs.workflow_path, "workflow")
     if isinstance(workflow, str):
         return _undetermined(workflow)
+    dockerfile = _blob(inputs, inputs.dockerfile_path, "Dockerfile")
+    if isinstance(dockerfile, str):
+        return _undetermined(dockerfile)
+    if sha256_hex(dockerfile) != inputs.dockerfile_sha256:
+        return _undetermined(
+            f"the Dockerfile at the fix commit (sha256 {sha256_hex(dockerfile)}) "
+            f"is not the locally proved one ({inputs.dockerfile_sha256})"
+        )
     listed = list_runs_for_sha(inputs.repo, inputs.fix_commit, gh)
     if isinstance(listed, str):
         outcome, reason = ci_eval.evaluate([], listing_complete=False)
@@ -139,7 +158,7 @@ def _confirm(doc: FixDocument, doc_path: Path, gh: GhRunner) -> _Result:
     evidence: list[AttemptEvidence] = []
     records: list[dict[str, Any]] = []
     for run in listed:
-        _judge_run(inputs, run, workflow, gh, evidence, records)
+        _judge_run(inputs, run, (workflow, dockerfile), gh, evidence, records)
     outcome, reason = ci_eval.evaluate(evidence, listing_complete=True)
     return _Result(outcome, reason, evidence, records)
 
@@ -147,13 +166,15 @@ def _confirm(doc: FixDocument, doc_path: Path, gh: GhRunner) -> _Result:
 def _judge_run(
     inputs: _Inputs,
     run: RunSummary,
-    workflow: bytes,
+    blobs: tuple[bytes, bytes],
     gh: GhRunner,
     evidence: list[AttemptEvidence],
     records: list[dict[str, Any]],
 ) -> None:
     """Every attempt ``1..run.attempts`` read, qualified and judged; a run
-    whose attempts cannot be read is one ``undetermined`` entry."""
+    whose attempts cannot be read is one ``undetermined`` entry. ``blobs``
+    are the workflow's and the Dockerfile's bytes at the fix commit."""
+    workflow, dockerfile = blobs
     if not 1 <= run.attempts <= MAX_ATTEMPTS:
         reason = f"run lists {run.attempts} attempts (read 1..{MAX_ATTEMPTS})"
         evidence.append(
@@ -173,13 +194,15 @@ def _judge_run(
             workflow,
             inputs.workflow_sha256,
         )
-        judged = _evidence(inputs, q, read.logs)
+        judged = _evidence(inputs, q, read.logs, dockerfile)
         evidence.append(judged)
         if judged.qualification == "qualified":
-            records.append(_record(judged, q))
+            records.append(_record(judged, q, read.logs))
 
 
-def _evidence(inputs: _Inputs, q: Qualified, logs: dict[int, str]) -> AttemptEvidence:
+def _evidence(
+    inputs: _Inputs, q: Qualified, logs: dict[int, str], dockerfile: bytes
+) -> AttemptEvidence:
     """The attempt's evidence, from exactly the log its read returned."""
     if q.status != "qualified" or q.job is None:
         return ci_eval.from_qualification(q)
@@ -188,15 +211,19 @@ def _evidence(inputs: _Inputs, q: Qualified, logs: dict[int, str]) -> AttemptEvi
         reason = f"log of job {q.job.job_id} was not read"
         key = (q.run_id, q.attempt, q.job_key or "")
         return AttemptEvidence(key, "undetermined", False, False, reason, ())
-    return ci_eval.attempt_evidence(q, inputs.cls, inputs.corrected, inputs.lines, log)
+    return ci_eval.attempt_evidence(
+        q, inputs.cls, inputs.corrected, inputs.lines, log, dockerfile=dockerfile
+    )
 
 
-def _record(e: AttemptEvidence, q: Qualified) -> dict[str, Any]:
+def _record(e: AttemptEvidence, q: Qualified, logs: dict[int, str]) -> dict[str, Any]:
     """One qualified attempt's evidence: run, attempt, job, the template's
-    verdict, and the log lines (numbers and text, in the job text). The text
-    is split by :func:`split_lines`, the rule that numbered the lines."""
+    verdict, the recurrence lines (numbers and text, in the job text, split
+    by :func:`split_lines`, the rule that numbered them) and the template's
+    lines (numbers and raw text, in the job log as read, split on ``\\n``)."""
     assert q.job is not None
     text = split_lines(job_text(q.job))
+    log = logs.get(q.job.job_id, "").split("\n")
     return {
         "run_id": e.key[0],
         "attempt": e.key[1],
@@ -210,14 +237,24 @@ def _record(e: AttemptEvidence, q: Qualified) -> dict[str, Any]:
             {"line": n, "text": text[n - 1] if 0 < n <= len(text) else None}
             for n in e.lines
         ],
+        "log_lines": [
+            {"line": n, "text": log[n - 1] if 0 < n <= len(log) else None}
+            for n in e.log_lines
+        ],
     }
 
 
 def _inputs(doc: FixDocument, doc_path: Path) -> _Inputs | str:
     """The document fields a confirmation reads, or why they are unusable."""
     publication, proposal = doc.publication, doc.proposal
-    if publication is None or publication.fix_commit is None or proposal is None:
-        return "the document records no fix commit or proposal"
+    proof = doc.local_proof
+    if (
+        publication is None
+        or publication.fix_commit is None
+        or proposal is None
+        or proof is None
+    ):
+        return "the document records no fix commit, proposal or local proof"
     fix_commit = publication.fix_commit
     if not _HEX40_RE.fullmatch(fix_commit):
         return f"the stored fix commit {fix_commit!r} is not a commit id"
@@ -229,20 +266,30 @@ def _inputs(doc: FixDocument, doc_path: Path) -> _Inputs | str:
     if problem is not None:
         return problem
     path = doc.input.workflow_path
-    if path.startswith("/") or any(p in ("", ".", "..") for p in path.split("/")):
+    if not _is_plain(path):
         return f"the stored workflow path {path!r} is not a plain relative path"
+    dockerfile = doc.input.target.get("artifact_path")
+    if not isinstance(dockerfile, str) or not _is_plain(dockerfile):
+        return f"the stored Dockerfile path {dockerfile!r} is not a plain relative path"
     job_key = doc.input.reproduction_binding.get("workflow_job")
     if not isinstance(job_key, str) or not job_key:
         return "the stored reproduction binding has no workflow job"
     build = build_config(doc.input.build)
     if isinstance(build, str):
         return build
+    if build.dockerfile != dockerfile:
+        return (
+            f"the stored Dockerfile path {dockerfile!r} is not the bound build's "
+            f"{build.dockerfile!r}"
+        )
     return _Inputs(
         repo=repo,
         fix_commit=fix_commit,
         worktree=worktree,
         workflow_path=path,
         workflow_sha256=doc.input.workflow_sha256,
+        dockerfile_path=dockerfile,
+        dockerfile_sha256=proof.dockerfile_sha256,
         job_key=job_key,
         build=build,
         cls=proposal.cls,
@@ -282,16 +329,24 @@ def _worktree_problem(worktree: Path, doc_path: Path, clone: Path) -> str | None
     return None
 
 
-def _workflow(inputs: _Inputs) -> bytes | str:
-    """The workflow's raw bytes at the fix commit, read in the worktree by
-    the guarded chokepoint; or why they could not be read."""
+def _is_plain(path: str) -> bool:
+    """A plain relative path: not absolute, no empty, ``.`` or ``..`` part."""
+    return not path.startswith("/") and all(
+        part not in ("", ".", "..") for part in path.split("/")
+    )
+
+
+def _blob(inputs: _Inputs, path: str, what: str) -> bytes | str:
+    """The raw bytes of ``path`` at the fix commit, read in the worktree by
+    the guarded chokepoint; or why they could not be read (``what`` names
+    the file in the reason)."""
     guards = _guards(inputs.worktree)
     if isinstance(guards, str):
-        return f"workflow not read: {guards}"
-    spec = f"{inputs.fix_commit}:{inputs.workflow_path}"
+        return f"{what} not read: {guards}"
+    spec = f"{inputs.fix_commit}:{path}"
     result = _run(inputs.worktree, "cat-file", "blob", spec, g=guards)
     if result.code != 0:
-        return f"workflow not read at the fix commit: {result.error}"
+        return f"{what} not read at the fix commit: {result.error}"
     return result.stdout
 
 

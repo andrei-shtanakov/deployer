@@ -555,17 +555,121 @@ An attempt that could not be read far enough to be excluded is `undetermined`, n
 silently dropped: dropping it would let a positive attempt elsewhere hide a possible
 contradiction.
 
-### 7.3 CI positive evidence — closed, recording-backed (hypotheses until recorded)
+### 7.3 CI positive evidence — closed, recording-backed
 
-- **COPY/ADD (BuildKit):** exactly one step header whose instruction text is the
+A closed table of CI "passed" templates (BuildKit plain progress). Both CI rows are
+backed by the C-recordings (`tests/fixtures/recordings/ci`, real `workflow_dispatch`
+runs on the polygon, PR #98) and are enabled (owner, 2026-09-26; F4b); a row without a
+recording would be disabled → `templates not enabled`. What the recordings show, and
+every rule below relies on:
+
+- **The corrected Dockerfile first, file-wide.** The corrected Dockerfile's bytes at the
+  fix commit are read by the guarded chokepoint, like the workflow, with replace refs
+  off. The path must be the bound build's Dockerfile, and the bytes must hash to the
+  locally proved `local_proof.dockerfile_sha256`: the file CI built is the one proved
+  locally. An unreadable file or a mismatch makes the confirmation `qualification
+  undetermined` with the reason. The bytes must pass the strict form
+  of §4 before any log line is read; a refusal → `binding ambiguous` with the gate's
+  reason. This holds for both kinds.
+- **COPY/ADD uniqueness in the Dockerfile** (the local rule of §6.3, unchanged): the
+  corrected text must occur exactly once among the corrected Dockerfile's COPY/ADD
+  instructions in the modelled form — the whole file passes the fix-wide reading checks,
+  and no instruction of the family holds `$`, a quote or a backslash or is a heredoc or
+  JSON form — else `binding ambiguous`, decided before the log is read. BuildKit also
+  skips a stage nothing depends on and prints no header for it, so an identical COPY in
+  a skipped stage must never make one printed header look unique.
+- **The bound build step's own section only.** The template reads only the part of the
+  job log that the build step printed. The bound header is exactly one runner group
+  header `##[group]Run <bound build line>` (the build step's name as the jobs API gives
+  it). The section is the lines after the first `##[endgroup]` that follows that header:
+  the runner's echo of the script, `shell:` and `env:` is not build output, and an
+  `env:` value with newlines prints untimestamped continuation lines there (review N2).
+  The section runs the first line that starts what follows the build step: any `##[group]` line,
+  the runner's post phase `Post job cleanup.` (every C-recording prints it right after
+  the build output: `c1` line 208, `c4` line 213), or `Post <step name>` for a step of
+  the job. If none of these comes, the section runs to the end of the log. Post-job
+  output never supplies evidence. Every section line must start with the runner's
+  timestamp, exactly as the recordings show it (`2026-09-25T14:30:21.1506466Z `, seven
+  fraction digits, `c1` line 109). The recordings carry a BOM only before the log's
+  first line, which is never in the section. A line without the timestamp, or a second
+  `##[endgroup]` inside the section → `binding ambiguous`. It works on the raw log
+  as read, split on `\n` only; a CRLF ending counts as one `\n` break. No such header,
+  or several → `binding ambiguous`. A section line that holds any other line break
+  `str.splitlines` would split on is also `binding ambiguous`, and the character is
+  named: a lone `\r`, `\x0b`, `\x0c`, `\x1c`–`\x1e`, `\x85`, U+2028 or U+2029. So
+  another step's output (a lint or test step printing `#0 [stage-0 …] COPY …` /
+  `#0 DONE`), or a RUN's output that smuggles such lines behind a non-`\n` break, can
+  never supply the evidence. None of the C-recordings holds such a break. Every
+  recorded BuildKit line sits in the build step's section. The template's evidence
+  lines are numbered in that raw log; recurrence keeps A's whole-job reading, and its
+  lines are numbered in the job text.
+- **Padded step numbers.** BuildKit right-aligns the step number to the width of the
+  step count: `[stage-0  7/10]` (`c4`, `c9`); `[stage-0 7/9]` when both are one digit
+  (`c1`). The header is read only in that form: the spaces before `k` plus its digits
+  are exactly `len(n)` wide (the unpadded form when `k` is as wide as `n`), `k` has no
+  leading zero, and any other run of spaces, or a tab, is not a stage header. A bracket
+  without a stage name (`[k/n]`, `[ k/n]`) is not read either: every recorded header
+  is named (`stage-0`, `extra`). (`c7`
+  was meant to show padding, but `LABEL` is not a build step, so it prints nine steps
+  unpadded; it stays as recorded.)
+- **COPY/ADD (BuildKit):** exactly one stage header whose instruction text is the
   corrected instruction, and `#k DONE` for the same `k`. `#k CACHED` is **not** accepted
-  automatically. A missing or repeated `k` → `binding ambiguous`.
-- **FROM (BuildKit):** the whole file parsed — a build-stage step exists and no
-  `dockerfile parse error`; the evidence must bind unambiguously to the required build and
-  the exact corrected bytes; frontend, context or definition loading steps are not
-  evidence. The image-pull result of that FROM is recorded when visible.
-
-Until recordings back a row it is disabled → `templates not enabled`.
+  automatically. A missing or repeated `k` → `binding ambiguous`. A later failure of
+  another step (`c4`: `RUN false` after the corrected `COPY … DONE`) does not refute it
+  (§7.4) — but only when it provably follows the COPY. The runner reads step output
+  with .NET `ReadLine()`, which also splits on `\r` and stores each piece as a clean
+  timestamped line, so a failing RUN can print its own header / `#0 DONE` pair for a
+  COPY the build never reached (review N1). Had the real COPY run, its header would
+  repeat. So when the section holds any `#k ERROR`, the COPY passes only if there is
+  exactly one erroring vertex and its stage headers give one step, in the COPY's stage,
+  numbered higher than the COPY's (`c4`: `#15 ERROR` at `[stage-0  8/10]` after the
+  COPY at `7/10`). An error in another stage, at an equal or lower step, unmapped, or
+  more than one erroring vertex → `binding ambiguous` ("failure not provably after the
+  corrected step"). Successful builds are unchanged. The forged header could name any
+  step, so the COPY's position is never read from the header (review R1): it is
+  derived from the corrected Dockerfile, and the matched header's bracket must be
+  exactly `<stage> <k right-aligned>/<n>`, the failing vertex compared against that
+  derived `k`, stage name and `n`. The numbering model is only what the C-recordings
+  show: one stage, its FROM first, printed `stage-0` unnamed (`c1`) or by its name for
+  `FROM <image> AS <name>` (`c3`), no FROM flag; `FROM`, `RUN`, `COPY` (also
+  `--from=<image>`) and `WORKDIR` are steps; `ENV`, `USER`, `CMD` (`c1`, count 9) and
+  `LABEL` (`c7`, count 9) are not. Any other instruction (`ADD`, `ARG`, `ENTRYPOINT`,
+  `EXPOSE`, …), several stages or another stage form → `binding ambiguous`; a step 0
+  or past `n` is no stage header. Failing vertices (`#k ERROR`/`#k CANCELED`) are
+  searched from the section start to the **end of the log**, not only in the section
+  (review R2): a failing step can print a section-end line (`Post job cleanup.`,
+  `##[group]…`), which ends the positive evidence but must not hide the real
+  failure. Both rules only refuse. The COPY pass is also bound to the bound build step's
+  conclusion in the jobs API, which no build output can forge (rulings AB, AD): only
+  `success` can confirm, and then with no failing vertex anywhere. A build step that
+  concluded `failure` never proves the corrected COPY ran: every line that could show
+  it — the header, `#k DONE`, a later `#k ERROR` placing the failure after the COPY — is
+  output a failing `RUN` before the COPY can print, and a killed build prints no real
+  `#k ERROR` (#100 review). So `failure`, `success` with a failing vertex, any other
+  conclusion (`cancelled`, `timed_out`, `skipped`, none) and a build step that is not
+  uniquely identified → `binding ambiguous`. The after-the-COPY rule above is thereby
+  superseded for confirmation; `c4` is insufficient. A workflow that uses
+  `continue-on-error` is `undetermined` (the API may then report a failed step as
+  `success`). Known limitation: the build step is found by its runner group title
+  `Run <build line>`; a build step with a workflow `name:` is titled by that name and
+  is not read, so it never confirms (`binding ambiguous`). A step can print `::add-mask::<text>`, after which the runner logs that
+  text as `***` everywhere: any line the rules above rely on could be erased, so `***`
+  anywhere from the section start to the end of the log → `binding ambiguous` (ruling
+  AC; legitimately masked secrets refuse too). BuildKit re-prints a vertex header when progress interleaves (`c1` prints
+  `#7 [stage-0 1/9] FROM …` twice). A corrected COPY re-printed this way reads as a
+  repeated header or `k` → `binding ambiguous`. That is a known, conservative false
+  negative; no C-recording shows it for the corrected COPY.
+- **FROM (BuildKit):** the whole file parsed. In the bound build step's section, a named
+  build-stage header exists and there is no `dockerfile parse error`. The rule does not
+  look at the corrected FROM's text. What ties it to the corrected bytes is the file
+  check above: the Dockerfile at the fix commit hashes to the locally proved one and is
+  in the strict form. Frontend, context or definition loading steps are not evidence. This rule stays file-wide, with no uniqueness check: BuildKit parses the
+  whole Dockerfile before any stage, and a bad FROM in a stage nothing depends on fails
+  the build with `dockerfile parse error on line 1` before any stage runs (`c8`), unlike
+  Podman (`l9`, §6.3). The image-pull result of that FROM is recorded when visible.
+- A job log holding more than one build (the definition loaded twice, `#k` numbering
+  restarting) → `binding ambiguous`; `c6` shows it, though its two build steps already
+  leave the attempt `qualification undetermined` at §7.2.
 
 **Recurrence of the diagnosed defect** is an A template row of the admitted class, bound
 by A's binding rules (A §4.2) to the corrected instruction — same line span, the corrected
@@ -589,7 +693,10 @@ result.
   take no further part.
 
 A later independent failure in the same run does not cancel proven passage of the
-corrected place. Ambiguous binding → no positive evidence.
+corrected place. Ambiguous binding → no positive evidence. On CI, passage is proven only
+by a build step that concluded `success` (§7.3, ruling AD): a failed step's log cannot
+prove it, so a CI run whose build fails after the corrected instruction confirms nothing
+(`c4`), and the local proof's own later-failure record (§6.4) is unaffected.
 
 ### 7.5 The result of a confirmation attempt
 
@@ -690,7 +797,7 @@ Each class of recording needs the owner's **separate** permission for real runs.
 - **L-recordings (local Podman):** real builds of corrected Dockerfiles for run-1 and
   run-5, and the cases: a bad FROM in a later stage; several stages on the same image; a
   later failure after the corrected COPY.
-- **C-recordings (CI):** real `push` runs of fix commits on the polygon repository:
+- **C-recordings (CI):** real `workflow_dispatch` (polygon) runs of fix commits on the polygon repository:
   successful BuildKit forms (COPY header + `DONE`, `CACHED`, the FROM stage header), a run
   with a later independent failure, a re-run.
 
@@ -704,8 +811,9 @@ C-recordings a published proposal is never CI-confirmed.
 ## 10. Acceptance — offline
 
 **Test seam.** A production row is enabled only with its recording (§9): the two local
-rows are, on the L-recordings; the CI rows are not, so the CI happy path is unreachable in
-production. Tests reach a disabled row by injecting an **enabled synthetic row** through a
+rows are, on the L-recordings, and the two CI rows on the C-recordings
+(`tests/fix/test_ci_recordings.py` replays every case through forge, qualification,
+evidence and `fix confirm`). Tests reach a disabled row by injecting an **enabled synthetic row** through a
 test-only registry (not reachable from the CLI or configuration); the test that no
 production row is enabled without a recording (§9) guards the seam.
 
@@ -741,9 +849,9 @@ production row is enabled without a recording (§9) guards the seam.
   Without the seam, the local side runs on the enabled, recording-backed rows: P tests
   whose faked build prints the passing local template (the corrected instruction's step
   line, then the same stage's next step) end at `locally_confirmed`, and those whose
-  output does not end at `no local confirmation: <the matcher's reason>`. The CI side
-  still ends at the expected refusal `templates not enabled` — asserted outcomes, not
-  skips.
+  output does not end at `no local confirmation: <the matcher's reason>`. The CI rows are
+  enabled on the C-recordings too; their outcomes are asserted end to end, through
+  `fix confirm`, by `tests/fix/test_ci_recordings.py` — asserted outcomes, not skips.
 - **G (real local Git, offline — no model, no container builds):** the worktree leaves the
   user's checkout untouched; the commit contains exactly the §3 paths and change types; an
   extra changed file is refused by the full-diff check; a fix directory inside the clone

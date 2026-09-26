@@ -38,6 +38,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from deployer.fix.binding import Bound, link_problem
+from deployer.provenance.gitrepo import NO_REPLACE_CONFIG, no_replace_env
 from deployer.provenance.model import (
     POINTER,
     RECORD_FILE,
@@ -476,11 +477,16 @@ def _run(
     env: Mapping[str, str] | None = None,
     stdin: bytes | None = None,
 ) -> _Result:
-    """Run ``git -C cwd <args>`` with the ``-c`` overrides ``g``; never raises."""
+    """Run ``git -C cwd <args>`` with the ``-c`` overrides ``g``; never raises.
+
+    Every fix-side git command passes here: replace objects are always off
+    (``core.useReplaceRefs=false``, ``GIT_NO_REPLACE_OBJECTS=1``, no
+    inherited ``GIT_REPLACE_REF_BASE``), so a read returns the object named,
+    never a ``refs/replace/*`` substitute."""
     environ = {k: v for k, v in os.environ.items() if k not in _REDIRECTING_ENV}
-    environ.update(env or {})
+    environ = no_replace_env({**environ, **(env or {})})
     overrides = [arg for item in g for arg in ("-c", item)]
-    command = ["git", *overrides, "-C", str(cwd), *args]
+    command = ["git", *NO_REPLACE_CONFIG, *overrides, "-C", str(cwd), *args]
     try:
         proc = subprocess.run(
             command,

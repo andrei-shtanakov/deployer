@@ -285,7 +285,8 @@ project; its `status` is one of `in_progress`, `stopped`, `locally_confirmed`,
 admission`, `fix method not established`, `no proposal`, `no local confirmation`,
 `commit blocked`.
 
-**Local confirmation is available; CI confirmation is not yet.** Both proof stages read
+**Local and CI confirmation are both available; the end-to-end acceptance run (design
+§11 stage 5) is not yet.** Both proof stages read
 their positive evidence off a closed table of template rows, and a row is enabled only
 together with the test that checks it against a real recording of that build (design
 §9). The two local (Podman) rows, COPY/ADD and FROM, are backed by the L-recordings
@@ -300,11 +301,28 @@ completion of another tag, or a Dockerfile outside the modelled form (a substitu
 quote in that instruction family, or an unmodelled continuation anywhere) never
 confirms.
 
-CI confirmation stays gated one stage later (design §11 stage 4): the CI rows have no
-recording enabled yet, so `deployer fix confirm` never reaches `ci_confirmed`. It still
-reports the other insufficient reasons (`no qualifying run`, `defect recurred`,
-`qualification undetermined`, …) where they apply; when a qualifying attempt is otherwise
-clean, the reason is `templates not enabled`.
+The two CI (BuildKit) rows are backed by the C-recordings
+(`tests/fixtures/recordings/ci`, real polygon runs) and enabled, so `deployer fix confirm`
+can reach `ci_confirmed`. The corrected Dockerfile is read at the fix commit first
+(replace refs off): it must be the bound build's file, hash to the locally proved bytes,
+be in the strict form, and hold a corrected COPY/ADD exactly once (BuildKit also skips a
+stage nothing depends on). Only the build step's own output is read: the
+runner-timestamped lines after the `##[endgroup]` that closes its one
+`##[group]Run <build line>` header, up to the next `##[group]` line or the post phase
+(`Post job cleanup.`), split on `\n` only; any other line break, or a line without the
+runner's timestamp, refuses. COPY/ADD then needs
+exactly one named stage header carrying the corrected text (BuildKit's step number
+right-aligned to the step count, as in `[stage-0  7/10]`) and that step's `#k DONE`;
+`#k CACHED` never confirms. The header must sit at the COPY's position derived from
+the Dockerfile (single stage, only recorded instructions; anything else refuses), and
+the build step must have concluded `success` in the GitHub API with no failing vertex
+anywhere in the log: a failed build's output cannot prove the COPY ran, because a
+failing `RUN` can print every line that would. Any `***` (a runner mask) refuses too,
+as does a workflow using `continue-on-error`; a build step with its own `name:` is not
+read and never confirms (known limitation).
+FROM is file-wide: a named build-stage header and no `dockerfile parse error` (BuildKit
+parses the whole file first). Any `undetermined` attempt, a recurrence or an ambiguous
+binding makes the result insufficient (design §7.3–§7.4).
 
 Exit codes: `fix` — `0` `locally_confirmed`, `1` `stopped`, `2` invalid invocation or
 local I/O; `fix publish` — `0` pushed and a PR created or found, `1` refused, `2` local

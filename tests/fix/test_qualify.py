@@ -331,3 +331,25 @@ def test_fully_green_mapped_job_qualifies() -> None:
     assert (result.status, result.reason, result.job) == ("qualified", None, green)
     assert result.shape is not None
     assert result.shape.build_step == 3
+
+
+@pytest.mark.parametrize(
+    "where",
+    ["step", "job"],
+)
+def test_continue_on_error_is_undetermined(where: str) -> None:
+    """``continue-on-error`` can make the API report a failed build step as
+    ``success``, which the CI COPY row trusts: refuse (#100 review)."""
+    if where == "step":
+        old = b"      - run: docker build --file ./Dockerfile --build-arg V=1 .\n"
+        new = old + b"        continue-on-error: true\n"
+    else:
+        old = b"    name: Build image\n"
+        new = old + b"    continue-on-error: true\n"
+    workflow = WORKFLOW.replace(old, new)
+    assert workflow != WORKFLOW
+    result = _q(
+        _read(jobs=[_lint(), _job()]), workflow, original_sha=sha256_hex(workflow)
+    )
+    assert result.status == "undetermined"
+    assert result.reason is not None and "continue-on-error" in result.reason
