@@ -8,7 +8,7 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-install-project
 
 COPY src/ci_build ./src/ci_build
-COPY docs/setup.md ./setup.md
+COPY docs/guide/setup.md ./setup.md
 
 RUN uv sync --frozen
 
