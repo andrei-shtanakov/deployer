@@ -226,9 +226,7 @@ _PODMAN_FROM_ARGS = "FROM requires either one argument, or three"
 _BK_ANY_RE = re.compile(r"#(?P<k>[0-9]{1,9}) .*")
 _BK_DEFINITION_RE = re.compile(r"#[0-9]{1,9} \[internal\] load build definition\b.*")
 _BK_HEADER_RE = re.compile(r"#(?P<k>[0-9]{1,9}) \[(?P<bracket>[^\]]*)\] (?P<text>.*)")
-_BK_STAGE_RE = re.compile(
-    r"(?:[^\s\]]+ )?(?P<pad> *)(?P<k>[0-9]{1,9})/(?P<n>[0-9]{1,9})"
-)
+_BK_STAGE_RE = re.compile(r"[^\s\]]+ (?P<pad> *)(?P<k>[0-9]{1,9})/(?P<n>[0-9]{1,9})")
 _BK_DONE_RE = re.compile(r"#(?P<k>[0-9]{1,9}) DONE(?: [0-9]{1,9}(?:\.[0-9]{1,9})?s)?")
 _BK_CACHED_RE = re.compile(r"#(?P<k>[0-9]{1,9}) CACHED")
 _BK_ERROR_RE = re.compile(r"#(?P<k>[0-9]{1,9}) (?:ERROR|CANCELED)(?:[: ].*)?")
@@ -601,7 +599,9 @@ def _bindable(text: str) -> bool:
 
 
 def _is_stage(header: re.Match[str]) -> bool:
-    """A header's bracket names a build stage step (``[name k/n]``/``[k/n]``).
+    """A header's bracket names a build stage step: ``[name k/n]``. A bracket
+    without a stage name (``[k/n]``, ``[ k/n]``) is not read: every recorded
+    header is named (``stage-0``, ``extra``).
 
     BuildKit right-aligns ``k`` to the width of ``n`` (``[stage-0  7/10]``,
     ``c4``/``c9``): the spaces before ``k`` plus its digits must be exactly

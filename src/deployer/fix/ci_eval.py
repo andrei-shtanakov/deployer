@@ -2,7 +2,10 @@
 
 :func:`attempt_evidence` reads the log of the job an attempt was qualified
 on: positive evidence is :func:`deployer.fix.templates.match_ci` returning
-``passed``; recurrence is the admitted class's admission matcher
+``passed`` on the bound build step's own section of the log as read
+(:func:`build_section`: the block after the one ``##[group]Run <build line>``
+header, up to the next ``##[group]Run `` header, split on ``\\n`` only);
+recurrence is the admitted class's admission matcher
 (:mod:`deployer.admission.templates`) binding to the corrected instruction's
 line span, whatever its object. A non-qualified attempt becomes evidence
 through :func:`from_qualification`, so nothing is dropped between
@@ -30,7 +33,14 @@ from deployer.admission.templates import (
 )
 from deployer.fix import templates
 from deployer.fix.qualify import Qualification, Qualified
-from deployer.forge import Completeness, FailedJob, _build_job
+from deployer.forge import (
+    _ANSI_RE,
+    _GROUP_PREFIX,
+    _LOG_TIMESTAMP_RE,
+    Completeness,
+    FailedJob,
+    _build_job,
+)
 from deployer.reproduce.shape import job_text
 
 Outcome = Literal["ci_confirmed", "ci_confirmation_insufficient"]
@@ -51,6 +61,11 @@ _KINDS: dict[str, templates.Kind] = {
     "from_argument_count": "from",
 }
 _GREEN = frozenset({"success", "skipped", "neutral"})
+_RUN = "Run "
+_RUN_GROUP = f"{_GROUP_PREFIX}{_RUN}"
+_BREAKS = frozenset("\r\x0b\x0c\x1c\x1d\x1e\x85\u2028\u2029")
+"""Line breaks other than ``\\n`` that ``str.splitlines`` splits on: on a
+section line they are refused, never re-split (ruling T)."""
 # The most specific reason first, when no attempt is positive or recurred;
 # ``"failed_before"`` marks an attempt whose job failed before its build step.
 _SPECIFIC: tuple[tuple[str, str], ...] = (
@@ -68,8 +83,9 @@ class AttemptEvidence:
 
     ``key`` is ``(run_id, attempt, job key or "")``; ``qualification`` is the
     attempt's, or ``undetermined`` when a qualified attempt's job text could
-    not be read here. ``lines`` are the template's evidence lines, plus the
-    admission match's when the defect recurred (1-based, in the job text).
+    not be read here. ``lines`` are the admission match's evidence lines when
+    the defect recurred (1-based, in the job text); ``log_lines`` the
+    template's (1-based lines of the job log as read, split on ``\\n``).
     ``template`` is the CI template's verdict (``None`` when not read);
     ``failed_before_build`` is set when the template did not pass and a step
     of the bound job before its build step failed. ``ambiguous_recurrence``
@@ -87,6 +103,7 @@ class AttemptEvidence:
     template: templates.Evidence | None = None
     failed_before_build: bool = False
     ambiguous_recurrence: bool = False
+    log_lines: tuple[int, ...] = ()
 
 
 def from_qualification(q: Qualified) -> AttemptEvidence:
@@ -189,16 +206,12 @@ def _read(
         return _undetermined(
             q, f"log of job {job.job_id} is not the one it was qualified on"
         )
-    outcome = templates.match_ci(
-        _KINDS[cls], corrected_text, text, dockerfile=dockerfile
-    )
+    outcome, log_lines = _template(q, cls, corrected_text, log, dockerfile)
     recurrence = _recurrence(cls, text, corrected_text, tuple(lines))
     ambiguous = recurrence == AMBIGUOUS_MATCH
     detail = outcome.detail
-    evidence_lines = set(outcome.lines)
     if isinstance(recurrence, tuple):
         detail = f"defect recurred at lines {lines[0]}-{lines[1]}"
-        evidence_lines.update(recurrence)
     elif ambiguous:
         detail = "admission match ambiguous"
     return AttemptEvidence(
@@ -207,11 +220,78 @@ def _read(
         positive=outcome.evidence == "passed",
         recurred=isinstance(recurrence, tuple),
         detail=detail,
-        lines=tuple(sorted(evidence_lines)),
+        lines=recurrence if isinstance(recurrence, tuple) else (),
         template=outcome.evidence,
         failed_before_build=outcome.evidence != "passed" and _failed_before(q),
         ambiguous_recurrence=ambiguous,
+        log_lines=log_lines,
     )
+
+
+def _template(
+    q: Qualified, cls: DefectClass, corrected: str, log: str, dockerfile: bytes
+) -> tuple[templates.Outcome, tuple[int, ...]]:
+    """The CI template over the bound build step's section of ``log`` only,
+    and its evidence lines as lines of ``log``. No section is
+    ``binding_ambiguous`` (ruling T)."""
+    title = _build_title(q)
+    section = build_section(log, title) if title is not None else None
+    if not isinstance(section, tuple):
+        reason = section or "the bound build step has no runner group title"
+        return templates.Outcome("binding_ambiguous", (), reason, None), ()
+    offset, text = section
+    outcome = templates.match_ci(_KINDS[cls], corrected, text, dockerfile=dockerfile)
+    return outcome, tuple(offset + n for n in outcome.lines)
+
+
+def _build_title(q: Qualified) -> str | None:
+    """The bound build step's runner group title (``Run <build line>``): the
+    step's name when it has that form, else ``None``."""
+    if q.job is None or q.shape is None:
+        return None
+    names = [s.name for s in q.job.all_steps or [] if s.number == q.shape.build_step]
+    if len(names) != 1 or not names[0].startswith(_RUN):
+        return None
+    return names[0]
+
+
+def build_section(log: str, title: str) -> tuple[int, str] | str:
+    """The bound build step's own section of the job log as read.
+
+    ``log`` is split on ``\\n`` only (a leading BOM dropped); each line is
+    read as forge reads it (one trailing ``\\r`` of a CRLF ending, the runner
+    timestamp and ANSI sequences removed). The section is the lines after the
+    one line ``##[group]<title>``, up to the next ``##[group]Run `` line or
+    the end. Returns ``(offset, text)`` — section line ``n`` is line
+    ``offset + n`` of ``log`` — or the reason there is no such section: no
+    header or several, or a line break other than ``\\n`` (a lone ``\\r``,
+    ``\\x0b``, ``\\x0c``, ``\\x1c``-``\\x1e``, ``\\x85``, U+2028, U+2029) on a
+    section line, which forge's own reading would have split."""
+    raw = log.removeprefix("\ufeff").split("\n")
+    last = len(raw) - 1
+    lines = [
+        line.removesuffix("\r") if i < last else line for i, line in enumerate(raw)
+    ]
+    read = [
+        _ANSI_RE.sub("", _LOG_TIMESTAMP_RE.sub("", line, count=1)) for line in lines
+    ]
+    header = f"{_GROUP_PREFIX}{title}"
+    at = [i for i, line in enumerate(read) if line == header]
+    if len(at) != 1:
+        return f"{len(at)} runner group headers {header!r} in the log (need one)"
+    start = at[0] + 1
+    end = next(
+        (i for i in range(start, len(read)) if read[i].startswith(_RUN_GROUP)),
+        len(read),
+    )
+    for i in range(start, end):
+        bad = next((c for c in lines[i] if c in _BREAKS), None)
+        if bad is not None:
+            return (
+                f"log line {i + 1}: line break U+{ord(bad):04X} inside the "
+                "build step's section"
+            )
+    return start, "\n".join(read[start:end])
 
 
 def _failed_before(q: Qualified) -> bool:

@@ -58,9 +58,13 @@ CLASSES: dict[str, DefectClass] = {
     "from": "from_argument_count",
 }
 
-Attempt = tuple[str, str | None, bool, bool, tuple[int, ...], str | None]
-"""Per attempt: qualification, template verdict, positive, recurred, evidence
-lines (1-based, in the job text) and detail."""
+Attempt = tuple[
+    str, str | None, bool, bool, tuple[int, ...], tuple[int, ...], str | None
+]
+"""Per attempt: qualification, template verdict, positive, recurred, the
+recurrence lines (1-based, in the job text), the template's lines (1-based,
+in the job log as read, split on ``\n``; the bound build step's section only)
+and detail."""
 
 _UNREAD = (
     "attempt not read: gh api --allow-escape-sequences "
@@ -69,27 +73,26 @@ _UNREAD = (
     '108113903561/logs": net/http: TLS handshake timeout'
 )
 _RECUR_C5 = (134, 135, 153, 154, 155, 156, 157, 158, 159, 160, 161)
-_PASS = ("qualified", "passed", True, False)
+_PASS = ("qualified", "passed", True, False, ())
+_UNQUALIFIED = ("undetermined", None, False, False, (), ())
+INSUFFICIENT = "ci_confirmation_insufficient"
 
 EXPECTED: dict[str, tuple[list[Attempt], str, str | None]] = {
-    "c1-copy-done": ([(*_PASS, (171, 172), None)], "ci_confirmed", None),
+    "c1-copy-done": ([(*_PASS, (191, 192), None)], "ci_confirmed", None),
     "c2-copy-rerun": (
-        [
-            (*_PASS, (171, 172), None),
-            ("undetermined", None, False, False, (), _UNREAD),
-        ],
-        "ci_confirmation_insufficient",
+        [(*_PASS, (191, 192), None), (*_UNQUALIFIED, _UNREAD)],
+        INSUFFICIENT,
         ci_eval.UNDETERMINED,
     ),
     "c2b-copy-rerun-reread": (
-        [(*_PASS, (171, 172), None), (*_PASS, (172, 173), None)],
+        [(*_PASS, (191, 192), None), (*_PASS, (192, 193), None)],
         "ci_confirmed",
         None,
     ),
-    "c3-from-parsed": ([(*_PASS, (127,), None)], "ci_confirmed", None),
+    "c3-from-parsed": ([(*_PASS, (147,), None)], "ci_confirmed", None),
     # The padded header ``#14 [stage-0  7/10]`` binds; ``RUN false`` fails
     # later (``#15 ERROR``), which does not cancel the proven pass (§7.4).
-    "c4-copy-later-failure": ([(*_PASS, (179, 180), None)], "ci_confirmed", None),
+    "c4-copy-later-failure": ([(*_PASS, (195, 196), None)], "ci_confirmed", None),
     "c5-copy-recurred": (
         [
             (
@@ -98,29 +101,21 @@ EXPECTED: dict[str, tuple[list[Attempt], str, str | None]] = {
                 False,
                 True,
                 _RECUR_C5,
+                (150, 151),
                 "defect recurred at lines 11-11",
             )
         ],
-        "ci_confirmation_insufficient",
+        INSUFFICIENT,
         ci_eval.RECURRED,
     ),
     # Two build steps in one job: qualification cannot bind one build, so
     # the attempt is undetermined before any template runs (§7.2).
     "c6-copy-cached": (
-        [
-            (
-                "undetermined",
-                None,
-                False,
-                False,
-                (),
-                "build not bound: several build steps",
-            )
-        ],
-        "ci_confirmation_insufficient",
+        [(*_UNQUALIFIED, "build not bound: several build steps")],
+        INSUFFICIENT,
         ci_eval.UNDETERMINED,
     ),
-    "c7-copy-done-padded": ([(*_PASS, (163, 164), None)], "ci_confirmed", None),
+    "c7-copy-done-padded": ([(*_PASS, (183, 184), None)], "ci_confirmed", None),
     # The "corrected" FROM asked here is the bad one: the template refuses on
     # the parse error, and the admission matcher binds it at line 1.
     "c8-from-bad-in-skipped-stage": (
@@ -131,13 +126,14 @@ EXPECTED: dict[str, tuple[list[Attempt], str, str | None]] = {
                 False,
                 True,
                 (104,),
+                (120,),
                 "defect recurred at lines 1-1",
             )
         ],
-        "ci_confirmation_insufficient",
+        INSUFFICIENT,
         ci_eval.RECURRED,
     ),
-    "c9-copy-done-padded-run": ([(*_PASS, (169, 170), None)], "ci_confirmed", None),
+    "c9-copy-done-padded-run": ([(*_PASS, (189, 190), None)], "ci_confirmed", None),
 }
 
 TEMPLATE: dict[str, tuple[str, tuple[int, ...], str | None]] = {
@@ -261,7 +257,15 @@ def test_ci_recording_replays(name: str) -> None:
     gh = case.replay()
     evidence = _pipeline(case, gh)
     got = [
-        (e.qualification, e.template, e.positive, e.recurred, e.lines, e.detail)
+        (
+            e.qualification,
+            e.template,
+            e.positive,
+            e.recurred,
+            e.lines,
+            e.log_lines,
+            e.detail,
+        )
         for e in evidence
     ]
     attempts, outcome, reason = EXPECTED[name]
@@ -469,11 +473,11 @@ def test_confirm_end_to_end(name: str, tmp_path: Path) -> None:
     considered = [(c["attempt"], c["qualification"]) for c in last.considered]
     assert considered == [(n, a[0]) for n, a in enumerate(attempts, 1)]
     positive = [
-        (record["attempt"], [line["line"] for line in record["lines"]])
+        (record["attempt"], [line["line"] for line in record["log_lines"]])
         for record in last.evidence
         if record["positive"]
     ]
-    assert positive == [(n, list(a[4])) for n, a in enumerate(attempts, 1) if a[2]]
+    assert positive == [(n, list(a[5])) for n, a in enumerate(attempts, 1) if a[2]]
     assert doc.status == (
         "ci_confirmed" if outcome == "ci_confirmed" else "fix_proposed"
     )

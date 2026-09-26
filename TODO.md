@@ -249,7 +249,7 @@ them is the next thing to pick up.
 
 ## Shipped
 
-- [x] C-recordings: real CI `push` runs of fix commits on the polygon repository, backing the CI template rows @owner:github:andrei-shtanakov @id:fix-c-recordings @epic:eco.dark-factory
+- [x] C-recordings: real CI `workflow_dispatch` (polygon) runs of fix commits on the polygon repository, backing the CI template rows @owner:github:andrei-shtanakov @id:fix-c-recordings @epic:eco.dark-factory
   Design §9, §11 stage 4. Recorded by the owner's permission 2026-09-25 (#98: `c1`–`c9`
   plus `c2b`, real `workflow_dispatch` runs on `polygon/fix-c-*`). The two CI rows
   (COPY/ADD, FROM) are enabled on them (F4b): the matchers read BuildKit's padded step

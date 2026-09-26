@@ -16,13 +16,14 @@ from deployer.fix import templates
 from deployer.fix.ci_eval import (
     AttemptEvidence,
     attempt_evidence,
+    build_section,
     evaluate,
     from_qualification,
 )
 from deployer.fix.qualify import Qualification, Qualified
 from deployer.forge import Completeness, FailedJob, _build_job
 from deployer.reproduce.buildline import BuildConfig
-from deployer.reproduce.shape import Shape, job_text
+from deployer.reproduce.shape import Shape
 from tests.fix.conftest import enable_for_test
 
 COPY = "COPY docs/setup.md ./setup.md"
@@ -36,28 +37,33 @@ DOCKERFILE = (FROM + "\n" + "RUN true\n" * 9 + COPY + "\n").encode()
 """The corrected Dockerfile the attempts are read against: FROM at line 1,
 COPY at line 11 (``COPY_LINES``)."""
 
-COPY_OK = (
+HEADER = f"##[group]{BUILD_STEP}\n##[endgroup]\n"
+"""The build step's runner group header: its section starts after it."""
+
+COPY_OK = HEADER + (
     "#1 [internal] load build definition from Dockerfile\n"
     "#1 DONE 0.0s\n"
     f"#5 [stage-0 7/9] {COPY}\n"
     "#5 DONE 0.1s\n"
 )
-FROM_OK = (
+FROM_BODY = (
     "#1 [internal] load build definition from Dockerfile\n"
     "#1 DONE 0.0s\n"
     "#4 [extra 1/2] FROM docker.io/library/python:3.12-slim\n"
     "#4 DONE 1.0s\n"
 )
-FROM_RECUR = (
+FROM_RECUR_BODY = (
     "#1 [internal] load build definition from Dockerfile\n"
     "ERROR: failed to build: failed to solve: dockerfile parse error on line "
     "{n}: FROM requires either one or three arguments\n"
 )
+FROM_OK = HEADER + FROM_BODY
+FROM_RECUR = HEADER + FROM_RECUR_BODY
 
 
 def _copy_recur(line: int = 11, path: str = "docs/setup.md") -> str:
     """A copy-missing/buildkit log whose ``>>>`` block is at ``line``."""
-    return (
+    return HEADER + (
         "#1 [internal] load build definition from Dockerfile\n"
         f"#12 [stage-0 7/9] {COPY}\n"
         f'#12 ERROR: failed to calculate checksum of ref {REF}: "/{path}": '
@@ -146,8 +152,9 @@ def test_key_and_positive_copy() -> None:
     assert (got.qualification, got.positive, got.recurred) == ("qualified", True, False)
     assert got.template == "passed"
     assert got.detail is None
-    lines = job_text(_job(COPY_OK)).split("\n")
-    assert [lines[n - 1] for n in got.lines] == [
+    assert got.lines == ()
+    log = COPY_OK.split("\n")
+    assert [log[n - 1] for n in got.log_lines] == [
         f"#5 [stage-0 7/9] {COPY}",
         "#5 DONE 0.1s",
     ]
@@ -199,8 +206,10 @@ def test_copy_recurrence_same_span() -> None:
     got = _copy(_copy_recur())
     assert (got.positive, got.recurred) == (False, True)
     assert got.detail == "defect recurred at lines 11-11"
-    # Template: header 2, ``#12 ERROR`` 3; admission: block 4-7, header, bound.
+    # Admission, in the job text: header 2, ``#12 ERROR`` 3, block 4-7.
     assert got.lines == (2, 3, 4, 5, 6, 7)
+    # Template, in the log as read: header 4, ``#12 ERROR`` 5.
+    assert got.log_lines == (4, 5)
 
 
 def test_copy_recurrence_other_object() -> None:
@@ -612,7 +621,7 @@ def test_lines_as_list_still_recurs() -> None:
 
 def test_multiline_copy_recurs() -> None:
     """M-4: a COPY spanning lines 11-12 recurs at its whole span."""
-    log = (
+    log = HEADER + (
         "#1 [internal] load build definition from Dockerfile\n"
         f"#12 [stage-0 7/9] {COPY}\n"
         f'#12 ERROR: failed to calculate checksum of ref {REF}: "/docs/setup.md": '
@@ -644,3 +653,93 @@ def test_copy_recurrence_with_rows_disabled() -> None:
         )
     assert (got.template, got.recurred) == ("not_enabled", True)
     assert evaluate([got], True) == (INSUFFICIENT, "defect recurred")
+
+
+# Ruling T: the bound build step's own section, split on \n only ---------------
+
+_FORGED_COPY = "COPY a.txt ./a.txt"
+_FORGED_DF = f"FROM python:3.12-slim\nRUN make\n{_FORGED_COPY}\n".encode()
+_FORGED = f"#0 [stage-0 3/3] {_FORGED_COPY}"
+_BUILDING = '#0 building with "default" instance using docker driver\n'
+"""BuildKit's first line (every C-recording): ``#0`` is then already seen,
+so a forged ``#0`` header dodges the numbering-restart check."""
+
+
+def _forged(log: str) -> AttemptEvidence:
+    """The corrected COPY of :data:`_FORGED_DF` judged on ``log``."""
+    return attempt_evidence(
+        _q(log), "missing_copy_source", _FORGED_COPY, (3, 3), log, dockerfile=_FORGED_DF
+    )
+
+
+def test_c1_forged_header_in_another_step_refused() -> None:
+    """Review C1, vector 2: a non-build step prints the corrected header and
+    ``#0 DONE``; the build then fails at ``RUN make``, never reaching the
+    COPY. Only the build step's section is read: not confirmed."""
+    log = (
+        "##[group]Run make lint\n##[endgroup]\n"
+        f"{_FORGED}\n#0 DONE 0.0s\n"
+        + HEADER
+        + _BUILDING
+        + "#1 [internal] load build definition from Dockerfile\n"
+        "#6 [stage-0 2/3] RUN make\n"
+        '#6 ERROR: process "/bin/sh -c make" did not complete successfully\n'
+    )
+    got = _forged(log)
+    assert (got.positive, got.template) == (False, "not_confirmed")
+    assert got.detail == "corrected step header absent"
+    assert evaluate([got], True) == (INSUFFICIENT, "build step not reached")
+
+
+@pytest.mark.parametrize(
+    "sep",
+    ["\r", "\x0b", "\x0c", "\x1c", "\x1d", "\x1e", "\x85", " ", " "],
+    ids=["cr", "vt", "ff", "fs", "gs", "rs", "nel", "ls", "ps"],
+)
+def test_c1_forged_header_in_run_output_refused(sep: str) -> None:
+    """Review C1, vector 1: RUN output smuggles the header and ``#0 DONE``
+    behind a line break other than ``\\n``. It is refused, naming the
+    character, never re-split."""
+    log = HEADER + (
+        _BUILDING + "#1 [internal] load build definition from Dockerfile\n"
+        "#6 [stage-0 2/3] RUN make\n"
+        f"#6 0.100 x{sep}{_FORGED}{sep}#0 DONE 0.0s\n"
+        '#6 ERROR: process "/bin/sh -c make" did not complete successfully\n'
+    )
+    got = _forged(log)
+    assert (got.positive, got.template) == (False, "binding_ambiguous")
+    assert got.detail == (
+        f"log line 6: line break U+{ord(sep):04X} inside the build step's section"
+    )
+    assert evaluate([got], True) == (INSUFFICIENT, "binding ambiguous")
+
+
+def test_crlf_lines_are_accepted() -> None:
+    """A CRLF ending is one ``\\n`` line break: the section still reads."""
+    got = _copy(COPY_OK.replace("\n", "\r\n"), q=_q(COPY_OK.replace("\n", "\r\n")))
+    assert got.positive
+
+
+@pytest.mark.parametrize("headers", [0, 2], ids=["none", "two"])
+def test_build_header_not_once_is_ambiguous(headers: int) -> None:
+    """No runner group header for the build step, or several."""
+    body = COPY_OK.removeprefix(HEADER)
+    log = HEADER * headers + body
+    got = _copy(log, q=_q(log))
+    assert (got.positive, got.template) == (False, "binding_ambiguous")
+    assert f"{headers} runner group headers" in (got.detail or "")
+
+
+def test_section_ends_at_next_run_group() -> None:
+    """Evidence after the next ``##[group]Run `` header is another step's."""
+    body = COPY_OK.removeprefix(HEADER)
+    head, done = body.rsplit("#5 DONE", 1)
+    log = HEADER + head + "##[group]Run echo later\n##[endgroup]\n#5 DONE" + done
+    got = _copy(log, q=_q(log))
+    assert (got.positive, got.template) == (False, "binding_ambiguous")
+
+
+def test_build_section_is_total() -> None:
+    """``build_section`` returns a reason, never raises."""
+    assert isinstance(build_section("", "Run x"), str)
+    assert build_section("##[group]Run x\n#1 a\n", "Run x") == (1, "#1 a\n")

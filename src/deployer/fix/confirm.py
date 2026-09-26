@@ -15,7 +15,11 @@ corrected text and line span (``proposal``).
 The workflow and the corrected Dockerfile are read at the fix commit in the
 fix worktree through ``fix.workspace``'s guarded chokepoint (``git cat-file
 blob``, hooks, filters and fsmonitor off; nothing is written to the clone or
-the worktree); the CI template reads the Dockerfile's bytes (§7.3).
+the worktree); the CI template reads the Dockerfile's bytes (§7.3). The
+Dockerfile path must be the bound build's (``input.build["dockerfile"]``) and
+the bytes read must hash to ``local_proof.dockerfile_sha256`` — the file CI
+built is the one proved locally — else the attempt is ``qualification
+undetermined`` with the reason.
 
 The runs of the fix commit are listed; **every** attempt ``1..attempts`` of
 every listed run is read, qualified (§7.2) and turned into evidence (§7.3)
@@ -54,6 +58,7 @@ from deployer.fix.localproof import build_config
 from deployer.fix.qualify import Qualified, qualify
 from deployer.fix.workspace import _guards, _run, outside
 from deployer.forge import GhRunner, RunSummary, list_runs_for_sha, read_attempt
+from deployer.provenance.model import sha256_hex
 from deployer.reproduce.buildline import BuildConfig
 from deployer.reproduce.shape import job_text
 
@@ -83,6 +88,7 @@ class _Inputs:
     workflow_path: str
     workflow_sha256: str
     dockerfile_path: str
+    dockerfile_sha256: str
     job_key: str
     build: BuildConfig
     cls: DefectClass
@@ -140,6 +146,11 @@ def _confirm(doc: FixDocument, doc_path: Path, gh: GhRunner) -> _Result:
     dockerfile = _blob(inputs, inputs.dockerfile_path, "Dockerfile")
     if isinstance(dockerfile, str):
         return _undetermined(dockerfile)
+    if sha256_hex(dockerfile) != inputs.dockerfile_sha256:
+        return _undetermined(
+            f"the Dockerfile at the fix commit (sha256 {sha256_hex(dockerfile)}) "
+            f"is not the locally proved one ({inputs.dockerfile_sha256})"
+        )
     listed = list_runs_for_sha(inputs.repo, inputs.fix_commit, gh)
     if isinstance(listed, str):
         outcome, reason = ci_eval.evaluate([], listing_complete=False)
@@ -186,7 +197,7 @@ def _judge_run(
         judged = _evidence(inputs, q, read.logs, dockerfile)
         evidence.append(judged)
         if judged.qualification == "qualified":
-            records.append(_record(judged, q))
+            records.append(_record(judged, q, read.logs))
 
 
 def _evidence(
@@ -205,12 +216,14 @@ def _evidence(
     )
 
 
-def _record(e: AttemptEvidence, q: Qualified) -> dict[str, Any]:
+def _record(e: AttemptEvidence, q: Qualified, logs: dict[int, str]) -> dict[str, Any]:
     """One qualified attempt's evidence: run, attempt, job, the template's
-    verdict, and the log lines (numbers and text, in the job text). The text
-    is split by :func:`split_lines`, the rule that numbered the lines."""
+    verdict, the recurrence lines (numbers and text, in the job text, split
+    by :func:`split_lines`, the rule that numbered them) and the template's
+    lines (numbers and raw text, in the job log as read, split on ``\\n``)."""
     assert q.job is not None
     text = split_lines(job_text(q.job))
+    log = logs.get(q.job.job_id, "").split("\n")
     return {
         "run_id": e.key[0],
         "attempt": e.key[1],
@@ -224,14 +237,24 @@ def _record(e: AttemptEvidence, q: Qualified) -> dict[str, Any]:
             {"line": n, "text": text[n - 1] if 0 < n <= len(text) else None}
             for n in e.lines
         ],
+        "log_lines": [
+            {"line": n, "text": log[n - 1] if 0 < n <= len(log) else None}
+            for n in e.log_lines
+        ],
     }
 
 
 def _inputs(doc: FixDocument, doc_path: Path) -> _Inputs | str:
     """The document fields a confirmation reads, or why they are unusable."""
     publication, proposal = doc.publication, doc.proposal
-    if publication is None or publication.fix_commit is None or proposal is None:
-        return "the document records no fix commit or proposal"
+    proof = doc.local_proof
+    if (
+        publication is None
+        or publication.fix_commit is None
+        or proposal is None
+        or proof is None
+    ):
+        return "the document records no fix commit, proposal or local proof"
     fix_commit = publication.fix_commit
     if not _HEX40_RE.fullmatch(fix_commit):
         return f"the stored fix commit {fix_commit!r} is not a commit id"
@@ -254,6 +277,11 @@ def _inputs(doc: FixDocument, doc_path: Path) -> _Inputs | str:
     build = build_config(doc.input.build)
     if isinstance(build, str):
         return build
+    if build.dockerfile != dockerfile:
+        return (
+            f"the stored Dockerfile path {dockerfile!r} is not the bound build's "
+            f"{build.dockerfile!r}"
+        )
     return _Inputs(
         repo=repo,
         fix_commit=fix_commit,
@@ -261,6 +289,7 @@ def _inputs(doc: FixDocument, doc_path: Path) -> _Inputs | str:
         workflow_path=path,
         workflow_sha256=doc.input.workflow_sha256,
         dockerfile_path=dockerfile,
+        dockerfile_sha256=proof.dockerfile_sha256,
         job_key=job_key,
         build=build,
         cls=proposal.cls,

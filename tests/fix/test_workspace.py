@@ -30,6 +30,7 @@ from deployer.fix.workspace import (
     new_fix_dir,
     outside,
 )
+from deployer.provenance import gitrepo
 
 _DOCKERFILE = b"FROM python:3.12-slim\nCOPY app.py /app/\nRUN echo hi\n"
 _CORRECTED = b"FROM python:3.12-slim\nCOPY main.py /app/\nRUN echo hi\n"
@@ -933,3 +934,55 @@ def test_a_failed_index_sync_still_returns_the_commit(tmp_path: Path) -> None:
     tip = _git(fix.worktree, "rev-parse", f"refs/heads/{branch}").strip()
     assert tip == committed.sha
     assert _git(fix.worktree, "rev-parse", "HEAD^").strip() == vetted.head
+
+
+# Ruling U: replace refs never substitute an object ---------------------------
+
+
+def _replaced_repo(tmp_path: Path) -> tuple[Path, str]:
+    """A repo whose commit ``A`` (``Dockerfile`` = ``real``) is replaced by
+    ``B`` (``forged``) through a real ``refs/replace/<A>``; returns ``A``."""
+    repo = tmp_path / "replaced"
+    repo.mkdir()
+
+    def run(*args: str) -> str:
+        env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@x"}
+        env.update(GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@x")
+        env.pop("GIT_NO_REPLACE_OBJECTS", None)
+        return subprocess.run(
+            ["git", "-C", str(repo), *args],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=env,
+        ).stdout.strip()
+
+    run("init", "-q")
+    (repo / "Dockerfile").write_text("real\n")
+    run("add", "Dockerfile")
+    run("commit", "-q", "-m", "a")
+    a = run("rev-parse", "HEAD")
+    (repo / "Dockerfile").write_text("forged\n")
+    run("commit", "-q", "-am", "b")
+    run("replace", a, run("rev-parse", "HEAD"))
+    assert run("cat-file", "blob", f"{a}:Dockerfile") == "forged"  # git honours it
+    return repo, a
+
+
+def test_guarded_read_ignores_replace_refs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every fix-side read (``workspace._run``: confirm, publish, workspace)
+    returns the object named, even with an inherited replace-ref base."""
+    repo, a = _replaced_repo(tmp_path)
+    monkeypatch.setenv("GIT_REPLACE_REF_BASE", "refs/replace/")
+    guards = workspace._guards(repo)
+    assert not isinstance(guards, str)
+    result = workspace._run(repo, "cat-file", "blob", f"{a}:Dockerfile", g=guards)
+    assert (result.code, result.stdout) == (0, b"real\n")
+
+
+def test_gitrepo_read_ignores_replace_refs(tmp_path: Path) -> None:
+    """``provenance.gitrepo._git`` (``blob_bytes``) ignores replace refs too."""
+    repo, a = _replaced_repo(tmp_path)
+    assert gitrepo.blob_bytes(repo, a, "Dockerfile") == b"real\n"

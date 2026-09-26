@@ -303,15 +303,18 @@ confirms.
 
 The two CI (BuildKit) rows are backed by the C-recordings
 (`tests/fixtures/recordings/ci`, real polygon runs) and enabled, so `deployer fix confirm`
-can reach `ci_confirmed`. The corrected Dockerfile is read at the fix commit first: it
-must be in the strict form, and a corrected COPY/ADD must occur once in it (BuildKit
-also skips a stage nothing depends on). COPY/ADD then needs exactly one stage header
-carrying the corrected text (BuildKit's step number right-aligned to the step count, as
-in `[stage-0  7/10]`) and that step's `#k DONE`; `#k CACHED` never confirms. FROM is
-file-wide: a build-stage header and no `dockerfile parse error` (BuildKit parses the
-whole file first). A later independent failure in the same run does not cancel a proven
-pass; any `undetermined` attempt, a recurrence or an ambiguous binding does (design
-§7.3–§7.4).
+can reach `ci_confirmed`. The corrected Dockerfile is read at the fix commit first
+(replace refs off): it must be the bound build's file, hash to the locally proved bytes,
+be in the strict form, and hold a corrected COPY/ADD exactly once (BuildKit also skips a
+stage nothing depends on). Only the build step's own section of the log is read: the
+lines after its one `##[group]Run <build line>` header, up to the next `##[group]Run `
+header, split on `\n` only; any other line break there refuses. COPY/ADD then needs
+exactly one named stage header carrying the corrected text (BuildKit's step number
+right-aligned to the step count, as in `[stage-0  7/10]`) and that step's `#k DONE`;
+`#k CACHED` never confirms. FROM is file-wide: a named build-stage header and no
+`dockerfile parse error` (BuildKit parses the whole file first). A later independent
+failure in the same run does not cancel a proven pass; any `undetermined` attempt, a
+recurrence or an ambiguous binding does (design §7.3–§7.4).
 
 Exit codes: `fix` — `0` `locally_confirmed`, `1` `stopped`, `2` invalid invocation or
 local I/O; `fix publish` — `0` pushed and a PR created or found, `1` refused, `2` local

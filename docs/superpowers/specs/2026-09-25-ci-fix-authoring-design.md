@@ -564,8 +564,11 @@ recording would be disabled → `templates not enabled`. What the recordings sho
 every rule below relies on:
 
 - **The corrected Dockerfile first, file-wide.** The corrected Dockerfile's bytes at the
-  fix commit (read by the guarded chokepoint, like the workflow; unreadable → the
-  attempt is `qualification undetermined` with the reason) must pass the strict form
+  fix commit are read by the guarded chokepoint, like the workflow, with replace refs
+  off. The path must be the bound build's Dockerfile, and the bytes must hash to the
+  locally proved `local_proof.dockerfile_sha256`: the file CI built is the one proved
+  locally. An unreadable file or a mismatch makes the confirmation `qualification
+  undetermined` with the reason. The bytes must pass the strict form
   of §4 before any log line is read; a refusal → `binding ambiguous` with the gate's
   reason. This holds for both kinds.
 - **COPY/ADD uniqueness in the Dockerfile** (the local rule of §6.3, unchanged): the
@@ -575,22 +578,42 @@ every rule below relies on:
   JSON form — else `binding ambiguous`, decided before the log is read. BuildKit also
   skips a stage nothing depends on and prints no header for it, so an identical COPY in
   a skipped stage must never make one printed header look unique.
+- **The bound build step's own section only.** The template reads only the part of the
+  job log that the build step printed: the lines after exactly one runner group header
+  `##[group]Run <bound build line>` (the build step's name as the jobs API gives it),
+  up to the next `##[group]Run ` header or the end of the log. It works on the raw log
+  as read, split on `\n` only; a CRLF ending counts as one `\n` break. No such header,
+  or several → `binding ambiguous`. A section line that holds any other line break
+  `str.splitlines` would split on is also `binding ambiguous`, and the character is
+  named: a lone `\r`, `\x0b`, `\x0c`, `\x1c`–`\x1e`, `\x85`, U+2028 or U+2029. So
+  another step's output (a lint or test step printing `#0 [stage-0 …] COPY …` /
+  `#0 DONE`), or a RUN's output that smuggles such lines behind a non-`\n` break, can
+  never supply the evidence. None of the C-recordings holds such a break. Every
+  recorded BuildKit line sits in the build step's section. The template's evidence
+  lines are numbered in that raw log; recurrence keeps A's whole-job reading, and its
+  lines are numbered in the job text.
 - **Padded step numbers.** BuildKit right-aligns the step number to the width of the
   step count: `[stage-0  7/10]` (`c4`, `c9`); `[stage-0 7/9]` when both are one digit
   (`c1`). The header is read only in that form: the spaces before `k` plus its digits
   are exactly `len(n)` wide (the unpadded form when `k` is as wide as `n`), `k` has no
-  leading zero, and any other run of spaces, or a tab, is not a stage header. (`c7`
+  leading zero, and any other run of spaces, or a tab, is not a stage header. A bracket
+  without a stage name (`[k/n]`, `[ k/n]`) is not read either: every recorded header
+  is named (`stage-0`, `extra`). (`c7`
   was meant to show padding, but `LABEL` is not a build step, so it prints nine steps
   unpadded; it stays as recorded.)
 - **COPY/ADD (BuildKit):** exactly one stage header whose instruction text is the
   corrected instruction, and `#k DONE` for the same `k`. `#k CACHED` is **not** accepted
   automatically. A missing or repeated `k` → `binding ambiguous`. A later failure of
   another step (`c4`: `RUN false` after the corrected `COPY … DONE`) does not refute it
-  (§7.4).
-- **FROM (BuildKit):** the whole file parsed — a build-stage step exists and no
-  `dockerfile parse error`; the evidence must bind unambiguously to the required build and
-  the exact corrected bytes; frontend, context or definition loading steps are not
-  evidence. This rule stays file-wide, with no uniqueness check: BuildKit parses the
+  (§7.4). BuildKit re-prints a vertex header when progress interleaves (`c1` prints
+  `#7 [stage-0 1/9] FROM …` twice). A corrected COPY re-printed this way reads as a
+  repeated header or `k` → `binding ambiguous`. That is a known, conservative false
+  negative; no C-recording shows it for the corrected COPY.
+- **FROM (BuildKit):** the whole file parsed. In the bound build step's section, a named
+  build-stage header exists and there is no `dockerfile parse error`. The rule does not
+  look at the corrected FROM's text. What ties it to the corrected bytes is the file
+  check above: the Dockerfile at the fix commit hashes to the locally proved one and is
+  in the strict form. Frontend, context or definition loading steps are not evidence. This rule stays file-wide, with no uniqueness check: BuildKit parses the
   whole Dockerfile before any stage, and a bad FROM in a stage nothing depends on fails
   the build with `dockerfile parse error on line 1` before any stage runs (`c8`), unlike
   Podman (`l9`, §6.3). The image-pull result of that FROM is recorded when visible.
@@ -721,7 +744,7 @@ Each class of recording needs the owner's **separate** permission for real runs.
 - **L-recordings (local Podman):** real builds of corrected Dockerfiles for run-1 and
   run-5, and the cases: a bad FROM in a later stage; several stages on the same image; a
   later failure after the corrected COPY.
-- **C-recordings (CI):** real `push` runs of fix commits on the polygon repository:
+- **C-recordings (CI):** real `workflow_dispatch` (polygon) runs of fix commits on the polygon repository:
   successful BuildKit forms (COPY header + `DONE`, `CACHED`, the FROM stage header), a run
   with a later independent failure, a re-run.
 

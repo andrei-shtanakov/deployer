@@ -28,7 +28,7 @@ from deployer.fix.document import FixDocument, load, save
 from deployer.fix.qualify import Qualified
 from deployer.forge import AttemptRead, Evidence, FailedJob, GhError
 from tests.fix.conftest import enable_for_test
-from tests.fix.test_ci_eval import FROM_OK, FROM_RECUR
+from tests.fix.test_ci_eval import FROM_BODY, FROM_RECUR_BODY
 from tests.fix.test_publish import _published
 
 AT = "2026-09-25T12:00:00+00:00"
@@ -42,7 +42,7 @@ _JOBS_RE = re.compile(r"/actions/runs/(\d+)/attempts/(\d+)/jobs\?")
 _LOGS_RE = re.compile(r"/actions/jobs/(\d+)/logs$")
 
 
-def ci_log(sha: str, build: str = FROM_OK) -> str:
+def ci_log(sha: str, build: str = FROM_BODY) -> str:
     """A job log: the checkout printing ``sha``, the build step, ``build``."""
     return "\n".join(
         [
@@ -208,7 +208,7 @@ class Fix:
 
     def recurred(self, run_id: int = 2) -> Run:
         """A run whose one attempt hit the same FROM parse error again."""
-        return Run(run_id, [Attempt(ci_log(self.commit, FROM_RECUR.format(n=1)))])
+        return Run(run_id, [Attempt(ci_log(self.commit, FROM_RECUR_BODY.format(n=1)))])
 
     def run(self, gh: CiGh) -> FixDocument:
         """One confirmation with ``gh`` and the fixed clock."""
@@ -338,7 +338,8 @@ def test_seam_confirms(fix: Fix) -> None:
     ]
     (record,) = attempt.evidence
     assert (record["run_id"], record["job_id"], record["positive"]) == (1, 101, True)
-    texts = [line["text"] for line in record["lines"]]
+    assert record["lines"] == []
+    texts = [line["text"] for line in record["log_lines"]]
     assert any("FROM docker.io/library/python:3.12-slim" in t for t in texts)
     assert doc.last_operation is not None
     assert doc.last_operation.result == "ci_confirmed"
@@ -350,9 +351,12 @@ def test_evidence_text_split_on_newline_only() -> None:
     not shift the recorded text off the evidence line number (review M1)."""
     job = FailedJob(101, "build", "success", [], [Evidence(101, "a\rb\nc\nd")])
     q = Qualified(1, 1, "build", "qualified", None, job, None)
-    e = ci_eval.AttemptEvidence((1, 1, "build"), "qualified", True, False, None, (2,))
-    record = confirm_mod._record(e, q)
+    e = ci_eval.AttemptEvidence(
+        (1, 1, "build"), "qualified", True, False, None, (2,), log_lines=(3,)
+    )
+    record = confirm_mod._record(e, q, {101: "x\ry\nz\nw"})
     assert record["lines"] == [{"line": 2, "text": "c"}]
+    assert record["log_lines"] == [{"line": 3, "text": "w"}]
 
 
 def test_recheck_contradicts(fix: Fix) -> None:
@@ -542,12 +546,37 @@ def test_dockerfile_unreadable(fix: Fix) -> None:
     """Ruling P: a Dockerfile the fix commit lacks is undetermined with the
     reason, before anything is listed; nothing raises."""
     target = {**fix.doc.input.target, "artifact_path": "no/such/Dockerfile"}
-    _set_input(fix, target=target)
+    build = {**fix.doc.input.build, "dockerfile": "no/such/Dockerfile"}
+    _set_input(fix, target=target, build=build)
     gh = fix.gh(fix.ok())
-    with enable_for_test(ROW):
-        doc = fix.run(gh)
+    doc = fix.run(gh)
     _insufficient(doc, ci_eval.UNDETERMINED)
     assert "Dockerfile not read at the fix commit" in _reason(doc)
+    assert gh.paths == []
+
+
+def test_dockerfile_path_not_the_bound_build(fix: Fix) -> None:
+    """Ruling V: ``target.artifact_path`` must be the bound build's
+    Dockerfile, else undetermined before anything is read."""
+    build = {**fix.doc.input.build, "dockerfile": "other/Dockerfile"}
+    _set_input(fix, build=build)
+    gh = fix.gh(fix.ok())
+    doc = fix.run(gh)
+    _insufficient(doc, ci_eval.UNDETERMINED)
+    assert "is not the bound build's 'other/Dockerfile'" in _reason(doc)
+    assert gh.paths == []
+
+
+def test_dockerfile_not_the_proved_one(fix: Fix) -> None:
+    """Ruling V: the Dockerfile at the fix commit must hash to the locally
+    proved bytes, else undetermined before anything is listed."""
+    proof = fix.doc.local_proof
+    assert proof is not None
+    fix.rewrite(local_proof=proof.model_copy(update={"dockerfile_sha256": "0" * 64}))
+    gh = fix.gh(fix.ok())
+    doc = fix.run(gh)
+    _insufficient(doc, ci_eval.UNDETERMINED)
+    assert "is not the locally proved one" in _reason(doc)
     assert gh.paths == []
 
 
