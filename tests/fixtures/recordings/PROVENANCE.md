@@ -71,7 +71,7 @@ Checksums: `CHECKSUMS.sha256` covers every file except itself and the recorder.
     `ubuntu-24.04` job runs the pinned `actions/checkout`, then
     `docker build --file ./Dockerfile .`, the build line of `polygon/run-1`.
 
-  `c6` has that build step twice. The branches stay on origin as evidence.
+  `c6` has that build step twice. The branches stayed on origin as evidence until 2026-09-26, when each was replaced by the tag `evidence/polygon-fix-c-<case>` on the same commit (owner) and deleted; the commits stay reachable through the tags.
 - **How:** `tests/fixtures/recordings/record_ci.py`. For each case it:
   - pushes the branch, refusing a branch that already exists;
   - checks that the SHA is not the head of any open PR (diagnosis spec §6.3);

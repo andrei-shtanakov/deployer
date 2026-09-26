@@ -27,7 +27,9 @@ Per case:
    parsing.
 
 A case directory that already exists is refused. Nothing is trimmed, edited
-or redacted.
+or redacted. Once a case's data is merged, its branch is replaced by the tag
+``evidence/polygon-fix-c-<case>`` on the same commit and deleted (the polygon
+convention since 2026-09-26: ``evidence/*`` tags, not long-lived branches).
 """
 
 import argparse
