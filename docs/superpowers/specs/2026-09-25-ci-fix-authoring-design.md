@@ -555,17 +555,48 @@ An attempt that could not be read far enough to be excluded is `undetermined`, n
 silently dropped: dropping it would let a positive attempt elsewhere hide a possible
 contradiction.
 
-### 7.3 CI positive evidence — closed, recording-backed (hypotheses until recorded)
+### 7.3 CI positive evidence — closed, recording-backed
 
-- **COPY/ADD (BuildKit):** exactly one step header whose instruction text is the
+A closed table of CI "passed" templates (BuildKit plain progress). Both CI rows are
+backed by the C-recordings (`tests/fixtures/recordings/ci`, real `workflow_dispatch`
+runs on the polygon, PR #98) and are enabled (owner, 2026-09-26; F4b); a row without a
+recording would be disabled → `templates not enabled`. What the recordings show, and
+every rule below relies on:
+
+- **The corrected Dockerfile first, file-wide.** The corrected Dockerfile's bytes at the
+  fix commit (read by the guarded chokepoint, like the workflow; unreadable → the
+  attempt is `qualification undetermined` with the reason) must pass the strict form
+  of §4 before any log line is read; a refusal → `binding ambiguous` with the gate's
+  reason. This holds for both kinds.
+- **COPY/ADD uniqueness in the Dockerfile** (the local rule of §6.3, unchanged): the
+  corrected text must occur exactly once among the corrected Dockerfile's COPY/ADD
+  instructions in the modelled form — the whole file passes the fix-wide reading checks,
+  and no instruction of the family holds `$`, a quote or a backslash or is a heredoc or
+  JSON form — else `binding ambiguous`, decided before the log is read. BuildKit also
+  skips a stage nothing depends on and prints no header for it, so an identical COPY in
+  a skipped stage must never make one printed header look unique.
+- **Padded step numbers.** BuildKit right-aligns the step number to the width of the
+  step count: `[stage-0  7/10]` (`c4`, `c9`); `[stage-0 7/9]` when both are one digit
+  (`c1`). The header is read only in that form: the spaces before `k` plus its digits
+  are exactly `len(n)` wide (the unpadded form when `k` is as wide as `n`), `k` has no
+  leading zero, and any other run of spaces, or a tab, is not a stage header. (`c7`
+  was meant to show padding, but `LABEL` is not a build step, so it prints nine steps
+  unpadded; it stays as recorded.)
+- **COPY/ADD (BuildKit):** exactly one stage header whose instruction text is the
   corrected instruction, and `#k DONE` for the same `k`. `#k CACHED` is **not** accepted
-  automatically. A missing or repeated `k` → `binding ambiguous`.
+  automatically. A missing or repeated `k` → `binding ambiguous`. A later failure of
+  another step (`c4`: `RUN false` after the corrected `COPY … DONE`) does not refute it
+  (§7.4).
 - **FROM (BuildKit):** the whole file parsed — a build-stage step exists and no
   `dockerfile parse error`; the evidence must bind unambiguously to the required build and
   the exact corrected bytes; frontend, context or definition loading steps are not
-  evidence. The image-pull result of that FROM is recorded when visible.
-
-Until recordings back a row it is disabled → `templates not enabled`.
+  evidence. This rule stays file-wide, with no uniqueness check: BuildKit parses the
+  whole Dockerfile before any stage, and a bad FROM in a stage nothing depends on fails
+  the build with `dockerfile parse error on line 1` before any stage runs (`c8`), unlike
+  Podman (`l9`, §6.3). The image-pull result of that FROM is recorded when visible.
+- A job log holding more than one build (the definition loaded twice, `#k` numbering
+  restarting) → `binding ambiguous`; `c6` shows it, though its two build steps already
+  leave the attempt `qualification undetermined` at §7.2.
 
 **Recurrence of the diagnosed defect** is an A template row of the admitted class, bound
 by A's binding rules (A §4.2) to the corrected instruction — same line span, the corrected
@@ -704,8 +735,9 @@ C-recordings a published proposal is never CI-confirmed.
 ## 10. Acceptance — offline
 
 **Test seam.** A production row is enabled only with its recording (§9): the two local
-rows are, on the L-recordings; the CI rows are not, so the CI happy path is unreachable in
-production. Tests reach a disabled row by injecting an **enabled synthetic row** through a
+rows are, on the L-recordings, and the two CI rows on the C-recordings
+(`tests/fix/test_ci_recordings.py` replays every case through forge, qualification,
+evidence and `fix confirm`). Tests reach a disabled row by injecting an **enabled synthetic row** through a
 test-only registry (not reachable from the CLI or configuration); the test that no
 production row is enabled without a recording (§9) guards the seam.
 
@@ -741,9 +773,9 @@ production row is enabled without a recording (§9) guards the seam.
   Without the seam, the local side runs on the enabled, recording-backed rows: P tests
   whose faked build prints the passing local template (the corrected instruction's step
   line, then the same stage's next step) end at `locally_confirmed`, and those whose
-  output does not end at `no local confirmation: <the matcher's reason>`. The CI side
-  still ends at the expected refusal `templates not enabled` — asserted outcomes, not
-  skips.
+  output does not end at `no local confirmation: <the matcher's reason>`. The CI rows are
+  enabled on the C-recordings too; their outcomes are asserted end to end, through
+  `fix confirm`, by `tests/fix/test_ci_recordings.py` — asserted outcomes, not skips.
 - **G (real local Git, offline — no model, no container builds):** the worktree leaves the
   user's checkout untouched; the commit contains exactly the §3 paths and change types; an
   extra changed file is refused by the full-diff check; a fix directory inside the clone
