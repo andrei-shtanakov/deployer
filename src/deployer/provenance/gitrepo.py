@@ -26,6 +26,19 @@ NO_LAZY_FETCH_ENV = {"GIT_NO_LAZY_FETCH": "1"}
 from the promisor remote (git >= 2.44; older git ignores it)."""
 REPLACE_REDIRECTING_ENV = ("GIT_REPLACE_REF_BASE",)
 """Inherited, this would point replace lookups at another ref namespace."""
+REDIRECTING_ENV = (
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_COMMON_DIR",
+    "GIT_NAMESPACE",
+    "GIT_PREFIX",
+)
+"""Variables that would point git at another repository, index or work tree
+than the one named by ``-C``; inherited (e.g. from a hook) they would
+silently redirect every command."""
 
 
 def guarded_git_env(base: Mapping[str, str] | None = None) -> dict[str, str]:
@@ -48,13 +61,15 @@ class GitError(Exception):
 def _git(path: Path, *args: str, ok: tuple[int, ...] = (0,)) -> bytes:
     """Run ``git <args>`` against the checkout at ``path``; return stdout.
     An exit code outside ``ok`` raises. Replace objects are off: an object
-    read is the object named."""
+    read is the object named; an inherited :data:`REDIRECTING_ENV` variable
+    is dropped, so ``path`` is the repository read."""
+    inherited = {k: v for k, v in os.environ.items() if k not in REDIRECTING_ENV}
     try:
         proc = subprocess.run(
             ["git", *NO_REPLACE_CONFIG, "-C", str(path), *args],
             capture_output=True,
             timeout=_TIMEOUT_S,
-            env=guarded_git_env(),
+            env=guarded_git_env(inherited),
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise GitError(f"git {args[0]} could not run: {exc}") from exc

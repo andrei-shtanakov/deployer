@@ -236,6 +236,10 @@ Only when all hold; otherwise authoring proceeds as before, publishes **no** set
 warns "ownership will not be confirmable":
 
 - the project is a Git checkout with an `origin` remote;
+- the checkout is not a partial clone (`extensions.partialClone` set, or a
+  `remote.<name>.promisor` that is not false): a missing blob would otherwise be
+  fetched from the promisor remote, since git older than 2.44 ignores
+  `GIT_NO_LAZY_FETCH`;
 - the working tree is clean **before authoring writes anything** — staged, unstaged and
   untracked changes all count, with no exception for files authoring is about to
   write (a hand-edited Dockerfile, compose or workflow is never silently allowed);
@@ -398,7 +402,7 @@ Re-signing with the test key where needed so the mutation reaches its step.
 ### 8.4 Authoring behaviour
 
 Tested as authoring behaviour (warning, no new set, old set removed), not as a verdict:
-not a Git checkout; no `origin` remote; dirty tree (staged / unstaged / untracked,
+not a Git checkout; no `origin` remote; a partial clone; dirty tree (staged / unstaged / untracked,
 including a hand-edited Dockerfile); a fact from an uncommitted file; no signing key;
 exclusion not provable; re-authoring without a new set removes the old one (pointer
 first). **Interrupted publication:**

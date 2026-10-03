@@ -43,6 +43,7 @@ from pathlib import Path
 from deployer.fix.binding import Bound, link_problem
 from deployer.provenance.gitrepo import (
     NO_REPLACE_CONFIG,
+    REDIRECTING_ENV,
     guarded_git_env,
     partial_clone_problem,
 )
@@ -86,19 +87,6 @@ _IDENTITY = {
     "GIT_COMMITTER_NAME": DEPLOYER_NAME,
     "GIT_COMMITTER_EMAIL": DEPLOYER_EMAIL,
 }
-# Variables that would point git at another repository, index or work tree
-# than the one named by ``-C``; inherited (e.g. from a hook) they would
-# silently redirect every command.
-_REDIRECTING_ENV = (
-    "GIT_DIR",
-    "GIT_WORK_TREE",
-    "GIT_INDEX_FILE",
-    "GIT_OBJECT_DIRECTORY",
-    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-    "GIT_COMMON_DIR",
-    "GIT_NAMESPACE",
-    "GIT_PREFIX",
-)
 
 
 class FixDirError(Exception):
@@ -491,7 +479,7 @@ def _run(
     inherited ``GIT_REPLACE_REF_BASE``), so a read returns the object named,
     never a ``refs/replace/*`` substitute; and ``GIT_NO_LAZY_FETCH=1`` makes
     a missing object an error, never a network fetch."""
-    environ = {k: v for k, v in os.environ.items() if k not in _REDIRECTING_ENV}
+    environ = {k: v for k, v in os.environ.items() if k not in REDIRECTING_ENV}
     environ = guarded_git_env({**environ, **(env or {})})
     overrides = [arg for item in g for arg in ("-c", item)]
     command = ["git", *NO_REPLACE_CONFIG, *overrides, "-C", str(cwd), *args]

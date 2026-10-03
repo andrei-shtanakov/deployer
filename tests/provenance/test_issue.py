@@ -81,13 +81,11 @@ def test_preflight_refuses_a_partial_clone(
     source = tmp_path / "src-repo"
     source.mkdir()
     subprocess.run(["git", "init", "-q", str(source)], check=True)
+    for name, value in (("user.name", "t"), ("user.email", "t@x")):
+        subprocess.run(["git", "-C", str(source), "config", name, value], check=True)
     (source / "pyproject.toml").write_text('[project]\nname = "p"\n')
     subprocess.run(["git", "-C", str(source), "add", "-A"], check=True)
-    subprocess.run(
-        ["git", "-C", str(source), "-c", "user.name=t", "-c", "user.email=t@x"]
-        + ["commit", "-qm", "init"],
-        check=True,
-    )
+    subprocess.run(["git", "-C", str(source), "commit", "-qm", "init"], check=True)
     partial = tmp_path / "partial"
     partial_clone(source, partial)
     reason = issue.preflight(partial, key)

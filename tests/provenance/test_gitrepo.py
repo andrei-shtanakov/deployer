@@ -115,3 +115,17 @@ def test_partial_clone_problem_reports_an_unreadable_configuration(
 ) -> None:
     reason = gitrepo.partial_clone_problem(tmp_path / "missing")
     assert reason is not None and "partial-clone configuration" in reason
+
+
+def test_partial_clone_problem_ignores_an_inherited_git_dir(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An inherited ``GIT_DIR`` (a hook, ``git rebase -x``) must not redirect
+    the read to another repository's configuration and pass a partial clone."""
+    other = tmp_path / "other"
+    other.mkdir()
+    subprocess.run(["git", "init", "-q", str(other)], check=True)
+    _git(repo, "config", "extensions.partialClone", "origin")
+    monkeypatch.setenv("GIT_DIR", str(other / ".git"))
+    reason = gitrepo.partial_clone_problem(repo)
+    assert reason is not None and "is a partial clone" in reason
