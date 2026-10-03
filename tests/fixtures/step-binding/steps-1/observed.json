@@ -13,7 +13,7 @@
       "job_log_line_110": "##[group]Run printf '%s-%s\\n' MARK s2-b"
     },
     "s4-composite": {
-      "fact": "the composite's inner steps open their own '##[group]Run ...' headers inside the outer step, between '##[start-action ...]' and '##[end-action ...;outcome=...]' runner lines; the zip files all of it under the outer API step 4"
+      "fact": "the composite's inner steps open their own '##[group]Run ...' headers inside the outer step, between '##[start-action ...]' and '##[end-action ...;outcome=...]' runner lines; the zip files all of it under the outer API step 4; the start-action display= value is percent-encoded where it holds '%' (display=Run printf '%25s-%25s\\n' MARK s4-inner-2 announces the header '##[group]Run printf '%s-%s\\n' MARK s4-inner-2'), so it equals neither the header nor the API step name"
     },
     "s5-spoof": {
       "fact": "line 113 is printed by step 3's own output (::group::), line 118 is the runner's header of step 4; after the timestamp they are byte-identical",

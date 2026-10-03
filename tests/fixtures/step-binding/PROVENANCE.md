@@ -63,7 +63,11 @@ here except itself and the recorder.
   step ends with `##[error]Process completed with exit code N.`
 - **Composite actions** open their own `##[group]Run …` headers inside the outer step,
   between runner lines `##[start-action display=…;id=…]` and
-  `##[end-action id=…;outcome=…;conclusion=…;duration_ms=…]`.
+  `##[end-action id=…;outcome=…;conclusion=…;duration_ms=…]`. The `display=` value is
+  neither the API step name nor the header: `%` arrives percent-encoded, so the inner
+  step whose header is `##[group]Run printf '%s-%s\n' MARK s4-inner-2` is announced as
+  `display=Run printf '%25s-%25s\n' MARK s4-inner-2`, while the sibling with no `%`
+  (`display=Run echo "::group::inner group s4"`) is not encoded.
 - **This run's archive has per-step files.** For each job it holds:
   - one top-level `<i>_<job>.txt`, equal to the job log;
   - `<job>/system.txt`;
