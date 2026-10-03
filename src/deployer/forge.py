@@ -25,7 +25,7 @@ ARCHIVE_TIMEOUT_S = 120.0
 DEFAULT_MAX_ARCHIVE_MB = 200
 """Default ``--max-archive-mb`` cap (spec §1.4) on a fetched source archive."""
 
-SNAPSHOT_SCHEMA_VERSION = "1.3"
+SNAPSHOT_SCHEMA_VERSION = "1.4"
 
 _PER_PAGE = 100
 _FAILED_CONCLUSIONS = frozenset({"failure", "timed_out"})
@@ -350,7 +350,10 @@ def dump_snapshot(run: FailedRun) -> str:
 
     Schema 1.3 adds ``workflow_ref_path``, ``workflow_path``, ``event`` on
     the run and ``all_steps`` on each job; additive like 1.1 and 1.2, so
-    older documents still load with them ``None``.
+    older documents still load with them ``None``. Schema 1.4 changes no
+    field, only attribution: job-log group headers are no ground for a step
+    binding, so a 1.4 snapshot's log blocks are all ``source=None``. An older
+    document keeps the sources it recorded; nothing rebinds them on load.
     """
     return _run_adapter.dump_json(run, indent=2).decode()
 
@@ -864,8 +867,8 @@ def build_failed_job(
     """A :class:`FailedJob` built from a job ``record`` and its ``log_text``.
 
     Only non-green steps are kept as ``steps`` (``all_steps`` keeps every
-    step); log blocks are bound to steps by exact title, and those bound to a
-    green step, plus ``annotations``, become job-level evidence.
+    step). Every log block and every annotation is job-level evidence; no
+    step is given evidence from the job log (:func:`_log_evidence`).
     """
     all_steps = list(record.get("steps") or [])
     step_infos = [
@@ -876,19 +879,17 @@ def build_failed_job(
         )
         for s in all_steps
     ]
-    step_evidence, job_evidence = _bind_log(log_text, job_id, all_steps)
     steps = [
         FailedStep(
             ref=StepRef(job_id, int(step["number"])),
             name=str(step.get("name", "")),
             conclusion=str(step.get("conclusion")),
-            evidence=step_evidence.pop(StepRef(job_id, int(step["number"])), []),
+            evidence=[],
         )
         for step in all_steps
         if step.get("conclusion") not in _GREEN_CONCLUSIONS
     ]
-    # Blocks bound to a green step: the step is not kept, the fact is.
-    job_evidence.extend(e for bound in step_evidence.values() for e in bound)
+    job_evidence = _log_evidence(log_text)
     job_evidence.extend(
         Evidence(source=job_id, text=str(a.get("message")), level=_level_of(a))
         for a in annotations
@@ -904,61 +905,42 @@ def build_failed_job(
     )
 
 
-def _bind_log(
-    log_text: str, job_id: int, steps: list[dict[str, Any]]
-) -> tuple[dict[StepRef, list[Evidence]], list[Evidence]]:
-    """Split a job log into blocks; bind a block to a step only by exact title.
+def _log_evidence(log_text: str) -> list[Evidence]:
+    """A job log's blocks, in log order, as job-level evidence (``source=None``).
 
-    A ``##[group]<title>`` block binds to the one step whose name is ``title``
-    or whose name is ``title`` minus the runner's ``Run `` prefix. Anything
-    else — other groups, lines outside a group, ambiguous titles — is
-    job-level evidence with ``source=None``.
+    A ``##[group]<title>`` header is no ground for binding a block to a step
+    (snapshot 1.4): a step's own output can print a group whose title is
+    byte-identical to the next step's runner header (recording ``steps-1``,
+    job ``s5-spoof``), and a named step's header is ``Run <first script
+    line>``, not its name (``s2-named``). The job log alone carries no
+    boundary its steps cannot forge.
     """
-    by_step: dict[StepRef, list[Evidence]] = {}
-    unbound: list[Evidence] = []
-    for title, lines in _split_blocks(log_text):
-        text = "\n".join(lines)
-        ref = _step_for_title(title, job_id, steps) if title is not None else None
-        if ref is None:
-            unbound.append(Evidence(source=None, text=text))
-        else:
-            by_step.setdefault(ref, []).append(Evidence(source=ref, text=text))
-    return by_step, unbound
+    return [
+        Evidence(source=None, text="\n".join(lines))
+        for lines in _split_blocks(log_text)
+    ]
 
 
-def _step_for_title(
-    title: str, job_id: int, steps: list[dict[str, Any]]
-) -> StepRef | None:
-    names = {title}
-    if title.startswith("Run "):
-        names.add(title.removeprefix("Run "))
-    matches = [s for s in steps if s.get("name") in names]
-    if len(matches) != 1:
-        return None
-    return StepRef(job_id, int(matches[0]["number"]))
-
-
-def _split_blocks(log_text: str) -> list[tuple[str | None, list[str]]]:
-    """Blocks of normalised lines: ``(group title | None, lines)``."""
-    blocks: list[tuple[str | None, list[str]]] = []
-    title: str | None = None
+def _split_blocks(log_text: str) -> list[list[str]]:
+    """Blocks of normalised lines, split at ``##[group]`` and after
+    ``##[endgroup]``; a block with no non-blank line is dropped."""
+    blocks: list[list[str]] = []
     current: list[str] = []
 
     def flush() -> None:
         if any(line.strip() for line in current):
-            blocks.append((title, current))
+            blocks.append(current)
 
     for raw in log_text.splitlines():
         line = RUNNER_LOG_TIMESTAMP_RE.sub("", raw, count=1)
         line = ANSI_CSI_RE.sub("", line)
         if line.startswith(RUNNER_GROUP_PREFIX):
             flush()
-            title = line.removeprefix(RUNNER_GROUP_PREFIX)
             current = [line]
         elif line == _ENDGROUP:
             current.append(line)
             flush()
-            title, current = None, []
+            current = []
         else:
             current.append(line)
     flush()

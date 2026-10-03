@@ -393,7 +393,10 @@ contract is this:
 1. **Facts** — `forge.py` reads a finished, failed run into a versioned `FailedRun`
    snapshot: identity, attempt fixed once, per-job and run-level `Completeness`, log
    blocks with the runner's `##[group]` binding where it exists and `source=None`
-   where it does not, annotations with their level as data. A `gh` failure without an
+   where it does not, annotations with their level as data. *(Superseded by snapshot
+   1.4: a `##[group]` title is no ground for a binding, and every job-log block is
+   `source=None` — a step's own output can print the next step's exact header; see
+   `tests/fixtures/step-binding/PROVENANCE.md`, job `s5-spoof`.)* A `gh` failure without an
    HTTP status propagates; a short jobs listing is an adapter error, never a partial
    snapshot.
 2. **Evidence completeness** — `EVIDENCE_UNAVAILABLE` is distinct from

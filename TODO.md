@@ -91,15 +91,14 @@ paragraph.
 - [ ] Widen CI COPY confirmation to multi-stage Dockerfiles, with its own C-recording @id:fix-ci-copy-multistage @trigger:"a real case needs it" @epic:eco.dark-factory
   Multi-stage COPY is refused on CI today: no recording shows `stage-<i>` numbering past
   0 or named multi-stage output (F4b, #100).
-- [ ] Stop binding job-log blocks to steps by `##[group]` title: a step's own output can forge the next step's header @owner:repo:deployer @id:forge-group-title-binding-spoofable @epic:eco.dark-factory
-  `_bind_log` gives a `##[group]<title>` block to the step whose name equals the title (or
-  the title minus `Run `). Recording `steps-1` (`tests/fixtures/step-binding/`, job
-  `s5-spoof`): step 3 prints `::group::` with step 4's exact header, the two header lines
-  are byte-identical after the timestamp, and today `MARK-s5-spoof` (step 3's output) is
-  bound to step 4 — a false `StepRef`. The job log alone cannot tell them apart, so the fix
-  is to bind nothing from it: every block becomes job-level, with a regression on `s5`.
-  More job-level evidence for now is the expected cost of dropping false precision.
-- [ ] Step-level log binding in forge from the per-attempt archive's per-step files, when present @owner:repo:deployer @id:forge-step-level-log-binding @blocked_by:todo://deployer/forge-group-title-binding-spoofable @epic:eco.dark-factory
+- [ ] Forge keeps the job log's leading UTF-8 BOM, so the first evidence line keeps its runner timestamp @owner:repo:deployer @id:forge-log-leading-bom @epic:eco.dark-factory
+  Every recorded job log starts with `\ufeff` before the first timestamp; `_split_blocks`
+  strips the timestamp with an anchored regex, which the BOM defeats, so the first block
+  reads `\ufeff2026-…Z Current runner version: …`. Found writing the `s5` regression
+  (`tests/test_forge.py`, compared from the second line on). `fix/ci_eval` already drops
+  the BOM in its own reader. Harmless for today's rules, but it is text forge did not
+  normalise.
+- [ ] Step-level log binding in forge from the per-attempt archive's per-step files, when present @owner:repo:deployer @id:forge-step-level-log-binding @epic:eco.dark-factory
   Today the diagnostic text (test output, build errors) lands as job-level evidence with
   `source=None`, and a verdict citing it carries "cited evidence is job-level". The step's
   output is in the job log after its header group's `##[endgroup]`, but the job log cannot
@@ -112,6 +111,9 @@ paragraph.
   sometimes present: absent, mismatched or ambiguous files bind nothing, and bound text is
   not repeated as job-level evidence. Needs its own spec (binary download; snapshot bump
   justified by attribution semantics; old snapshots keep their recorded `source`).
+  No consumer compares a stored snapshot's attribution with a fresh read today
+  (`fix confirm` reads job and log in one live call); one that does will need an
+  explicit compatibility policy for attribution semantics across snapshot versions.
   Sibling: "nothing was fetched" should be a `Completeness` state of its own instead of
   being inferred from `jobs == []` in `diagnose_run`. Second sibling: with two failed steps
   in one job and one unbound error block, both verdicts cite that same block; binding
@@ -224,6 +226,19 @@ them is the next thing to pick up.
 
 ## Shipped
 
+- [x] Stop binding job-log blocks to steps by `##[group]` title: a step's own output can forge the next step's header @owner:repo:deployer @id:forge-group-title-binding-spoofable @epic:eco.dark-factory
+  `_bind_log` gives a `##[group]<title>` block to the step whose name equals the title (or
+  the title minus `Run `). Recording `steps-1` (`tests/fixtures/step-binding/`, job
+  `s5-spoof`): step 3 prints `::group::` with step 4's exact header, the two header lines
+  are byte-identical after the timestamp, and today `MARK-s5-spoof` (step 3's output) is
+  bound to step 4 — a false `StepRef`. The job log alone cannot tell them apart, so the fix
+  is to bind nothing from it: every block becomes job-level, with a regression on `s5`.
+  More job-level evidence for now is the expected cost of dropping false precision.
+  Fixed: `_bind_log`/`_step_for_title` replaced by `_log_evidence` (every block job-level,
+  in log order); snapshot schema 1.4 (job-log group headers are no ground for a binding;
+  stored 1.3 documents keep their recorded `source`, unrebound); regression on the real
+  `s5` recording. `shape.job_text` became plain log order, so job-text coordinates in
+  `fix` moved — verified to cite the same lines as before (text pinned in the tests).
 - [x] Private imports across packages outside `fix` @owner:repo:deployer @id:private-imports-outside-fix @epic:eco.dark-factory
   `admission/templates.py` ← `reproduce.compare._error_blocks`, `bench.py` ← `author._deployer_git_sha`,
   `verify.py` ← `facts._normalize_requirement_name`. Same problem `fix-private-helpers-public` fixed
