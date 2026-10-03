@@ -1,13 +1,15 @@
 # Forge archive step binding — design ("bind a step's output only where the runner's own files prove it")
 
-**Status:** DRAFT rev 2. Designed with the owner on 2026-10-03: approach A was chosen,
+**Status:** DRAFT rev 2.1. Designed with the owner on 2026-10-03: approach A was chosen,
 then six refinements were applied before writing (§3.3, §4, §5.2, §6, §7, §9.3). Rev 2
 resolves the external review of rev 1 at `eadf587`
 (`../../../../_cowork_output/deployer-forge-archive-step-binding-spec-review-2026-10-03.md`,
 a dev-only workspace file: R1 the one-sided BOM in the boundary check, §4.3; R2
 undecodable step files before ownership, §4.2; R3 a bad-numbering fixture that could
 not reach its refusal, §9.2; and the capped subprocess lifecycle, §7.2). Next: the
-owner checks the rev 2 diff, then a plan. No code exists for this design.
+owner checks the rev 2 diff, then a plan. Rev 2 was approved for planning; rev 2.1
+makes discovery of step entries independent of name validation (§4.2), the review's
+non-blocking detail 2. No code exists for this design.
 **Item:** `todo://deployer/forge-step-level-log-binding`.
 **Base:** `master` @ `d612ad6`. The schema 1.4 baseline (#113): no job-log block is bound
 to a step. The recording `steps-1` (#112): `tests/fixtures/step-binding/`, with
@@ -128,18 +130,23 @@ evidence, exactly as today.
 
 ### 4.2 Matching first
 
-Every **step directory** is collected: the top-level path component of an entry
-`<dir>/<N>_<rest>.txt` where `N` is a decimal number. `<dir>/system.txt` and the
-top-level `<i>_<name>.txt` files are ignored.
+**Discovery is separate from validation.** Every top-level directory of the archive
+(the first path component of any entry that has one) is examined. Its entries other
+than `<dir>/system.txt` are its **step entries**. A directory with step entries is a
+step directory; a directory holding only `system.txt` is not one. Top-level files
+(`<i>_<name>.txt`) are ignored. No name pattern decides which entries count: a pattern
+used to discover entries would silently drop the malformed names that the next rule
+must see.
 
 **Before ownership, every step directory must be readable.** No owner can be named for
 a directory whose text cannot be built. Dropping that directory would let another one
 look unique, which resolves uncertainty by exclusion. So any of the following makes the
 whole archive `refused` and leaves every job unbound:
 
-- an entry in a step directory, other than `system.txt`, whose name is not
-  `<N>_<rest>.txt` with `N` canonical decimal: `0`, or a nonzero digit followed by
-  digits. `03` and `+3` are not canonical;
+- a step entry whose name is not `<N>_<rest>.txt` with `N` canonical decimal: `0`, or a
+  nonzero digit followed by digits. `03` and `+3` are not canonical, and neither is a
+  name without `<N>_`. A directory whose only step entries are such names refuses the
+  archive too: it is not quietly skipped as "no step directory";
 - two entries in one directory with the same `N`, which would leave the concatenation
   order undefined;
 - a step file that is not valid UTF-8.
@@ -404,6 +411,8 @@ Each case is built from the recording by a named transformation, under
 | step file not UTF-8 | one byte of a `s3-two-failures/` file set to `0xFF` | `refused` (§4.2); every job unbound |
 | unreadable beside a match | a non-UTF-8 copy of `s1`'s directory added under another name, while `s1`'s own stays intact and matching | `refused`; `s1` is not bound by excluding the unreadable directory |
 | repeated or non-canonical `N` | `s2-named/3_…` copied as `03_…`; separately, a second `4_…` entry with another name | `refused` (§4.2) |
+| `+N` name | `s2-named/3_…` copied as `+3_…` | `refused` (§4.2) |
+| only malformed names | an extra directory `extra/` holding only `+1_a.txt` and `x.txt` | `refused` (§4.2), not skipped as "no step directory" |
 | no per-step files | only top-level and `system.txt` entries kept | `absent`; every job `no_archive` |
 | duplicate entry | one name written twice | `refused` (duplicate) |
 | corrupt | central directory truncated | `refused` (corrupt) |
