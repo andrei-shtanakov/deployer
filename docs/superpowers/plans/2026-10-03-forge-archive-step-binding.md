@@ -30,7 +30,9 @@ approved for planning). Cited below as §N.
 - `SNAPSHOT_SCHEMA_VERSION` becomes `"1.5"`. Its new fields are additive and default to `None`, meaning "not attempted" (§6).
 - Unchanged by this plan: `read_attempt`, `fetch_archive`, `fix/*`, `reproduce/*`, `admission/*`, `diagnose.py`'s logic (only its docstrings' version), `verdict_schema_version`.
 - An HTTP-status `GhError` is data (an archive state). A status-less `GhError` propagates (§7.4).
-- Production `SubprocessGh` reads the archive. A runner without `api_bytes_capped` (every existing test fake) attempts no archive, which leaves the states `None`.
+- Production `SubprocessGh` reads the archive. A runner without `api_bytes_capped` (every existing test fake) attempts no archive, which leaves the states `None`. That is a supported limited capability (spec §8, rev 2.2), not a gap to paper over. **Every test of the binding path (Tasks 5–6) uses a capped runner** (`ArchiveFakeGh`, `Replay`). The older fakes never count as coverage of it.
+- Corruption boundary (spec §7.3, rev 2.2): central-directory checks apply to every entry; decompression and CRC run only on the step entries binding uses. A damaged top-level file or `system.txt` goes unnoticed, and Task 3 pins that.
+- The code blocks below are a starting point, not a mandate. If an implementer finds one wrong, they fix it against the spec and say so in their report.
 - The work happens on the branch `feat/forge-archive-step-binding`, which already holds the spec.
 - **Deviation from §9.2's wording:** the synthetic cases are derived at test time by named functions in `tests/step_binding_data.py`; no derived ZIPs are committed under `tests/fixtures/step-binding/synthetic/`. The derivation and its labels live in PROVENANCE's "Synthetic cases" section (Task 6). Derivations stay reviewable as code, and no binary escapes the checksums.
 
@@ -834,6 +836,22 @@ def test_a_duplicate_entry_name_refuses_the_archive() -> None:
 def test_a_truncated_archive_is_corrupt() -> None:
     blob = data.zip_of(data.archive_entries())
     assert "corrupt" in _refused(blob[: len(blob) - 100])
+
+
+def test_damage_inside_an_unread_entry_goes_unnoticed() -> None:
+    """Spec §7.3 (rev 2.2): ``system.txt`` and top-level files are never
+    decompressed, so a CRC mismatch inside one is not detected. Binding
+    never reads them."""
+    entries = [
+        ("s1-plain-fail/system.txt", b"SYSTEM-unique-payload\n"),
+        ("s1-plain-fail/3_x.txt", b"x\n"),
+    ]
+    blob = bytearray(data.zip_of(entries, method=zipfile.ZIP_STORED))
+    at = blob.find(b"SYSTEM-unique-payload")
+    blob[at] ^= 0x01
+    result = read_step_directories(bytes(blob))
+    assert not isinstance(result, ArchiveRefused)
+    assert [f.number for d in result for f in d.files] == [3]
 
 
 def test_a_crc_mismatch_is_corrupt() -> None:

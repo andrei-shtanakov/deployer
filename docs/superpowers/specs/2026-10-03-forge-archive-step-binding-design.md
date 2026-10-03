@@ -1,6 +1,6 @@
 # Forge archive step binding — design ("bind a step's output only where the runner's own files prove it")
 
-**Status:** DRAFT rev 2.1. Designed with the owner on 2026-10-03: approach A was chosen,
+**Status:** DRAFT rev 2.2. Designed with the owner on 2026-10-03: approach A was chosen,
 then six refinements were applied before writing (§3.3, §4, §5.2, §6, §7, §9.3). Rev 2
 resolves the external review of rev 1 at `eadf587`
 (`../../../../_cowork_output/deployer-forge-archive-step-binding-spec-review-2026-10-03.md`,
@@ -9,7 +9,9 @@ undecodable step files before ownership, §4.2; R3 a bad-numbering fixture that 
 not reach its refusal, §9.2; and the capped subprocess lifecycle, §7.2). Next: the
 owner checks the rev 2 diff, then a plan. Rev 2 was approved for planning; rev 2.1
 makes discovery of step entries independent of name validation (§4.2), the review's
-non-blocking detail 2. No code exists for this design.
+non-blocking detail 2. Rev 2.2 adds two contract points from the plan review: a runner
+without the capped download attempts nothing (§8), and the boundary of what a corrupt
+archive is detected by (§7.3). No code exists for this design.
 **Item:** `todo://deployer/forge-step-level-log-binding`.
 **Base:** `master` @ `d612ad6`. The schema 1.4 baseline (#113): no job-log block is bound
 to a step. The recording `steps-1` (#112): `tests/fixtures/step-binding/`, with
@@ -354,6 +356,14 @@ The archive is read in memory with `zipfile` and never extracted to disk.
 Each entry is decompressed through `ZipFile.open` in bounded chunks, so a limit is
 enforced against what actually decompresses, not against declared sizes.
 
+**What corruption is detected, and what is not.** Every check that reads only the
+central directory applies to **every** entry: the entry count, duplicate names, the
+encryption flag, the compression method and the declared size. Decompression, with its
+CRC check and limits, runs only on the **step entries** that binding uses. Top-level
+`<i>_<name>.txt` files and `<dir>/system.txt` are never decompressed, so damage inside
+one of them goes unnoticed. That is deliberate: binding never reads them, and the
+archive's text is never evidence (§2). A test pins this behaviour.
+
 ### 7.4 Failures
 
 As elsewhere in forge, an HTTP status is data about the run and a missing status is a
@@ -373,6 +383,12 @@ decides `unverifiable`.
   `verdict_schema_version` does not change, because the run snapshot is nested and
   versioned on its own.
 - No new CLI flag. The limits are constants (§7.1).
+- **A runner without the capped download** (`api_bytes_capped`) attempts no archive:
+  `archive` and every `step_binding` stay `None`, which means not attempted, exactly as
+  in an older snapshot. This is a supported limited capability, not an error. The
+  production runner, `SubprocessGh`, always has the capped download. Tests that exercise
+  binding (integration, acceptance) must use a capped runner, so that the older fakes,
+  which lack it, can never look like coverage of the new path.
 - `--output-file` and stored snapshots carry `archive` and `step_binding`, so an
   operator reading a job-level verdict can see why binding did not happen.
 
