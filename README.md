@@ -162,11 +162,11 @@ stdout carries the human-readable summary, stderr the diagnostics.
 `reproduction` section, `"1.3"` once an attempted reproduction adds an
 `admission` section — see below; independent of the report
 `schema_version` above); the run snapshot nested in it carries
-`snapshot_schema_version` (`"1.3"`). Verdict 1.1 is additive over 1.0: the
+`snapshot_schema_version` (`"1.4"`). Verdict 1.1 is additive over 1.0: the
 keys are the same, `causes` is always `[]` and `kind` always `null`; 1.2 adds
 only the `reproduction` key, so a document produced without `--reproduce` has
 the verdict's own keys unchanged from 1.1 — the nested `run` snapshot is
-schema 1.3 either way, so the document as a whole is not byte-identical to a
+schema 1.4 either way, so the document as a whole is not byte-identical to a
 1.1 one. Snapshot 1.1 added a per-job `completeness` — how
 that one job was read — beside the run-level worst-of; 1.2 added `level` on
 each piece of evidence: a GitHub annotation's raw `annotation_level`, and
@@ -175,7 +175,11 @@ its event and every job step (not only the failed ones) — inputs `--reproduce`
 needs to restore and bind the failed step, unused otherwise. All three are
 additive, so a stored 1.0/1.1/1.2 snapshot still loads — reading every job as
 completely read, every piece of evidence as level-less, and every
-reproduction-only field as absent.
+reproduction-only field as absent. 1.4 changes no field, only attribution: a
+job log's `##[group]` header is no ground for binding a block to a step (a
+step's own output can print the next step's exact header), so every job-log
+block is `source: null`; a stored 1.3 snapshot keeps the step bindings it
+recorded.
 
 Requires `gh` authenticated for the repository, and a `gh` new enough to
 support `gh api --allow-escape-sequences` (real build logs carry ANSI colour
