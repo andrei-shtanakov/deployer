@@ -11,10 +11,12 @@ import json
 import os
 import re
 import subprocess
+import threading
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from itertools import groupby
-from typing import Any, Literal, Protocol, TypeGuard
+from typing import IO, Any, Literal, Protocol, TypeGuard, runtime_checkable
 
 from pydantic import TypeAdapter
 
@@ -278,6 +280,89 @@ class GhBytesRunner(GhRunner, Protocol):
         ...
 
 
+@dataclass(frozen=True)
+class OverCap:
+    """``api_bytes_capped`` stopped reading: more than ``max_bytes`` arrived."""
+
+    max_bytes: int
+
+
+@runtime_checkable
+class GhCappedBytesRunner(GhRunner, Protocol):
+    """A runner whose binary download stops at a byte cap (spec §7.2)."""
+
+    def api_bytes_capped(
+        self, argv: list[str], *, timeout: float, max_bytes: int
+    ) -> bytes | OverCap:
+        """Stdout bytes, or :class:`OverCap`; raise :class:`GhError` on failure."""
+        ...
+
+
+STDERR_TAIL_BYTES = 64 * 1024
+"""How much of a capped call's stderr is kept: its tail, for the error message."""
+_CAPPED_CHUNK = 64 * 1024
+_TERMINATE_GRACE_S = 2.0
+_READER_JOIN_S = 5.0
+_POLL_S = 0.05
+
+
+class _StdoutReader(threading.Thread):
+    """Reads stdout in chunks until EOF or until more than ``max_bytes`` arrived.
+
+    The thread owns its pipe and closes it when it ends, so no other thread
+    can close the descriptor while a read on it is still in flight.
+    """
+
+    def __init__(self, pipe: IO[bytes], max_bytes: int) -> None:
+        super().__init__(daemon=True)
+        self._pipe = pipe
+        self._max = max_bytes
+        self.chunks: list[bytes] = []
+        self.size = 0
+        self.over = threading.Event()
+        self.error: Exception | None = None
+
+    def run(self) -> None:
+        """Append chunks until EOF or the cap; never decide anything."""
+        try:
+            fd = self._pipe.fileno()
+            while chunk := os.read(fd, _CAPPED_CHUNK):
+                self.size += len(chunk)
+                self.chunks.append(chunk)  # at most the cap plus one chunk
+                if self.size > self._max:
+                    self.over.set()
+                    return
+        except Exception as exc:  # surfaced by the caller, never swallowed
+            self.error = exc
+        finally:
+            self._pipe.close()
+
+
+class _StderrTail(threading.Thread):
+    """Drains stderr to EOF, keeping only its last ``STDERR_TAIL_BYTES``.
+
+    Like :class:`_StdoutReader`, the thread owns and closes its pipe.
+    """
+
+    def __init__(self, pipe: IO[bytes]) -> None:
+        super().__init__(daemon=True)
+        self._pipe = pipe
+        self.tail = bytearray()
+        self.error: Exception | None = None
+
+    def run(self) -> None:
+        """Drain to EOF, trimming to the tail after every chunk."""
+        try:
+            fd = self._pipe.fileno()
+            while chunk := os.read(fd, _CAPPED_CHUNK):
+                self.tail += chunk
+                del self.tail[:-STDERR_TAIL_BYTES]
+        except Exception as exc:  # surfaced by the caller, never swallowed
+            self.error = exc
+        finally:
+            self._pipe.close()
+
+
 def _gh_failure(what: str, returncode: int, stderr: str) -> GhError:
     """Map a nonzero ``gh api`` exit to a :class:`GhError`, HTTP status if any."""
     stderr = stderr.strip()
@@ -293,12 +378,51 @@ def _gh_env() -> dict[str, str]:
     return {**os.environ, "GH_PROMPT_DISABLED": "1", "GH_NO_UPDATE_NOTIFIER": "1"}
 
 
+def _await_exit(
+    proc: subprocess.Popen[bytes], over: threading.Event, deadline: float
+) -> Literal["exited", "over", "deadline"]:
+    """Wait for the child, an exceeded cap or the deadline, whichever is first.
+
+    Never reads a pipe: the readers do, so no blocking read holds off the
+    deadline.
+    """
+    while True:
+        if over.is_set():
+            return "over"
+        left = deadline - time.monotonic()
+        if left <= 0:
+            return "deadline"
+        try:
+            proc.wait(timeout=min(left, _POLL_S))
+            return "exited"
+        except subprocess.TimeoutExpired:
+            continue
+
+
+def _stop(proc: subprocess.Popen[bytes]) -> None:
+    """Terminate, wait a grace period, then kill; always reap.
+
+    ``Popen`` signals only a child it has not reaped yet, so a child that
+    exited meanwhile is never confused with a reused pid.
+    """
+    proc.terminate()
+    try:
+        proc.wait(timeout=_TERMINATE_GRACE_S)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+
+
 class SubprocessGh:
     """The real runner: ``gh api`` as an argument vector, never a shell."""
 
+    def __init__(self, command: Sequence[str] = ("gh",)) -> None:
+        """``command`` is the program run before ``api`` (``gh`` in production)."""
+        self._command = tuple(command)
+
     def api(self, argv: list[str], *, timeout: float) -> str:
         """Run ``gh api *argv`` under ``timeout`` with prompts disabled."""
-        cmd = ["gh", "api", *argv]
+        cmd = [*self._command, "api", *argv]
         what = " ".join(argv)
         try:
             proc = subprocess.run(
@@ -325,7 +449,7 @@ class SubprocessGh:
         ``gh``'s HTTP client follows the tarball endpoint's redirect. Same
         timeout and status mapping as :meth:`api`.
         """
-        cmd = ["gh", "api", *argv]
+        cmd = [*self._command, "api", *argv]
         what = " ".join(argv)
         try:
             proc = subprocess.run(
@@ -344,6 +468,73 @@ class SubprocessGh:
             stderr = (proc.stderr or b"").decode("utf-8", errors="replace")
             raise _gh_failure(what, proc.returncode, stderr)
         return proc.stdout
+
+    def api_bytes_capped(
+        self, argv: list[str], *, timeout: float, max_bytes: int
+    ) -> bytes | OverCap:
+        """``gh api *argv`` stdout, stopping once more than ``max_bytes`` arrived.
+
+        The whole lifecycle is owned here (spec §7.2): two reader threads, one
+        deadline in the calling thread, terminate → grace → kill → reap, and
+        both readers finished before any result is chosen, so a child that
+        exits before its last bytes are read can neither hide an exceeded cap
+        nor return partial output.
+        """
+        cmd = [*self._command, "api", *argv]
+        what = " ".join(argv)
+        deadline = time.monotonic() + timeout
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=_gh_env(),
+            )
+        except OSError as exc:
+            raise GhError(f"gh api could not start: {exc}") from exc
+        assert proc.stdout is not None and proc.stderr is not None
+        out = _StdoutReader(proc.stdout, max_bytes)
+        err = _StderrTail(proc.stderr)
+        try:
+            out.start()
+            err.start()
+            ended = _await_exit(proc, out.over, deadline)
+        finally:
+            if proc.returncode is None:
+                _stop(proc)
+            for pipe, reader in ((proc.stdout, out), (proc.stderr, err)):
+                if reader.ident is None:  # never started: nobody else closes it
+                    pipe.close()
+        returncode = proc.wait()  # already reaped: returns at once
+        for reader in (out, err):
+            reader.join(_READER_JOIN_S)
+        return _capped_result(what, timeout, max_bytes, returncode, ended, out, err)
+
+
+def _capped_result(
+    what: str,
+    timeout: float,
+    max_bytes: int,
+    returncode: int,
+    ended: Literal["exited", "over", "deadline"],
+    out: _StdoutReader,
+    err: _StderrTail,
+) -> bytes | OverCap:
+    """Choose the result of a reaped child once both readers have finished."""
+    if out.is_alive() or err.is_alive():
+        raise GhError(f"gh api {what}: an output reader did not finish")
+    for failure in (out.error, err.error):
+        if failure is not None:
+            raise GhError(f"gh api {what}: reading output failed: {failure}")
+    if out.over.is_set():
+        return OverCap(max_bytes)
+    if ended == "deadline":
+        raise GhError(f"gh api {what} timed out after {timeout}s")
+    if returncode != 0:
+        stderr = bytes(err.tail).decode("utf-8", errors="replace")
+        raise _gh_failure(what, returncode, stderr)
+    return b"".join(out.chunks)
 
 
 _run_adapter: TypeAdapter[FailedRun] = TypeAdapter(FailedRun)
