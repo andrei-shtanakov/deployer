@@ -156,3 +156,13 @@ def test_the_one_entry_limit() -> None:
 def test_the_total_limit() -> None:
     blob = data.zip_of(data.archive_entries())
     assert "total" in _refused(blob, ArchiveLimits(total=20_000))
+
+
+def test_a_strong_encryption_flag_refuses_the_archive() -> None:
+    blob = data.zip_of(data.archive_entries())
+    assert "encrypted" in _refused(_patch_central(blob, S2_FILE, flag_or=0x40))
+
+
+def test_a_patched_data_flag_refuses_the_archive() -> None:
+    blob = data.zip_of(data.archive_entries())
+    assert "unsupported" in _refused(_patch_central(blob, S2_FILE, flag_or=0x20))

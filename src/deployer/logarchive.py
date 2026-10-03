@@ -25,6 +25,8 @@ _CHUNK = 64 * 1024
 _METHODS = frozenset({zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED})
 _STEP_NAME_RE = re.compile(r"(0|[1-9][0-9]*)_[^/]*\.txt", re.DOTALL)
 _SYSTEM = "system.txt"
+_ENCRYPTED_BITS = 0x1 | 0x40  # traditional and strong encryption
+_PATCHED_BIT = 0x20  # compressed patched data
 
 
 @dataclass(frozen=True)
@@ -54,7 +56,13 @@ def read_step_directories(
     try:
         with zipfile.ZipFile(io.BytesIO(blob)) as archive:
             return _read(archive, limits)
-    except (zipfile.BadZipFile, zlib.error, EOFError, ValueError) as exc:
+    except (
+        zipfile.BadZipFile,
+        zlib.error,
+        EOFError,
+        ValueError,
+        NotImplementedError,
+    ) as exc:
         return ArchiveRefused(f"corrupt archive: {exc}")
 
 
@@ -71,8 +79,10 @@ def _check_entries(
     if repeated:
         return ArchiveRefused(f"duplicate entry name(s): {repeated}")
     for info in infos:
-        if info.flag_bits & 0x1:
+        if info.flag_bits & _ENCRYPTED_BITS:
             return ArchiveRefused(f"encrypted entry: {info.filename!r}")
+        if info.flag_bits & _PATCHED_BIT:
+            return ArchiveRefused(f"unsupported patched-data entry: {info.filename!r}")
         if info.compress_type not in _METHODS:
             return ArchiveRefused(
                 f"unsupported compression method {info.compress_type}: "
