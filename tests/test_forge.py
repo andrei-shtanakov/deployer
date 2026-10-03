@@ -11,6 +11,7 @@ import pytest
 
 from deployer.forge import (
     GH_TIMEOUT_S,
+    SNAPSHOT_SCHEMA_VERSION,
     AdapterRefusal,
     Completeness,
     Evidence,
@@ -24,6 +25,7 @@ from deployer.forge import (
     SubprocessGh,
     TreeEntry,
     TreeListing,
+    build_failed_job,
     dump_snapshot,
     fetch_archive,
     fetch_failed_run,
@@ -376,26 +378,74 @@ _LOG = "\n".join(
 )
 
 
-def test_group_titled_after_a_unique_step_is_bound_to_it(fake_gh):
+def test_a_group_titled_after_a_step_is_not_bound_to_it(fake_gh):
+    """A ``##[group]`` title is no ground for a binding (snapshot 1.4): a
+    step's own output can print the next step's exact header (recording
+    ``steps-1``, job ``s5-spoof``). Every block is job-level, in log order."""
     fake_gh.job_pages = [[job(1, steps=[step(1, "Run pytest -q"), step(2, "Test")])]]
     fake_gh.logs = _LOG
     snapshot = fetch_failed_run(RunRef("o/r", 1), attempt=1, runner=fake_gh)
     assert isinstance(snapshot, FailedRun)
     (kept,) = snapshot.jobs
-    by_step = {s.ref: s for s in kept.steps}
-    assert [e.text for e in by_step[StepRef(1, 1)].evidence] == [
-        "##[group]Run pytest -q\npytest -q\nshell: /usr/bin/bash -e {0}\n##[endgroup]"
-    ]
-    assert by_step[StepRef(1, 1)].evidence[0].source == StepRef(1, 1)
-    assert [e.text for e in by_step[StepRef(1, 2)].evidence] == [
-        "##[group]Run Test\nnamed step block\n##[endgroup]"
-    ]
+    assert all(not s.evidence for s in kept.steps)
     assert [e.text for e in kept.evidence] == [
         "Current runner version: '2.3'",
+        "##[group]Run pytest -q\npytest -q\nshell: /usr/bin/bash -e {0}\n##[endgroup]",
         "FAILED tests/test_x.py::test_y\n##[error]Process completed with exit code 1.",
+        "##[group]Run Test\nnamed step block\n##[endgroup]",
         "##[group]Post job cleanup\ncleanup\n##[endgroup]",
     ]
     assert all(e.source is None for e in kept.evidence)
+
+
+_STEP_BINDING = Path(__file__).parent / "fixtures" / "step-binding" / "steps-1"
+
+
+def _recorded_job(name: str) -> tuple[dict[str, Any], str]:
+    """A job record and its log as recorded in ``steps-1`` (``gh-calls.json``)."""
+    calls = json.loads((_STEP_BINDING / "gh-calls.json").read_text())
+    records = {
+        j["id"]: j
+        for c in calls
+        if "/jobs?" in c["argv"][-1] and "stdout" in c
+        for j in json.loads(c["stdout"])["jobs"]
+    }
+    for call in calls:
+        match = _LOGS_RE.search(call["argv"][-1])
+        if match and "stdout" in call and records[int(match.group(1))]["name"] == name:
+            return records[int(match.group(1))], call["stdout"]
+    raise AssertionError(name)
+
+
+def test_a_spoofed_group_header_binds_nothing_and_keeps_its_place():
+    """Recording ``steps-1``, job ``s5-spoof``: step 3 prints ``::group::``
+    with step 4's exact header, so its output ``MARK-s5-spoof`` used to be
+    bound to step 4. No step gets it now; it stays job-level evidence, and
+    every non-blank line of the log survives in log order."""
+    record, log = _recorded_job("s5-spoof")
+    kept = build_failed_job(
+        record, record["id"], log, [], Completeness("present", "absent")
+    )
+    assert [s.ref.number for s in kept.steps] == [3]
+    assert all(not s.evidence for s in kept.steps)
+    assert all(e.source is None for e in kept.evidence)
+    lines = [line for e in kept.evidence for line in e.text.split("\n")]
+    read = [
+        re.sub(r"\x1b\[[0-9;?]*[ -/]*[@-~]", "", re.sub(r"^\S+Z ", "", raw))
+        for raw in log.removeprefix("\ufeff").splitlines()
+    ]
+    # From the second line on: forge keeps the log's leading UTF-8 BOM, so its
+    # first line also keeps the runner timestamp (TODO forge-log-leading-bom).
+    assert [x for x in lines if x.strip()][1:] == [x for x in read if x.strip()][1:]
+    header = "##[group]Run printf '%s-%s\\n' MARK s5-next"
+    order = [
+        lines.index(header),
+        lines.index("MARK-s5-spoof"),
+        lines.index("AssertionError: probe-s5"),
+        len(lines) - 1 - lines[::-1].index(header),
+        lines.index("MARK-s5-next"),
+    ]
+    assert order == sorted(order) and len(set(order)) == len(order)
 
 
 def test_ambiguous_step_name_is_not_bound(fake_gh):
@@ -407,8 +457,8 @@ def test_ambiguous_step_name_is_not_bound(fake_gh):
     assert [e.source for e in snapshot.jobs[0].evidence] == [None]
 
 
-def test_block_bound_to_a_green_step_stays_as_job_evidence(fake_gh):
-    """The step is not kept, but the block and its real binding are."""
+def test_a_group_titled_after_a_green_step_is_unbound_job_evidence(fake_gh):
+    """The green step is not kept; its header block stays, bound to nothing."""
     fake_gh.job_pages = [
         [job(1, steps=[step(1, "Checkout", "success"), step(2, "Test")])]
     ]
@@ -420,7 +470,7 @@ def test_block_bound_to_a_green_step_stays_as_job_evidence(fake_gh):
     assert [s.ref for s in snapshot.jobs[0].steps] == [StepRef(1, 2)]
     assert snapshot.jobs[0].evidence == [
         Evidence(
-            source=StepRef(1, 1),
+            source=None,
             text="##[group]Run Checkout\nwith: fetch-depth 1\n##[endgroup]",
         )
     ]
@@ -431,7 +481,8 @@ def test_group_without_endgroup_runs_to_the_end(fake_gh):
     fake_gh.logs = f"{_TS}##[group]Run Test\n{_TS}one\n{_TS}two"
     snapshot = fetch_failed_run(RunRef("o/r", 1), attempt=1, runner=fake_gh)
     assert isinstance(snapshot, FailedRun)
-    assert [e.text for e in snapshot.jobs[0].steps[0].evidence] == [
+    assert snapshot.jobs[0].steps[0].evidence == []
+    assert [e.text for e in snapshot.jobs[0].evidence] == [
         "##[group]Run Test\none\ntwo"
     ]
 
@@ -484,8 +535,8 @@ def test_log_block_evidence_carries_no_level(fake_gh):
     fake_gh.logs = f"{_TS}##[group]Run Test\n{_TS}one\n{_TS}##[endgroup]\n{_TS}two"
     snapshot = fetch_failed_run(RunRef("o/r", 1), attempt=1, runner=fake_gh)
     assert isinstance(snapshot, FailedRun)
-    assert snapshot.jobs[0].steps[0].evidence[0].level is None
-    assert [e.level for e in snapshot.jobs[0].evidence] == [None]
+    assert snapshot.jobs[0].steps[0].evidence == []
+    assert [e.level for e in snapshot.jobs[0].evidence] == [None, None]
 
 
 # --- completeness -----------------------------------------------------------
@@ -652,7 +703,7 @@ def test_ansi_colour_is_stripped_from_log_evidence(fake_gh):
     assert all_evidence
     assert not any("\x1b" in e.text for e in all_evidence)
     (kept,) = snapshot.jobs
-    assert "docker build --file ./Dockerfile ." in kept.steps[0].evidence[0].text
+    assert "docker build --file ./Dockerfile ." in kept.evidence[0].text
 
 
 # --- versioned serialization -------------------------------------------------
@@ -666,7 +717,7 @@ def test_snapshot_round_trips_through_versioned_json(fake_gh):
     assert isinstance(snapshot, FailedRun)
     text = dump_snapshot(snapshot)
     document = json.loads(text)
-    assert document["snapshot_schema_version"] == "1.3"
+    assert document["snapshot_schema_version"] == "1.4"
     assert document["jobs"][0]["completeness"] == {
         "logs": "present",
         "annotations": "present",
@@ -675,8 +726,49 @@ def test_snapshot_round_trips_through_versioned_json(fake_gh):
     assert restored == snapshot
     sources = {type(e.source) for j in restored.jobs for e in j.evidence}
     assert sources == {type(None), int}
-    assert restored.jobs[0].steps[0].evidence[0].source == StepRef(1, 1)
     assert restored.jobs[0].evidence[-1].level == "failure"
+
+
+def test_a_1_3_snapshot_keeps_its_recorded_step_bindings():
+    """1.4 changes how forge attributes a log, not what a stored snapshot
+    says: a 1.3 document's ``StepRef`` sources load as recorded, unrebound."""
+    bound = Evidence(source=StepRef(1, 1), text="##[group]Run pytest -q")
+    run = FailedRun(
+        "o/r",
+        1,
+        1,
+        "sha",
+        "url",
+        [
+            FailedJob(
+                1,
+                "j",
+                "failure",
+                [FailedStep(StepRef(1, 1), "s", "failure", [bound])],
+                [bound],
+            )
+        ],
+        Completeness("present", "absent"),
+        snapshot_schema_version="1.3",
+    )
+    restored = load_snapshot(dump_snapshot(run))
+    assert restored.snapshot_schema_version == "1.3"
+    assert restored.jobs[0].steps[0].evidence == [bound]
+    assert restored.jobs[0].evidence == [bound]
+
+
+def test_a_document_without_a_version_loads_as_the_current_one():
+    """Pinned as it is: the field defaults to ``SNAPSHOT_SCHEMA_VERSION``, so
+    a document missing it reads as current. ``dump_snapshot`` always writes
+    it; only a hand-made or foreign document can lack it."""
+    document = json.loads(
+        dump_snapshot(
+            FailedRun("o/r", 1, 1, "sha", "url", [], Completeness("present", "absent"))
+        )
+    )
+    del document["snapshot_schema_version"]
+    restored = load_snapshot(json.dumps(document))
+    assert restored.snapshot_schema_version == SNAPSHOT_SCHEMA_VERSION == "1.4"
 
 
 def test_a_schema_1_0_snapshot_still_loads(fake_gh):
@@ -748,7 +840,7 @@ def test_snapshot_types_construct_positionally():
     refusal = AdapterRefusal("not_failed", "conclusion is success")
     assert refusal.reason == "not_failed"
     run = FailedRun("o/r", 1, 1, "sha", "url", [], Completeness("present", "absent"))
-    assert run.snapshot_schema_version == "1.3"
+    assert run.snapshot_schema_version == "1.4"
     assert FailedJob(1, "j", "failure", [], []).steps == []
     assert FailedStep(StepRef(1, 1), "s", "failure", []).ref.number == 1
     assert Evidence(None, "a line").level is None

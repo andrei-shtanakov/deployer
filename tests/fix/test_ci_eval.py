@@ -23,7 +23,7 @@ from deployer.fix.ci_eval import (
 from deployer.fix.qualify import Qualification, Qualified
 from deployer.forge import Completeness, FailedJob, build_failed_job
 from deployer.reproduce.buildline import BuildConfig
-from deployer.reproduce.shape import Shape
+from deployer.reproduce.shape import Shape, job_text
 from tests.fix.conftest import enable_for_test
 
 COPY = "COPY docs/setup.md ./setup.md"
@@ -227,8 +227,20 @@ def test_copy_recurrence_same_span() -> None:
     got = _copy(_copy_recur())
     assert (got.positive, got.recurred) == (False, True)
     assert got.detail == "defect recurred at lines 11-11"
-    # Admission, in the job text: header 2, ``#12 ERROR`` 3, block 4-7.
-    assert got.lines == (2, 3, 4, 5, 6, 7)
+    # Admission, in the job text: header 4, ``#12 ERROR`` 5, block 6-9.
+    assert got.lines == (4, 5, 6, 7, 8, 9)
+    q = _q(_copy_recur())
+    assert q.job is not None
+    text = job_text(q.job).split("\n")
+    cited = [text[n - 1] for n in got.lines]
+    assert cited[0] == "#12 [extra 7/9] COPY docs/setup.md ./setup.md"
+    assert cited[1].startswith("#12 ERROR: failed to calculate checksum of ref ")
+    assert cited[2:] == [
+        "Dockerfile:11",
+        "--------------------",
+        "  11 | >>> COPY docs/setup.md ./setup.md",
+        "--------------------",
+    ]
     # Template, in the log as read: header 4, ``#12 ERROR`` 5.
     assert got.log_lines == (4, 5)
 
@@ -1111,9 +1123,13 @@ def test_ab_success_with_a_failing_vertex_refused() -> None:
 
 def test_ab_build_step_not_unique_refused() -> None:
     """Two listed steps with the build step's number: ``_build_step`` binds
-    no conclusion. End to end this refuses earlier, at the job-text rebuild
-    (``undetermined``); the assertion pins which path is reached so a change
-    that let a twin supply a conclusion would show here (#100 review)."""
+    no conclusion, so the template has no section: ``binding_ambiguous``,
+    never positive. Before snapshot 1.4 this refused earlier, at the
+    job-text rebuild (``undetermined``), because the twin changed which step
+    a group title bound to; forge binds no title now, so the rebuild agrees
+    and the refusal is the template's. The assertion pins which path is
+    reached so a change that let a twin supply a conclusion would show here
+    (#100 review)."""
     job = _job(COPY_OK)
     assert job.all_steps is not None
     twin = replace(job.all_steps[2], conclusion="success")
@@ -1121,5 +1137,7 @@ def test_ab_build_step_not_unique_refused() -> None:
     assert ci_eval._build_step(q) is None
     got = _copy(COPY_OK, q=q)
     assert not got.positive
-    assert got.qualification == "undetermined"
+    assert got.qualification == "qualified"
+    assert got.template == "binding_ambiguous"
+    assert got.detail == "the bound build step has no runner group title"
     assert evaluate([got], True)[0] == INSUFFICIENT

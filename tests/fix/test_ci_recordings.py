@@ -73,7 +73,7 @@ _UNREAD = (
     'Get "https://api.github.com/repos/andrei-shtanakov/deployer/actions/jobs/'
     '108113903561/logs": net/http: TLS handshake timeout'
 )
-_RECUR_C5 = (134, 135, 153, 154, 155, 156, 157, 158, 159, 160, 161)
+_RECUR_C5 = (150, 151, 169, 170, 171, 172, 173, 174, 175, 176, 177)
 _PASS = ("qualified", "passed", True, False, ())
 _UNQUALIFIED = ("undetermined", None, False, False, (), ())
 INSUFFICIENT = "ci_confirmation_insufficient"
@@ -142,7 +142,7 @@ EXPECTED: dict[str, tuple[list[Attempt], str, str | None]] = {
                 "not_confirmed",
                 False,
                 True,
-                (104,),
+                (120,),
                 (120,),
                 "defect recurred at lines 1-1",
             )
@@ -154,8 +154,8 @@ EXPECTED: dict[str, tuple[list[Attempt], str, str | None]] = {
 }
 
 TEMPLATE: dict[str, tuple[str, tuple[int, ...], str | None]] = {
-    "c6-copy-cached": ("binding_ambiguous", (95, 198), "several builds in log"),
-    "c8-from-bad-in-skipped-stage": ("not_confirmed", (104,), "dockerfile parse error"),
+    "c6-copy-cached": ("binding_ambiguous", (111, 214), "several builds in log"),
+    "c8-from-bad-in-skipped-stage": ("not_confirmed", (120,), "dockerfile parse error"),
 }
 """``match_ci`` straight on the job text, where the pipeline hides it: ``c6``
 never reaches the template (qualification), ``c8``'s recurrence overrides the
@@ -305,6 +305,44 @@ def test_template_on_the_job_text(name: str) -> None:
         case.kind, case.corrected, job_text(job), dockerfile=case.dockerfile
     )
     assert (outcome.evidence, outcome.lines, outcome.detail) == TEMPLATE[name]
+
+
+CITED_TEXT: dict[str, tuple[tuple[int, ...], tuple[str, ...]]] = {
+    "c5-copy-recurred": (
+        _RECUR_C5[:3],
+        (
+            "#12 [stage-0 7/9] COPY docs/guide/setup.md ./setup.md",
+            "#12 ERROR: failed to calculate checksum of ref ",
+            "Dockerfile:11",
+        ),
+    ),
+    "c8-from-bad-in-skipped-stage": (
+        (120,),
+        (
+            "ERROR: failed to build: failed to solve: dockerfile parse error "
+            "on line 1: FROM requires either one or three ",
+        ),
+    ),
+}
+"""What the job-text coordinates of ``EXPECTED``/``TEMPLATE`` point at, as
+line prefixes. The coordinates moved when forge stopped binding blocks by
+group title (snapshot 1.4); the text they cite did not, and this pins it."""
+
+
+@pytest.mark.parametrize("name", sorted(CITED_TEXT), ids=["c5", "c8"])
+def test_cited_job_text_lines_are_the_build_errors(name: str) -> None:
+    case = _case(name)
+    gh = case.replay()
+    runs = list_runs_for_sha(case.env["repo"], case.env["sha"], gh)
+    assert not isinstance(runs, str)
+    read = read_attempt(case.env["repo"], runs[0], 1, gh)
+    assert read.jobs is not None
+    (job,) = read.jobs
+    text = job_text(job).split("\n")
+    numbers, prefixes = CITED_TEXT[name]
+    assert len(numbers) == len(prefixes)
+    for number, prefix in zip(numbers, prefixes, strict=True):
+        assert text[number - 1].startswith(prefix), (number, text[number - 1])
 
 
 def test_padding_is_what_c4_and_c9_print() -> None:

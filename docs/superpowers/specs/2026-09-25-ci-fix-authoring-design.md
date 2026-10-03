@@ -584,7 +584,10 @@ every rule below relies on:
 - **The bound build step's own section only.** The template reads only the part of the
   job log that the build step printed. The bound header is exactly one runner group
   header `##[group]Run <bound build line>` (the build step's name as the jobs API gives
-  it). The section is the lines after the first `##[endgroup]` that follows that header:
+  it). *(Recording `steps-1`, job `s5-spoof`: a step's own output can print a header
+  byte-identical to a later step's. Requiring exactly one such header refuses that
+  recorded shape — it reads as two headers — but does not prove this reader safe from
+  every forgery a step's output can print.)* The section is the lines after the first `##[endgroup]` that follows that header:
   the runner's echo of the script, `shell:` and `env:` is not build output, and an
   `env:` value with newlines prints untimestamped continuation lines there (review N2).
   The section runs the first line that starts what follows the build step: any `##[group]` line,
