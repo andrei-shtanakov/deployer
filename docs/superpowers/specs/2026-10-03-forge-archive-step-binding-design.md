@@ -414,8 +414,10 @@ job, `job_text` equals its no-archive `job_text` byte for byte (§5.3).
 
 ### 9.2 Synthetic, derived from `steps-1` and labelled as such
 
-Each case is built from the recording by a named transformation, under
-`tests/fixtures/step-binding/synthetic/`, with PROVENANCE stating the derivation.
+Each case is built from the recording at test time by a named transformation in
+`tests/step_binding_data.py`; no derived file is committed, and PROVENANCE's "Synthetic
+cases" section states the derivation (a plan decision: the derivations stay reviewable
+as code and no binary escapes the checksums).
 
 | Case | Derivation | Expected |
 |---|---|---|
