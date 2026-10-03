@@ -11,10 +11,14 @@ import json
 import os
 import re
 import subprocess
+from collections.abc import Sequence
 from dataclasses import dataclass, field
+from itertools import groupby
 from typing import Any, Literal, Protocol, TypeGuard
 
 from pydantic import TypeAdapter
+
+from deployer.stepbinding import StepSpan
 
 GH_TIMEOUT_S = 30.0
 """Wall-clock budget for one ``gh api`` invocation."""
@@ -863,12 +867,16 @@ def build_failed_job(
     log_text: str,
     annotations: list[dict[str, Any]],
     completeness: Completeness,
+    *,
+    spans: Sequence[StepSpan] = (),
 ) -> FailedJob:
     """A :class:`FailedJob` built from a job ``record`` and its ``log_text``.
 
     Only non-green steps are kept as ``steps`` (``all_steps`` keeps every
     step). Every log block and every annotation is job-level evidence; no
-    step is given evidence from the job log (:func:`_log_evidence`).
+    step is given evidence from the job log (:func:`_log_evidence`). ``spans``
+    (spec §4) bind log lines to steps; without them every log block is
+    job-level.
     """
     all_steps = list(record.get("steps") or [])
     step_infos = [
@@ -889,7 +897,7 @@ def build_failed_job(
         for step in all_steps
         if step.get("conclusion") not in _GREEN_CONCLUSIONS
     ]
-    job_evidence = _log_evidence(log_text)
+    job_evidence = _log_evidence(log_text, job_id, spans)
     job_evidence.extend(
         Evidence(source=job_id, text=str(a.get("message")), level=_level_of(a))
         for a in annotations
@@ -905,43 +913,53 @@ def build_failed_job(
     )
 
 
-def _log_evidence(log_text: str) -> list[Evidence]:
-    """A job log's blocks, in log order, as job-level evidence (``source=None``).
+def _log_evidence(
+    log_text: str, job_id: int, spans: Sequence[StepSpan] = ()
+) -> list[Evidence]:
+    """A job log's blocks, in log order, as evidence.
 
     A ``##[group]<title>`` header is no ground for binding a block to a step
     (snapshot 1.4): a step's own output can print a group whose title is
     byte-identical to the next step's runner header (recording ``steps-1``,
     job ``s5-spoof``), and a named step's header is ``Run <first script
-    line>``, not its name (``s2-named``). The job log alone carries no
-    boundary its steps cannot forge.
+    line>``, not its name (``s2-named``). Only ``spans`` bind: boundaries the
+    per-attempt archive proved (spec §4). A block that crosses a boundary is
+    cut at it; every piece keeps all its lines, blank ones included, so the
+    pieces of a block join back to the block and ``job_text`` never depends on
+    binding (spec §5.3). Lines outside every span stay ``source=None``.
     """
-    return [
-        Evidence(source=None, text="\n".join(lines))
-        for lines in _split_blocks(log_text)
-    ]
+    owner = {i: span.number for span in spans for i in range(span.start, span.end)}
+    evidence: list[Evidence] = []
+    for block in _split_blocks(log_text):
+        for number, piece in groupby(block, key=lambda item: owner.get(item[0])):
+            source = None if number is None else StepRef(job_id, number)
+            text = "\n".join(line for _, line in piece)
+            evidence.append(Evidence(source=source, text=text))
+    return evidence
 
 
-def _split_blocks(log_text: str) -> list[list[str]]:
-    """Blocks of normalised lines, split at ``##[group]`` and after
-    ``##[endgroup]``; a block with no non-blank line is dropped."""
-    blocks: list[list[str]] = []
-    current: list[str] = []
+def _split_blocks(log_text: str) -> list[list[tuple[int, str]]]:
+    """Blocks of ``(splitlines index, normalised line)``, split at
+    ``##[group]`` and after ``##[endgroup]``; a block with no non-blank line
+    is dropped."""
+    blocks: list[list[tuple[int, str]]] = []
+    current: list[tuple[int, str]] = []
 
     def flush() -> None:
-        if any(line.strip() for line in current):
+        if any(line.strip() for _, line in current):
             blocks.append(current)
 
-    for raw in log_text.splitlines():
+    for index, raw in enumerate(log_text.splitlines()):
         line = RUNNER_LOG_TIMESTAMP_RE.sub("", raw, count=1)
         line = ANSI_CSI_RE.sub("", line)
         if line.startswith(RUNNER_GROUP_PREFIX):
             flush()
-            current = [line]
+            current = [(index, line)]
         elif line == _ENDGROUP:
-            current.append(line)
+            current.append((index, line))
             flush()
             current = []
         else:
-            current.append(line)
+            current.append((index, line))
     flush()
     return blocks
