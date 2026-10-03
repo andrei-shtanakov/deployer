@@ -101,6 +101,11 @@ paragraph.
 - [ ] "Nothing was fetched" as a `Completeness` state of its own instead of being inferred from `jobs == []` in `diagnose_run` @owner:repo:deployer @id:forge-nothing-fetched-state @epic:eco.dark-factory
 - [ ] Record a real repeated attempt of the step-binding polygon run (`steps-1b`, spec §9.3) @owner:github:andrei-shtanakov @id:step-binding-rerun-recording @trigger:"the owner permits one rerun of 37115427715" @epic:eco.dark-factory
   Without it, the repeated-attempt check is synthetic only (spec §9.2, "attempt mixing").
+- [ ] With two failed steps in one job, both verdicts cite the same unbound block @owner:repo:deployer @id:forge-unbound-block-shared-across-steps @epic:eco.dark-factory
+  `_evidence_pool` gives every unbound (`source=None`) block to every failed step of its
+  job, so whenever step binding does not happen (no archive, refused, unverifiable,
+  unmatched, ambiguous, malformed) two failed steps cite the same error block. Binding
+  removes it only for the blocks it proves (spec §5.2).
 - [ ] Rule-catalogue precision for `diagnose.py`: over-firing prose markers and missed shapes, driven by fixtures @owner:repo:deployer @id:diagnose-rule-catalogue-precision @epic:eco.dark-factory
   Known over-firers (acceptable in the first slice, recorded by review): `failed to fetch`
   (jest's `TypeError: Failed to fetch`), `connection timed out` / `503` printed by tests that
@@ -214,6 +219,10 @@ them is the next thing to pick up.
   their recorded `source`); acceptance on the real `steps-1` recording
   (`tests/test_step_binding_acceptance.py`, spec §9.1) plus synthetic cases (§9.2).
   The "nothing fetched" sibling and the `steps-1b` rerun are open items above.
+  Still open as a design constraint: no consumer compares a stored snapshot's attribution
+  with a fresh read today (`fix confirm` reads job and log in one live call); one that does
+  will need an explicit compatibility policy for attribution semantics across snapshot
+  versions.
 
 - [x] Stop binding job-log blocks to steps by `##[group]` title: a step's own output can forge the next step's header @owner:repo:deployer @id:forge-group-title-binding-spoofable @epic:eco.dark-factory
   `_bind_log` gives a `##[group]<title>` block to the step whose name equals the title (or
