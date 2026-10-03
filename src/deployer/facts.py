@@ -76,7 +76,7 @@ _DIR_DENYLIST = frozenset(
 )
 
 
-def _normalize_requirement_name(raw: str) -> str:
+def normalize_requirement_name(raw: str) -> str:
     """PEP 503-ish normalization: name only, lowercase, underscores to dashes."""
     name = _REQ_NAME_SPLIT.split(raw.strip(), maxsplit=1)[0]
     return name.lower().replace("_", "-")
@@ -96,7 +96,7 @@ def _parse_requirements(path: Path) -> list[str]:
         if stripped.startswith("-"):
             entries.append(stripped)
             continue
-        name = _normalize_requirement_name(stripped)
+        name = normalize_requirement_name(stripped)
         if name and _VALID_NAME.match(name):
             entries.append(name)
     return entries

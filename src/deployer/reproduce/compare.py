@@ -53,7 +53,7 @@ def ci_instruction(job_text: str) -> InstructionRef | None:
         return InstructionRef(
             kind="parse", lines=(line, line), bound_by="buildkit_parse_error"
         )
-    spans = _error_blocks(job_text.splitlines())
+    spans = buildkit_error_blocks(job_text.splitlines())
     if len(spans) != 1:
         return None
     return InstructionRef(kind="span", lines=spans[0], bound_by="buildkit_error_block")
@@ -244,7 +244,7 @@ def _normalise_builder_error(line: str) -> str:
     return _REF_TOKEN_RE.sub("ref <ref>:", line)
 
 
-def _error_blocks(lines: list[str]) -> list[tuple[int, int]]:
+def buildkit_error_blocks(lines: list[str]) -> list[tuple[int, int]]:
     spans: list[tuple[int, int]] = []
     for i, line in enumerate(lines):
         if not _BLOCK_HEAD_RE.match(line.strip()):

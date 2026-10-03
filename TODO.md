@@ -91,10 +91,6 @@ paragraph.
 - [ ] Widen CI COPY confirmation to multi-stage Dockerfiles, with its own C-recording @id:fix-ci-copy-multistage @trigger:"a real case needs it" @epic:eco.dark-factory
   Multi-stage COPY is refused on CI today: no recording shows `stage-<i>` numbering past
   0 or named multi-stage output (F4b, #100).
-- [ ] Private imports across packages outside `fix` @id:private-imports-outside-fix @epic:eco.dark-factory
-  `admission/templates.py` ← `reproduce.compare._error_blocks`, `bench.py` ← `author._deployer_git_sha`,
-  `verify.py` ← `facts._normalize_requirement_name`. Same problem `fix-private-helpers-public` fixed
-  inside `fix`: rename to meaningful public names, no aliases.
 - [ ] Step-level log binding in forge: read the run-level log archive so a step's OUTPUT is bound to its StepRef, not only its `##[group]` header block @owner:repo:deployer @id:forge-step-level-log-binding @epic:eco.dark-factory
   Today `actions/jobs/{id}/logs` gives no line→step binding beyond the runner's `##[group]Run
   <name>` block, so the diagnostic text (test output, build errors) lands as honest job-level
@@ -213,6 +209,12 @@ them is the next thing to pick up.
 
 ## Shipped
 
+- [x] Private imports across packages outside `fix` @owner:repo:deployer @id:private-imports-outside-fix @epic:eco.dark-factory
+  `admission/templates.py` ← `reproduce.compare._error_blocks`, `bench.py` ← `author._deployer_git_sha`,
+  `verify.py` ← `facts._normalize_requirement_name`. Same problem `fix-private-helpers-public` fixed
+  inside `fix`: rename to meaningful public names, no aliases.
+  Fixed: `normalize_requirement_name`, `deployer_git_sha`, `buildkit_error_blocks`
+  (the last names what it finds: BuildKit's `<file>:<N>` + `---` blocks).
 - [x] `deployer author --signing-key` reads blobs without the partial-clone refusal @owner:repo:deployer @id:author-partial-clone-refusal @epic:eco.dark-factory
   `provenance/issue.py` reads blobs through `gitrepo` with only `GIT_NO_LAZY_FETCH=1`; on git older
   than 2.44 a partial clone would still lazy-fetch, and on newer git it surfaces as a raw

@@ -15,16 +15,16 @@ matched whole (``re.fullmatch``), never by substring. Digit groups are ASCII
 expected as R produces it (``shape.job_text``: ANSI codes and timestamps
 already stripped by ``forge``).
 
-R's ``compare._error_blocks`` (private, reproduce package) is the authority on
-the ``Dockerfile:<N>`` blocks; this module only locates their lines for
-evidence and refuses when the two readings disagree.
+R's ``compare.buildkit_error_blocks`` is the authority on the ``Dockerfile:<N>``
+blocks; this module only locates their lines for evidence and refuses when the
+two readings disagree.
 """
 
 import re
 from dataclasses import dataclass
 from typing import Literal
 
-from deployer.reproduce.compare import _error_blocks
+from deployer.reproduce.compare import buildkit_error_blocks
 from deployer.reproduce.dockerfile import normalise
 
 Ambiguous = Literal["ambiguous"]
@@ -257,10 +257,10 @@ def _copy_block(lines: list[str]) -> _Block | None:
 
 
 def _r_blocks(lines: list[str]) -> list[tuple[int, int]] | None:
-    """R's ``_error_blocks``, or ``None`` when its own ``int()`` fails on an
-    over-long ``>>>`` line number (it reads ``\\d+`` unbounded)."""
+    """R's ``buildkit_error_blocks``, or ``None`` when its own ``int()`` fails on
+    an over-long ``>>>`` line number (it reads ``\\d+`` unbounded)."""
     try:
-        return _error_blocks(lines)
+        return buildkit_error_blocks(lines)
     except ValueError:
         return None
 
