@@ -91,19 +91,34 @@ paragraph.
 - [ ] Widen CI COPY confirmation to multi-stage Dockerfiles, with its own C-recording @id:fix-ci-copy-multistage @trigger:"a real case needs it" @epic:eco.dark-factory
   Multi-stage COPY is refused on CI today: no recording shows `stage-<i>` numbering past
   0 or named multi-stage output (F4b, #100).
-- [ ] Step-level log binding in forge: read the run-level log archive so a step's OUTPUT is bound to its StepRef, not only its `##[group]` header block @owner:repo:deployer @id:forge-step-level-log-binding @epic:eco.dark-factory
-  Today `actions/jobs/{id}/logs` gives no line→step binding beyond the runner's `##[group]Run
-  <name>` block, so the diagnostic text (test output, build errors) lands as honest job-level
-  evidence with `source=None` and every live verdict carries "cited evidence is job-level".
-  The per-attempt zip (`actions/runs/{id}/attempts/{n}/logs`) has one file per step and would
-  give the exact binding; it is a binary download, a different subprocess contract from the
-  text endpoint, hence its own slice. Sibling: "nothing was fetched" should be a `Completeness`
-  state of its own instead of being inferred from `jobs == []` in `diagnose_run`.
-  Second sibling: with two failed steps in one job and one unbound error block, both verdicts
-  cite that same block, so the operator reads the same error twice — step binding removes the
-  duplication at its root. (The third, per-job `Completeness` so ONE job's unreadable log no
-  longer erases a sibling's established cause, is DONE: `FailedJob.completeness`, snapshot
-  schema 1.1.)
+- [ ] Stop binding job-log blocks to steps by `##[group]` title: a step's own output can forge the next step's header @owner:repo:deployer @id:forge-group-title-binding-spoofable @epic:eco.dark-factory
+  `_bind_log` gives a `##[group]<title>` block to the step whose name equals the title (or
+  the title minus `Run `). Recording `steps-1` (`tests/fixtures/step-binding/`, job
+  `s5-spoof`): step 3 prints `::group::` with step 4's exact header, the two header lines
+  are byte-identical after the timestamp, and today `MARK-s5-spoof` (step 3's output) is
+  bound to step 4 — a false `StepRef`. The job log alone cannot tell them apart, so the fix
+  is to bind nothing from it: every block becomes job-level, with a regression on `s5`.
+  More job-level evidence for now is the expected cost of dropping false precision.
+- [ ] Step-level log binding in forge from the per-attempt archive's per-step files, when present @owner:repo:deployer @id:forge-step-level-log-binding @blocked_by:todo://deployer/forge-group-title-binding-spoofable @epic:eco.dark-factory
+  Today the diagnostic text (test output, build errors) lands as job-level evidence with
+  `source=None`, and a verdict citing it carries "cited evidence is job-level". The step's
+  output is in the job log after its header group's `##[endgroup]`, but the job log cannot
+  carry a trustworthy boundary (see `forge-group-title-binding-spoofable`). The per-attempt
+  archive (`actions/runs/{id}/attempts/{n}/logs`) can: in `steps-1` it holds one
+  `<job>/<API step number>_<name>.txt` per step, and per job the step files add up to the
+  job log as text (BOM and runner timestamps aside), which ties a directory to a `job_id`
+  by content rather than by name. Archive composition differs between recorded runs —
+  two earlier ones held no per-step files — and the cause is unknown, so the source is
+  sometimes present: absent, mismatched or ambiguous files bind nothing, and bound text is
+  not repeated as job-level evidence. Needs its own spec (binary download; snapshot bump
+  justified by attribution semantics; old snapshots keep their recorded `source`).
+  Sibling: "nothing was fetched" should be a `Completeness` state of its own instead of
+  being inferred from `jobs == []` in `diagnose_run`. Second sibling: with two failed steps
+  in one job and one unbound error block, both verdicts cite that same block; binding
+  removes the duplication only for blocks it proves (`_evidence_pool` still gives every
+  unbound block to every step). (The third, per-job `Completeness` so ONE job's unreadable
+  log no longer erases a sibling's established cause, is DONE: `FailedJob.completeness`,
+  snapshot schema 1.1.)
 - [ ] Rule-catalogue precision for `diagnose.py`: over-firing prose markers and missed shapes, driven by fixtures @owner:repo:deployer @id:diagnose-rule-catalogue-precision @epic:eco.dark-factory
   Known over-firers (acceptable in the first slice, recorded by review): `failed to fetch`
   (jest's `TypeError: Failed to fetch`), `connection timed out` / `503` printed by tests that
