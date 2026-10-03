@@ -1,0 +1,15 @@
+name: probe
+description: composite probe for step binding
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        echo "::group::inner group s4"
+        printf '%s-%s\n' MARK s4-inner-1
+        echo "::endgroup::"
+    - shell: bash
+      run: |
+        printf '%s-%s\n' MARK s4-inner-2
+        printf '%s: %s\n' AssertionError probe-s4
+        exit 1
