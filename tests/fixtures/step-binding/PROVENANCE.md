@@ -94,3 +94,14 @@ here except itself and the recorder.
 
 A truncated log could not be produced honestly at this cost. Its handling is to be
 covered by a synthetic test, labelled as such.
+
+## Synthetic cases
+
+The step-binding tests also run on cases derived from `steps-1`. They are built at test
+time by named functions in `tests/step_binding_data.py` (`renamed`, `without`, `edited`,
+`foreign_runner`, `zip_of`), and no derived file is committed. Every derived case is a
+transformation of the recorded entries or logs, named by its test. None of them is a
+recording. `foreign_runner` replaces the `Worker ID` and temporary `HOME` lines, the
+lines that differ between real runs, as a stand-in for another attempt's archive; it is
+not one. Annotations were not recorded, because `read_attempt` does not read them, so
+the acceptance replay serves them empty.
