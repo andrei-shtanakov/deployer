@@ -12,6 +12,8 @@ from deployer.provenance.model import TreeRow
 
 _TIMEOUT_S = 60
 _SLUG_RE = re.compile(r"[:/]([^/:]+)/([^/]+?)(?:\.git)?/?$")
+_PARTIAL_KEYS_RE = r"^(extensions\.partialclone|remote\..*\.promisor)$"
+_FALSE_VALUES = frozenset({"false", "no", "off", "0"})
 
 
 NO_REPLACE_CONFIG = ("-c", "core.useReplaceRefs=false")
@@ -24,6 +26,19 @@ NO_LAZY_FETCH_ENV = {"GIT_NO_LAZY_FETCH": "1"}
 from the promisor remote (git >= 2.44; older git ignores it)."""
 REPLACE_REDIRECTING_ENV = ("GIT_REPLACE_REF_BASE",)
 """Inherited, this would point replace lookups at another ref namespace."""
+REDIRECTING_ENV = (
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_COMMON_DIR",
+    "GIT_NAMESPACE",
+    "GIT_PREFIX",
+)
+"""Variables that would point git at another repository, index or work tree
+than the one named by ``-C``; inherited (e.g. from a hook) they would
+silently redirect every command."""
 
 
 def guarded_git_env(base: Mapping[str, str] | None = None) -> dict[str, str]:
@@ -43,19 +58,22 @@ class GitError(Exception):
     """A git command failed; the message names it."""
 
 
-def _git(path: Path, *args: str) -> bytes:
+def _git(path: Path, *args: str, ok: tuple[int, ...] = (0,)) -> bytes:
     """Run ``git <args>`` against the checkout at ``path``; return stdout.
-    Replace objects are off: an object read is the object named."""
+    An exit code outside ``ok`` raises. Replace objects are off: an object
+    read is the object named; an inherited :data:`REDIRECTING_ENV` variable
+    is dropped, so ``path`` is the repository read."""
+    inherited = {k: v for k, v in os.environ.items() if k not in REDIRECTING_ENV}
     try:
         proc = subprocess.run(
             ["git", *NO_REPLACE_CONFIG, "-C", str(path), *args],
             capture_output=True,
             timeout=_TIMEOUT_S,
-            env=guarded_git_env(),
+            env=guarded_git_env(inherited),
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise GitError(f"git {args[0]} could not run: {exc}") from exc
-    if proc.returncode != 0:
+    if proc.returncode not in ok:
         stderr = proc.stderr.decode(errors="replace").strip()
         raise GitError(f"git {args[0]} failed: {stderr}")
     return proc.stdout
@@ -77,6 +95,28 @@ def toplevel(path: Path) -> Path:
     need to handle that, since a race is always possible.
     """
     return Path(_git(path, "rev-parse", "--show-toplevel").decode().strip())
+
+
+def partial_clone_problem(path: Path) -> str | None:
+    """Why ``path`` is refused as a partial clone, or ``None`` if it is not.
+
+    Partial means ``extensions.partialClone`` is set or any
+    ``remote.<name>.promisor`` is not false: a missing blob would be fetched
+    lazily, and git older than 2.44 ignores ``GIT_NO_LAZY_FETCH``. An
+    unreadable configuration is refused too. Never raises."""
+    try:
+        listed = _git(path, "config", "-z", "--get-regexp", _PARTIAL_KEYS_RE, ok=(0, 1))
+    except GitError as exc:
+        return f"cannot read the partial-clone configuration: {exc}"
+    for entry in filter(None, listed.split(b"\0")):
+        key, _, value = entry.decode(errors="replace").partition("\n")
+        if key.startswith("remote.") and value.strip().lower() in _FALSE_VALUES:
+            continue
+        return (
+            f"{path} is a partial clone ({key}={value}): a missing object would "
+            "be fetched from the promisor remote"
+        )
+    return None
 
 
 def git_path(path: Path, name: str) -> Path:

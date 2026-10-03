@@ -91,11 +91,6 @@ paragraph.
 - [ ] Widen CI COPY confirmation to multi-stage Dockerfiles, with its own C-recording @id:fix-ci-copy-multistage @trigger:"a real case needs it" @epic:eco.dark-factory
   Multi-stage COPY is refused on CI today: no recording shows `stage-<i>` numbering past
   0 or named multi-stage output (F4b, #100).
-- [ ] `deployer author --signing-key` reads blobs without the partial-clone refusal @id:author-partial-clone-refusal @epic:eco.dark-factory
-  `provenance/issue.py` reads blobs through `gitrepo` with only `GIT_NO_LAZY_FETCH=1`; on git older
-  than 2.44 a partial clone would still lazy-fetch, and on newer git it surfaces as a raw
-  `GitError` rather than a clear refusal. `fix` refuses partial clones explicitly; authoring
-  does not (found reviewing the tech-debt PR).
 - [ ] Private imports across packages outside `fix` @id:private-imports-outside-fix @epic:eco.dark-factory
   `admission/templates.py` ← `reproduce.compare._error_blocks`, `bench.py` ← `author._deployer_git_sha`,
   `verify.py` ← `facts._normalize_requirement_name`. Same problem `fix-private-helpers-public` fixed
@@ -218,6 +213,14 @@ them is the next thing to pick up.
 
 ## Shipped
 
+- [x] `deployer author --signing-key` reads blobs without the partial-clone refusal @owner:repo:deployer @id:author-partial-clone-refusal @epic:eco.dark-factory
+  `provenance/issue.py` reads blobs through `gitrepo` with only `GIT_NO_LAZY_FETCH=1`; on git older
+  than 2.44 a partial clone would still lazy-fetch, and on newer git it surfaces as a raw
+  `GitError` rather than a clear refusal. `fix` refuses partial clones explicitly; authoring
+  does not (found reviewing the tech-debt PR).
+  Fixed: `issue.preflight` refuses a partial clone before the first object read;
+  `partial_clone_problem` moved from `fix/workspace.py` to `provenance/gitrepo.py`,
+  which owns `GIT_NO_LAZY_FETCH`, so `fix` imports it from there.
 - [x] `reproduce/shape.py:131` catches only `yaml.YAMLError`; a bad YAML date raises `ValueError` @id:reproduce-shape-yaml-date-valueerror @epic:eco.dark-factory
   `_load`'s `except yaml.YAMLError` does not cover a malformed YAML date scalar, which
   `yaml.safe_load` raises as a bare `ValueError` — an unhandled exception out of a

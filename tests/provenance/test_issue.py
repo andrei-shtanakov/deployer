@@ -12,6 +12,7 @@ import pytest
 
 from deployer.provenance import gitrepo, issue, sshsig
 from deployer.provenance.model import POINTER, SET_ROOT, Record, sha256_hex
+from tests.fix.conftest import partial_clone
 from tests.provenance.conftest import make_key
 
 DOCKERFILE = "FROM python:3.12-slim\nCOPY src ./src\n"
@@ -67,6 +68,28 @@ def test_preflight_refusals(
     (repo_with_origin / "Dockerfile").write_text("hand edit\n")  # untracked
     reason = issue.preflight(repo_with_origin, key)
     assert isinstance(reason, str) and "dirty" in reason
+
+
+def test_preflight_refuses_a_partial_clone(
+    tmp_path: Path, keypair: tuple[Path, str]
+) -> None:
+    """A real ``--filter=blob:none`` clone is refused before any blob is
+    read: on git < 2.44 ``GIT_NO_LAZY_FETCH`` is ignored and the read would
+    fetch from the promisor remote; on newer git it would fail as a raw
+    ``GitError`` instead of a refusal."""
+    key, _ = keypair
+    source = tmp_path / "src-repo"
+    source.mkdir()
+    subprocess.run(["git", "init", "-q", str(source)], check=True)
+    for name, value in (("user.name", "t"), ("user.email", "t@x")):
+        subprocess.run(["git", "-C", str(source), "config", name, value], check=True)
+    (source / "pyproject.toml").write_text('[project]\nname = "p"\n')
+    subprocess.run(["git", "-C", str(source), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(source), "commit", "-qm", "init"], check=True)
+    partial = tmp_path / "partial"
+    partial_clone(source, partial)
+    reason = issue.preflight(partial, key)
+    assert isinstance(reason, str) and "is a partial clone" in reason
 
 
 def test_preflight_refuses_outside_the_repository_root(
