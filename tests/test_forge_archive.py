@@ -1,4 +1,7 @@
-"""Archive states and the wiring in ``fetch_failed_run`` (spec §1, §4.1, §6, §7.4)."""
+"""Archive states and the wiring in ``fetch_failed_run``.
+
+Spec §1, §4.1, §6, §7.4.
+"""
 
 import json
 from dataclasses import dataclass, field
@@ -23,6 +26,7 @@ from tests.test_forge import _LOGS_RE, Call, FakeGh, job, step
 
 TS = "2026-10-03T10:08:54.1234567Z "
 LOG = f"\ufeff{TS}setup\n{TS}##[group]Run a\n{TS}a-cmd\n{TS}##[endgroup]\n{TS}a-out\n"
+_STEP_2 = f"\ufeff{TS}##[group]Run a\n{TS}a-cmd\n{TS}##[endgroup]\n{TS}a-out\n"
 ARCHIVE_PATH = "repos/o/r/actions/runs/1/attempts/1/logs"
 
 
@@ -60,10 +64,7 @@ def _bound_archive() -> bytes:
             ("0_job-1.txt", LOG.encode()),
             ("job-1/system.txt", b"runner\n"),
             ("job-1/1_Set up job.txt", f"\ufeff{TS}setup\n".encode()),
-            (
-                "job-1/2_Run a.txt",
-                f"\ufeff{TS}##[group]Run a\n{TS}a-cmd\n{TS}##[endgroup]\n{TS}a-out\n".encode(),
-            ),
+            ("job-1/2_Run a.txt", _STEP_2.encode()),
         ]
     )
 
@@ -111,9 +112,48 @@ def test_the_archive_request_names_the_resolved_attempt() -> None:
 def test_an_http_error_makes_the_archive_unavailable() -> None:
     run = _run(_gh(GhError("gh api … failed: Not Found (HTTP 404)", 404)))
     assert run.archive is not None and run.archive.state == "unavailable"
-    assert (run.archive.reason or "").startswith("HTTP 404")
+    reason = run.archive.reason or ""
+    assert reason.startswith("HTTP 404") and reason.count("404") == 1
     assert run.jobs[0].step_binding is not None
     assert run.jobs[0].step_binding.state == "no_archive"
+
+
+def test_no_kept_job_means_no_archive_attempt() -> None:
+    gh = _gh(_bound_archive())
+    gh.job_pages = [[job(2, conclusion="success")]]
+    gh.logs_by_job = {2: f"{TS}other\n"}
+    run = _run(gh)
+    assert run.archive is None and run.jobs == []
+    assert gh.archive_calls == []
+
+
+def test_a_malformed_green_job_record_is_a_status_less_error() -> None:
+    gh = _gh(_bound_archive())
+    gh.job_pages = [
+        [*gh.job_pages[0], job(2, conclusion="success", steps=[{"name": "x"}])]
+    ]
+    with pytest.raises(GhError) as caught:
+        _run(gh)
+    assert caught.value.status is None
+
+
+def test_kept_job_states_are_checked_before_any_green_log_is_read() -> None:
+    gh = _gh(_bound_archive())
+    gh.job_pages = [[job(2, conclusion="success"), *gh.job_pages[0]]]
+    gh.logs_by_job = {1: GhError("gh api … failed (HTTP 404)", 404)}
+    run = _run(gh)
+    assert [j.step_binding.state for j in run.jobs if j.step_binding] == [
+        "unverifiable"
+    ]
+    assert not [c for c in gh.calls if c.argv[-1].endswith("jobs/2/logs")]
+
+
+def test_a_status_less_error_on_a_green_log_propagates() -> None:
+    gh = _gh(_bound_archive())
+    gh.job_pages = [[*gh.job_pages[0], job(2, conclusion="success")]]
+    gh.logs_by_job = {2: GhError("gh api … timed out after 30.0s", None)}
+    with pytest.raises(GhError):
+        _run(gh)
 
 
 def test_a_status_less_error_propagates() -> None:

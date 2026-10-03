@@ -30,6 +30,13 @@ PRELUDE = (
 )
 
 
+PRELUDE_IGNORING_SIGTERM = (
+    "import os, sys, time, signal\n"
+    "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+    "open(os.environ['PIDFILE'], 'w').write(str(os.getpid()))\n"
+)
+
+
 def _gh(script: str) -> SubprocessGh:
     return SubprocessGh(command=(sys.executable, "-c", PRELUDE + script))
 
@@ -42,6 +49,9 @@ def pidfile(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 def _assert_reaped(pidfile: Path) -> None:
+    deadline = time.monotonic() + 5
+    while not pidfile.exists() and time.monotonic() < deadline:
+        time.sleep(0.05)
     pid = int(pidfile.read_text())
     with pytest.raises(ChildProcessError):
         os.waitpid(pid, os.WNOHANG)  # already reaped: not our child any more
@@ -110,13 +120,17 @@ def test_a_silent_child_times_out(pidfile: Path) -> None:
 
 
 def test_a_child_ignoring_sigterm_is_killed(pidfile: Path) -> None:
-    gh = _gh("signal.signal(signal.SIGTERM, signal.SIG_IGN)\ntime.sleep(60)")
+    # SIG_IGN is installed before the pidfile is written; the 3 s timeout
+    # leaves slow interpreter start-up room before SIGTERM is sent.
+    gh = SubprocessGh(
+        command=(sys.executable, "-c", PRELUDE_IGNORING_SIGTERM + "time.sleep(60)")
+    )
     start = time.monotonic()
     with pytest.raises(GhError):
-        gh.api_bytes_capped(["x"], timeout=1.0, max_bytes=100)
+        gh.api_bytes_capped(["x"], timeout=3.0, max_bytes=100)
     elapsed = time.monotonic() - start
     # SIGTERM was ignored, so the full 2 s grace passed before the kill.
-    assert 1.0 + 2 <= elapsed < 1.0 + 2 + 3
+    assert 3.0 + 2 <= elapsed < 3.0 + 2 + 3
     _assert_reaped(pidfile)
 
 

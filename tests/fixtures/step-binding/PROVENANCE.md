@@ -90,6 +90,15 @@ here except itself and the recorder.
   Steps-1's archive did not change over 40 minutes, but that does not prove the files
   are durable.
 
+  Later observation (2026-10-03): run 37115427715 attempt 1 (`steps-1`) held 50
+  entries, per-step files included, when downloaded at 10:09:20Z and again at
+  10:49:56Z (the run completed at 10:08:59Z). Downloaded again at 18:44:12Z it held 12
+  entries: only `<i>_<job>.txt` and `<job>/system.txt`, no per-step files. So the same
+  run's archive lost its per-step files somewhere between about 40 minutes and about
+  8.5 hours after completion. Together with run 37109766941 (none at about 80 and 100
+  minutes) this makes age the strongest candidate, but the window is not measured and
+  age is not proven to be the cause.
+
 ## Not recorded
 
 A truncated log could not be produced honestly at this cost. Its handling is to be

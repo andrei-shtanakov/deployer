@@ -101,6 +101,18 @@ paragraph.
 - [ ] "Nothing was fetched" as a `Completeness` state of its own instead of being inferred from `jobs == []` in `diagnose_run` @owner:repo:deployer @id:forge-nothing-fetched-state @epic:eco.dark-factory
 - [ ] Record a real repeated attempt of the step-binding polygon run (`steps-1b`, spec §9.3) @owner:github:andrei-shtanakov @id:step-binding-rerun-recording @trigger:"the owner permits one rerun of 37115427715" @epic:eco.dark-factory
   Without it, the repeated-attempt check is synthetic only (spec §9.2, "attempt mixing").
+  It must be captured within the per-step-file retention window
+  (`step-archive-retention-window`), or its archive will hold no per-step files.
+- [ ] Measure how long per-step files stay in the per-attempt log archive @owner:repo:deployer @id:step-archive-retention-window @epic:eco.dark-factory
+  Run 37115427715 attempt 1: 50 entries with per-step files at 10:09Z and 10:50Z, 12
+  entries without them at 18:44Z on 2026-10-03 (completed 10:08:59Z); run 37109766941
+  had none at ~80 and ~100 min. Age is the strongest candidate, window unmeasured. It
+  decides whether step binding is useful at DarkFactory latency.
+- [ ] Exclude jobs that never started from the step-binding population @owner:repo:deployer @id:step-binding-never-started-jobs @epic:eco.dark-factory
+  Fail-fast matrices cancel siblings before they start; such a job has no log, so today
+  every job of the run reads `unverifiable` (spec §4.1). A job with no steps in the
+  listing cannot own a step directory (every `N` would fail §4.3), so a spec revision
+  could exclude it like `skipped`. Spec change first, no code on this branch.
 - [ ] With two failed steps in one job, both verdicts cite the same unbound block @owner:repo:deployer @id:forge-unbound-block-shared-across-steps @epic:eco.dark-factory
   `_evidence_pool` gives every unbound (`source=None`) block to every failed step of its
   job, so whenever step binding does not happen (no archive, refused, unverifiable,

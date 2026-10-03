@@ -683,7 +683,7 @@ def _bind_steps(
     A runner without the capped download attempts nothing. Only an
     ``available`` archive costs the population's extra log reads (§4.1).
     """
-    if not isinstance(runner, GhCappedBytesRunner):
+    if not isinstance(runner, GhCappedBytesRunner) or not reads:
         return None, {}
     limits = ArchiveLimits()
     path = f"repos/{ref.repo}/actions/runs/{ref.run_id}/attempts/{attempt}/logs"
@@ -694,7 +694,8 @@ def _bind_steps(
     except GhError as exc:
         if exc.status is None:
             raise
-        unavailable = ArchiveStatus("unavailable", f"HTTP {exc.status}: {exc}")
+        message = re.sub(r"\s*\(HTTP \d+\)\s*$", "", str(exc))
+        unavailable = ArchiveStatus("unavailable", f"HTTP {exc.status}: {message}")
         return unavailable, _each(reads, "no_archive", "the log archive is unavailable")
     if isinstance(blob, OverCap):
         refused = ArchiveStatus(
@@ -711,10 +712,20 @@ def _bind_steps(
             reads, "no_archive", "the log archive holds no per-step files"
         )
     population = [r for r in listing if r.get("conclusion") != "skipped"]
+    for record in population:
+        _check_job_record(record)
     logs: dict[int, str] = {}
+    for job_id, (text, state) in reads.items():
+        if state != "present":
+            return ArchiveStatus("available"), _each(
+                reads, "unverifiable", f"the log of job {job_id} is {state}"
+            )
+        logs[job_id] = text
     for record in population:
         job_id = int(record["id"])
-        text, state = reads[job_id] if job_id in reads else gh.logs(job_id)
+        if job_id in reads:
+            continue
+        text, state = gh.logs(job_id)
         if state != "present":
             return ArchiveStatus("available"), _each(
                 reads, "unverifiable", f"the log of job {job_id} is {state}"
