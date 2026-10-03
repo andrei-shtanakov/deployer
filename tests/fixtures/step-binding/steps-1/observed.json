@@ -1,0 +1,159 @@
+{
+  "archive": {
+    "downloaded": [
+      "2026-10-03T10:09:20Z or just before (attempt-1.zip; environment.json recorded_at is written right after it; run completed 10:08:59Z)",
+      "2026-10-03T10:49:56Z"
+    ],
+    "fact": "both downloads byte-identical: per job one top-level '<i>_<job>.txt' equal to the job log, '<job>/system.txt', and one '<job>/<api step number>_<sanitised name>.txt' per step that ran, post steps included. Per job, the step files concatenated in step order, each with its UTF-8 BOM dropped and every runner timestamp removed, equal the job log with the same normalisation; the timestamps themselves differ by fractions of a millisecond"
+  },
+  "headers": {
+    "s2-named": {
+      "api_step_4_name": "Custom label s2",
+      "fact": "a named run: step's header is 'Run <first script line>', not its name",
+      "job_log_line_110": "##[group]Run printf '%s-%s\\n' MARK s2-b"
+    },
+    "s4-composite": {
+      "fact": "the composite's inner steps open their own '##[group]Run ...' headers inside the outer step, between '##[start-action ...]' and '##[end-action ...;outcome=...]' runner lines; the zip files all of it under the outer API step 4; the start-action display= value is percent-encoded where it holds '%' (display=Run printf '%25s-%25s\\n' MARK s4-inner-2 announces the header '##[group]Run printf '%s-%s\\n' MARK s4-inner-2'), so it equals neither the header nor the API step name"
+    },
+    "s5-spoof": {
+      "fact": "line 113 is printed by step 3's own output (::group::), line 118 is the runner's header of step 4; after the timestamp they are byte-identical",
+      "job_log_line_113": "##[group]Run printf '%s-%s\\n' MARK s5-next",
+      "job_log_line_118": "##[group]Run printf '%s-%s\\n' MARK s5-next"
+    }
+  },
+  "lines": [
+    {
+      "job": "s1-plain-fail",
+      "job_log_line": 109,
+      "line": "MARK-s1-a",
+      "zip_step": 3
+    },
+    {
+      "job": "s1-plain-fail",
+      "job_log_line": 116,
+      "line": "MARK-s1-b",
+      "zip_step": 4
+    },
+    {
+      "job": "s1-plain-fail",
+      "job_log_line": 117,
+      "line": "AssertionError: probe-s1",
+      "zip_step": 4
+    },
+    {
+      "job": "s2-named",
+      "job_log_line": 109,
+      "line": "MARK-s2-a",
+      "zip_step": 3
+    },
+    {
+      "job": "s2-named",
+      "job_log_line": 116,
+      "line": "MARK-s2-b",
+      "zip_step": 4
+    },
+    {
+      "job": "s2-named",
+      "job_log_line": 117,
+      "line": "AssertionError: probe-s2",
+      "zip_step": 4
+    },
+    {
+      "job": "s2-named",
+      "job_log_line": 123,
+      "line": "MARK-s2-c",
+      "zip_step": 5
+    },
+    {
+      "job": "s3-two-failures",
+      "job_log_line": 111,
+      "line": "MARK-s3-a",
+      "zip_step": 3
+    },
+    {
+      "job": "s3-two-failures",
+      "job_log_line": 112,
+      "line": "AssertionError: probe-s3",
+      "zip_step": 3
+    },
+    {
+      "job": "s3-two-failures",
+      "job_log_line": 120,
+      "line": "MARK-s3-b",
+      "zip_step": 4
+    },
+    {
+      "job": "s3-two-failures",
+      "job_log_line": 121,
+      "line": "exec format error",
+      "zip_step": 4
+    },
+    {
+      "job": "s4-composite",
+      "job_log_line": 109,
+      "line": "MARK-s4-before",
+      "zip_step": 3
+    },
+    {
+      "job": "s4-composite",
+      "job_log_line": 121,
+      "line": "MARK-s4-inner-1",
+      "zip_step": 4
+    },
+    {
+      "job": "s4-composite",
+      "job_log_line": 131,
+      "line": "MARK-s4-inner-2",
+      "zip_step": 4
+    },
+    {
+      "job": "s4-composite",
+      "job_log_line": 132,
+      "line": "AssertionError: probe-s4",
+      "zip_step": 4
+    },
+    {
+      "job": "s4-composite",
+      "job_log_line": 139,
+      "line": "MARK-s4-after",
+      "zip_step": 5
+    },
+    {
+      "job": "s5-spoof",
+      "job_log_line": 114,
+      "line": "MARK-s5-spoof",
+      "zip_step": 3
+    },
+    {
+      "job": "s5-spoof",
+      "job_log_line": 116,
+      "line": "AssertionError: probe-s5",
+      "zip_step": 3
+    },
+    {
+      "job": "s5-spoof",
+      "job_log_line": 122,
+      "line": "MARK-s5-next",
+      "zip_step": 4
+    },
+    {
+      "job": "s6-dupes",
+      "job_log_line": 109,
+      "line": "MARK-s6-a",
+      "zip_step": 3
+    },
+    {
+      "job": "s6-dupes",
+      "job_log_line": 116,
+      "line": "MARK-s6-b",
+      "zip_step": 4
+    },
+    {
+      "job": "s6-dupes",
+      "job_log_line": 117,
+      "line": "AssertionError: probe-s6",
+      "zip_step": 4
+    }
+  ],
+  "note": "Written after the recording, from the raw data, before any parser change. job_log_line: the 1-based line of the job log (actions/jobs/{id}/logs in gh-calls.json, BOM dropped) whose text after the runner timestamp equals 'line' exactly; each occurs exactly once. zip_step: the number in the name of the one per-step file of attempt-1.zip that holds the line. Every zip_step equals the owner pre-registered in expected.json."
+}

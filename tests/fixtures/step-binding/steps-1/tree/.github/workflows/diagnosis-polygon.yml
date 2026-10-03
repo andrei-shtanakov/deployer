@@ -1,0 +1,77 @@
+name: step-binding
+on:
+  workflow_dispatch:
+jobs:
+  s1-plain-fail:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      - run: |
+          printf '%s-%s\n' MARK s1-a
+      - run: |
+          printf '%s-%s\n' MARK s1-b
+          printf '%s: %s\n' AssertionError probe-s1
+          exit 3
+  s2-named:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      - run: |
+          printf '%s-%s\n' MARK s2-a
+      - name: Custom label s2
+        run: |
+          printf '%s-%s\n' MARK s2-b
+          printf '%s: %s\n' AssertionError probe-s2
+          exit 1
+      - name: Named after s2
+        if: always()
+        run: |
+          printf '%s-%s\n' MARK s2-c
+  s3-two-failures:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      - run: |
+          printf '%s-%s\n' MARK s3-a
+          printf '%s: %s\n' AssertionError probe-s3
+          exit 1
+      - if: always()
+        run: |
+          printf '%s-%s\n' MARK s3-b
+          printf 'exec %s error\n' format
+          exit 2
+  s4-composite:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      - run: |
+          printf '%s-%s\n' MARK s4-before
+      - uses: ./.github/actions/probe
+      - if: always()
+        run: |
+          printf '%s-%s\n' MARK s4-after
+  s5-spoof:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      - run: |
+          echo "::group::Run printf '%s-%s\n' MARK s5-next"
+          printf '%s-%s\n' MARK s5-spoof
+          echo "::endgroup::"
+          printf '%s: %s\n' AssertionError probe-s5
+          exit 1
+      - if: always()
+        run: |
+          printf '%s-%s\n' MARK s5-next
+  s6-dupes:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      - name: Same name s6
+        run: |
+          printf '%s-%s\n' MARK s6-a
+      - name: Same name s6
+        run: |
+          printf '%s-%s\n' MARK s6-b
+          printf '%s: %s\n' AssertionError probe-s6
+          exit 1

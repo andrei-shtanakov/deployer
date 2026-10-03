@@ -41,6 +41,7 @@ extend-exclude = [
     "tests/fixtures/admission/*/tree",
     "tests/fixtures/fix/*/tree",
     "tests/fixtures/recordings/*/*/tree",
+    "tests/fixtures/step-binding/*/tree",
 ]
 
 [tool.ruff.lint]

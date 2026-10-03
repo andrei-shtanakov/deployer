@@ -1,0 +1,9 @@
+{
+  "branch": "polygon/steps-1",
+  "recorded_at": "2026-10-03T10:09:20Z",
+  "repo": "andrei-shtanakov/deployer",
+  "run_id": 37115427715,
+  "run_url": "https://github.com/andrei-shtanakov/deployer/actions/runs/37115427715",
+  "sha": "dce71829e52a544a031314b7796d0e18b954a9b0",
+  "workflow_path": ".github/workflows/diagnosis-polygon.yml"
+}
