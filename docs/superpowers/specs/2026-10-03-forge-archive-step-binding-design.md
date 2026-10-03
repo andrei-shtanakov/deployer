@@ -1,8 +1,13 @@
 # Forge archive step binding — design ("bind a step's output only where the runner's own files prove it")
 
-**Status:** DRAFT rev 1. Designed with the owner on 2026-10-03: approach A was chosen,
-then six refinements were applied before writing (§3.3, §4, §5.2, §6, §7, §9.3). Next:
-the owner's external review. No code exists for this design.
+**Status:** DRAFT rev 2. Designed with the owner on 2026-10-03: approach A was chosen,
+then six refinements were applied before writing (§3.3, §4, §5.2, §6, §7, §9.3). Rev 2
+resolves the external review of rev 1 at `eadf587`
+(`../../../../_cowork_output/deployer-forge-archive-step-binding-spec-review-2026-10-03.md`,
+a dev-only workspace file: R1 the one-sided BOM in the boundary check, §4.3; R2
+undecodable step files before ownership, §4.2; R3 a bad-numbering fixture that could
+not reach its refusal, §9.2; and the capped subprocess lifecycle, §7.2). Next: the
+owner checks the rev 2 diff, then a plan. No code exists for this design.
 **Item:** `todo://deployer/forge-step-level-log-binding`.
 **Base:** `master` @ `d612ad6`. The schema 1.4 baseline (#113): no job-log block is bound
 to a step. The recording `steps-1` (#112): `tests/fixtures/step-binding/`, with
@@ -73,7 +78,8 @@ order of evidence and every coordinate downstream stay those of the job log.
 
 Both sides are compared as `str`. The job log is the `str` forge already holds: `gh`'s
 output decoded as UTF-8 with `errors="replace"`, exactly as `_Gh.logs` reads it today.
-A step file is decoded as strict UTF-8; failing that makes the job `malformed` (§7.3).
+A step file is decoded as strict UTF-8; failing that makes the archive `refused`, since
+no owner can be named for it yet (§4.2).
 A text is split on `\n` only. When the text ends with `\n`, the final empty element is
 not a line. One BOM (U+FEFF) at the very start of the text is dropped before splitting:
 once per step file and once per job log. A BOM anywhere else is content.
@@ -124,9 +130,22 @@ evidence, exactly as today.
 
 Every **step directory** is collected: the top-level path component of an entry
 `<dir>/<N>_<rest>.txt` where `N` is a decimal number. `<dir>/system.txt` and the
-top-level `<i>_<name>.txt` files are ignored. Each directory's text (§3.3) is then
-compared with each population job's log. The result is the full match relation,
-computed before any structural check.
+top-level `<i>_<name>.txt` files are ignored.
+
+**Before ownership, every step directory must be readable.** No owner can be named for
+a directory whose text cannot be built. Dropping that directory would let another one
+look unique, which resolves uncertainty by exclusion. So any of the following makes the
+whole archive `refused` and leaves every job unbound:
+
+- an entry in a step directory, other than `system.txt`, whose name is not
+  `<N>_<rest>.txt` with `N` canonical decimal: `0`, or a nonzero digit followed by
+  digits. `03` and `+3` are not canonical;
+- two entries in one directory with the same `N`, which would leave the concatenation
+  order undefined;
+- a step file that is not valid UTF-8.
+
+Each directory's text (§3.3) is then compared with each population job's log. The
+result is the full match relation, computed before any structural check.
 
 A pair `(dir, job)` is a candidate only when `dir` matches exactly this one job and
 this job matches exactly this one directory. Any other match makes **every** job it
@@ -144,9 +163,6 @@ Each candidate pair is checked. If any check fails, the job is `malformed`. It i
 re-matched to another directory, and a directory rejected here frees nothing for
 another job.
 
-- File names: every entry of the directory except `system.txt` is `<N>_<rest>.txt`,
-  where `N` is a decimal number with no sign or leading `+`. The values of `N` in the
-  directory are unique.
 - Every `N` is a step number of this job in the API listing, and the job's API step
   numbers are themselves unique. A listing that repeats a number makes the job
   `malformed` (as in `ci_eval`'s ruling AB).
@@ -154,10 +170,16 @@ another job.
   next file's first line, and the boundary would be ambiguous.
 - The job log's line boundaries agree with forge's own reading. Forge splits blocks with
   `str.splitlines`, which also breaks on `\r` alone, `\x0b`, `\x0c`, `\x1c`–`\x1e`,
-  `\x85`, U+2028 and U+2029. The check: the job log decoded as forge decodes it, split
-  by `splitlines`, must equal its §3.1 `\n`-split lines with one trailing `\r` removed
-  from each. Otherwise line `i` of the comparison is not line `i` of the evidence, and
-  the job is `malformed` (`ci_eval` refuses the same breaks, ruling N2).
+  `\x85`, U+2028 and U+2029. The check compares **one view on both sides**: the job log
+  with its leading BOM dropped (§3.1), split by `splitlines`, must equal the same
+  BOM-dropped text split on `\n` (§3.1), with one trailing `\r` removed from each line.
+  Dropping the BOM moves no line index, because the BOM sits inside line 0. So line `i`
+  of this view is line `i` of forge's blocks. The view exists only for this check:
+  evidence text, `_split_blocks` and the separate BOM item (`forge-log-leading-bom`) are
+  untouched. On any difference, line `i` of the comparison is not line `i` of the
+  evidence, and the job is `malformed` (`ci_eval` refuses the same breaks, ruling N2).
+  Every job log in `steps-1` starts with a BOM, and all six pass this check; the rev 1
+  form, with the BOM dropped on one side only, failed all six.
 
 A pair that passes every check is `bound`.
 
@@ -206,7 +228,9 @@ both paths (bound, and without the archive) must give equal `job_text` for each 
 - an unclosed `##[group]` that runs across a boundary;
 - a blank-only block that `_split_blocks` drops;
 - a job log without a final `\n`;
-- a CRLF log.
+- a CRLF log;
+- a job log that starts with a BOM: the case of every recorded log. It is bound, and its
+  `job_text` is unchanged.
 
 If the splitter could not keep the invariant, the overlay must change, not the
 invariant.
@@ -224,7 +248,7 @@ path that does not read the archive.
 | `available` | downloaded within limits, read without error, holds at least one step directory |
 | `absent` | downloaded and read, holds no step directory (the shape of P's earlier runs) |
 | `unavailable` | the download returned an HTTP error status (404, 410, any other) |
-| `refused` | a limit was exceeded, or the archive is corrupt, duplicated, encrypted or uses an unsupported method (§7) |
+| `refused` | a limit was exceeded; the archive is corrupt, duplicated, encrypted or uses an unsupported method (§7); or a step directory is unreadable before ownership (§4.2) |
 
 Each state carries a short `reason` (text) beside it, except `available`.
 
@@ -267,16 +291,45 @@ never an error that stops diagnosis.
 so checking `len()` afterwards protects no memory. That is how `fetch_archive` works today,
 and its docstring says so. The archive needs a capped read:
 
-- A new runner method, `api_bytes_capped(argv, *, timeout, max_bytes)`, starts
-  `gh api` with `Popen` and reads stdout in chunks.
-- As soon as more than `max_bytes` has arrived, it terminates `gh`, reads no further,
-  and reports `over the cap` (not a `GhError`). Stderr is drained so `gh` cannot block
-  on it.
-- The timeout covers the whole read. On timeout, `gh` is killed and a status-less
-  `GhError` is raised.
-- A nonzero exit maps through `_gh_failure`, exactly as `api_bytes` does.
+A new runner method, `api_bytes_capped(argv, *, timeout, max_bytes)`, owns the whole
+lifecycle of one `gh api` process:
 
-The runner protocol grows a `GhCappedBytesRunner`, and test fakes implement it.
+- **Start.** `Popen` with stdout and stderr as pipes and stdin as the null device, in
+  `_gh_env()`. The program is `gh` by default and injectable, so that tests can run a
+  real child process.
+- **Two reader threads.** One reads stdout in 64 KiB chunks and appends to a buffer
+  until the total passes `max_bytes`; it then stops appending and sets `over the cap`.
+  The other reads stderr until end of file and keeps only the **last 64 KiB**, so a
+  child that floods stderr can neither block on a full pipe nor grow memory. Neither
+  thread decides anything.
+- **One deadline.** The calling thread waits for the process with the time left until
+  `start + timeout`. It also stops waiting as soon as `over the cap` is set. A blocking
+  chunk read happens in a reader thread, never in the calling thread, so it cannot hold
+  off the deadline.
+- **Termination.** On `over the cap` or on the deadline: `terminate()`, a wait of up to
+  2 s, then `kill()` and an unbounded `wait()`. The child is always reaped, and the pipes
+  reach end of file once it is gone. Both reader threads are then joined with a bound;
+  if one fails to end, that is reported as a status-less `GhError` too.
+- **Results.** Over the cap: `over the cap`, which is not a `GhError` (§7.1, the archive
+  is `refused`). Deadline: a status-less `GhError` naming the timeout. Nonzero exit: maps
+  through `_gh_failure` with the retained stderr, exactly as `api_bytes` does. Otherwise:
+  the bytes.
+
+The runner protocol grows a `GhCappedBytesRunner`, and test fakes implement it for the
+ownership and state tests. **The lifecycle itself is tested against real child
+processes** (`sys.executable -c …`, no network, no GitHub), each with a bounded test
+time:
+
+- stdout over the cap: stops, the child is reaped, and the buffer holds at most cap plus
+  one chunk;
+- stderr floods (more than a pipe buffer) while stdout stays small: completes, with
+  stderr truncated to its tail;
+- a silent child that sleeps past the timeout: a status-less `GhError` within timeout
+  plus the termination grace;
+- a child that ignores `SIGTERM`: killed and reaped;
+- a nonzero exit with a stderr message: `_gh_failure`'s mapping;
+- after each case, the child has a return code: no zombie, no live process.
+
 `fetch_archive` is not changed by this design.
 
 ### 7.3 Reading the ZIP
@@ -289,7 +342,7 @@ The archive is read in memory with `zipfile` and never extracted to disk.
 | two entries with the same name in the central directory | `refused` (duplicate) |
 | an entry with the encryption flag (bit 0) | `refused` (encrypted) |
 | a compression method other than stored (0) or deflated (8) | `refused` (unsupported) |
-| a step file that is not valid UTF-8 | that job `malformed`; the archive stays `available` |
+| a step file that is not valid UTF-8, or a non-canonical or repeated `N` in a step directory | `refused` (unreadable before ownership, §4.2) |
 
 Each entry is decompressed through `ZipFile.open` in bounded chunks, so a limit is
 enforced against what actually decompresses, not against declared sizes.
@@ -345,7 +398,12 @@ Each case is built from the recording by a named transformation, under
 |---|---|---|
 | missing step file | one entry of `s2-named/` removed | `s2` `unmatched`; the others `bound` |
 | identical job logs | `s6`'s log served for a second job id in the listing | both `ambiguous` |
-| bad numbering | `s1`'s `3_…` renamed `7_…` (not an API step) | `s1` `malformed` |
+| reordered by renumbering | `s1`'s `3_…` renamed `7_…`: the concatenation order becomes `[1, 2, 4, 7, 8, 9]` | `s1` `unmatched` (the text no longer matches; checked on the recording) |
+| number not in the API | `s1`'s last file `9_…` renamed `99_…`: the order is kept, and 99 is not a step of `s1` | `s1` `malformed` (matches, then fails §4.3; checked on the recording) |
+| API number repeated | `s1`'s listing gives a second step the number 4; the archive is unchanged | `s1` `malformed` |
+| step file not UTF-8 | one byte of a `s3-two-failures/` file set to `0xFF` | `refused` (§4.2); every job unbound |
+| unreadable beside a match | a non-UTF-8 copy of `s1`'s directory added under another name, while `s1`'s own stays intact and matching | `refused`; `s1` is not bound by excluding the unreadable directory |
+| repeated or non-canonical `N` | `s2-named/3_…` copied as `03_…`; separately, a second `4_…` entry with another name | `refused` (§4.2) |
 | no per-step files | only top-level and `system.txt` entries kept | `absent`; every job `no_archive` |
 | duplicate entry | one name written twice | `refused` (duplicate) |
 | corrupt | central directory truncated | `refused` (corrupt) |
@@ -379,8 +437,8 @@ says so in its acceptance record.
 
 1. `_split_blocks` reports line indices; the `job_text` invariant tests (§5.3) are
    added first and pass while nothing is bound.
-2. `api_bytes_capped` and the ZIP reader with every refusal of §7, tested on the
-   synthetic archives.
+2. `api_bytes_capped` with its real-process lifecycle tests (§7.2); the ZIP reader with
+   every refusal of §7.3 and §4.2, tested on the synthetic archives.
 3. Ownership (§4) as a pure function over `(jobs, logs, archive entries)`, with the
    synthetic cases.
 4. Wiring into `fetch_failed_run`: the population reads, the states, snapshot 1.5.
