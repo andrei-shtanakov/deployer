@@ -20,7 +20,8 @@ from typing import IO, Any, Literal, Protocol, TypeGuard, runtime_checkable
 
 from pydantic import TypeAdapter
 
-from deployer.stepbinding import StepSpan
+from deployer.logarchive import ArchiveLimits, ArchiveRefused, read_step_directories
+from deployer.stepbinding import JobBinding, StepBindingState, StepSpan, bind_jobs
 
 GH_TIMEOUT_S = 30.0
 """Wall-clock budget for one ``gh api`` invocation."""
@@ -31,7 +32,10 @@ ARCHIVE_TIMEOUT_S = 120.0
 DEFAULT_MAX_ARCHIVE_MB = 200
 """Default ``--max-archive-mb`` cap (spec §1.4) on a fetched source archive."""
 
-SNAPSHOT_SCHEMA_VERSION = "1.4"
+LOG_ARCHIVE_TIMEOUT_S = 120.0
+"""Wall-clock budget for downloading one per-attempt log archive."""
+
+SNAPSHOT_SCHEMA_VERSION = "1.5"
 
 _PER_PAGE = 100
 _FAILED_CONCLUSIONS = frozenset({"failure", "timed_out"})
@@ -146,6 +150,29 @@ here, there were no annotations", which is what 1.0's whole-run
 """
 
 
+ArchiveState = Literal["available", "absent", "unavailable", "refused"]
+
+
+@dataclass(frozen=True)
+class ArchiveStatus:
+    """How the per-attempt log archive was read (snapshot 1.5, spec §6).
+
+    ``None`` on a run means no archive was attempted: an older snapshot, or a
+    runner without the capped download.
+    """
+
+    state: ArchiveState
+    reason: str | None = None
+
+
+@dataclass(frozen=True)
+class StepBinding:
+    """What step binding decided for one job (snapshot 1.5, spec §6)."""
+
+    state: StepBindingState
+    reason: str | None = None
+
+
 @dataclass(frozen=True)
 class FailedJob:
     """A non-green job with its kept steps, job-level evidence and read state.
@@ -162,6 +189,7 @@ class FailedJob:
     evidence: list[Evidence]
     completeness: Completeness = COMPLETE_BY_CONSTRUCTION
     all_steps: list[StepInfo] | None = None
+    step_binding: StepBinding | None = None
 
 
 @dataclass(frozen=True)
@@ -178,6 +206,7 @@ class FailedRun:
     workflow_ref_path: str | None = None
     workflow_path: str | None = None
     event: str | None = None
+    archive: ArchiveStatus | None = None
     snapshot_schema_version: str = SNAPSHOT_SCHEMA_VERSION
 
 
@@ -549,6 +578,9 @@ def dump_snapshot(run: FailedRun) -> str:
     field, only attribution: job-log group headers are no ground for a step
     binding, so a 1.4 snapshot's log blocks are all ``source=None``. An older
     document keeps the sources it recorded; nothing rebinds them on load.
+    Schema 1.5 adds the run's ``archive`` and each job's ``step_binding``
+    (spec §6); additive, so a 1.4 or older document loads with both ``None``,
+    which means not attempted.
     """
     return _run_adapter.dump_json(run, indent=2).decode()
 
@@ -578,22 +610,28 @@ def fetch_failed_run(
     unparseable failure) means ``gh`` itself never reached GitHub and
     propagates instead.
     """
-    gh = _Gh(runner if runner is not None else SubprocessGh(), ref.repo)
+    runner = runner if runner is not None else SubprocessGh()
+    gh = _Gh(runner, ref.repo)
     run = gh.json(_run_path(ref.run_id, attempt))
     refusal = _refuse(run)
     if refusal is not None:
         return refusal
     resolved = attempt if attempt is not None else int(run["run_attempt"])
-    kept = [
-        job
-        for job in gh.jobs(ref.run_id, resolved)
-        if job.get("conclusion") not in _GREEN_CONCLUSIONS
-    ]
+    listing = gh.jobs(ref.run_id, resolved)
+    kept = [job for job in listing if job.get("conclusion") not in _GREEN_CONCLUSIONS]
+    reads: dict[int, tuple[str, LogsState]] = {}
+    noted: dict[int, tuple[list[dict[str, Any]], AnnotationsState]] = {}
+    for record in kept:
+        job_id = int(record["id"])
+        reads[job_id] = gh.logs(job_id)
+        noted[job_id] = gh.annotations(job_id)
+    archive, bindings = _bind_steps(runner, gh, ref, resolved, listing, reads)
     jobs: list[FailedJob] = []
     for record in kept:
         job_id = int(record["id"])
-        log_text, logs_state = gh.logs(job_id)
-        annotations, annotations_state = gh.annotations(job_id)
+        log_text, logs_state = reads[job_id]
+        annotations, annotations_state = noted[job_id]
+        binding = bindings.get(job_id)
         jobs.append(
             build_failed_job(
                 record,
@@ -601,6 +639,12 @@ def fetch_failed_run(
                 log_text,
                 annotations,
                 Completeness(logs=logs_state, annotations=annotations_state),
+                spans=binding.spans if binding is not None else (),
+                step_binding=(
+                    StepBinding(binding.state, binding.reason)
+                    if binding is not None
+                    else None
+                ),
             )
         )
     raw_path = run.get("path")
@@ -622,7 +666,73 @@ def fetch_failed_run(
         workflow_ref_path=ref_path,
         workflow_path=normalise_workflow_path(ref_path) if ref_path else None,
         event=str(raw_event) if raw_event is not None else None,
+        archive=archive,
     )
+
+
+def _bind_steps(
+    runner: GhRunner,
+    gh: "_Gh",
+    ref: RunRef,
+    attempt: int,
+    listing: list[dict[str, Any]],
+    reads: dict[int, tuple[str, LogsState]],
+) -> tuple[ArchiveStatus | None, dict[int, JobBinding]]:
+    """The archive's state and each kept job's binding (spec §4, §6, §7).
+
+    A runner without the capped download attempts nothing. Only an
+    ``available`` archive costs the population's extra log reads (§4.1).
+    """
+    if not isinstance(runner, GhCappedBytesRunner):
+        return None, {}
+    limits = ArchiveLimits()
+    path = f"repos/{ref.repo}/actions/runs/{ref.run_id}/attempts/{attempt}/logs"
+    try:
+        blob = runner.api_bytes_capped(
+            [path], timeout=LOG_ARCHIVE_TIMEOUT_S, max_bytes=limits.download
+        )
+    except GhError as exc:
+        if exc.status is None:
+            raise
+        unavailable = ArchiveStatus("unavailable", f"HTTP {exc.status}: {exc}")
+        return unavailable, _each(reads, "no_archive", "the log archive is unavailable")
+    if isinstance(blob, OverCap):
+        refused = ArchiveStatus(
+            "refused", f"the download exceeds {blob.max_bytes} bytes"
+        )
+        return refused, _each(reads, "no_archive", "the log archive was refused")
+    found = read_step_directories(blob, limits)
+    if isinstance(found, ArchiveRefused):
+        return ArchiveStatus("refused", found.reason), _each(
+            reads, "no_archive", "the log archive was refused"
+        )
+    if not found:
+        return ArchiveStatus("absent", "the archive holds no per-step files"), _each(
+            reads, "no_archive", "the log archive holds no per-step files"
+        )
+    population = [r for r in listing if r.get("conclusion") != "skipped"]
+    logs: dict[int, str] = {}
+    for record in population:
+        job_id = int(record["id"])
+        text, state = reads[job_id] if job_id in reads else gh.logs(job_id)
+        if state != "present":
+            return ArchiveStatus("available"), _each(
+                reads, "unverifiable", f"the log of job {job_id} is {state}"
+            )
+        logs[job_id] = text
+    numbers = {
+        int(r["id"]): [int(s["number"]) for s in r.get("steps") or []]
+        for r in population
+    }
+    bound = bind_jobs(logs, numbers, found)
+    return ArchiveStatus("available"), {job_id: bound[job_id] for job_id in reads}
+
+
+def _each(
+    reads: dict[int, tuple[str, LogsState]], state: StepBindingState, reason: str
+) -> dict[int, JobBinding]:
+    """The same binding state for every kept job."""
+    return {job_id: JobBinding(state, reason) for job_id in reads}
 
 
 def list_runs_for_sha(repo: str, sha: str, runner: GhRunner) -> list[RunSummary] | str:
@@ -1060,6 +1170,7 @@ def build_failed_job(
     completeness: Completeness,
     *,
     spans: Sequence[StepSpan] = (),
+    step_binding: StepBinding | None = None,
 ) -> FailedJob:
     """A :class:`FailedJob` built from a job ``record`` and its ``log_text``.
 
@@ -1101,6 +1212,7 @@ def build_failed_job(
         evidence=job_evidence,
         completeness=completeness,
         all_steps=step_infos,
+        step_binding=step_binding,
     )
 
 
