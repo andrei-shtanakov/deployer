@@ -1,0 +1,129 @@
+{
+  "diagnose": {
+    "s3-two-failures": {
+      "step 0 cites": "AssertionError: probe-s3",
+      "step 0 must not cite": "exec format error",
+      "step 1 cites": "exec format error",
+      "step 1 must not cite": "AssertionError: probe-s3"
+    }
+  },
+  "lines": [
+    {
+      "job": "s1-plain-fail",
+      "line": "MARK-s1-a",
+      "step": 0
+    },
+    {
+      "job": "s1-plain-fail",
+      "line": "MARK-s1-b",
+      "step": 1
+    },
+    {
+      "job": "s1-plain-fail",
+      "line": "AssertionError: probe-s1",
+      "step": 1
+    },
+    {
+      "job": "s2-named",
+      "line": "MARK-s2-a",
+      "step": 0
+    },
+    {
+      "job": "s2-named",
+      "line": "MARK-s2-b",
+      "step": 1
+    },
+    {
+      "job": "s2-named",
+      "line": "AssertionError: probe-s2",
+      "step": 1
+    },
+    {
+      "job": "s2-named",
+      "line": "MARK-s2-c",
+      "step": 2
+    },
+    {
+      "job": "s3-two-failures",
+      "line": "MARK-s3-a",
+      "step": 0
+    },
+    {
+      "job": "s3-two-failures",
+      "line": "AssertionError: probe-s3",
+      "step": 0
+    },
+    {
+      "job": "s3-two-failures",
+      "line": "MARK-s3-b",
+      "step": 1
+    },
+    {
+      "job": "s3-two-failures",
+      "line": "exec format error",
+      "step": 1
+    },
+    {
+      "job": "s4-composite",
+      "line": "MARK-s4-before",
+      "step": 0
+    },
+    {
+      "fallback_ok": true,
+      "job": "s4-composite",
+      "line": "MARK-s4-inner-1",
+      "step": 1
+    },
+    {
+      "fallback_ok": true,
+      "job": "s4-composite",
+      "line": "MARK-s4-inner-2",
+      "step": 1
+    },
+    {
+      "fallback_ok": true,
+      "job": "s4-composite",
+      "line": "AssertionError: probe-s4",
+      "step": 1
+    },
+    {
+      "job": "s4-composite",
+      "line": "MARK-s4-after",
+      "step": 2
+    },
+    {
+      "job": "s5-spoof",
+      "line": "MARK-s5-spoof",
+      "step": 0
+    },
+    {
+      "job": "s5-spoof",
+      "line": "AssertionError: probe-s5",
+      "step": 0
+    },
+    {
+      "job": "s5-spoof",
+      "line": "MARK-s5-next",
+      "step": 1
+    },
+    {
+      "fallback_ok": true,
+      "job": "s6-dupes",
+      "line": "MARK-s6-a",
+      "step": 0
+    },
+    {
+      "fallback_ok": true,
+      "job": "s6-dupes",
+      "line": "MARK-s6-b",
+      "step": 1
+    },
+    {
+      "fallback_ok": true,
+      "job": "s6-dupes",
+      "line": "AssertionError: probe-s6",
+      "step": 1
+    }
+  ],
+  "note": "Pre-registered before the run: the owner of each exact output line, as (job key, 0-based index among the job's workflow steps AFTER the checkout). Composite inner lines belong to the outer API step. 'fallback_ok' marks lines where job-level is an acceptable answer and only a binding to another step is wrong."
+}
