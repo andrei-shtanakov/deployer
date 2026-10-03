@@ -18,6 +18,10 @@ the null device, disables every configured ``hook.<name>``, turns off
 A partial clone is refused outright
 (:func:`deployer.provenance.gitrepo.partial_clone_problem`): a
 missing blob would otherwise be fetched from the network, silently.
+That probe is the one git command outside :func:`_run`: a ``git config``
+read through ``gitrepo``, with replace objects off, lazy fetch forbidden and
+redirecting variables dropped, but without the ``-c`` guards above — a
+config read runs no hook, filter, fsmonitor or gc.
 The worktree therefore holds raw blobs; the local proof reads R's
 ``source/``, not the worktree.
 
