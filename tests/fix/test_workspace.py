@@ -1017,27 +1017,6 @@ def _plain_repo(tmp_path: Path) -> Path:
     return repo
 
 
-@pytest.mark.parametrize(
-    ("key", "value", "refused"),
-    [
-        ("extensions.partialClone", "origin", True),
-        ("remote.origin.promisor", "true", True),
-        ("remote.origin.promisor", "false", False),
-    ],
-    ids=["ext", "promisor", "promisor-off"],
-)
-def test_partial_clone_config(
-    tmp_path: Path, key: str, value: str, refused: bool
-) -> None:
-    repo = _plain_repo(tmp_path)
-    assert workspace.partial_clone_problem(repo) is None
-    _git(repo, "config", key, value)
-    reason = workspace.partial_clone_problem(repo)
-    assert (reason is not None) == refused
-    if refused:
-        assert reason is not None and "is a partial clone" in reason
-
-
 def test_real_partial_clone_refused_by_guards(tmp_path: Path) -> None:
     """``_guards`` — which every publish/confirm/workspace git command reads
     first — refuses a real partial clone and a linked worktree of it."""

@@ -90,3 +90,28 @@ def test_export_rejects_absolute_symlink(repo: Path, tmp_path: Path) -> None:
     head = gitrepo.head_commit(repo)
     with pytest.raises(gitrepo.GitError):
         gitrepo.export_commit(repo, head, tmp_path / "export")
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "refused"),
+    [
+        ("extensions.partialClone", "origin", True),
+        ("remote.origin.promisor", "true", True),
+        ("remote.origin.promisor", "false", False),
+    ],
+    ids=["ext", "promisor", "promisor-off"],
+)
+def test_partial_clone_config(repo: Path, key: str, value: str, refused: bool) -> None:
+    assert gitrepo.partial_clone_problem(repo) is None
+    _git(repo, "config", key, value)
+    reason = gitrepo.partial_clone_problem(repo)
+    assert (reason is not None) == refused
+    if refused:
+        assert reason is not None and "is a partial clone" in reason
+
+
+def test_partial_clone_problem_reports_an_unreadable_configuration(
+    tmp_path: Path,
+) -> None:
+    reason = gitrepo.partial_clone_problem(tmp_path / "missing")
+    assert reason is not None and "partial-clone configuration" in reason

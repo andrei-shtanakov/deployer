@@ -15,7 +15,8 @@ the null device, disables every configured ``hook.<name>``, turns off
 ``core.fsmonitor``, auto-gc and auto-maintenance, and empties the
 ``clean``/``smudge``/``process`` command of every configured filter driver
 (:func:`_guards`, read in the repository or worktree the command runs in).
-A partial clone is refused outright (:func:`partial_clone_problem`): a
+A partial clone is refused outright
+(:func:`deployer.provenance.gitrepo.partial_clone_problem`): a
 missing blob would otherwise be fetched from the network, silently.
 The worktree therefore holds raw blobs; the local proof reads R's
 ``source/``, not the worktree.
@@ -40,7 +41,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from deployer.fix.binding import Bound, link_problem
-from deployer.provenance.gitrepo import NO_REPLACE_CONFIG, guarded_git_env
+from deployer.provenance.gitrepo import (
+    NO_REPLACE_CONFIG,
+    guarded_git_env,
+    partial_clone_problem,
+)
 from deployer.provenance.model import (
     POINTER,
     RECORD_FILE,
@@ -63,8 +68,6 @@ _SET_PREFIX = f"{SET_ROOT}/{SET_PARENT}/"
 _SET_FILES = frozenset({RECORD_FILE, SIGNATURE_FILE, SNAPSHOT_FILE})
 _SET_NAME_RE = re.compile(r"[0-9a-f]{64}")
 _GUARDED_KEY_RE = re.compile(r"(filter|hook)\.(.+)\.[^.]+")
-_PARTIAL_KEYS_RE = r"^(extensions\.partialclone|remote\..*\.promisor)$"
-_FALSE_VALUES = frozenset({"false", "no", "off", "0"})
 _MODIFIED = frozenset({" M", "M ", "MM"})
 _ADDED = frozenset({"??", "A ", "AM"})
 _DELETED = frozenset({" D", "D "})
@@ -504,29 +507,6 @@ def _run(
         return _Result(code=None, stdout=b"", error=f"could not run: {exc}")
     error = proc.stderr.decode(errors="replace").strip()
     return _Result(code=proc.returncode, stdout=proc.stdout, error=error)
-
-
-def partial_clone_problem(repo: Path) -> str | None:
-    """Why ``repo`` is refused as a partial clone, or ``None`` if it is not.
-
-    Partial means ``extensions.partialClone`` is set or any
-    ``remote.<name>.promisor`` is not false: a missing blob would be fetched
-    lazily, and git older than 2.44 ignores ``GIT_NO_LAZY_FETCH``. An
-    unreadable configuration is refused too. Never raises."""
-    listed = _run(
-        repo, "config", "-z", "--get-regexp", _PARTIAL_KEYS_RE, g=_BASE_GUARDS
-    )
-    if listed.code not in (0, 1):
-        return f"cannot read the partial-clone configuration: {listed.error}"
-    for entry in filter(None, listed.stdout.split(b"\0")):
-        key, _, value = entry.decode(errors="replace").partition("\n")
-        if key.startswith("remote.") and value.strip().lower() in _FALSE_VALUES:
-            continue
-        return (
-            f"{repo} is a partial clone ({key}={value}): a missing object would "
-            "be fetched from the promisor remote"
-        )
-    return None
 
 
 def _guards(repo: Path) -> tuple[str, ...] | str:

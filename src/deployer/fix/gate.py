@@ -23,7 +23,6 @@ from deployer.admission.model import AdmissionSection
 from deployer.admission.ownership import OwnershipFacts, verify_ownership
 from deployer.admission.prepare import read_head_listing
 from deployer.fix.document import FixDocument, Input, StoredFile, verify_inputs
-from deployer.fix.workspace import partial_clone_problem
 from deployer.provenance import gitrepo
 from deployer.provenance.model import sha256_hex
 from deployer.provenance.trust import trust_dir
@@ -127,7 +126,7 @@ def _clone_state(clone: Path) -> tuple[str, str] | str:
     top = gitrepo.toplevel(clone)
     if not top.samefile(clone):
         return f"{clone} is not the repository root ({top})"
-    partial = partial_clone_problem(clone)
+    partial = gitrepo.partial_clone_problem(clone)
     if partial is not None:
         return partial
     slug = gitrepo.origin_slug(clone)

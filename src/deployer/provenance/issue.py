@@ -84,6 +84,9 @@ def preflight(project: Path, signing_key: Path | None) -> Preflight | str:
         return str(exc)
     if project.resolve() != top.resolve():
         return f"{project} is not the repository root ({top})"
+    partial = gitrepo.partial_clone_problem(project)
+    if partial is not None:
+        return partial
     repo = gitrepo.origin_slug(project)
     if repo is None:
         return f"{project} has no origin remote"

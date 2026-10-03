@@ -12,6 +12,8 @@ from deployer.provenance.model import TreeRow
 
 _TIMEOUT_S = 60
 _SLUG_RE = re.compile(r"[:/]([^/:]+)/([^/]+?)(?:\.git)?/?$")
+_PARTIAL_KEYS_RE = r"^(extensions\.partialclone|remote\..*\.promisor)$"
+_FALSE_VALUES = frozenset({"false", "no", "off", "0"})
 
 
 NO_REPLACE_CONFIG = ("-c", "core.useReplaceRefs=false")
@@ -43,9 +45,10 @@ class GitError(Exception):
     """A git command failed; the message names it."""
 
 
-def _git(path: Path, *args: str) -> bytes:
+def _git(path: Path, *args: str, ok: tuple[int, ...] = (0,)) -> bytes:
     """Run ``git <args>`` against the checkout at ``path``; return stdout.
-    Replace objects are off: an object read is the object named."""
+    An exit code outside ``ok`` raises. Replace objects are off: an object
+    read is the object named."""
     try:
         proc = subprocess.run(
             ["git", *NO_REPLACE_CONFIG, "-C", str(path), *args],
@@ -55,7 +58,7 @@ def _git(path: Path, *args: str) -> bytes:
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise GitError(f"git {args[0]} could not run: {exc}") from exc
-    if proc.returncode != 0:
+    if proc.returncode not in ok:
         stderr = proc.stderr.decode(errors="replace").strip()
         raise GitError(f"git {args[0]} failed: {stderr}")
     return proc.stdout
@@ -77,6 +80,28 @@ def toplevel(path: Path) -> Path:
     need to handle that, since a race is always possible.
     """
     return Path(_git(path, "rev-parse", "--show-toplevel").decode().strip())
+
+
+def partial_clone_problem(path: Path) -> str | None:
+    """Why ``path`` is refused as a partial clone, or ``None`` if it is not.
+
+    Partial means ``extensions.partialClone`` is set or any
+    ``remote.<name>.promisor`` is not false: a missing blob would be fetched
+    lazily, and git older than 2.44 ignores ``GIT_NO_LAZY_FETCH``. An
+    unreadable configuration is refused too. Never raises."""
+    try:
+        listed = _git(path, "config", "-z", "--get-regexp", _PARTIAL_KEYS_RE, ok=(0, 1))
+    except GitError as exc:
+        return f"cannot read the partial-clone configuration: {exc}"
+    for entry in filter(None, listed.split(b"\0")):
+        key, _, value = entry.decode(errors="replace").partition("\n")
+        if key.startswith("remote.") and value.strip().lower() in _FALSE_VALUES:
+            continue
+        return (
+            f"{path} is a partial clone ({key}={value}): a missing object would "
+            "be fetched from the promisor remote"
+        )
+    return None
 
 
 def git_path(path: Path, name: str) -> Path:
