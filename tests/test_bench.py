@@ -867,7 +867,7 @@ def test_run_case_records_external_identity(tmp_path: Path, monkeypatch) -> None
 def test_corpus_commit_dirty_suffix(monkeypatch) -> None:
     from deployer.bench import _corpus_commit
 
-    monkeypatch.setattr("deployer.bench._deployer_git_sha", lambda: "abc123")
+    monkeypatch.setattr("deployer.bench.deployer_git_sha", lambda: "abc123")
 
     def _fake_proc(returncode: int, stdout: str = "", stderr: str = ""):
         class P:

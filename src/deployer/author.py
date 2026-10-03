@@ -59,7 +59,7 @@ def _stop_reason(report: VerificationReport) -> StopReason | None:
     return None
 
 
-def _deployer_git_sha() -> str | None:
+def deployer_git_sha() -> str | None:
     try:
         proc = subprocess.run(
             ["git", "-C", str(Path(__file__).resolve().parent), "rev-parse", "HEAD"],
@@ -246,5 +246,5 @@ def author_dockerfile(
         runtime_versions=runtime_versions,
         author_info=author_info,
         deployer_version=deployer_version(),
-        deployer_git_sha=_deployer_git_sha(),
+        deployer_git_sha=deployer_git_sha(),
     )

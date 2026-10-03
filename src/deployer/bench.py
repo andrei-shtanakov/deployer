@@ -18,8 +18,8 @@ from pydantic import BaseModel, Field
 from deployer.artifacts import render_artifact_response
 from deployer.author import (
     DockerfileAuthor,
-    _deployer_git_sha,
     author_dockerfile,
+    deployer_git_sha,
     deployer_version,
 )
 from deployer.facts import analyze_project
@@ -348,7 +348,7 @@ def run_case(
 
 def _corpus_commit() -> str | None:
     """Deployer repo sha, '-dirty'-suffixed when the working tree has changes."""
-    sha = _deployer_git_sha()
+    sha = deployer_git_sha()
     if sha is None:
         return None
     try:

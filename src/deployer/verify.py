@@ -20,7 +20,7 @@ import yaml
 
 from deployer.facts import (
     TargetConfigError,
-    _normalize_requirement_name,
+    normalize_requirement_name,
     validate_target_against_facts,
 )
 from deployer.models import (
@@ -318,7 +318,7 @@ def _check_install_strategy(
             payload = _pip_install_payload(cmd)
             if not payload:
                 continue
-            names = {_normalize_requirement_name(t) for t in payload}
+            names = {normalize_requirement_name(t) for t in payload}
             if names == {"poetry"}:
                 # the builder bootstrap — allowed, but must be pinned
                 if not all("==" in t for t in payload):
