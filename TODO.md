@@ -113,6 +113,14 @@ paragraph.
   every job of the run reads `unverifiable` (spec §4.1). A job with no steps in the
   listing cannot own a step directory (every `N` would fail §4.3), so a spec revision
   could exclude it like `skipped`. Spec change first, no code on this branch.
+  Real responses (2026-10-04) show neither `conclusion=cancelled` nor `steps==0` proves it:
+  a steward job had `runner_id 0`, `runner_name ""`, 0 steps, `started_at == created_at`;
+  a dispatcher job had a runner, 0 steps and 25 minutes; both have no log (`gh: HTTP 404`,
+  BlobNotFound) and no archive entry. A missing archive entry is only an observation, never
+  proof (files expire). Next: a `steps-2` polygon recording (fail-fast matrix, a
+  `max-parallel: 1` sibling left waiting, a running sibling cancelled; one dispatch, owner's
+  permission), then the spec with exclusion criteria taken from it; the dispatcher shape
+  stays `unverifiable`.
 - [ ] With two failed steps in one job, both verdicts cite the same unbound block @owner:repo:deployer @id:forge-unbound-block-shared-across-steps @epic:eco.dark-factory
   `_evidence_pool` gives every unbound (`source=None`) block to every failed step of its
   job, so whenever step binding does not happen (no archive, refused, unverifiable,
@@ -223,6 +231,15 @@ them is the next thing to pick up.
 
 ## Shipped
 
+- [x] A job log `gh` reports as `gh: HTTP 404` lost its status, so a missing log crashed `diagnose` @owner:repo:deployer @id:forge-gh-bare-http-status @epic:eco.dark-factory
+  For a log that does not exist (a cancelled job that never started), `gh` prints the bare
+  line `gh: HTTP 404`, without the `(HTTP 404)` form `_gh_failure` matched. The status read
+  as `None`, `_Gh.logs` treated it as a broken instrument and propagated it, and a failed
+  run with such a kept sibling would end `diagnose` with exit 2. That is the expected crash;
+  the mechanism is confirmed on real responses, and a failed run of that shape is not yet
+  recorded (`steps-2`). Fixed: the whole line `gh: HTTP nnn` is recognised (not any
+  occurrence of `HTTP nnn`), so 404 reads `error` and 410 `unavailable` as before;
+  regression on the real stderr.
 - [x] Step-level log binding in forge from the per-attempt archive's per-step files, when present @owner:repo:deployer @id:forge-step-level-log-binding @epic:eco.dark-factory
   Fixed: `fetch_failed_run` binds a job log's blocks to steps only where the runner's
   per-step archive files prove it by content (spec

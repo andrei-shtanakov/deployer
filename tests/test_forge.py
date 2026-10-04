@@ -26,6 +26,7 @@ from deployer.forge import (
     SubprocessGh,
     TreeEntry,
     TreeListing,
+    _gh_failure,
     build_failed_job,
     dump_snapshot,
     fetch_archive,
@@ -903,6 +904,53 @@ def test_subprocess_gh_nonzero_exit_is_a_gh_error_with_http_status(monkeypatch):
         SubprocessGh().api(["repos/o/r/actions/runs/1"], timeout=1.0)
     assert info.value.status == 404
     assert "Not Found" in str(info.value)
+
+
+def test_a_bare_gh_http_status_line_is_recognised(monkeypatch):
+    """The form ``gh`` prints when a job log does not exist: ``gh: HTTP 404``,
+    no parentheses (a real response, steward job 99392658211, a cancelled job
+    that never started). Its status is data, not a broken instrument."""
+    monkeypatch.setattr(
+        subprocess, "run", lambda cmd, **kw: _Proc(1, stderr="gh: HTTP 404\n")
+    )
+    with pytest.raises(GhError) as info:
+        SubprocessGh().api(["repos/o/r/actions/jobs/1/logs"], timeout=1.0)
+    assert info.value.status == 404
+
+
+@pytest.mark.parametrize(
+    "stderr",
+    [
+        "error: the HTTP 404 handler failed",
+        "something gh: HTTP 404",
+        "gh: HTTP 4040",
+        "gh: HTTP 404x",
+        "gh: http 404",
+    ],
+    ids=["prose", "mid-line", "four-digit", "suffix", "lowercase"],
+)
+def test_http_404_text_that_is_not_gh_s_status_line_is_not_a_status(
+    monkeypatch, stderr
+):
+    monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: _Proc(1, stderr=stderr))
+    with pytest.raises(GhError) as info:
+        SubprocessGh().api(["x"], timeout=1.0)
+    assert info.value.status is None
+
+
+def test_a_missing_log_reported_bare_is_an_error_state_not_a_crash(fake_gh):
+    """A kept job whose log ``gh`` reports as ``gh: HTTP 404`` is read as an
+    unreadable log (404 → ``error``, the existing rule); the snapshot is made."""
+
+    def logs_missing(argv, *, timeout):
+        if _LOGS_RE.search(argv[-1]):
+            raise _gh_failure(argv[-1], 1, "gh: HTTP 404\n")
+        return FakeGh.api(fake_gh, argv, timeout=timeout)
+
+    fake_gh.api = logs_missing  # type: ignore[method-assign]
+    snapshot = fetch_failed_run(RunRef("o/r", 1), attempt=1, runner=fake_gh)
+    assert isinstance(snapshot, FailedRun)
+    assert snapshot.jobs[0].completeness.logs == "error"
 
 
 def test_subprocess_gh_nonzero_exit_without_http_status(monkeypatch):
