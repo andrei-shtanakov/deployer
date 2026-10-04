@@ -1,0 +1,29 @@
+{
+  "caveats": [
+    "The 20-second delay of parallel-legs/fail-fast does not guarantee that long-1 and long-2 have started executing before fail-fast cancels them.",
+    "max-parallel: 1 limits parallelism; it does not prove which leg of waiting-legs starts first."
+  ],
+  "hypotheses": [
+    {
+      "conclusion": "failure",
+      "job": "parallel-legs (fail-fast)",
+      "shape": "ran: a runner, steps, a log, an archive entry"
+    },
+    {
+      "conclusion": "cancelled",
+      "job": "parallel-legs (long-1), parallel-legs (long-2)",
+      "shape": "cancelled mid-execution: a runner, steps, a log"
+    },
+    {
+      "conclusion": "failure",
+      "job": "waiting-legs (first-fails)",
+      "shape": "ran"
+    },
+    {
+      "conclusion": "cancelled",
+      "job": "waiting-legs (never-starts)",
+      "shape": "never started: runner_id 0, runner_name '', no steps, started_at == created_at, the job log a bare 'gh: HTTP 404', no archive entry (an observation only, never proof)"
+    }
+  ],
+  "note": "Pre-registered HYPOTHESES, written before the run. They are not guarantees, and whatever the run returns is recorded unchanged; a shape that does not appear is a result too."
+}
