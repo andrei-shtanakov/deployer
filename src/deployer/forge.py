@@ -46,6 +46,10 @@ _PER_PAGE = 100
 _FAILED_CONCLUSIONS = frozenset({"failure", "timed_out"})
 _GREEN_CONCLUSIONS = frozenset({"success", "skipped", "neutral"})
 _HTTP_STATUS_RE = re.compile(r"\(HTTP (\d{3})\)")
+_GH_STATUS_LINE_RE = re.compile(r"^gh: HTTP (\d{3})$", re.MULTILINE)
+"""The bare status line ``gh`` prints when the response has no JSON message,
+e.g. a job log that does not exist (``gh: HTTP 404``): a whole line, not any
+occurrence of ``HTTP nnn`` in stderr."""
 RUNNER_LOG_TIMESTAMP_RE = re.compile(
     r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z ?"
 )
@@ -404,7 +408,7 @@ class _StderrTail(threading.Thread):
 def _gh_failure(what: str, returncode: int, stderr: str) -> GhError:
     """Map a nonzero ``gh api`` exit to a :class:`GhError`, HTTP status if any."""
     stderr = stderr.strip()
-    match = _HTTP_STATUS_RE.search(stderr)
+    match = _HTTP_STATUS_RE.search(stderr) or _GH_STATUS_LINE_RE.search(stderr)
     status = int(match.group(1)) if match else None
     return GhError(
         f"gh api {what} failed: {stderr or f'exit code {returncode}'}", status
