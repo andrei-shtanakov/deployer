@@ -1143,3 +1143,17 @@ def test_fetch_tree_listing_refuses_an_incomplete_response(body):
     with pytest.raises(GhError, match="tree listing malformed") as info:
         fetch_tree_listing("o/r", "abc", BytesGh(b"", body))
     assert info.value.status is None
+
+
+def test_a_log_read_carries_its_http_status(fake_gh):
+    """§3.1: the status of a failed log read reaches the caller as data."""
+    from deployer.forge import _Gh
+
+    fake_gh.logs = GhError("gh api … failed: gh: HTTP 404", status=404)
+    read = _Gh(fake_gh, "o/r").logs(1)
+    assert (read.text, read.state, read.status) == ("", "error", 404)
+    fake_gh.logs = GhError("gh: Gone (HTTP 410)", status=410)
+    assert _Gh(fake_gh, "o/r").logs(1).status == 410
+    fake_gh.logs = "a log\n"
+    read = _Gh(fake_gh, "o/r").logs(1)
+    assert (read.text, read.state, read.status) == ("a log\n", "present", None)

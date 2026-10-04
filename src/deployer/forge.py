@@ -13,7 +13,7 @@ import re
 import subprocess
 import threading
 import time
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from itertools import groupby
 from typing import IO, Any, Literal, Protocol, TypeGuard, runtime_checkable
@@ -63,6 +63,19 @@ RUNNER_GROUP_PREFIX = "##[group]"
 _ENDGROUP = "##[endgroup]"
 
 LogsState = Literal["present", "unavailable", "error"]
+
+
+@dataclass(frozen=True)
+class LogRead:
+    """One job-log read: its text, what its absence means, and the HTTP status
+    of a failed read (``None`` when it succeeded). The status is kept as data
+    (not-executed spec §3.1), never re-derived from a message."""
+
+    text: str
+    state: LogsState
+    status: int | None = None
+
+
 AnnotationsState = Literal["present", "absent", "error"]
 _LOGS_RANK: dict[LogsState, int] = {"present": 0, "unavailable": 1, "error": 2}
 _ANNOTATIONS_RANK: dict[AnnotationsState, int] = {"present": 0, "absent": 1, "error": 2}
@@ -632,7 +645,7 @@ def fetch_failed_run(
     resolved = attempt if attempt is not None else int(run["run_attempt"])
     listing = gh.jobs(ref.run_id, resolved)
     kept = [job for job in listing if job.get("conclusion") not in _GREEN_CONCLUSIONS]
-    reads: dict[int, tuple[str, LogsState]] = {}
+    reads: dict[int, LogRead] = {}
     noted: dict[int, tuple[list[dict[str, Any]], AnnotationsState]] = {}
     for record in kept:
         job_id = int(record["id"])
@@ -642,7 +655,8 @@ def fetch_failed_run(
     jobs: list[FailedJob] = []
     for record in kept:
         job_id = int(record["id"])
-        log_text, logs_state = reads[job_id]
+        read = reads[job_id]
+        log_text, logs_state = read.text, read.state
         annotations, annotations_state = noted[job_id]
         binding = bindings.get(job_id)
         jobs.append(
@@ -690,7 +704,7 @@ def _bind_steps(
     attempt: int,
     listing: list[dict[str, Any]],
     kept: list[dict[str, Any]],
-    reads: dict[int, tuple[str, LogsState]],
+    reads: dict[int, LogRead],
 ) -> tuple[ArchiveStatus | None, dict[int, JobBinding]]:
     """The archive's state and each kept job's binding (spec §4, §6, §7).
 
@@ -749,27 +763,27 @@ def _bind_steps(
         )
         return ArchiveStatus("available"), _each(reads, "unverifiable", reason)
     logs: dict[int, str] = {}
-    for job_id, (text, state) in reads.items():
-        if state != "present":
+    for job_id, read in reads.items():
+        if read.state != "present":
             return ArchiveStatus("available"), _each(
-                reads, "unverifiable", f"the log of job {job_id} is {state}"
+                reads, "unverifiable", f"the log of job {job_id} is {read.state}"
             )
-        logs[job_id] = text
+        logs[job_id] = read.text
     for record in population:
         job_id = int(record["id"])
         if job_id in reads:
             continue
         try:
-            text, state = gh.logs(job_id)
+            read = gh.logs(job_id)
         except GhTimeout:
             return ArchiveStatus("available"), _each(
                 reads, "unverifiable", f"the log read of green job {job_id} timed out"
             )
-        if state != "present":
+        if read.state != "present":
             return ArchiveStatus("available"), _each(
-                reads, "unverifiable", f"the log of job {job_id} is {state}"
+                reads, "unverifiable", f"the log of job {job_id} is {read.state}"
             )
-        logs[job_id] = text
+        logs[job_id] = read.text
     numbers = {
         int(r["id"]): [int(s["number"]) for s in r.get("steps") or []]
         for r in population
@@ -779,7 +793,7 @@ def _bind_steps(
 
 
 def _each(
-    reads: dict[int, tuple[str, LogsState]], state: StepBindingState, reason: str
+    reads: Mapping[int, LogRead], state: StepBindingState, reason: str
 ) -> dict[int, JobBinding]:
     """The same binding state for every kept job."""
     return {job_id: JobBinding(state, reason) for job_id in reads}
@@ -951,7 +965,8 @@ def _read_all_jobs(
     for record in gh.jobs(run_id, attempt):
         _check_job_record(record)
         job_id = int(record["id"])
-        log_text, state = gh.logs(job_id)
+        read = gh.logs(job_id)
+        log_text, state = read.text, read.state
         states[job_id] = state
         if state == "present":
             texts[job_id] = log_text
@@ -1165,8 +1180,8 @@ class _Gh:
                 )
             page += 1
 
-    def logs(self, job_id: int) -> tuple[str, LogsState]:
-        """A job's log text and what its absence means.
+    def logs(self, job_id: int) -> LogRead:
+        """A job's log read: text, what its absence means, the HTTP status.
 
         Only an HTTP status is data about the run: 410 is GitHub's expired-log
         answer (``unavailable``), any other status is a fetch that GitHub
@@ -1185,8 +1200,11 @@ class _Gh:
         except GhError as exc:
             if exc.status is None:
                 raise
-            return "", "unavailable" if exc.status == 410 else "error"
-        return (text, "present") if text.strip() else ("", "unavailable")
+            state: LogsState = "unavailable" if exc.status == 410 else "error"
+            return LogRead("", state, exc.status)
+        if text.strip():
+            return LogRead(text, "present")
+        return LogRead("", "unavailable")
 
     def annotations(self, job_id: int) -> tuple[list[dict[str, Any]], AnnotationsState]:
         """A job's annotations and what a short read means.
