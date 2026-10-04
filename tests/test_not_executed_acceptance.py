@@ -19,6 +19,7 @@ from deployer.reproduce.shape import job_text, precheck
 from tests.step_binding_data import (
     STEPS_2,
     Steps2Replay,
+    never_starts_with_a_runner,
     only_the_recognised_job_kept,
     with_assertion_in_fail_fast,
 )
@@ -114,7 +115,8 @@ def test_a_recognised_diagnostic_line_is_cited_from_its_own_step() -> None:
     assert not any("probe-fail-fast" in e.text for v in others for e in v.evidence)
 
 
-def test_job_text_is_unchanged_by_recognition() -> None:
+def test_job_text_is_unchanged_by_binding() -> None:
+    """Capped (binding runs) and not-attempted (no binding) read the same text."""
     run = _fetch(Steps2Replay())
     plain = _fetch(Steps2Replay(capped=False))
     assert {j.job_id: job_text(j) for j in run.jobs} == {
@@ -192,3 +194,18 @@ def test_reproduce_precheck_refuses_the_same_with_and_without_the_field() -> Non
     stripped = replace(run, jobs=[replace(j, not_executed=None) for j in run.jobs])
     assert precheck(run) == precheck(stripped)
     assert getattr(precheck(run), "reason", None) == "checkout SHA not established"
+
+
+def test_a_dispatcher_shaped_job_is_not_recognised() -> None:
+    """Synthetic dispatcher shape (§9.2): a runner, no steps, no log."""
+    run = _fetch(Steps2Replay(records=never_starts_with_a_runner))
+    by = {j.name: j for j in run.jobs}
+    assert by[NEVER].not_executed is None
+    assert all(
+        j.step_binding is not None and j.step_binding.state == "unverifiable"
+        for j in run.jobs
+    )
+    d = diagnose_run(run)
+    assert d.outcome == "EVIDENCE_UNAVAILABLE"
+    assert by[NEVER].job_id in {v.where for v in d.failures}
+    assert not any("cancelled before execution" in o for o in d.observations)

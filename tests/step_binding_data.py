@@ -243,6 +243,19 @@ def only_the_recognised_job_kept(
     ]
 
 
+def never_starts_with_a_runner(
+    records: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """``waiting-legs (never-starts)`` given a runner: the dispatcher shape
+    (a runner, 0 steps, no log), a labelled synthetic derivation."""
+    return [
+        {**job, "runner_id": 1000028882, "runner_name": "GitHub Actions 1000028882"}
+        if job["name"] == "waiting-legs (never-starts)"
+        else job
+        for job in records
+    ]
+
+
 def _with_probe(text: str) -> str:
     """``text`` with the runner-timestamped probe line right after
     ``MARK-fail-fast``, stamped with that line's own timestamp."""

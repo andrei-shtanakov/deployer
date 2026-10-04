@@ -1,17 +1,26 @@
 """Forge: recognition on kept jobs, snapshot 1.6, strict load, the population."""
 
 import json
+from collections.abc import Callable
+from dataclasses import replace
+from typing import Any
 
 import pytest
 from pydantic import ValidationError
 
 from deployer.forge import (
     ArchiveStatus,
+    Completeness,
+    Evidence,
+    FailedJob,
     FailedRun,
+    FailedStep,
     GhError,
     OverCap,
     RunRef,
     StepBinding,
+    StepInfo,
+    StepRef,
     dump_snapshot,
     fetch_failed_run,
     is_not_executed,
@@ -151,3 +160,42 @@ def test_a_contradicting_stored_basis_is_not_trusted() -> None:
     document = json.loads(dump_snapshot(run))
     document["jobs"][1]["conclusion"] = "failure"
     assert not is_not_executed(load_snapshot(json.dumps(document)).jobs[1])
+
+
+def _contradict_basis(**changes: Any) -> Callable[[FailedJob], FailedJob]:
+    def apply(job: FailedJob) -> FailedJob:
+        assert job.not_executed is not None
+        return replace(job, not_executed=replace(job.not_executed, **changes))
+
+    return apply
+
+
+@pytest.mark.parametrize(
+    "contradict",
+    [
+        _contradict_basis(runner_id=5),
+        _contradict_basis(log_status=410),
+        _contradict_basis(started_at="2026-10-04T09:13:26Z"),
+        lambda j: replace(j, all_steps=[StepInfo(1, "Set up job", "success")]),
+        lambda j: replace(j, steps=[FailedStep(StepRef(j.job_id, 1), "s", "x", [])]),
+        lambda j: replace(j, completeness=Completeness("present", "absent")),
+        lambda j: replace(j, evidence=[Evidence(None, "x")]),
+        lambda j: replace(j, evidence=[Evidence(StepRef(j.job_id, 1), "x")]),
+    ],
+    ids=[
+        "basis-runner",
+        "basis-log-status",
+        "basis-timestamps",
+        "all-steps",
+        "steps",
+        "logs-present",
+        "evidence-no-source",
+        "evidence-step-source",
+    ],
+)
+def test_each_contradiction_defeats_recognition(
+    contradict: Callable[[FailedJob], FailedJob],
+) -> None:
+    job = _run(_gh(_bound_archive())).jobs[1]
+    assert is_not_executed(job)
+    assert not is_not_executed(contradict(job))

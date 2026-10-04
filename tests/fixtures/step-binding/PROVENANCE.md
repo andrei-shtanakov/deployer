@@ -141,7 +141,8 @@ dispatch, with no repeat. Its purpose was to see real cancelled matrix siblings.
     steward job on 2026-10-03. Since #116 forge reads that as status 404.
   - The archive has no entry for it at all, and its top-level files are numbered 0, 2,
     3, 4.
-- **Through forge:** `fetch_failed_run` produces a snapshot. Before #116 the
+- **Through forge (before the not-executed spec; see "Not-executed jobs" below for
+  the current behaviour):** `fetch_failed_run` produces a snapshot. Before #116 the
   never-started job's log read would have raised, and `diagnose` would have exited 2.
   - That job's `completeness.logs` is `error`.
   - Every kept job's binding is `unverifiable`, because of that job.

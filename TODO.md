@@ -216,25 +216,19 @@ them is the next thing to pick up.
   `stop`/`remove`). What is genuinely duplicated is the docker-vs-podman + remote-host
   choice. Neither repo references the other; recorded so a third copy is a decision
 
+- [ ] Recognise (or keep refusing) the dispatcher shape: a cancelled job with a runner, 0 steps and no log @owner:repo:deployer @id:not-executed-dispatcher-shape @epic:eco.dark-factory
+  Today it takes the ordinary path (unverifiable binding, `EVIDENCE_UNAVAILABLE`); recognising it needs a recording of that shape.
+
 ## Shipped
 
 - [x] Exclude jobs that never started from the step-binding population @owner:repo:deployer @id:step-binding-never-started-jobs @epic:eco.dark-factory
-  Fail-fast matrices cancel siblings before they start; such a job has no log, so today
-  every job of the run reads `unverifiable` (spec §4.1). A job with no steps in the
-  listing cannot own a step directory (every `N` would fail §4.3), so a spec revision
-  could exclude it like `skipped`. Spec change first, no code on this branch.
-  Real responses (2026-10-04) show neither `conclusion=cancelled` nor `steps==0` proves it:
-  a steward job had `runner_id 0`, `runner_name ""`, 0 steps, `started_at == created_at`;
-  a dispatcher job had a runner, 0 steps and 25 minutes; both have no log (`gh: HTTP 404`,
-  BlobNotFound) and no archive entry. A missing archive entry is only an observation, never
-  proof (files expire). Recorded as `steps-2` (run 37191453692, `tests/fixtures/step-binding/`):
-  the never-started sibling has `runner_id 0`, `runner_name ""`, 0 steps,
-  `started_at == created_at`, a bare `gh: HTTP 404` log and no archive entry, while the
-  siblings cancelled mid-execution have runners, steps and logs. Through forge today, every
-  job is `unverifiable` and the run reads `EVIDENCE_UNAVAILABLE`: a job that never ran
-  counts as missing evidence. The spec must decide both the binding population and whether
-  such a job is a kept failure or affects completeness at all. Next: that spec, with its
-  exclusion criteria taken from the recording; the dispatcher shape stays `unverifiable`.
+  Fail-fast matrices cancel siblings before they start; such a job has no log, so every
+  job of the run read `unverifiable` and the run `EVIDENCE_UNAVAILABLE` (spec §4.1).
+  Recorded as `steps-2` (run 37191453692, `tests/fixtures/step-binding/`): the
+  never-started sibling has `runner_id 0`, `runner_name ""`, 0 steps,
+  `started_at == created_at`, a bare `gh: HTTP 404` log and no archive entry. A dispatcher
+  job (a runner, 0 steps, 25 minutes, no log) was seen once, unrecorded; neither
+  `conclusion=cancelled` nor `steps==0` alone proves a job never started.
   Fixed (spec `docs/superpowers/specs/2026-10-04-forge-not-executed-jobs-design.md`, rev 2.2):
   forge recognises a kept job of the recorded form (completed/cancelled, runner 0, `""`,
   no steps, `started_at == created_at`, its own log read 404) and stores it as

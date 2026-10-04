@@ -181,14 +181,16 @@ step's own output can print the next step's exact header), so every job-log
 block is `source: null`; a stored 1.3 snapshot keeps the step bindings it
 recorded. 1.5 adds the run's `archive` (how the per-attempt log archive was
 read: `available`, `absent`, `unavailable` or `refused`) and each job's
-`step_binding` (`bound`, `no_archive`, `unverifiable`, `unmatched`, `ambiguous`
-or `malformed`). Where a job is `bound`, its log blocks carry the `StepRef` the
+`step_binding` (`bound`, `no_archive`, `unverifiable`, `unmatched`, `ambiguous`,
+`malformed` or `excluded`). Where a job is `bound`, its log blocks carry the `StepRef` the
 runner's own per-step files prove. Both fields are `null` on older snapshots:
-not attempted. 1.6 adds each job's `not_executed`: the recorded basis (completed,
+not attempted.
+1.6 adds each job's `not_executed`: the recorded basis (completed,
 cancelled, no runner, no steps, equal timestamps, its own log read a 404) on which a
 matrix sibling is recognised as cancelled before execution; such a job's
 `step_binding` is `excluded` and it stays out of the binding population. It is
-`null` on older snapshots and on every job not recognised. Per-step files appear to be short-lived (observed gone from one run's
+`null` on older snapshots and on every job not recognised.
+Per-step files appear to be short-lived (observed gone from one run's
 archive within hours), so binding usually applies only when `diagnose` runs soon after
 the failure; otherwise the archive reads `absent` and evidence stays job-level.
 
