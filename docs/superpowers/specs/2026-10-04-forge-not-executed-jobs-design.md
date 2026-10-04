@@ -1,6 +1,6 @@
 # Forge not-executed jobs — design ("a sibling cancelled before it ran is not a failure, and does not hide one")
 
-**Status:** DRAFT rev 2.1. Designed with the owner on 2026-10-04. Approach: a closed set of
+**Status:** DRAFT rev 2.2. Designed with the owner on 2026-10-04. Approach: a closed set of
 recognised signals, three separate decisions (the binding population, the verdict and
 completeness), and five refinements (§2–§5, §8). Rev 2 resolves the external review of
 rev 1 at `07f6c95`
@@ -17,7 +17,8 @@ archive-not-attempted case in §4, and validating a stored `NotExecuted` in §3.
 the owner re-checks the changed sections, then a plan. Rev 2.1 closes the re-review's one
 remaining P2: `NotExecuted` is loaded with strict validation of its own fields (§3.3),
 because Pydantic's default lax mode turns `false` into `0` and `"404"` into `404` before
-any predicate could see them. No code exists for this design.
+any predicate could see them. Rev 2.2 (planning): §9.1 states the provable form of "real
+failures cite their own lines". No code exists for this design.
 **Item:** `todo://deployer/step-binding-never-started-jobs`.
 **Base:** `master` @ `45887b9` (#116), with the `steps-2` recording of PR #117
 (`tests/fixtures/step-binding/`, `steps-2/observed.json` as **O2**, PROVENANCE as **P**).
@@ -267,7 +268,10 @@ than GitHub listed.
 - The verdicts are exactly the step verdicts of the four jobs that ran: their composition
   is pinned by `(job, step)`, and `never-starts` has none.
   - The real failures stay visible: `parallel-legs (fail-fast)` and
-    `waiting-legs (first-fails)` each cite their own step's lines and no other job's.
+    `waiting-legs (first-fails)` keep their own step verdicts. Their `MARK-<leg>` lines lie
+    in their own step's evidence. Every block a verdict cites has the source of that
+    verdict's own step, so no verdict cites another job's lines. Whether a rule observes
+    anything in `MARK-…` is not part of this design (rev 2.2).
   - `long-1` and `long-2` (cancelled mid-execution) keep verdicts under the ordinary rules.
   - No verdict cites another job's evidence.
 - The run outcome is `UNCLASSIFIED`. The run observations include the §5 line for
