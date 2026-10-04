@@ -20,7 +20,12 @@ from typing import IO, Any, Literal, Protocol, TypeGuard, runtime_checkable
 
 from pydantic import TypeAdapter
 
-from deployer.logarchive import ArchiveLimits, ArchiveRefused, read_step_directories
+from deployer.logarchive import (
+    ArchiveLimits,
+    ArchiveRefused,
+    read_step_directories,
+    short,
+)
 from deployer.stepbinding import JobBinding, StepBindingState, StepSpan, bind_jobs
 
 GH_TIMEOUT_S = 30.0
@@ -469,7 +474,7 @@ class SubprocessGh:
                 env=_gh_env(),
             )
         except subprocess.TimeoutExpired as exc:
-            raise GhError(f"gh api {what} timed out after {timeout}s") from exc
+            raise GhTimeout(f"gh api {what} timed out after {timeout}s") from exc
         except OSError as exc:
             raise GhError(f"gh api could not start: {exc}") from exc
         if proc.returncode != 0:
@@ -494,7 +499,7 @@ class SubprocessGh:
                 env=_gh_env(),
             )
         except subprocess.TimeoutExpired as exc:
-            raise GhError(f"gh api {what} timed out after {timeout}s") from exc
+            raise GhTimeout(f"gh api {what} timed out after {timeout}s") from exc
         except OSError as exc:
             raise GhError(f"gh api could not start: {exc}") from exc
         if proc.returncode != 0:
@@ -697,7 +702,7 @@ def _bind_steps(
             [path], timeout=LOG_ARCHIVE_TIMEOUT_S, max_bytes=limits.download
         )
     except GhTimeout as exc:
-        reason = f"the download timed out: {exc}"
+        reason = f"the download timed out: {short(exc)}"
         return ArchiveStatus("unavailable", reason), _each(
             reads,
             "no_archive",
@@ -707,7 +712,9 @@ def _bind_steps(
         if exc.status is None:
             raise
         message = re.sub(r"\s*\(HTTP \d+\)\s*$", "", str(exc))
-        unavailable = ArchiveStatus("unavailable", f"HTTP {exc.status}: {message}")
+        unavailable = ArchiveStatus(
+            "unavailable", f"HTTP {exc.status}: {short(message, 200)}"
+        )
         return unavailable, _each(reads, "no_archive", "the log archive is unavailable")
     if isinstance(blob, OverCap):
         refused = ArchiveStatus(
@@ -733,7 +740,7 @@ def _bind_steps(
         if any(record is k for k in kept):
             _check_job_record(record)
         reason = (
-            f"the record of green job {record.get('id')!r} "
+            f"the record of green job {short(repr(record.get('id')))} "
             f"(listing index {index}) is malformed: {defect}"
         )
         return ArchiveStatus("available"), _each(reads, "unverifiable", reason)
@@ -748,7 +755,12 @@ def _bind_steps(
         job_id = int(record["id"])
         if job_id in reads:
             continue
-        text, state = gh.logs(job_id)
+        try:
+            text, state = gh.logs(job_id)
+        except GhTimeout:
+            return ArchiveStatus("available"), _each(
+                reads, "unverifiable", f"the log read of green job {job_id} timed out"
+            )
         if state != "present":
             return ArchiveStatus("available"), _each(
                 reads, "unverifiable", f"the log of job {job_id} is {state}"

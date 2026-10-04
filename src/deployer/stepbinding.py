@@ -125,12 +125,14 @@ def _structure(
     unknown = [f.number for f in directory.files if f.number not in set(numbers)]
     if unknown:
         return JobBinding(
-            "malformed", f"step file number(s) {unknown} not in the listing"
+            "malformed",
+            f"{len(unknown)} step file number(s) not in the listing, e.g. {unknown[0]}",
         )
     open_ended = [f.number for f in directory.files if not f.text.endswith("\n")]
     if open_ended:
         return JobBinding(
-            "malformed", f"step file(s) {open_ended} lack a final newline"
+            "malformed",
+            f"{len(open_ended)} step file(s) lack a final newline, e.g. {open_ended[0]}",
         )
     if not _breaks_agree(log):
         return JobBinding("malformed", "a line break other than \\n inside the job log")

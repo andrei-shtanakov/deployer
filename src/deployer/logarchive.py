@@ -28,6 +28,8 @@ _SYSTEM = "system.txt"
 _ENCRYPTED_BITS = 0x1 | 0x40  # traditional and strong encryption
 _PATCHED_BIT = 0x20  # compressed patched data
 
+_SHORT = 80  # a reason quotes archive-controlled text only this long
+
 
 @dataclass(frozen=True)
 class ArchiveLimits:
@@ -63,7 +65,13 @@ def read_step_directories(
         ValueError,
         NotImplementedError,
     ) as exc:
-        return ArchiveRefused(f"corrupt archive: {exc}")
+        return ArchiveRefused(f"corrupt archive: {short(str(exc))}")
+
+
+def short(value: object, limit: int = _SHORT) -> str:
+    """``value`` as text, cut to ``limit`` characters with an ellipsis."""
+    text = str(value)
+    return text if len(text) <= limit else f"{text[:limit]}..."
 
 
 def _check_entries(
@@ -77,20 +85,25 @@ def _check_entries(
     counts = Counter(i.filename for i in infos)
     repeated = sorted(n for n, c in counts.items() if c > 1)
     if repeated:
-        return ArchiveRefused(f"duplicate entry name(s): {repeated}")
+        return ArchiveRefused(
+            f"{len(repeated)} duplicate entry name(s), e.g. {short(repeated[0])!r}"
+        )
     for info in infos:
         if info.flag_bits & _ENCRYPTED_BITS:
-            return ArchiveRefused(f"encrypted entry: {info.filename!r}")
+            return ArchiveRefused(f"encrypted entry: {short(info.filename)!r}")
         if info.flag_bits & _PATCHED_BIT:
-            return ArchiveRefused(f"unsupported patched-data entry: {info.filename!r}")
+            return ArchiveRefused(
+                f"unsupported patched-data entry: {short(info.filename)!r}"
+            )
         if info.compress_type not in _METHODS:
             return ArchiveRefused(
                 f"unsupported compression method {info.compress_type}: "
-                f"{info.filename!r}"
+                f"{short(info.filename)!r}"
             )
         if info.file_size > limits.entry:
             return ArchiveRefused(
-                f"entry {info.filename!r} exceeds {limits.entry} bytes uncompressed"
+                f"entry {short(info.filename)!r} exceeds {limits.entry} bytes "
+                "uncompressed"
             )
     return None
 
@@ -120,7 +133,7 @@ def _read(
             match = _STEP_NAME_RE.fullmatch(info.filename.partition("/")[2])
             if match is None:
                 return ArchiveRefused(
-                    f"step entry {info.filename!r} is not <N>_<name>.txt"
+                    f"step entry {short(info.filename)!r} is not <N>_<name>.txt"
                 )
             raw = _read_entry(archive, info, limits.entry, budget)
             if isinstance(raw, ArchiveRefused):
@@ -129,11 +142,16 @@ def _read(
             try:
                 text = raw.decode("utf-8")
             except UnicodeDecodeError:
-                return ArchiveRefused(f"step file {info.filename!r} is not UTF-8")
+                return ArchiveRefused(
+                    f"step file {short(info.filename)!r} is not UTF-8"
+                )
             files.append(StepFile(int(match.group(1)), text))
         twice = sorted(n for n, c in Counter(f.number for f in files).items() if c > 1)
         if twice:
-            return ArchiveRefused(f"directory {name!r} repeats step number(s) {twice}")
+            return ArchiveRefused(
+                f"directory {short(name)!r} repeats {len(twice)} step number(s), "
+                f"e.g. {twice[0]}"
+            )
         ordered = tuple(sorted(files, key=lambda f: f.number))
         directories.append(StepDirectory(name, ordered))
     return tuple(directories)
@@ -150,7 +168,8 @@ def _read_entry(
             size += len(chunk)
             if size > entry_limit:
                 return ArchiveRefused(
-                    f"entry {info.filename!r} exceeds {entry_limit} bytes uncompressed"
+                    f"entry {short(info.filename)!r} exceeds {entry_limit} bytes "
+                    "uncompressed"
                 )
             if size > budget:
                 return ArchiveRefused("entries exceed the total uncompressed limit")

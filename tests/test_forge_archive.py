@@ -177,12 +177,47 @@ def test_kept_job_states_are_checked_before_any_green_log_is_read() -> None:
     assert not [c for c in gh.calls if c.argv[-1].endswith("jobs/2/logs")]
 
 
-def test_a_status_less_error_on_a_green_log_propagates() -> None:
+def _with_green_log(error: GhError) -> ArchiveFakeGh:
     gh = _gh(_bound_archive())
     gh.job_pages = [[*gh.job_pages[0], job(2, conclusion="success")]]
-    gh.logs_by_job = {2: GhError("gh api … timed out after 30.0s", None)}
-    with pytest.raises(GhError):
+    gh.logs_by_job = {2: error}
+    return gh
+
+
+def test_a_timeout_on_a_green_log_makes_binding_unverifiable() -> None:
+    run = _run(_with_green_log(GhTimeout("gh api … timed out after 30.0s")))
+    assert run.archive == ArchiveStatus("available")
+    binding = run.jobs[0].step_binding
+    assert binding is not None and binding.state == "unverifiable"
+    reason = binding.reason or ""
+    assert len(reason) < 200 and "job 2" in reason and "timed out" in reason
+    _assert_diagnosed_without_steps(run)
+
+
+def test_another_status_less_error_on_a_green_log_propagates() -> None:
+    with pytest.raises(GhError) as caught:
+        _run(_with_green_log(GhError("gh api could not start: no gh")))
+    assert not isinstance(caught.value, GhTimeout)
+
+
+def test_a_timeout_on_a_kept_log_propagates() -> None:
+    gh = _gh(_bound_archive())
+    gh.logs_by_job = {1: GhTimeout("gh api … timed out after 30.0s")}
+    with pytest.raises(GhTimeout):
         _run(gh)
+
+
+def test_a_long_green_record_id_gives_a_short_reason() -> None:
+    gh = _gh(_bound_archive())
+    gh.job_pages = [
+        [*gh.job_pages[0], {**job(2, conclusion="success"), "id": "9" * 10_000}]
+    ]
+    run = _run(gh)
+    binding = run.jobs[0].step_binding
+    assert binding is not None and binding.state == "unverifiable"
+    assert len(binding.reason or "") < 300 and "`id` is not an int" in (
+        binding.reason or ""
+    )
 
 
 def test_a_download_timeout_is_recorded_and_the_diagnosis_is_still_made() -> None:

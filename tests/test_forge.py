@@ -19,6 +19,7 @@ from deployer.forge import (
     FailedRun,
     FailedStep,
     GhError,
+    GhTimeout,
     RunRef,
     StepInfo,
     StepRef,
@@ -918,8 +919,10 @@ def test_subprocess_gh_timeout_is_a_gh_error(monkeypatch):
         raise subprocess.TimeoutExpired(cmd, kwargs["timeout"])
 
     monkeypatch.setattr(subprocess, "run", timed_out)
-    with pytest.raises(GhError):
+    with pytest.raises(GhTimeout):
         SubprocessGh().api(["x"], timeout=1.0)
+    with pytest.raises(GhTimeout):
+        SubprocessGh().api_bytes(["x"], timeout=1.0)
 
 
 def test_subprocess_gh_missing_binary_is_a_gh_error(monkeypatch):

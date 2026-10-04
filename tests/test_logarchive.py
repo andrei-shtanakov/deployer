@@ -65,6 +65,19 @@ def test_a_duplicate_entry_name_refuses_the_archive() -> None:
     assert "duplicate" in _refused(data.zip_of([*entries, entries[3]]))
 
 
+def test_a_long_duplicate_name_gives_a_short_reason() -> None:
+    entries = data.archive_entries()
+    long_entry = ("x" * 10_000, b"a")
+    reason = _refused(data.zip_of([*entries, long_entry, long_entry]))
+    assert len(reason) < 300 and "duplicate entry name" in reason
+
+
+def test_a_long_malformed_step_name_gives_a_short_reason() -> None:
+    entries = data.archive_entries()
+    reason = _refused(data.zip_of([*entries, ("job-1/" + "y" * 10_000 + ".txt", b"a")]))
+    assert len(reason) < 300 and "not <N>_<name>.txt" in reason
+
+
 def test_a_truncated_archive_is_corrupt() -> None:
     blob = data.zip_of(data.archive_entries())
     assert "corrupt" in _refused(blob[: len(blob) - 100])
