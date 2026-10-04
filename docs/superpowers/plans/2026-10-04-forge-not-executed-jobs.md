@@ -807,7 +807,7 @@ git commit -m "feat(diagnose): no verdict for a recognised job; logs-only exempt
 - Modify: `tests/fixtures/step-binding/PROVENANCE.md` (the derivations named for this spec) and `CHECKSUMS.sha256` (re-hash); `TODO.md`.
 
 **Interfaces:**
-- Produces: `step_binding_data.STEPS_2` (the `steps-2` fixture directory), `step_binding_data.only_the_recognised_job_kept(records)` (every listed job except `waiting-legs (never-starts)` turned `"conclusion": "success"`, so the recognised job is the only kept one; a labelled derivation), and `step_binding_data.Steps2Replay(logs: dict[int, str | GhError] | None = None, annotations: dict[int, GhError] | None = None, archive: bytes | None = <recorded>, capped: bool = True, records: Callable[[list[dict]], list[dict]] | None = None)`. It serves the recorded calls, applies overrides, and serves annotations `[]` unless overridden. When `capped` is false it has no `api_bytes_capped` (implement this as a subclass, not as an attribute set to `None`).
+- Produces: `step_binding_data.with_assertion_in_fail_fast() -> Steps2Replay` (a labelled synthetic derivation: the runner-timestamped line `AssertionError: probe-fail-fast` inserted right after the `MARK-fail-fast` line in both `parallel-legs (fail-fast)`'s served log and its step-3 file of the served archive, the archive re-zipped with `zip_of`; the timestamp copied from the `MARK` line so the comparison still matches), `step_binding_data.STEPS_2` (the `steps-2` fixture directory), `step_binding_data.only_the_recognised_job_kept(records)` (every listed job except `waiting-legs (never-starts)` turned `"conclusion": "success"`, so the recognised job is the only kept one; a labelled derivation), and `step_binding_data.Steps2Replay(logs: dict[int, str | GhError] | None = None, annotations: dict[int, GhError] | None = None, archive: bytes | None = <recorded>, capped: bool = True, records: Callable[[list[dict]], list[dict]] | None = None)`. It serves the recorded calls, applies overrides, and serves annotations `[]` unless overridden. When `capped` is false it has no `api_bytes_capped` (implement this as a subclass, not as an attribute set to `None`).
 
 - [ ] **Step 1: Add `Steps2Replay` and switch `test_steps2_recording.py` to it.** Keep that file's assertions unchanged. Run `uv run pytest tests/test_steps2_recording.py -q`; it passes.
 
@@ -825,7 +825,12 @@ from deployer.diagnose import diagnose_run
 from deployer.forge import FailedRun, GhError, RunRef, StepBinding, StepRef, fetch_failed_run
 from deployer.notexecuted import NotExecuted
 from deployer.reproduce.shape import job_text, precheck
-from tests.step_binding_data import STEPS_2, Steps2Replay, only_the_recognised_job_kept
+from tests.step_binding_data import (
+    STEPS_2,
+    Steps2Replay,
+    only_the_recognised_job_kept,
+    with_assertion_in_fail_fast,
+)
 
 ENV = json.loads((STEPS_2 / "environment.json").read_text())
 TS = "2026-10-04T09:13:25Z"
@@ -867,12 +872,32 @@ def test_the_verdicts_are_exactly_the_four_run_steps() -> None:
     run = _fetch(Steps2Replay())
     d = diagnose_run(run)
     ids = {j.name: j.job_id for j in run.jobs}
+    assert len(d.failures) == 4  # a set alone would hide a duplicated verdict
     assert {v.where for v in d.failures} == {StepRef(ids[n], 3) for n in RAN}
     for verdict in d.failures:  # no verdict cites another job's or step's evidence
         assert all(e.source == verdict.where for e in verdict.evidence)
     assert d.outcome == "UNCLASSIFIED"
     assert any("was cancelled before execution" in o for o in d.observations)
     assert not any("logs fetch error" in o for o in d.observations)
+
+
+def test_a_recognised_diagnostic_line_is_cited_from_its_own_step() -> None:
+    """Labelled synthetic (owner, 2026-10-04): every-cited-block-is-own-step passes
+    vacuously when nothing is cited, so one leg gets a line an existing rule surely
+    observes. It is `AssertionError: probe-fail-fast`, inserted after
+    `MARK-fail-fast` in BOTH that job's log and its step-3 archive file, so binding
+    still holds."""
+    gh = with_assertion_in_fail_fast()
+    run = _fetch(gh)
+    ids = {j.name: j.job_id for j in run.jobs}
+    d = diagnose_run(run)
+    assert len(d.failures) == 4
+    (verdict,) = [v for v in d.failures if v.where == StepRef(ids["parallel-legs (fail-fast)"], 3)]
+    assert verdict.evidence, "the rule must cite something"
+    assert all(e.source == verdict.where for e in verdict.evidence)
+    assert any("AssertionError: probe-fail-fast" in e.text for e in verdict.evidence)
+    others = [v for v in d.failures if v is not verdict]
+    assert not any("probe-fail-fast" in e.text for v in others for e in v.evidence)
 
 
 def test_job_text_is_unchanged_by_recognition() -> None:
