@@ -1,9 +1,20 @@
 # Forge not-executed jobs — design ("a sibling cancelled before it ran is not a failure, and does not hide one")
 
-**Status:** DRAFT rev 1. Designed with the owner on 2026-10-04. Approach: a closed set of
+**Status:** DRAFT rev 2. Designed with the owner on 2026-10-04. Approach: a closed set of
 recognised signals, three separate decisions (the binding population, the verdict and
-completeness), and five refinements (§2–§5, §8). Next: the owner's external review. No
-code exists for this design.
+completeness), and five refinements (§2–§5, §8). Rev 2 resolves the external review of
+rev 1 at `07f6c95`
+(`../../../../_cowork_output/deployer-forge-not-executed-jobs-spec-review-2026-10-04.md`,
+a dev-only workspace file):
+- R1: the completeness exemption is per dimension and reaches the run-level
+  explanations (§6).
+- R2: the timestamps must be valid and in the recorded form (§2).
+- R3: the boundary regression names the actual refusal, and `fix` gets an explicit
+  fixture (§8).
+
+It also takes up the review's non-blocking details: at least one kept job for §6.1, the
+archive-not-attempted case in §4, and validating a stored `NotExecuted` in §3.3. Next:
+the owner re-checks the changed sections, then a plan. No code exists for this design.
 **Item:** `todo://deployer/step-binding-never-started-jobs`.
 **Base:** `master` @ `45887b9` (#116), with the `steps-2` recording of PR #117
 (`tests/fixtures/step-binding/`, `steps-2/observed.json` as **O2**, PROVENANCE as **P**).
@@ -58,13 +69,16 @@ values are never turned into matching ones by a default.
 | `runner_id` | the integer `0` (not `bool`, not a string) | `0` |
 | `runner_name` | the string `""` (present and empty; `null` or absent does not match) | `""` |
 | `steps` | a present, empty list `[]` | `[]` |
-| `created_at`, `started_at` | both present strings, equal | `09:13:25Z` both |
+| `created_at`, `started_at` | both present, both strings in exactly the recorded form `YYYY-MM-DDTHH:MM:SSZ` (`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$`) that also parse as a valid UTC instant, and equal | `2026-10-04T09:13:25Z` both |
 | the job's own log read | HTTP status `404` (structural, §3.1) | `gh: HTTP 404` → 404 |
 
 Any other value for any signal is a contradiction or a gap, and the job takes the
 ordinary path. That includes a log that is present, 410, any other status, a status-less
 failure (which propagates as today), a missing field, a non-empty or `null` runner name,
-a step, or `started_at ≠ created_at`. The set is closed. Adding an equivalent (for
+a step, or `started_at ≠ created_at`. Timestamps follow the same rule: equal empty
+strings, equal unrecognised strings (`"unknown"`), `null`, a non-string value, a missing
+member of the pair, any other form (fractional seconds, an offset in place of `Z`), or an
+impossible date (`2026-02-30T…`) are gaps, not equal instants. The set is closed. Adding an equivalent (for
 example `runner_name: null`) needs a recording that shows it.
 
 The wording is deliberate: the form is the **supported basis** for treating the job as
@@ -103,14 +117,34 @@ The job stays in `FailedRun.jobs`, with its original `conclusion` (`cancelled`),
 from a log). Nothing makes it look read. Schema 1.6 is additive: 1.5 and older load with
 `None`.
 
+### 3.3 Consuming a stored `NotExecuted`
+
+`NotExecuted`'s fields are typed (`Literal` for `status` and `conclusion`, `int` and `str`
+for the rest), so a document with ill-typed values fails to load, as any malformed
+snapshot does. A value that loads is still not trusted on its own: diagnose consumes it
+only through one validating predicate, `is_not_executed(job)`, which returns true only when
+both of these hold.
+
+1. The stored basis satisfies §2 on its own values: `completed`, `cancelled`, `0`, `""`,
+   0 steps, both timestamps valid in the recorded form and equal, and `log_status` 404.
+2. It agrees with the job it sits on: `job.conclusion == "cancelled"`, `job.all_steps` is
+   `[]`, `job.steps` is empty, `job.completeness.logs == "error"`, and no evidence comes
+   from a log (only annotation evidence, `source == job_id`, may be present).
+
+A stored `NotExecuted` that fails the predicate is ignored: the job takes the ordinary
+path, and diagnose adds the run observation `job <id>: stored not_executed contradicts the
+job; ignored`. An arbitrary non-null object is never enough.
+
 ## 4. Decision 1 — the binding population (B §4.1)
 
 A recognised job is outside the population of the uniqueness check. It never ran, so no
 step directory can be its, and its missing log no longer makes the others `unverifiable`.
 Its own `step_binding` is a new state, `excluded`, with the reason "cancelled before
 execution", **whatever the archive state**: `excluded` is set even when the archive is
-absent, refused or unavailable, because the basis does not depend on the archive. The
-order of precedence for a recognised job is `excluded` over every archive-derived state.
+absent, refused or unavailable, and even when no archive was attempted (a runner without
+the capped download, B §8), because the basis does not depend on the archive. The
+order of precedence for a recognised job is `excluded` over every archive-derived state
+and over "not attempted".
 For every other kept job the B rules are unchanged.
 
 The steps of the decision are fixed:
@@ -122,8 +156,10 @@ A recognised job is never matched to a directory.
 
 ## 5. Decision 2 — the verdict
 
-`diagnose` creates **no failure verdict** for a recognised job. That job has no evidence to
-read, and an empty verdict would show a failure that did not happen. Instead the run gets
+`diagnose` creates **no failure verdict** for a recognised job. That job has no log evidence
+to read, and an empty verdict would show a failure that did not happen. Annotation
+evidence the job may carry (`source == job_id`) is kept in the snapshot unchanged, but is
+not cited by any verdict. Instead the run gets
 one observation per recognised job: `job <id> (<name>) was cancelled before execution
 (runner 0, no steps, log 404)`. The verdicts of every other kept job are formed exactly
 as before. That includes jobs cancelled mid-execution (O2 `long-1`, `long-2`): they ran,
@@ -131,19 +167,31 @@ they keep their verdicts and their binding, and the ordinary rules apply.
 
 ## 6. Decision 3 — completeness
 
-The expected 404 of a recognised job is not missing evidence. It is left out of:
-- the run-level worst-of `FailedRun.completeness` (forge);
-- `diagnose`'s incompleteness check (`_incomplete`, and the per-verdict
-  `EVIDENCE_UNAVAILABLE`).
+The exemption covers **one dimension only: the recognised job's log read**, the expected
+404. Recognition never inspects annotations, so they are not exempt.
 
-Its own `FailedJob.completeness` stays as read (`logs: "error"`). Every other job's
-incompleteness counts exactly as before. A real failure of a job that ran therefore stays
-visible: an `error` read of a job that is not recognised still makes the run
-`EVIDENCE_UNAVAILABLE`.
+- **The logs dimension.** The recognised job's `logs` state is left out of the run-level
+  worst-of `FailedRun.completeness.logs` (forge) and out of diagnose's incompleteness
+  check (`_incomplete`). Its own `FailedJob.completeness.logs` stays `error`.
+- **The annotations dimension.** It is unchanged. A recognised job's annotations state
+  still feeds `FailedRun.completeness.annotations` and the incompleteness check. An
+  `error` there makes the run `EVIDENCE_UNAVAILABLE`, exactly as for any other job, and
+  is reported as such. No standalone verdict is needed to report it.
+- **Run-level explanations** follow the same policy. `_run_missing` (and `_missing` per
+  job) does not report the recognised job's expected log `error` as lost evidence. It
+  still reports a recognised job's annotations error, and every other job's losses,
+  exactly as before. The §5 cancellation observation stays in every case.
+
+Every other job's incompleteness counts exactly as before. A real failure of a job that
+ran therefore stays visible: an `error` read of a job that is not recognised still makes
+the run `EVIDENCE_UNAVAILABLE`, and is reported, without the excluded 404 coming back as
+lost evidence.
 
 ### 6.1 Nothing left to evaluate
 
-If every kept job is recognised, the failed run has no job that ran and failed. The result
+If **at least one job was kept and** every kept job is recognised, the failed run has no
+job that ran and failed. The zero-kept-job path (nothing fetched) is untouched: it keeps
+its existing outcome and observations, and `all([])` never reaches this rule. The result
 is **conservative and explicit**:
 - the outcome is `EVIDENCE_UNAVAILABLE`, never `UNCLASSIFIED` and never anything that reads
   as complete;
@@ -166,11 +214,21 @@ and they were set aside for a stated reason.
 Their logic is unchanged. A diagnose snapshot can reach them (`diagnose --reproduce`, and
 `fix` reading R's snapshot), so a regression pins that the new field gives them no
 positive outcome they did not have:
-- On a `steps-2`-derived snapshot, `reproduce.precheck` refuses exactly as it does on the
-  same snapshot without `not_executed`. Today it refuses `several failed jobs`, and the
-  never-started job has no checkout SHA in its text.
-- Loading a 1.6 snapshot through `fix`'s `load_snapshot` path re-derives the same binding
-  as from the 1.5 form.
+- **reproduce.** Replay `steps-2` through `fetch_failed_run` and call
+  `reproduce.precheck` on the five-job snapshot. Today the result is
+  `Refusal(reason='checkout SHA not established')`. `precheck` checks each job's checkout
+  SHA before it counts jobs, and the never-started job has none (confirmed by the
+  external review's replay). The regression pins that the result is equal, the same
+  `Refusal`, with and without `not_executed` on the job. `precheck`'s order is not
+  changed to suit this design.
+- **fix.** A raw `steps-2` snapshot is refused by reproduction, so it has no R binding to
+  re-derive. The fixture is therefore the existing fix bundle
+  `tests/fixtures/fix/copy-basename-unique`, whose R binding succeeds. In a labelled
+  synthetic derivation, a recognised never-started sibling (with `not_executed` set from
+  the `steps-2` values) is added to the stored run that `fix.author._build` reads. The
+  regression runs the actual `_build` path through the existing author test harness. It
+  asserts that the result, `(BuildConfig, workflow path, workflow SHA-256)` or the same
+  refusal, is identical with and without the sibling and the field.
 
 Keeping the job in `jobs` is the conservative choice, because no consumer sees fewer jobs
 than GitHub listed.
@@ -214,21 +272,31 @@ than GitHub listed.
 | the log 410 | `GhError(…, 410)` | not recognised (`unavailable` as today) |
 | the log another status | `GhError(…, 502)` | not recognised |
 | the log status-less | `GhError(…, None)` | propagates, as today |
-| every kept job recognised | the run's other kept jobs removed | §6.1: `EVIDENCE_UNAVAILABLE` with the explanation; no verdicts |
-| a real error beside an exclusion | `parallel-legs (long-1)`'s log served as 502 | `never-starts` still recognised; the run `EVIDENCE_UNAVAILABLE` for `long-1`'s read; nothing hides it |
-| archive absent | the recording's archive replaced by one without step files | `never-starts` still `excluded`; the others `no_archive` |
+| timestamps equal and empty | both `""` | not recognised |
+| timestamps equal and malformed | both `"unknown"` | not recognised |
+| timestamps null / ill-typed | both `null`; separately both `0` | not recognised |
+| either timestamp missing | `created_at` removed; separately `started_at` removed | not recognised |
+| another timestamp form | both `2026-10-04T09:13:25.000Z`; separately both `…+00:00` | not recognised |
+| an impossible date | both `2026-02-30T09:13:25Z` | not recognised |
+| every kept job recognised | the run's other kept jobs removed (at least one kept) | §6.1: `EVIDENCE_UNAVAILABLE` with the explanation; no verdicts |
+| zero kept jobs | every job green | the existing nothing-fetched outcome, unchanged |
+| a real error beside an exclusion | `parallel-legs (long-1)`'s log served as 502 | `never-starts` still recognised. The run is `EVIDENCE_UNAVAILABLE` for `long-1`'s read. The run observations hold the cancellation line for `never-starts` and `long-1`'s lost log, and **not** `never-starts`' 404 as lost evidence |
+| a recognised job's annotations error | `never-starts`' annotations served as 502 | `never-starts` still recognised and `excluded`, no verdict. `FailedRun.completeness.annotations` is `error`. The run is `EVIDENCE_UNAVAILABLE`, with an observation naming `never-starts`' annotations fetch error beside the cancellation line |
+| archive absent / refused / unavailable / not attempted | four variants: no step files; corrupt; HTTP 404; a runner without `api_bytes_capped` | `never-starts` `excluded` in each. The others get `no_archive`, or `None` when not attempted |
+| a stored `not_executed` that contradicts its job | a 1.6 snapshot whose recognised job is given `conclusion: "failure"` (or a log evidence block, or `log_status: 410`) | the predicate of §3.3 fails: the ordinary path, with the "contradicts the job; ignored" observation |
 
 ### 9.3 The boundary (§8)
 
-Regression on `reproduce.precheck` and `fix`'s snapshot loading, with and without the new
-field.
+As §8. `precheck` gives `Refusal('checkout SHA not established')` with and without the
+field. `fix.author._build` on the `copy-basename-unique` derivation gives an identical
+result with and without the recognised sibling.
 
 ## 10. Order of work (for the plan)
 
 1. `LogRead` with a structural status (§3.1). It is pure plumbing, and every existing test
    stays green.
-2. Recognition (§2) as a pure function over `(record, LogRead)`, with every negative case
-   of §9.2.
+2. Recognition (§2) as a pure function over `(record, LogRead)`, and the validating
+   predicate (§3.3), with every negative case of §9.2.
 3. Snapshot 1.6 and wiring in `fetch_failed_run` and `_bind_steps` (§3.2, §4, run-level
    completeness).
 4. Diagnose (§5, §6, §6.1).
