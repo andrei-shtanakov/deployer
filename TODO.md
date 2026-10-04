@@ -91,7 +91,6 @@ paragraph.
 - [ ] Widen CI COPY confirmation to multi-stage Dockerfiles, with its own C-recording @id:fix-ci-copy-multistage @trigger:"a real case needs it" @epic:eco.dark-factory
   Multi-stage COPY is refused on CI today: no recording shows `stage-<i>` numbering past
   0 or named multi-stage output (F4b, #100).
-- [ ] "Nothing was fetched" as a `Completeness` state of its own instead of being inferred from `jobs == []` in `diagnose_run` @owner:repo:deployer @id:forge-nothing-fetched-state @epic:eco.dark-factory
 - [ ] Record a real repeated attempt of the step-binding polygon run (`steps-1b`, spec §9.3) @owner:github:andrei-shtanakov @id:step-binding-rerun-recording @trigger:"the owner permits one rerun of 37115427715" @epic:eco.dark-factory
   Without it, the repeated-attempt check is synthetic only (spec §9.2, "attempt mixing").
   It must be captured within the per-step-file retention window
@@ -218,6 +217,14 @@ them is the next thing to pick up.
 
 ## Shipped
 
+- [x] "Nothing was fetched" as a `Completeness` state of its own instead of being inferred from `jobs == []` in `diagnose_run` @owner:repo:deployer @id:forge-nothing-fetched-state @epic:eco.dark-factory
+  Fixed: snapshot 1.7 adds the run-level state `none_read` (no job's result counts toward
+  that dimension: zero kept jobs, or for logs every kept job recognised as cancelled before
+  execution). It replaces the old `unavailable`/`absent` there and the earlier ruling that
+  kept `unavailable` for the all-recognised case; a job can never carry it (`FailedJob`
+  refuses it on construction and load). Diagnose outcomes are unchanged; the CLI explains
+  `none_read`. Compatibility is one-way: 1.7 reads older snapshots unchanged, an older
+  reader may reject `none_read`.
 - [x] Forge keeps the job log's leading UTF-8 BOM, so the first evidence line keeps its runner timestamp @owner:repo:deployer @id:forge-log-leading-bom @epic:eco.dark-factory
   Every recorded job log starts with `\ufeff` before the first timestamp; `_split_blocks`
   strips the timestamp with an anchored regex, which the BOM defeats, so the first block

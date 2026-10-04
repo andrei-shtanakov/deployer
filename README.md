@@ -162,11 +162,11 @@ stdout carries the human-readable summary, stderr the diagnostics.
 `reproduction` section, `"1.3"` once an attempted reproduction adds an
 `admission` section — see below; independent of the report
 `schema_version` above); the run snapshot nested in it carries
-`snapshot_schema_version` (`"1.6"`). Verdict 1.1 is additive over 1.0: the
+`snapshot_schema_version` (`"1.7"`). Verdict 1.1 is additive over 1.0: the
 keys are the same, `causes` is always `[]` and `kind` always `null`; 1.2 adds
 only the `reproduction` key, so a document produced without `--reproduce` has
 the verdict's own keys unchanged from 1.1 — the nested `run` snapshot is
-schema 1.6 either way, so the document as a whole is not byte-identical to a
+schema 1.7 either way, so the document as a whole is not byte-identical to a
 1.1 one. Snapshot 1.1 added a per-job `completeness` — how
 that one job was read — beside the run-level worst-of; 1.2 added `level` on
 each piece of evidence: a GitHub annotation's raw `annotation_level`, and
@@ -190,6 +190,11 @@ cancelled, no runner, no steps, equal timestamps, its own log read a 404) on whi
 matrix sibling is recognised as cancelled before execution; such a job's
 `step_binding` is `excluded` and it stays out of the binding population. It is
 `null` on older snapshots and on every job not recognised.
+1.7 adds `none_read` to the run's `completeness`: no job's result counts toward that
+dimension (zero kept jobs; or, for logs, every kept job recognised as cancelled before
+execution, whose log read did happen and returned 404). It never means "expired" and a
+job never carries it. 1.7 extends an enum, so the compatibility is one-way: a 1.7
+reader reads older snapshots unchanged, while an older reader may reject `none_read`.
 Per-step files appear to be short-lived (observed gone from one run's
 archive within hours), so binding usually applies only when `diagnose` runs soon after
 the failure; otherwise the archive reads `absent` and evidence stays job-level.

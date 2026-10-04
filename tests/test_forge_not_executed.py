@@ -121,7 +121,7 @@ def test_excluded_when_no_archive_is_attempted() -> None:
 def test_snapshot_1_6_round_trips_and_1_5_loads_as_not_recognised() -> None:
     run = _run(_gh(_bound_archive()))
     text = dump_snapshot(run)
-    assert json.loads(text)["snapshot_schema_version"] == "1.6"
+    assert json.loads(text)["snapshot_schema_version"] == "1.7"
     assert load_snapshot(text) == run
     old = json.loads(text)
     old["snapshot_schema_version"] = "1.5"
