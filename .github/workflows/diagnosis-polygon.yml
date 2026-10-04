@@ -1,0 +1,29 @@
+name: step-binding-2
+on:
+  workflow_dispatch:
+jobs:
+  parallel-legs:
+    timeout-minutes: 5
+    strategy:
+      fail-fast: true
+      matrix:
+        leg: [fail-fast, long-1, long-2]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      - run: |
+          printf '%s-%s\n' MARK "${{ matrix.leg }}"
+          if [ "${{ matrix.leg }}" = fail-fast ]; then sleep 20; exit 1; fi; sleep 240
+  waiting-legs:
+    timeout-minutes: 5
+    strategy:
+      fail-fast: true
+      max-parallel: 1
+      matrix:
+        leg: [first-fails, never-starts]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      - run: |
+          printf '%s-%s\n' MARK "${{ matrix.leg }}"
+          if [ "${{ matrix.leg }}" = first-fails ]; then exit 1; fi; sleep 240
