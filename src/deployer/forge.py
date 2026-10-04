@@ -41,7 +41,7 @@ DEFAULT_MAX_ARCHIVE_MB = 200
 LOG_ARCHIVE_TIMEOUT_S = 120.0
 """Wall-clock budget for downloading one per-attempt log archive."""
 
-SNAPSHOT_SCHEMA_VERSION = "1.6"
+SNAPSHOT_SCHEMA_VERSION = "1.7"
 
 _PER_PAGE = 100
 _FAILED_CONCLUSIONS = frozenset({"failure", "timed_out"})
@@ -63,7 +63,7 @@ RUNNER_GROUP_PREFIX = "##[group]"
 """The runner's marker that opens a collapsible log group; the title follows it."""
 _ENDGROUP = "##[endgroup]"
 
-LogsState = Literal["present", "unavailable", "error"]
+LogsState = Literal["present", "unavailable", "error", "none_read"]
 
 
 @dataclass(frozen=True)
@@ -77,7 +77,7 @@ class LogRead:
     status: int | None = None
 
 
-AnnotationsState = Literal["present", "absent", "error"]
+AnnotationsState = Literal["present", "absent", "error", "none_read"]
 _LOGS_RANK: dict[LogsState, int] = {"present": 0, "unavailable": 1, "error": 2}
 _ANNOTATIONS_RANK: dict[AnnotationsState, int] = {"present": 0, "absent": 1, "error": 2}
 
@@ -154,9 +154,12 @@ class Completeness:
 
     Recorded twice over: on each :class:`FailedJob`, for how that one job
     was read, and once on the run as the worst-of aggregate over the kept
-    jobs. With zero kept jobs nothing was fetched, so the run's states read
-    ``unavailable``/``absent``; check ``jobs`` before reading them as
-    "logs expired".
+    jobs. ``none_read`` (snapshot 1.7) is a run-level state only: no job's
+    result counts toward that dimension — zero kept jobs, or (logs) every
+    kept job recognised as cancelled before execution, whose log read did
+    happen and returned 404. It never means "expired" and never "error"; a
+    job never carries it (:class:`FailedJob` refuses it). Snapshots before
+    1.7 read ``unavailable``/``absent`` there; check ``jobs`` for those.
     """
 
     logs: LogsState
@@ -220,6 +223,15 @@ class FailedJob:
     all_steps: list[StepInfo] | None = None
     step_binding: StepBinding | None = None
     not_executed: NotExecuted | None = None
+
+    def __post_init__(self) -> None:
+        """A job's own completeness is a read result; ``none_read`` is only
+        ever a run-level aggregate state (snapshot 1.7)."""
+        if "none_read" in (self.completeness.logs, self.completeness.annotations):
+            raise ValueError(
+                f"job {self.job_id}: none_read is a run-level state, "
+                "never a job's own completeness"
+            )
 
 
 def is_not_executed(job: FailedJob) -> bool:
@@ -631,6 +643,11 @@ def dump_snapshot(run: FailedRun) -> str:
     (spec §6); additive, so a 1.4 or older document loads with both ``None``,
     which means not attempted. Schema 1.6 adds each job's ``not_executed``
     (not-executed spec §3.2), additive; older documents load it as ``None``.
+    Schema 1.7 adds the run-level state ``none_read`` to ``completeness``
+    (no job's result counts toward that dimension). It extends an enum, so
+    the compatibility is one-way: this reader reads every older snapshot
+    unchanged, while a reader older than 1.7 may reject a 1.7 document that
+    carries ``none_read``.
     """
     return _run_adapter.dump_json(run, indent=2).decode()
 
@@ -736,10 +753,12 @@ def fetch_failed_run(
             logs=_worst(
                 [j.completeness.logs for j in jobs if j.job_id not in recognised],
                 _LOGS_RANK,
-                "unavailable",
+                "none_read",
             ),
             annotations=_worst(
-                [j.completeness.annotations for j in jobs], _ANNOTATIONS_RANK, "absent"
+                [j.completeness.annotations for j in jobs],
+                _ANNOTATIONS_RANK,
+                "none_read",
             ),
         ),
         workflow_ref_path=ref_path,

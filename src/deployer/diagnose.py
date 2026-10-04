@@ -60,7 +60,7 @@ REPRODUCTION_VERDICT_SCHEMA_VERSION = "1.2"
 Additive over 1.1: no key of the 1.1 document is renamed or removed: without
 a reproduction section (``render_verdict`` called with none, i.e. no
 ``--reproduce``), the verdict's own keys are unchanged from 1.1 — the nested
-``run`` snapshot is schema 1.6 either way, so the document is not
+``run`` snapshot is schema 1.7 either way, so the document is not
 byte-identical to a 1.1 one.
 """
 
@@ -296,9 +296,10 @@ def diagnose_run(snapshot: FailedRun) -> RunDiagnosis:
     Precedence: evidence incomplete anywhere → ``EVIDENCE_UNAVAILABLE``; else
     ``UNCLASSIFIED``, including for a run that exposes nothing to diagnose.
 
-    With zero kept jobs forge fetched nothing, so its worst-of reads
-    ``unavailable``/``absent`` without anything having been lost; there only
-    an ``error`` state counts as incompleteness.
+    With zero kept jobs no job's result counts, so forge's worst-of reads
+    ``none_read`` (snapshot 1.7; ``unavailable``/``absent`` before it) without
+    anything having been lost; there only an ``error`` state counts as
+    incompleteness, and ``none_read`` never does.
 
     A job recognised as cancelled before execution (``is_not_executed``, the
     only way a stored ``not_executed`` is trusted) gets no verdict, only a run

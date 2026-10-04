@@ -159,7 +159,7 @@ def test_every_kept_job_recognised() -> None:
     run = _fetch(Steps2Replay(records=only_the_recognised_job_kept))
     assert [j.name for j in run.jobs] == [NEVER]
     assert run.archive is None
-    assert run.completeness.logs == "unavailable"
+    assert run.completeness.logs == "none_read"  # snapshot 1.7, owner 2026-10-04
     d = diagnose_run(run)
     assert d.failures == [] and d.outcome == "EVIDENCE_UNAVAILABLE"
     assert (

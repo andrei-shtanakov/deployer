@@ -558,6 +558,11 @@ def _print_diagnosis(diagnosis: RunDiagnosis) -> None:
         f"annotations={completeness.annotations}",
         file=sys.stderr,
     )
+    if "none_read" in (completeness.logs, completeness.annotations):
+        print(
+            "  none_read: no job's result counts toward this dimension",
+            file=sys.stderr,
+        )
 
 
 def _print_reproduction(section: ReproductionSection) -> None:
