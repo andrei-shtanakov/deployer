@@ -1,6 +1,6 @@
 # Forge archive step binding — design ("bind a step's output only where the runner's own files prove it")
 
-**Status:** rev 2.3. Designed with the owner on 2026-10-03: approach A was chosen,
+**Status:** rev 2.4. Designed with the owner on 2026-10-03: approach A was chosen,
 then six refinements were applied before writing (§3.3, §4, §5.2, §6, §7, §9.3). Rev 2
 resolves the external review of rev 1 at `eadf587`
 (`../../../../_cowork_output/deployer-forge-archive-step-binding-spec-review-2026-10-03.md`,
@@ -14,8 +14,12 @@ without the capped download attempts nothing (§8), and the boundary of what a c
 archive is detected by (§7.3). Rev 2.3, from the review of PR #114 and the owner's
 ruling: a failure on the archive path that happens after the evidence is in hand —
 a download timeout, a green job's malformed record — degrades binding instead of
-aborting the diagnosis (§4.1, §6, §7.2, §7.4). Implemented on
-`feat/forge-archive-step-binding` (PR #114).
+aborting the diagnosis (§4.1, §6, §7.2, §7.4). Rev 2.4, from the published review of
+PR #114 under the same ruling ("the archive and the extra green-job logs only improve
+attribution; their unavailability must not cancel the diagnosis"): a timeout on a
+green job's log read, which happens only because the archive is usable, degrades
+binding too (§4.1, §7.4); refusal and degradation reasons are bounded (§6).
+Implemented on `feat/forge-archive-step-binding` (PR #114).
 **Item:** `todo://deployer/forge-step-level-log-binding`.
 **Base:** `master` @ `d612ad6`. The schema 1.4 baseline (#113): no job-log block is bound
 to a step. The recording `steps-1` (#112): `tests/fixtures/step-binding/`, with
@@ -284,6 +288,11 @@ Each state carries a short `reason` (text) beside it, except `available`.
 | `ambiguous` | this job is in a match that is not one-to-one (§4.2) |
 | `malformed` | the candidate failed a structural check (§4.3), with a reason |
 
+Every `reason` is short and bounded (rev 2.4). It names the defect, a count and at most
+a short, truncated sample of archive- or API-controlled text, such as entry names or a
+job id, never the text in full. A reason is persisted in snapshots and verdicts, and
+an archive can carry entry names of up to 64 KiB each.
+
 `available` with every job `unmatched` or `ambiguous` is a valid outcome, distinct from
 `absent` and from `refused`. 1.5 is additive over 1.4: both fields default to `None`,
 so 1.4 and older documents load as "not attempted", and 1.3's recorded step bindings
@@ -398,8 +407,14 @@ broken instrument:
   exactly as before rev 2.3. No broad exception handler wraps binding or diagnosis.
 
 The extra population logs (§4.1) follow `_Gh.logs`' existing rule, and their state
-decides `unverifiable`. A green job's malformed record also decides `unverifiable`
-(§4.1).
+decides `unverifiable`, with one change in rev 2.4: a **timeout** on a green job's log
+read (`GhTimeout`, which `SubprocessGh.api` now raises on its deadline as well) makes
+every kept job `unverifiable`, with the timeout named, and the diagnosis is still
+produced. Those reads happen only because the archive is usable, and they only improve
+attribution. Any other status-less failure on them (`gh` did not start) still
+propagates as a broken instrument. A timeout on a main-path read (the run, the jobs
+listing, a kept job's log or annotations) is a `GhTimeout` too, and still propagates
+exactly as before. A green job's malformed record also decides `unverifiable` (§4.1).
 
 ## 8. Diagnose, CLI and output
 
