@@ -1,10 +1,12 @@
 """The ``steps-2`` recording: real cancelled matrix siblings (PROVENANCE.md).
 
 The shape facts are re-read from the raw data, not through forge. The replay
-test pins what forge and diagnose do with it today. ``never-starts`` yields a
-snapshot and an ``error`` log (#116), every job is ``unverifiable``, and the run
-reads ``EVIDENCE_UNAVAILABLE``. ``step-binding-never-started-jobs`` is expected
-to revise the last two outcomes, and this test should change with that spec.
+test pins what forge and diagnose do with it now that never-started siblings
+are recognised (forge-not-executed-jobs spec). ``never-starts`` still yields a
+snapshot and an ``error`` log (#116), but it is recognised as cancelled before
+execution: its binding is ``excluded`` and the four jobs that ran are ``bound``;
+diagnose gives it no verdict, exempts its expected 404, and the run reads
+``UNCLASSIFIED`` with one verdict per failure of the jobs that ran.
 """
 
 import json
@@ -14,7 +16,13 @@ from pathlib import Path
 from typing import Any
 
 from deployer.diagnose import diagnose_run
-from deployer.forge import FailedRun, GhError, OverCap, RunRef, fetch_failed_run
+from deployer.forge import (
+    FailedRun,
+    RunRef,
+    StepBinding,
+    fetch_failed_run,
+)
+from tests.step_binding_data import Steps2Replay
 
 CASE = Path(__file__).parent / "fixtures" / "step-binding" / "steps-2"
 _LOGS_RE = re.compile(r"actions/jobs/(\d+)/logs$")
@@ -58,41 +66,21 @@ def test_the_siblings_cancelled_mid_execution_ran() -> None:
         assert job["started_at"] != job["created_at"]
 
 
-class _Replay:
-    """Serves the recorded calls (a recorded error is re-raised with its status),
-    annotations as ``[]`` (not recorded), and the recorded archive."""
-
-    def __init__(self) -> None:
-        self._by_path = {c["argv"][-1]: c for c in _calls()}
-        self._archive = (CASE / "attempt-1.zip").read_bytes()
-
-    def api(self, argv: list[str], *, timeout: float) -> str:
-        path = argv[-1]
-        if "/check-runs/" in path:
-            return "[]"
-        call = self._by_path[path]
-        if "error" in call:
-            raise GhError(call["error"], call["status"])
-        return call["stdout"]
-
-    def api_bytes_capped(
-        self, argv: list[str], *, timeout: float, max_bytes: int
-    ) -> bytes | OverCap:
-        return self._archive
-
-
 def test_forge_and_diagnose_today_on_steps_2() -> None:
     env = json.loads((CASE / "environment.json").read_text())
     run = fetch_failed_run(
-        RunRef(env["repo"], env["run_id"]), attempt=1, runner=_Replay()
+        RunRef(env["repo"], env["run_id"]), attempt=1, runner=Steps2Replay()
     )
     assert isinstance(run, FailedRun)
     logs = {j.name: j.completeness.logs for j in run.jobs}
     assert logs.pop("waiting-legs (never-starts)") == "error"
     assert set(logs.values()) == {"present"}
-    assert {j.step_binding.state for j in run.jobs if j.step_binding} == {
-        "unverifiable"
-    }
+    bindings = {j.name: j.step_binding for j in run.jobs}
+    assert bindings.pop("waiting-legs (never-starts)") == StepBinding(
+        "excluded", "cancelled before execution"
+    )
+    assert len(bindings) == 4
+    assert all(b is not None and b.state == "bound" for b in bindings.values())
     diagnosis = diagnose_run(run)
-    assert len(diagnosis.failures) == 5
-    assert diagnosis.outcome == "EVIDENCE_UNAVAILABLE"
+    assert len(diagnosis.failures) == 4
+    assert diagnosis.outcome == "UNCLASSIFIED"

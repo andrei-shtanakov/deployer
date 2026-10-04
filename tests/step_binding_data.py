@@ -15,6 +15,7 @@ from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any
 
+from deployer.forge import GhError, OverCap
 from deployer.stepbinding import StepDirectory, StepFile
 
 STEPS_1 = Path(__file__).parent / "fixtures" / "step-binding" / "steps-1"
@@ -140,3 +141,151 @@ def preregistered() -> list[tuple[str, str, int]]:
         ]
         owners.append((row["job"], row["line"], steps[1 + row["step"]]["number"]))
     return owners
+
+
+# --- steps-2: real cancelled matrix siblings (not-executed spec §9) ---------
+
+STEPS_2 = Path(__file__).parent / "fixtures" / "step-binding" / "steps-2"
+_FAIL_FAST = "parallel-legs (fail-fast)"
+_PROBE = "AssertionError: probe-fail-fast"
+_MARK_RE = re.compile(r"^(\S+) MARK-fail-fast$", re.MULTILINE)
+
+
+def _steps2_calls() -> list[dict[str, Any]]:
+    """Every recorded ``gh api`` call of ``steps-2``."""
+    return json.loads((STEPS_2 / "gh-calls.json").read_text())
+
+
+class Steps2Replay:
+    """The ``steps-2`` calls replayed without the capped download.
+
+    ``logs`` overrides a job's log read (a ``GhError`` is raised),
+    ``annotations`` makes a job's annotations read raise (otherwise ``[]``:
+    not recorded), ``records`` transforms the served jobs listing. With
+    ``capped`` true (the default) the instance is a ``_CappedSteps2Replay``,
+    which also serves ``archive`` (a ``GhError`` is raised).
+    """
+
+    def __new__(cls, *args: Any, capped: bool = True, **kwargs: Any) -> "Steps2Replay":
+        return object.__new__(_CappedSteps2Replay if capped else Steps2Replay)
+
+    def __init__(
+        self,
+        logs: dict[int, str | GhError] | None = None,
+        annotations: dict[int, GhError] | None = None,
+        archive: bytes | GhError | None = None,
+        capped: bool = True,
+        records: Callable[[list[dict[str, Any]]], list[dict[str, Any]]] | None = None,
+    ) -> None:
+        self._by_path = {c["argv"][-1]: c for c in _steps2_calls()}
+        self._logs = logs or {}
+        self._annotations = annotations or {}
+        self._archive = (
+            (STEPS_2 / "attempt-1.zip").read_bytes() if archive is None else archive
+        )
+        self._records = records
+
+    def records(self) -> list[dict[str, Any]]:
+        """The recorded jobs listing, untransformed."""
+        return [
+            job
+            for path, call in self._by_path.items()
+            if "/jobs?" in path and "stdout" in call
+            for job in json.loads(call["stdout"])["jobs"]
+        ]
+
+    def api(self, argv: list[str], *, timeout: float) -> str:
+        """The recorded answer to ``argv``, with this replay's overrides."""
+        path = argv[-1]
+        if "/check-runs/" in path:
+            job_id = int(path.split("/check-runs/")[1].split("/")[0])
+            if job_id in self._annotations:
+                raise self._annotations[job_id]
+            return "[]"
+        match = _LOGS_RE.search(path)
+        if match and int(match.group(1)) in self._logs:
+            log = self._logs[int(match.group(1))]
+            if isinstance(log, GhError):
+                raise log
+            return log
+        call = self._by_path[path]
+        if "error" in call:
+            raise GhError(call["error"], call["status"])
+        if "/jobs?" in path and self._records is not None:
+            listing = json.loads(call["stdout"])
+            listing["jobs"] = self._records(listing["jobs"])
+            return json.dumps(listing)
+        return call["stdout"]
+
+
+class _CappedSteps2Replay(Steps2Replay):
+    """``Steps2Replay`` with the capped archive download."""
+
+    def api_bytes_capped(
+        self, argv: list[str], *, timeout: float, max_bytes: int
+    ) -> bytes | OverCap:
+        """The served archive; a ``GhError`` archive is raised."""
+        if isinstance(self._archive, GhError):
+            raise self._archive
+        return self._archive
+
+
+def only_the_recognised_job_kept(
+    records: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Every job but ``waiting-legs (never-starts)`` turned ``success``: the
+    recognised job is the only kept one (a labelled synthetic derivation)."""
+    return [
+        job
+        if job["name"] == "waiting-legs (never-starts)"
+        else {**job, "conclusion": "success"}
+        for job in records
+    ]
+
+
+def never_starts_with_a_runner(
+    records: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """``waiting-legs (never-starts)`` given a runner: the dispatcher shape
+    (a runner, 0 steps, no log), a labelled synthetic derivation."""
+    return [
+        {**job, "runner_id": 1000028882, "runner_name": "GitHub Actions 1000028882"}
+        if job["name"] == "waiting-legs (never-starts)"
+        else job
+        for job in records
+    ]
+
+
+def _with_probe(text: str) -> str:
+    """``text`` with the runner-timestamped probe line right after
+    ``MARK-fail-fast``, stamped with that line's own timestamp."""
+    match = _MARK_RE.search(text)
+    assert match is not None
+    probe = f"\n{match.group(1)} {_PROBE}"
+    return text[: match.end()] + probe + text[match.end() :]
+
+
+def with_assertion_in_fail_fast() -> Steps2Replay:
+    """``steps-2`` with ``AssertionError: probe-fail-fast`` after
+    ``MARK-fail-fast`` in both ``parallel-legs (fail-fast)``'s served log and
+    its step-3 archive file (a labelled synthetic derivation, owner 2026-10-04)."""
+    calls = _steps2_calls()
+    (job,) = [
+        job
+        for call in calls
+        if "/jobs?" in call["argv"][-1] and "stdout" in call
+        for job in json.loads(call["stdout"])["jobs"]
+        if job["name"] == _FAIL_FAST
+    ]
+    (log,) = [
+        c["stdout"]
+        for c in calls
+        if (m := _LOGS_RE.search(c["argv"][-1])) and int(m.group(1)) == job["id"]
+    ]
+    with zipfile.ZipFile(STEPS_2 / "attempt-1.zip") as archive:
+        entries = [(i.filename, archive.read(i)) for i in archive.infolist()]
+    step3 = f"{_FAIL_FAST}/3_"
+    archive_bytes = zip_of(
+        edited(entries, step3, lambda data: _with_probe(data.decode()).encode())
+    )
+    return Steps2Replay(logs={job["id"]: _with_probe(log)}, archive=archive_bytes)

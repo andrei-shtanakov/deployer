@@ -46,6 +46,7 @@ from deployer.forge import (
     FailedRun,
     FailedStep,
     StepRef,
+    is_not_executed,
 )
 
 # ``CLASSIFIED`` is kept for the document's schema; this module never produces it.
@@ -59,13 +60,20 @@ REPRODUCTION_VERDICT_SCHEMA_VERSION = "1.2"
 Additive over 1.1: no key of the 1.1 document is renamed or removed: without
 a reproduction section (``render_verdict`` called with none, i.e. no
 ``--reproduce``), the verdict's own keys are unchanged from 1.1 — the nested
-``run`` snapshot is schema 1.5 either way, so the document is not
+``run`` snapshot is schema 1.6 either way, so the document is not
 byte-identical to a 1.1 one.
 """
 
 _JOB_LEVEL_NOTE = "cited evidence is job-level (no step binding)"
 _NO_OBSERVATION_NOTE = "no observation matched"
 _EMPTY_SET_NOTE = "failed run exposes no failed job or step"
+_NOT_EXECUTED_NOTE = (
+    "job {job_id} ({name}) was cancelled before execution (runner 0, no steps, log 404)"
+)
+_ALL_NOT_EXECUTED_NOTE = (
+    "every non-green job was cancelled before execution; no job log holds the failure"
+)
+_CONTRADICTED_NOTE = "job {job_id}: stored not_executed contradicts the job; ignored"
 WARNING_SHAPED_NOTE = "warning-shaped"
 
 # The shape of a Python exception line, optionally under pytest's ``E`` prefix.
@@ -291,22 +299,42 @@ def diagnose_run(snapshot: FailedRun) -> RunDiagnosis:
     With zero kept jobs forge fetched nothing, so its worst-of reads
     ``unavailable``/``absent`` without anything having been lost; there only
     an ``error`` state counts as incompleteness.
+
+    A job recognised as cancelled before execution (``is_not_executed``, the
+    only way a stored ``not_executed`` is trusted) gets no verdict, only a run
+    observation (not-executed spec §5); its expected log 404 is exempt from
+    the incompleteness check and the run's explanations, its annotations are
+    not (§6). When jobs were kept and every one is recognised, nothing is left
+    to evaluate: ``EVIDENCE_UNAVAILABLE``, saying why (§6.1). A stored
+    ``not_executed`` that fails the predicate is ignored with a note (§3.3).
     """
+    recognised = {j.job_id for j in snapshot.jobs if is_not_executed(j)}
+    notes = [
+        _NOT_EXECUTED_NOTE.format(job_id=j.job_id, name=j.name)
+        for j in snapshot.jobs
+        if j.job_id in recognised
+    ] + [
+        _CONTRADICTED_NOTE.format(job_id=j.job_id)
+        for j in snapshot.jobs
+        if j.not_executed is not None and j.job_id not in recognised
+    ]
+    evaluated = [j for j in snapshot.jobs if j.job_id not in recognised]
     failures = [
         read_failure(job, step, job.completeness)
-        for job in snapshot.jobs
+        for job in evaluated
         for step in (job.steps or [None])
     ]
-    lost = (
-        _lost(snapshot.completeness)
-        if not snapshot.jobs
-        else _incomplete(snapshot.completeness)
-    )
-    if lost or any(v.outcome == "EVIDENCE_UNAVAILABLE" for v in failures):
+    missing = _run_missing(snapshot, recognised)
+    if snapshot.jobs and not evaluated:
+        observations = notes + [_ALL_NOT_EXECUTED_NOTE] + missing
+        return RunDiagnosis(snapshot, [], "EVIDENCE_UNAVAILABLE", [], observations)
+    if _run_lost(snapshot, recognised) or any(
+        v.outcome == "EVIDENCE_UNAVAILABLE" for v in failures
+    ):
         return RunDiagnosis(
-            snapshot, failures, "EVIDENCE_UNAVAILABLE", [], _run_missing(snapshot)
+            snapshot, failures, "EVIDENCE_UNAVAILABLE", [], notes + missing
         )
-    observations = [] if failures else [_EMPTY_SET_NOTE]
+    observations = notes + ([] if failures else [_EMPTY_SET_NOTE])
     return RunDiagnosis(snapshot, failures, "UNCLASSIFIED", [], observations)
 
 
@@ -429,20 +457,53 @@ def _lost(completeness: Completeness) -> bool:
     return completeness.logs == "error" or completeness.annotations == "error"
 
 
-def _run_missing(snapshot: FailedRun) -> list[str]:
+def _run_lost(snapshot: FailedRun, recognised: set[int]) -> bool:
+    """Whether evidence was lost, exempting only recognised jobs' log reads (§6).
+
+    Without recognised jobs this is exactly the old test on the run's
+    worst-of; with them it is taken per job, so the exemption cannot depend
+    on how a stored aggregate was computed.
+    """
+    if not snapshot.jobs:
+        return _lost(snapshot.completeness)
+    if not recognised:
+        return _incomplete(snapshot.completeness)
+    return any(_job_incomplete(j, j.job_id in recognised) for j in snapshot.jobs)
+
+
+def _job_incomplete(job: FailedJob, exempt: bool) -> bool:
+    """A job's incompleteness; an exempt job's logs dimension is left out."""
+    if exempt:
+        return job.completeness.annotations == "error"
+    return _incomplete(job.completeness)
+
+
+def _job_missing(job: FailedJob, exempt: bool) -> list[str]:
+    """What a job is missing; an exempt job's expected log 404 is not lost."""
+    if exempt:
+        return (
+            ["annotations fetch error"]
+            if job.completeness.annotations == "error"
+            else []
+        )
+    return _missing(job.completeness)
+
+
+def _run_missing(snapshot: FailedRun, recognised: set[int]) -> list[str]:
     """What is missing, naming the job it is missing from.
 
     "logs fetch error" alone leaves the operator to guess which job of a
     matrix was not read. The run's own worst-of is the fallback: with no
     kept jobs there is nothing to name, and a hand-built snapshot may carry
-    an aggregate no job accounts for.
+    an aggregate no job accounts for. With recognised jobs the per-job list
+    is the whole answer: their exempt log read is not lost evidence (§6).
     """
     per_job = [
         f"job {job.job_id}: {note}"
         for job in snapshot.jobs
-        for note in _missing(job.completeness)
+        for note in _job_missing(job, job.job_id in recognised)
     ]
-    return per_job or _missing(snapshot.completeness)
+    return per_job if (per_job or recognised) else _missing(snapshot.completeness)
 
 
 def _missing(completeness: Completeness) -> list[str]:
@@ -471,7 +532,7 @@ def render_verdict(
     ``snapshot_schema_version`` (``forge.py``) untouched. With
     ``reproduction`` given, the document gains a ``reproduction`` key and
     reads schema 1.2 (additive); without it, the verdict's own keys are
-    unchanged from 1.1 — the nested ``run`` snapshot is schema 1.5 either
+    unchanged from 1.1 — the nested ``run`` snapshot is schema 1.6 either
     way, so the document as a whole is not byte-identical to a 1.1 one.
     With ``admission`` also given (A §6.2), it gains an ``admission`` key and
     reads schema 1.3, additive over 1.2; an admission needs a reproduction.

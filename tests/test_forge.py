@@ -719,7 +719,7 @@ def test_snapshot_round_trips_through_versioned_json(fake_gh):
     assert isinstance(snapshot, FailedRun)
     text = dump_snapshot(snapshot)
     document = json.loads(text)
-    assert document["snapshot_schema_version"] == "1.5"
+    assert document["snapshot_schema_version"] == "1.6"
     assert document["jobs"][0]["completeness"] == {
         "logs": "present",
         "annotations": "present",
@@ -770,7 +770,7 @@ def test_a_document_without_a_version_loads_as_the_current_one():
     )
     del document["snapshot_schema_version"]
     restored = load_snapshot(json.dumps(document))
-    assert restored.snapshot_schema_version == SNAPSHOT_SCHEMA_VERSION == "1.5"
+    assert restored.snapshot_schema_version == SNAPSHOT_SCHEMA_VERSION == "1.6"
 
 
 def test_a_schema_1_0_snapshot_still_loads(fake_gh):
@@ -842,7 +842,7 @@ def test_snapshot_types_construct_positionally():
     refusal = AdapterRefusal("not_failed", "conclusion is success")
     assert refusal.reason == "not_failed"
     run = FailedRun("o/r", 1, 1, "sha", "url", [], Completeness("present", "absent"))
-    assert run.snapshot_schema_version == "1.5"
+    assert run.snapshot_schema_version == "1.6"
     assert FailedJob(1, "j", "failure", [], []).steps == []
     assert FailedStep(StepRef(1, 1), "s", "failure", []).ref.number == 1
     assert Evidence(None, "a line").level is None
@@ -1143,3 +1143,17 @@ def test_fetch_tree_listing_refuses_an_incomplete_response(body):
     with pytest.raises(GhError, match="tree listing malformed") as info:
         fetch_tree_listing("o/r", "abc", BytesGh(b"", body))
     assert info.value.status is None
+
+
+def test_a_log_read_carries_its_http_status(fake_gh):
+    """§3.1: the status of a failed log read reaches the caller as data."""
+    from deployer.forge import _Gh
+
+    fake_gh.logs = GhError("gh api … failed: gh: HTTP 404", status=404)
+    read = _Gh(fake_gh, "o/r").logs(1)
+    assert (read.text, read.state, read.status) == ("", "error", 404)
+    fake_gh.logs = GhError("gh: Gone (HTTP 410)", status=410)
+    assert _Gh(fake_gh, "o/r").logs(1).status == 410
+    fake_gh.logs = "a log\n"
+    read = _Gh(fake_gh, "o/r").logs(1)
+    assert (read.text, read.state, read.status) == ("a log\n", "present", None)

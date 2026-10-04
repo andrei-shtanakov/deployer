@@ -8,6 +8,7 @@ bundles are untouched): ``basename-unique`` adds one other file named
 only through the ``enable_for_test`` seam.
 """
 
+import copy
 import dataclasses
 import json
 import os
@@ -24,9 +25,11 @@ from deployer.fix import author as author_mod
 from deployer.fix.author import FIX_FILE, FixAbort, author_fix
 from deployer.fix.document import FixDocument, load
 from deployer.fix.workspace import Committed, FixDirError, Vetted, new_fix_dir
+from deployer.forge import is_not_executed, load_snapshot
 from deployer.models import ContainerRuntime
 from deployer.provenance.issue import Issued
 from deployer.provenance.model import POINTER, SET_ROOT
+from deployer.reproduce.model import ReproductionSection
 from tests.admission.conftest import Replayed
 from tests.fix.conftest import (
     Scenario,
@@ -703,3 +706,48 @@ def test_the_fix_path_is_announced_only_after_the_first_save(
             on_document=announced.append,
         )
     assert announced == []
+
+
+def test_a_recognised_sibling_does_not_change_r_s_rebuilt_binding(
+    unique: Case,
+) -> None:
+    """Not-executed spec §8: a never-started sibling with ``not_executed``,
+    added to the stored run that ``_build`` reads, leaves the re-bound
+    configuration identical (a labelled synthetic derivation of the
+    basename-unique case)."""
+    document = unique.s.document()
+    section = ReproductionSection.model_validate(document["reproduction"])
+    assert section.try_dir is not None
+    source_dir = (unique.s.r.root / section.try_dir).parent.parent / "source"
+    before = author_mod._build(document, section, source_dir)
+    assert not isinstance(before, str), before
+    sibling = {
+        **copy.deepcopy(document["run"]["jobs"][0]),
+        "job_id": 999_999,
+        "name": "never-starts",
+        "conclusion": "cancelled",
+        "steps": [],
+        "evidence": [],
+        "all_steps": [],
+        "completeness": {"logs": "error", "annotations": "absent"},
+        "step_binding": {"state": "excluded", "reason": "cancelled before execution"},
+        "not_executed": {
+            "status": "completed",
+            "conclusion": "cancelled",
+            "runner_id": 0,
+            "runner_name": "",
+            "steps": 0,
+            "created_at": "2026-10-04T09:13:25Z",
+            "started_at": "2026-10-04T09:13:25Z",
+            "log_status": 404,
+        },
+    }
+    changed = copy.deepcopy(document)
+    changed["run"]["jobs"].append(sibling)
+    (loaded,) = [
+        job
+        for job in load_snapshot(json.dumps(changed["run"])).jobs
+        if job.job_id == 999_999
+    ]
+    assert is_not_executed(loaded)  # the sibling is recognised, not ignored
+    assert author_mod._build(changed, section, source_dir) == before

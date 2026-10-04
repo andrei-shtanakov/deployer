@@ -315,10 +315,10 @@ def test_a_job_that_never_started_makes_binding_unverifiable() -> None:
     }
 
 
-def test_snapshot_1_5_round_trips_and_1_4_loads_as_not_attempted() -> None:
+def test_snapshot_round_trips_and_1_4_loads_as_not_attempted() -> None:
     run = _run(_gh(_bound_archive()))
     text = dump_snapshot(run)
-    assert json.loads(text)["snapshot_schema_version"] == "1.5"
+    assert json.loads(text)["snapshot_schema_version"] == "1.6"
     assert load_snapshot(text) == run
     old = json.loads(text)
     old["snapshot_schema_version"] = "1.4"
