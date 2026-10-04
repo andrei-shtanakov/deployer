@@ -8,10 +8,12 @@ from dataclasses import dataclass, field
 
 import pytest
 
+from deployer.diagnose import diagnose_run
 from deployer.forge import (
     ArchiveStatus,
     FailedRun,
     GhError,
+    GhTimeout,
     OverCap,
     RunRef,
     StepBinding,
@@ -37,6 +39,7 @@ class ArchiveFakeGh(FakeGh):
     archive: bytes | OverCap | GhError = b""
     logs_by_job: dict[int, str | GhError] = field(default_factory=dict)
     archive_calls: list[list[str]] = field(default_factory=list)
+    archive_error: Exception | None = None
 
     def api(self, argv: list[str], *, timeout: float) -> str:
         match = _LOGS_RE.search(argv[-1])
@@ -52,6 +55,8 @@ class ArchiveFakeGh(FakeGh):
         self, argv: list[str], *, timeout: float, max_bytes: int
     ) -> bytes | OverCap:
         self.archive_calls.append(list(argv))
+        if self.archive_error is not None:
+            raise self.archive_error
         if isinstance(self.archive, GhError):
             raise self.archive
         return self.archive
@@ -127,14 +132,28 @@ def test_no_kept_job_means_no_archive_attempt() -> None:
     assert gh.archive_calls == []
 
 
-def test_a_malformed_green_job_record_is_a_status_less_error() -> None:
+def _assert_diagnosed_without_steps(run: FailedRun) -> None:
+    assert all(not isinstance(e.source, StepRef) for j in run.jobs for e in j.evidence)
+    diagnosis = diagnose_run(run)
+    assert diagnosis.failures
+    assert all(
+        not isinstance(e.source, StepRef)
+        for f in diagnosis.failures
+        for e in f.evidence
+    )
+
+
+def test_a_malformed_green_job_record_makes_binding_unverifiable() -> None:
     gh = _gh(_bound_archive())
     gh.job_pages = [
         [*gh.job_pages[0], job(2, conclusion="success", steps=[{"name": "x"}])]
     ]
-    with pytest.raises(GhError) as caught:
-        _run(gh)
-    assert caught.value.status is None
+    run = _run(gh)
+    assert run.archive == ArchiveStatus("available")
+    binding = run.jobs[0].step_binding
+    assert binding is not None and binding.state == "unverifiable"
+    assert "job record" in (binding.reason or "")
+    _assert_diagnosed_without_steps(run)
 
 
 def test_kept_job_states_are_checked_before_any_green_log_is_read() -> None:
@@ -156,9 +175,38 @@ def test_a_status_less_error_on_a_green_log_propagates() -> None:
         _run(gh)
 
 
-def test_a_status_less_error_propagates() -> None:
+def test_a_download_timeout_is_recorded_and_the_diagnosis_is_still_made() -> None:
+    plain = _run(FakeGh(job_pages=_gh(b"").job_pages, logs=LOG))
+    run = _run(_gh(GhTimeout("gh api … timed out after 120.0s")))
+    assert run.archive is not None and run.archive.state == "unavailable"
+    assert "timed out" in (run.archive.reason or "")
+    assert run.jobs
+    for kept in run.jobs:
+        assert kept.step_binding is not None
+        assert kept.step_binding.state == "no_archive"
+    assert [j.completeness for j in run.jobs] == [j.completeness for j in plain.jobs]
+    assert run.jobs[0].completeness.logs == "present"
+    _assert_diagnosed_without_steps(run)
+
+
+def test_another_status_less_archive_error_propagates() -> None:
+    with pytest.raises(GhError) as caught:
+        _run(_gh(GhError("gh api could not start: no gh")))
+    assert not isinstance(caught.value, GhTimeout)
+
+
+def test_an_unexpected_archive_exception_propagates() -> None:
+    gh = _gh(b"")
+    gh.archive_error = ValueError("boom")
+    with pytest.raises(ValueError):
+        _run(gh)
+
+
+def test_a_status_less_error_on_a_kept_log_propagates() -> None:
+    gh = _gh(_bound_archive())
+    gh.logs_by_job = {1: GhError("gh api … timed out after 30.0s", None)}
     with pytest.raises(GhError):
-        _run(_gh(GhError("gh api … timed out after 120.0s")))
+        _run(gh)
 
 
 def test_an_archive_over_the_download_cap_is_refused() -> None:

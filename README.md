@@ -197,8 +197,10 @@ exits 2 rather than being reported as an unreadable log.
 Every `diagnose` also downloads the run attempt's log archive (capped at 64 MiB,
 120 s) and, when it holds per-step files, reads the log of every job of the attempt
 that ran (green ones included) to prove ownership. HTTP errors there are recorded as
-states; a failure without an HTTP status (timeout, `gh` not starting) exits 2 like any
-other `gh` failure.
+states, and so is a download that times out (`archive: unavailable`): the diagnosis is
+still produced. A malformed green job record makes step binding `unverifiable`. Any
+other failure without an HTTP status (`gh` not starting, a reader error) exits 2 like
+any other `gh` failure.
 
 The reading layer itself is offline and pure: it is a function from the
 fetched snapshot to the verdict. Fixture input is a **test affordance, not a user

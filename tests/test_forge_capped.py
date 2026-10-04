@@ -17,6 +17,7 @@ from deployer.forge import (
     _CAPPED_CHUNK,
     GhCappedBytesRunner,
     GhError,
+    GhTimeout,
     OverCap,
     SubprocessGh,
     _capped_result,
@@ -115,6 +116,7 @@ def test_a_silent_child_times_out(pidfile: Path) -> None:
     with pytest.raises(GhError) as caught:
         gh.api_bytes_capped(["x"], timeout=0.5, max_bytes=100)
     assert caught.value.status is None and "timed out" in str(caught.value)
+    assert isinstance(caught.value, GhTimeout)
     assert time.monotonic() - start < 0.5 + 2 + 3
     _assert_reaped(pidfile)
 
@@ -139,6 +141,7 @@ def test_a_missing_program_is_a_status_less_error() -> None:
     with pytest.raises(GhError) as caught:
         gh.api_bytes_capped(["x"], timeout=5, max_bytes=100)
     assert caught.value.status is None
+    assert not isinstance(caught.value, GhTimeout)
 
 
 def test_the_stdout_buffer_holds_at_most_the_cap_plus_one_chunk() -> None:

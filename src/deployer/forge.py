@@ -293,6 +293,10 @@ class GhError(Exception):
         self.status = status
 
 
+class GhTimeout(GhError):
+    """A ``gh api`` call hit its deadline, as opposed to other status-less failures."""
+
+
 class GhRunner(Protocol):
     """Anything that answers ``gh api <argv>`` with stdout text."""
 
@@ -559,7 +563,7 @@ def _capped_result(
     if out.over.is_set():
         return OverCap(max_bytes)
     if ended == "deadline":
-        raise GhError(f"gh api {what} timed out after {timeout}s")
+        raise GhTimeout(f"gh api {what} timed out after {timeout}s")
     if returncode != 0:
         stderr = bytes(err.tail).decode("utf-8", errors="replace")
         raise _gh_failure(what, returncode, stderr)
@@ -691,6 +695,13 @@ def _bind_steps(
         blob = runner.api_bytes_capped(
             [path], timeout=LOG_ARCHIVE_TIMEOUT_S, max_bytes=limits.download
         )
+    except GhTimeout as exc:
+        reason = f"the download timed out: {exc}"
+        return ArchiveStatus("unavailable", reason), _each(
+            reads,
+            "no_archive",
+            "the log archive is unavailable: the download timed out",
+        )
     except GhError as exc:
         if exc.status is None:
             raise
@@ -713,7 +724,13 @@ def _bind_steps(
         )
     population = [r for r in listing if r.get("conclusion") != "skipped"]
     for record in population:
-        _check_job_record(record)
+        if _is_readable_job_record(record):
+            continue
+        if isinstance(record, dict) and record.get("id") in reads:
+            _check_job_record(record)
+        return ArchiveStatus("available"), _each(
+            reads, "unverifiable", f"a job record is malformed: {record!r}"
+        )
     logs: dict[int, str] = {}
     for job_id, (text, state) in reads.items():
         if state != "present":
@@ -924,16 +941,20 @@ def _read_all_jobs(
     return jobs, states, texts
 
 
-def _check_job_record(record: object) -> None:
-    """Refuse a job record ``build_failed_job`` could not read without guessing."""
+def _is_readable_job_record(record: object) -> bool:
+    """Whether ``build_failed_job`` could read the record without guessing."""
     steps = record.get("steps") if isinstance(record, dict) else None
-    ok = (
+    return (
         isinstance(record, dict)
         and _is_int(record.get("id"))
         and (steps is None or isinstance(steps, list))
         and all(isinstance(s, dict) and _is_int(s.get("number")) for s in steps or [])
     )
-    if not ok:
+
+
+def _check_job_record(record: object) -> None:
+    """Refuse a job record ``build_failed_job`` could not read without guessing."""
+    if not _is_readable_job_record(record):
         raise GhError(f"job record malformed: {record!r}", None)
 
 
