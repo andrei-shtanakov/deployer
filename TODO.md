@@ -108,6 +108,12 @@ paragraph.
   entries without them at 18:44Z on 2026-10-03 (completed 10:08:59Z); run 37109766941
   had none at ~80 and ~100 min. Age is the strongest candidate, window unmeasured. It
   decides whether step binding is useful at DarkFactory latency.
+- [ ] Recognise (or keep refusing) a cancelled job with a runner assigned, 0 steps and no log @owner:repo:deployer @id:not-executed-runner-assigned-no-steps @trigger:"a job of this shape is recorded" @epic:eco.dark-factory
+  First seen on a CI run of the `dispatcher` repository (run 33061272927, 2026-10-04); that is
+  only where the example was found, not a dependency on that repo. Today such a job takes the
+  ordinary path (`unverifiable` binding, `EVIDENCE_UNAVAILABLE`), because the supported
+  not-executed form requires `runner_id 0`. Recognising it needs a recording of the shape, then a
+  spec decision on whether it counts as not executed.
 - [ ] With two failed steps in one job, both verdicts cite the same unbound block @owner:repo:deployer @id:forge-unbound-block-shared-across-steps @epic:eco.dark-factory
   `_evidence_pool` gives every unbound (`source=None`) block to every failed step of its
   job, so whenever step binding does not happen (no archive, refused, unverifiable,
@@ -216,8 +222,6 @@ them is the next thing to pick up.
   `stop`/`remove`). What is genuinely duplicated is the docker-vs-podman + remote-host
   choice. Neither repo references the other; recorded so a third copy is a decision
 
-- [ ] Recognise (or keep refusing) the dispatcher shape: a cancelled job with a runner, 0 steps and no log @owner:repo:deployer @id:not-executed-dispatcher-shape @epic:eco.dark-factory
-  Today it takes the ordinary path (unverifiable binding, `EVIDENCE_UNAVAILABLE`); recognising it needs a recording of that shape.
 
 ## Shipped
 
