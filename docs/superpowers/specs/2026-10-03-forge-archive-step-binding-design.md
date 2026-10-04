@@ -1,6 +1,6 @@
 # Forge archive step binding — design ("bind a step's output only where the runner's own files prove it")
 
-**Status:** DRAFT rev 2.2. Designed with the owner on 2026-10-03: approach A was chosen,
+**Status:** rev 2.3. Designed with the owner on 2026-10-03: approach A was chosen,
 then six refinements were applied before writing (§3.3, §4, §5.2, §6, §7, §9.3). Rev 2
 resolves the external review of rev 1 at `eadf587`
 (`../../../../_cowork_output/deployer-forge-archive-step-binding-spec-review-2026-10-03.md`,
@@ -11,7 +11,11 @@ owner checks the rev 2 diff, then a plan. Rev 2 was approved for planning; rev 2
 makes discovery of step entries independent of name validation (§4.2), the review's
 non-blocking detail 2. Rev 2.2 adds two contract points from the plan review: a runner
 without the capped download attempts nothing (§8), and the boundary of what a corrupt
-archive is detected by (§7.3). No code exists for this design.
+archive is detected by (§7.3). Rev 2.3, from the review of PR #114 and the owner's
+ruling: a failure on the archive path that happens after the evidence is in hand —
+a download timeout, a green job's malformed record — degrades binding instead of
+aborting the diagnosis (§4.1, §6, §7.2, §7.4). Implemented on
+`feat/forge-archive-step-binding` (PR #114).
 **Item:** `todo://deployer/forge-step-level-log-binding`.
 **Base:** `master` @ `d612ad6`. The schema 1.4 baseline (#113): no job-log block is bound
 to a step. The recording `steps-1` (#112): `tests/fixtures/step-binding/`, with
@@ -126,6 +130,14 @@ and has no log; it is outside the population. If any job of the population is no
 Every job then reads `unverifiable` (§6) and nothing is bound. Restricting the
 guarantee to the logs that happened to be read is not done silently, because it is
 not done at all.
+
+A green job's record that cannot be read (a missing or non-integer `id`, or a step
+without an integer `number`) leaves the population unprovable in the same way: that job
+cannot be excluded from the uniqueness check, because its text could equal a kept job's.
+Every kept job then reads `unverifiable`, with the record named in the reason. This
+does not abort the diagnosis (rev 2.3): the kept jobs' evidence was already read
+through the main path, and only binding is given up. The kept jobs' own records are
+parsed on the main path, and a malformed one there still fails as before.
 
 The extra logs are used only for this decision. Green jobs are not kept and add no
 evidence, exactly as today.
@@ -256,7 +268,7 @@ path that does not read the archive.
 |---|---|
 | `available` | downloaded within limits, read without error, holds at least one step directory |
 | `absent` | downloaded and read, holds no step directory (the shape of P's earlier runs) |
-| `unavailable` | the download returned an HTTP error status (404, 410, any other) |
+| `unavailable` | the download returned an HTTP error status (404, 410, any other), or did not finish before its deadline (rev 2.3) |
 | `refused` | a limit was exceeded; the archive is corrupt, duplicated, encrypted or uses an unsupported method (§7); or a step directory is unreadable before ownership (§4.2) |
 
 Each state carries a short `reason` (text) beside it, except `available`.
@@ -320,7 +332,8 @@ lifecycle of one `gh api` process:
   reach end of file once it is gone. Both reader threads are then joined with a bound;
   if one fails to end, that is reported as a status-less `GhError` too.
 - **Results.** Over the cap: `over the cap`, which is not a `GhError` (§7.1, the archive
-  is `refused`). Deadline: a status-less `GhError` naming the timeout. Nonzero exit: maps
+  is `refused`). Deadline: `GhTimeout`, a status-less `GhError` subclass naming the
+timeout, so a caller can tell a deadline from other status-less failures (rev 2.3). Nonzero exit: maps
   through `_gh_failure` with the retained stderr, exactly as `api_bytes` does. Otherwise:
   the bytes.
 
@@ -370,12 +383,23 @@ As elsewhere in forge, an HTTP status is data about the run and a missing status
 broken instrument:
 
 - **A `GhError` with a status** makes the archive `unavailable`, with that status.
-- **A `GhError` without a status** (timeout, `gh` did not start) propagates, as it does
-  for the jobs listing and the job logs. An archive `unavailable` because of a timeout
-  would hide a broken instrument as data about the run.
+- **A deadline on the archive download** (`GhTimeout`) makes the archive
+  `unavailable`, with the timeout as the reason, and every kept job `no_archive`
+  (rev 2.3). By then the run, the jobs listing and every kept job's log and annotations
+  have been read through separate calls that succeeded, so the instrument works. The
+  archive only improves attribution, and its slowness must not take away a diagnosis
+  that the main evidence supports. The kept jobs keep their evidence and their
+  `Completeness`, and the verdicts stay job-level.
+- **Any other `GhError` without a status** on the archive download (`gh` did not
+  start, an output reader did not finish, a reader error) still propagates: that is a
+  broken instrument, not a slow archive.
+- **Main-path failures are unchanged.** A status-less failure on the run, the jobs
+  listing, a kept job's log or annotations, and any unexpected exception, propagate
+  exactly as before rev 2.3. No broad exception handler wraps binding or diagnosis.
 
 The extra population logs (§4.1) follow `_Gh.logs`' existing rule, and their state
-decides `unverifiable`.
+decides `unverifiable`. A green job's malformed record also decides `unverifiable`
+(§4.1).
 
 ## 8. Diagnose, CLI and output
 
