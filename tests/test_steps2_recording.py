@@ -1,10 +1,12 @@
 """The ``steps-2`` recording: real cancelled matrix siblings (PROVENANCE.md).
 
 The shape facts are re-read from the raw data, not through forge. The replay
-test pins what forge and diagnose do with it today. ``never-starts`` yields a
-snapshot and an ``error`` log (#116), every job is ``unverifiable``, and the run
-reads ``EVIDENCE_UNAVAILABLE``. ``step-binding-never-started-jobs`` is expected
-to revise the last two outcomes, and this test should change with that spec.
+test pins what forge and diagnose do with it now that never-started siblings
+are recognised (forge-not-executed-jobs spec). ``never-starts`` still yields a
+snapshot and an ``error`` log (#116), but it is recognised as cancelled before
+execution: its binding is ``excluded`` and the four jobs that ran are ``bound``;
+diagnose gives it no verdict, exempts its expected 404, and the run reads
+``UNCLASSIFIED`` with one verdict per failure of the jobs that ran.
 """
 
 import json
@@ -104,5 +106,5 @@ def test_forge_and_diagnose_today_on_steps_2() -> None:
     assert len(bindings) == 4
     assert all(b is not None and b.state == "bound" for b in bindings.values())
     diagnosis = diagnose_run(run)
-    assert len(diagnosis.failures) == 5
-    assert diagnosis.outcome == "EVIDENCE_UNAVAILABLE"
+    assert len(diagnosis.failures) == 4
+    assert diagnosis.outcome == "UNCLASSIFIED"
