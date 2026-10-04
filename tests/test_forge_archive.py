@@ -152,8 +152,18 @@ def test_a_malformed_green_job_record_makes_binding_unverifiable() -> None:
     assert run.archive == ArchiveStatus("available")
     binding = run.jobs[0].step_binding
     assert binding is not None and binding.state == "unverifiable"
-    assert "job record" in (binding.reason or "")
+    reason = binding.reason or ""
+    assert len(reason) < 200 and "green job 2" in reason
+    assert "a step without an int `number`" in reason
     _assert_diagnosed_without_steps(run)
+
+
+def test_a_malformed_kept_job_record_still_raises_status_less() -> None:
+    gh = _gh(_bound_archive())
+    gh.job_pages = [[job(1, steps=[{"name": "x"}])]]
+    with pytest.raises(GhError) as caught:
+        _run(gh)
+    assert caught.value.status is None
 
 
 def test_kept_job_states_are_checked_before_any_green_log_is_read() -> None:

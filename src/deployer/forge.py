@@ -629,7 +629,7 @@ def fetch_failed_run(
         job_id = int(record["id"])
         reads[job_id] = gh.logs(job_id)
         noted[job_id] = gh.annotations(job_id)
-    archive, bindings = _bind_steps(runner, gh, ref, resolved, listing, reads)
+    archive, bindings = _bind_steps(runner, gh, ref, resolved, listing, kept, reads)
     jobs: list[FailedJob] = []
     for record in kept:
         job_id = int(record["id"])
@@ -680,6 +680,7 @@ def _bind_steps(
     ref: RunRef,
     attempt: int,
     listing: list[dict[str, Any]],
+    kept: list[dict[str, Any]],
     reads: dict[int, tuple[str, LogsState]],
 ) -> tuple[ArchiveStatus | None, dict[int, JobBinding]]:
     """The archive's state and each kept job's binding (spec §4, §6, §7).
@@ -723,14 +724,19 @@ def _bind_steps(
             reads, "no_archive", "the log archive holds no per-step files"
         )
     population = [r for r in listing if r.get("conclusion") != "skipped"]
-    for record in population:
-        if _is_readable_job_record(record):
+    for index, record in enumerate(listing):
+        if record.get("conclusion") == "skipped":
             continue
-        if isinstance(record, dict) and record.get("id") in reads:
+        defect = _job_record_defect(record)
+        if defect is None:
+            continue
+        if any(record is k for k in kept):
             _check_job_record(record)
-        return ArchiveStatus("available"), _each(
-            reads, "unverifiable", f"a job record is malformed: {record!r}"
+        reason = (
+            f"the record of green job {record.get('id')!r} "
+            f"(listing index {index}) is malformed: {defect}"
         )
+        return ArchiveStatus("available"), _each(reads, "unverifiable", reason)
     logs: dict[int, str] = {}
     for job_id, (text, state) in reads.items():
         if state != "present":
@@ -941,20 +947,23 @@ def _read_all_jobs(
     return jobs, states, texts
 
 
-def _is_readable_job_record(record: object) -> bool:
-    """Whether ``build_failed_job`` could read the record without guessing."""
-    steps = record.get("steps") if isinstance(record, dict) else None
-    return (
-        isinstance(record, dict)
-        and _is_int(record.get("id"))
-        and (steps is None or isinstance(steps, list))
-        and all(isinstance(s, dict) and _is_int(s.get("number")) for s in steps or [])
-    )
+def _job_record_defect(record: object) -> str | None:
+    """Why ``build_failed_job`` could not read the record without guessing."""
+    if not isinstance(record, dict):
+        return "not an object"
+    if not _is_int(record.get("id")):
+        return "`id` is not an int"
+    steps = record.get("steps")
+    if steps is not None and not isinstance(steps, list):
+        return "`steps` is not a list"
+    if not all(isinstance(s, dict) and _is_int(s.get("number")) for s in steps or []):
+        return "a step without an int `number`"
+    return None
 
 
 def _check_job_record(record: object) -> None:
     """Refuse a job record ``build_failed_job`` could not read without guessing."""
-    if not _is_readable_job_record(record):
+    if _job_record_defect(record) is not None:
         raise GhError(f"job record malformed: {record!r}", None)
 
 
