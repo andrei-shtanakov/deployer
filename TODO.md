@@ -106,11 +106,15 @@ paragraph.
   ordinary path (`unverifiable` binding, `EVIDENCE_UNAVAILABLE`), because the supported
   not-executed form requires `runner_id 0`. Recognising it needs a recording of the shape, then a
   spec decision on whether it counts as not executed.
-- [ ] With two failed steps in one job, both verdicts cite the same unbound block @owner:repo:deployer @id:forge-unbound-block-shared-across-steps @epic:eco.dark-factory
+- [ ] With two failed steps in one job, both verdicts cite the same unbound block @owner:repo:deployer @id:forge-unbound-block-shared-across-steps @trigger:"a real failed job with two or more non-green steps is seen" @epic:eco.dark-factory
   `_evidence_pool` gives every unbound (`source=None`) block to every failed step of its
   job, so whenever step binding does not happen (no archive, refused, unverifiable,
   unmatched, ambiguous, malformed) two failed steps cite the same error block. Binding
-  removes it only for the blocks it proves (spec §5.2).
+  removes it only for the blocks it proves (spec §5.2). Measured 2026-10-04 (last 25
+  failed runs of deployer, maestro, atp-platform, steward, dispatcher, spec-runner,
+  arbiter): of 200 kept jobs, 198 had exactly one non-green step, one had none, and the
+  only one with two was the `steps-1` polygon job built for this case. Not worth a design
+  until a real job shows the shape.
 - [ ] Rule-catalogue precision for `diagnose.py`: over-firing prose markers and missed shapes, driven by fixtures @owner:repo:deployer @id:diagnose-rule-catalogue-precision @epic:eco.dark-factory
   Known over-firers (acceptable in the first slice, recorded by review): `failed to fetch`
   (jest's `TypeError: Failed to fetch`), `connection timed out` / `503` printed by tests that
