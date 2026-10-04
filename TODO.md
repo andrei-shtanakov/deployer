@@ -108,23 +108,6 @@ paragraph.
   entries without them at 18:44Z on 2026-10-03 (completed 10:08:59Z); run 37109766941
   had none at ~80 and ~100 min. Age is the strongest candidate, window unmeasured. It
   decides whether step binding is useful at DarkFactory latency.
-- [ ] Exclude jobs that never started from the step-binding population @owner:repo:deployer @id:step-binding-never-started-jobs @epic:eco.dark-factory
-  Fail-fast matrices cancel siblings before they start; such a job has no log, so today
-  every job of the run reads `unverifiable` (spec §4.1). A job with no steps in the
-  listing cannot own a step directory (every `N` would fail §4.3), so a spec revision
-  could exclude it like `skipped`. Spec change first, no code on this branch.
-  Real responses (2026-10-04) show neither `conclusion=cancelled` nor `steps==0` proves it:
-  a steward job had `runner_id 0`, `runner_name ""`, 0 steps, `started_at == created_at`;
-  a dispatcher job had a runner, 0 steps and 25 minutes; both have no log (`gh: HTTP 404`,
-  BlobNotFound) and no archive entry. A missing archive entry is only an observation, never
-  proof (files expire). Recorded as `steps-2` (run 37191453692, `tests/fixtures/step-binding/`):
-  the never-started sibling has `runner_id 0`, `runner_name ""`, 0 steps,
-  `started_at == created_at`, a bare `gh: HTTP 404` log and no archive entry, while the
-  siblings cancelled mid-execution have runners, steps and logs. Through forge today, every
-  job is `unverifiable` and the run reads `EVIDENCE_UNAVAILABLE`: a job that never ran
-  counts as missing evidence. The spec must decide both the binding population and whether
-  such a job is a kept failure or affects completeness at all. Next: that spec, with its
-  exclusion criteria taken from the recording; the dispatcher shape stays `unverifiable`.
 - [ ] With two failed steps in one job, both verdicts cite the same unbound block @owner:repo:deployer @id:forge-unbound-block-shared-across-steps @epic:eco.dark-factory
   `_evidence_pool` gives every unbound (`source=None`) block to every failed step of its
   job, so whenever step binding does not happen (no archive, refused, unverifiable,
@@ -235,6 +218,33 @@ them is the next thing to pick up.
 
 ## Shipped
 
+- [x] Exclude jobs that never started from the step-binding population @owner:repo:deployer @id:step-binding-never-started-jobs @epic:eco.dark-factory
+  Fail-fast matrices cancel siblings before they start; such a job has no log, so today
+  every job of the run reads `unverifiable` (spec §4.1). A job with no steps in the
+  listing cannot own a step directory (every `N` would fail §4.3), so a spec revision
+  could exclude it like `skipped`. Spec change first, no code on this branch.
+  Real responses (2026-10-04) show neither `conclusion=cancelled` nor `steps==0` proves it:
+  a steward job had `runner_id 0`, `runner_name ""`, 0 steps, `started_at == created_at`;
+  a dispatcher job had a runner, 0 steps and 25 minutes; both have no log (`gh: HTTP 404`,
+  BlobNotFound) and no archive entry. A missing archive entry is only an observation, never
+  proof (files expire). Recorded as `steps-2` (run 37191453692, `tests/fixtures/step-binding/`):
+  the never-started sibling has `runner_id 0`, `runner_name ""`, 0 steps,
+  `started_at == created_at`, a bare `gh: HTTP 404` log and no archive entry, while the
+  siblings cancelled mid-execution have runners, steps and logs. Through forge today, every
+  job is `unverifiable` and the run reads `EVIDENCE_UNAVAILABLE`: a job that never ran
+  counts as missing evidence. The spec must decide both the binding population and whether
+  such a job is a kept failure or affects completeness at all. Next: that spec, with its
+  exclusion criteria taken from the recording; the dispatcher shape stays `unverifiable`.
+  Fixed (spec `docs/superpowers/specs/2026-10-04-forge-not-executed-jobs-design.md`, rev 2.2):
+  forge recognises a kept job of the recorded form (completed/cancelled, runner 0, `""`,
+  no steps, `started_at == created_at`, its own log read 404) and stores it as
+  `not_executed` (snapshot 1.6, additive); its binding is `excluded` under every archive
+  state. Diagnose gives it no verdict, exempts only its logs dimension, notes the
+  cancellation, and reads `EVIDENCE_UNAVAILABLE` with an explanation when every kept job is
+  recognised; the dispatcher shape stays `unverifiable`. Acceptance on the real `steps-2`
+  replay: `never-starts` excluded, the four jobs that ran `bound` at their run step,
+  exactly four verdicts each citing only its own step, the run `UNCLASSIFIED`; synthetic
+  derivations (PROVENANCE) and the reproduce/fix boundary pinned unchanged.
 - [x] A job log `gh` reports as `gh: HTTP 404` lost its status, so a missing log crashed `diagnose` @owner:repo:deployer @id:forge-gh-bare-http-status @epic:eco.dark-factory
   For a log that does not exist (a cancelled job that never started), `gh` prints the bare
   line `gh: HTTP 404`, without the `(HTTP 404)` form `_gh_failure` matched. The status read

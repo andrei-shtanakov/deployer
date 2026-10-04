@@ -18,12 +18,11 @@ from typing import Any
 from deployer.diagnose import diagnose_run
 from deployer.forge import (
     FailedRun,
-    GhError,
-    OverCap,
     RunRef,
     StepBinding,
     fetch_failed_run,
 )
+from tests.step_binding_data import Steps2Replay
 
 CASE = Path(__file__).parent / "fixtures" / "step-binding" / "steps-2"
 _LOGS_RE = re.compile(r"actions/jobs/(\d+)/logs$")
@@ -67,33 +66,10 @@ def test_the_siblings_cancelled_mid_execution_ran() -> None:
         assert job["started_at"] != job["created_at"]
 
 
-class _Replay:
-    """Serves the recorded calls (a recorded error is re-raised with its status),
-    annotations as ``[]`` (not recorded), and the recorded archive."""
-
-    def __init__(self) -> None:
-        self._by_path = {c["argv"][-1]: c for c in _calls()}
-        self._archive = (CASE / "attempt-1.zip").read_bytes()
-
-    def api(self, argv: list[str], *, timeout: float) -> str:
-        path = argv[-1]
-        if "/check-runs/" in path:
-            return "[]"
-        call = self._by_path[path]
-        if "error" in call:
-            raise GhError(call["error"], call["status"])
-        return call["stdout"]
-
-    def api_bytes_capped(
-        self, argv: list[str], *, timeout: float, max_bytes: int
-    ) -> bytes | OverCap:
-        return self._archive
-
-
 def test_forge_and_diagnose_today_on_steps_2() -> None:
     env = json.loads((CASE / "environment.json").read_text())
     run = fetch_failed_run(
-        RunRef(env["repo"], env["run_id"]), attempt=1, runner=_Replay()
+        RunRef(env["repo"], env["run_id"]), attempt=1, runner=Steps2Replay()
     )
     assert isinstance(run, FailedRun)
     logs = {j.name: j.completeness.logs for j in run.jobs}

@@ -150,3 +150,30 @@ dispatch, with no repeat. Its purpose was to see real cancelled matrix siblings.
 - **Not shown:** the dispatcher-like shape (a runner, 0 steps, no log) did not appear.
   A missing archive entry is an observation only, never proof that a job did not run,
   because per-step files expire.
+
+## Not-executed jobs: derivations of `steps-2` (2026-10-04)
+
+The acceptance of the not-executed spec
+(`docs/superpowers/specs/2026-10-04-forge-not-executed-jobs-design.md` §9) replays
+`steps-2` through `tests/step_binding_data.py::Steps2Replay`. The plain replay serves the
+recorded calls and archive as they are, and annotations as `[]` (not recorded). Every
+other case below is a **labelled synthetic case built at test time, not a recording**; no
+derived file is committed.
+
+- **A log served as 502:** `parallel-legs (long-1)`'s log read raises `GhError(…, 502)`.
+- **Annotations served as 502:** `waiting-legs (never-starts)`' annotations read raises
+  `GhError(…, 502)`.
+- **The archive replaced:** an empty ZIP (absent), bytes that are not a ZIP (refused), and
+  `GhError(…, 404)` (unavailable).
+- **No capped download:** a replay without `api_bytes_capped`, so no archive is attempted.
+- **The listing reduced to the recognised job** (`only_the_recognised_job_kept`): every
+  other job's `conclusion` set to `success`, so `never-starts` is the only kept job.
+- **A diagnostic line in one leg** (`with_assertion_in_fail_fast`, owner 2026-10-04): the
+  line `AssertionError: probe-fail-fast`, stamped with the `MARK-fail-fast` line's own
+  timestamp, inserted right after that line in both `parallel-legs (fail-fast)`'s served
+  log and its step-3 file of the archive (re-zipped with `zip_of`). It exists so that a
+  verdict cites something; the recorded `MARK-…` lines match no diagnose rule.
+
+The fix boundary (§8) adds a recognised never-started sibling, with the `steps-2` values,
+to the stored run of the `run-1` basename-unique scenario in `tests/fix/test_author.py`;
+that is also a labelled synthetic derivation.
