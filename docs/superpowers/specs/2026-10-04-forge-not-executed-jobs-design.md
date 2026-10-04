@@ -1,6 +1,6 @@
 # Forge not-executed jobs — design ("a sibling cancelled before it ran is not a failure, and does not hide one")
 
-**Status:** DRAFT rev 2. Designed with the owner on 2026-10-04. Approach: a closed set of
+**Status:** DRAFT rev 2.1. Designed with the owner on 2026-10-04. Approach: a closed set of
 recognised signals, three separate decisions (the binding population, the verdict and
 completeness), and five refinements (§2–§5, §8). Rev 2 resolves the external review of
 rev 1 at `07f6c95`
@@ -14,7 +14,10 @@ a dev-only workspace file):
 
 It also takes up the review's non-blocking details: at least one kept job for §6.1, the
 archive-not-attempted case in §4, and validating a stored `NotExecuted` in §3.3. Next:
-the owner re-checks the changed sections, then a plan. No code exists for this design.
+the owner re-checks the changed sections, then a plan. Rev 2.1 closes the re-review's one
+remaining P2: `NotExecuted` is loaded with strict validation of its own fields (§3.3),
+because Pydantic's default lax mode turns `false` into `0` and `"404"` into `404` before
+any predicate could see them. No code exists for this design.
 **Item:** `todo://deployer/step-binding-never-started-jobs`.
 **Base:** `master` @ `45887b9` (#116), with the `steps-2` recording of PR #117
 (`tests/fixtures/step-binding/`, `steps-2/observed.json` as **O2**, PROVENANCE as **P**).
@@ -119,11 +122,29 @@ from a log). Nothing makes it look read. Schema 1.6 is additive: 1.5 and older l
 
 ### 3.3 Consuming a stored `NotExecuted`
 
-`NotExecuted`'s fields are typed (`Literal` for `status` and `conclusion`, `int` and `str`
-for the rest), so a document with ill-typed values fails to load, as any malformed
-snapshot does. A value that loads is still not trusted on its own: diagnose consumes it
-only through one validating predicate, `is_not_executed(job)`, which returns true only when
-both of these hold.
+**Strict loading, for `NotExecuted`'s fields only.** Plain `int` and `str` annotations are
+not enough. Pydantic's default lax mode coerces on load, and was confirmed in this
+project to turn `false` into `0`, `"0"` into `0` and `"404"` into `404`, after which no
+predicate can see the original type. `NotExecuted` therefore declares:
+
+- `runner_id`, `steps` and `log_status` as `Annotated[int, Strict()]`. This rejects
+  `false`, `true`, `"0"`, `0.0` and `"404"`.
+- `runner_name`, `created_at` and `started_at` as `Annotated[str, Strict()]`. This rejects
+  `null` and numbers.
+- `status` and `conclusion` as `Literal["completed"]` and `Literal["cancelled"]`.
+  `Strict()` does not apply to a `Literal`, and the `Literal` already accepts only the
+  exact string: `"Completed"` and `1` are rejected.
+
+The strictness is scoped to these fields. Every other snapshot field keeps its existing
+lax behaviour, so a stored `job_id: "8"` still loads as `8`, as today. A 1.6 document
+whose `not_executed` holds an ill-typed value fails to load through `load_snapshot`, as
+any malformed snapshot does. It is never silently coerced into a recognised job. The
+behaviour was checked in this project's environment with the `TypeAdapter` that
+`load_snapshot` uses.
+
+A value that loads is still not trusted on its own: diagnose consumes it only through one
+validating predicate, `is_not_executed(job)`, which returns true only when both of these
+hold.
 
 1. The stored basis satisfies §2 on its own values: `completed`, `cancelled`, `0`, `""`,
    0 steps, both timestamps valid in the recorded form and equal, and `log_status` 404.
@@ -283,6 +304,7 @@ than GitHub listed.
 | a real error beside an exclusion | `parallel-legs (long-1)`'s log served as 502 | `never-starts` still recognised. The run is `EVIDENCE_UNAVAILABLE` for `long-1`'s read. The run observations hold the cancellation line for `never-starts` and `long-1`'s lost log, and **not** `never-starts`' 404 as lost evidence |
 | a recognised job's annotations error | `never-starts`' annotations served as 502 | `never-starts` still recognised and `excluded`, no verdict. `FailedRun.completeness.annotations` is `error`. The run is `EVIDENCE_UNAVAILABLE`, with an observation naming `never-starts`' annotations fetch error beside the cancellation line |
 | archive absent / refused / unavailable / not attempted | four variants: no step files; corrupt; HTTP 404; a runner without `api_bytes_capped` | `never-starts` `excluded` in each. The others get `no_archive`, or `None` when not attempted |
+| a stored `not_executed` with an ill-typed value, through the real `load_snapshot` | a valid 1.6 snapshot with, one at a time: `runner_id: false`, `runner_id: "0"`, `steps: true`, `log_status: "404"`, `runner_name: null`, `created_at: 0`, `status: "Completed"` | `load_snapshot` raises a validation error for each. None of them loads as a recognised job. In the same document, an ordinary lax field (`job_id: "8"`) still loads as `8` |
 | a stored `not_executed` that contradicts its job | a 1.6 snapshot whose recognised job is given `conclusion: "failure"` (or a log evidence block, or `log_status: 410`) | the predicate of §3.3 fails: the ordinary path, with the "contradicts the job; ignored" observation |
 
 ### 9.3 The boundary (§8)
