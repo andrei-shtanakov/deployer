@@ -91,13 +91,6 @@ paragraph.
 - [ ] Widen CI COPY confirmation to multi-stage Dockerfiles, with its own C-recording @id:fix-ci-copy-multistage @trigger:"a real case needs it" @epic:eco.dark-factory
   Multi-stage COPY is refused on CI today: no recording shows `stage-<i>` numbering past
   0 or named multi-stage output (F4b, #100).
-- [ ] Forge keeps the job log's leading UTF-8 BOM, so the first evidence line keeps its runner timestamp @owner:repo:deployer @id:forge-log-leading-bom @epic:eco.dark-factory
-  Every recorded job log starts with `\ufeff` before the first timestamp; `_split_blocks`
-  strips the timestamp with an anchored regex, which the BOM defeats, so the first block
-  reads `\ufeff2026-…Z Current runner version: …`. Found writing the `s5` regression
-  (`tests/test_forge.py`, compared from the second line on). `fix/ci_eval` already drops
-  the BOM in its own reader. Harmless for today's rules, but it is text forge did not
-  normalise.
 - [ ] "Nothing was fetched" as a `Completeness` state of its own instead of being inferred from `jobs == []` in `diagnose_run` @owner:repo:deployer @id:forge-nothing-fetched-state @epic:eco.dark-factory
 - [ ] Record a real repeated attempt of the step-binding polygon run (`steps-1b`, spec §9.3) @owner:github:andrei-shtanakov @id:step-binding-rerun-recording @trigger:"the owner permits one rerun of 37115427715" @epic:eco.dark-factory
   Without it, the repeated-attempt check is synthetic only (spec §9.2, "attempt mixing").
@@ -225,6 +218,18 @@ them is the next thing to pick up.
 
 ## Shipped
 
+- [x] Forge keeps the job log's leading UTF-8 BOM, so the first evidence line keeps its runner timestamp @owner:repo:deployer @id:forge-log-leading-bom @epic:eco.dark-factory
+  Every recorded job log starts with `\ufeff` before the first timestamp; `_split_blocks`
+  strips the timestamp with an anchored regex, which the BOM defeats, so the first block
+  reads `\ufeff2026-…Z Current runner version: …`. Found writing the `s5` regression
+  (`tests/test_forge.py`, compared from the second line on). `fix/ci_eval` already drops
+  the BOM in its own reader. Harmless for today's rules, but it is text forge did not
+  normalise.
+  Fixed: `_split_blocks` drops exactly one leading BOM before `splitlines()` (line indices
+  unchanged; a BOM elsewhere stays content; a second leading BOM stays and keeps its
+  timestamp). Every real job log examined (steps-1, steps-2) starts with one; their first
+  evidence line is now `Current runner version: …`. A log opening with `##[group]` now has
+  that group recognised. No stored snapshot or recording was rewritten.
 - [x] Exclude jobs that never started from the step-binding population @owner:repo:deployer @id:step-binding-never-started-jobs @epic:eco.dark-factory
   Fail-fast matrices cancel siblings before they start; such a job has no log, so every
   job of the run read `unverifiable` and the run `EVIDENCE_UNAVAILABLE` (spec §4.1).

@@ -1389,7 +1389,10 @@ def _log_evidence(
 def _split_blocks(log_text: str) -> list[list[tuple[int, str]]]:
     """Blocks of ``(splitlines index, normalised line)``, split at
     ``##[group]`` and after ``##[endgroup]``; a block with no non-blank line
-    is dropped."""
+    is dropped. One UTF-8 BOM at the very start of the log is dropped first —
+    every real job log examined starts with one, and it hid the first line's
+    runner timestamp and ``##[group]``; it sits inside line 0, so no index
+    moves. A BOM anywhere else is content."""
     blocks: list[list[tuple[int, str]]] = []
     current: list[tuple[int, str]] = []
 
@@ -1397,7 +1400,7 @@ def _split_blocks(log_text: str) -> list[list[tuple[int, str]]]:
         if any(line.strip() for _, line in current):
             blocks.append(current)
 
-    for index, raw in enumerate(log_text.splitlines()):
+    for index, raw in enumerate(log_text.removeprefix("\ufeff").splitlines()):
         line = RUNNER_LOG_TIMESTAMP_RE.sub("", raw, count=1)
         line = ANSI_CSI_RE.sub("", line)
         if line.startswith(RUNNER_GROUP_PREFIX):
