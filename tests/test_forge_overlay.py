@@ -109,3 +109,60 @@ def test_an_unclosed_group_is_cut_between_its_steps() -> None:
     log, spans = CASES["an unclosed group across a boundary"]
     assert _sources_of("a-out", log, spans) == [StepRef(JOB, 3)]
     assert _sources_of("b-out-1", log, spans) == [StepRef(JOB, 4)]
+
+
+# --- the log's leading BOM (TODO forge-log-leading-bom) ------------------------
+
+
+def _texts(log: str) -> list[str]:
+    job = build_failed_job(_record(()), JOB, log, [], COMPLETE_BY_CONSTRUCTION)
+    return [e.text for e in job.evidence]
+
+
+def test_one_leading_bom_is_dropped_before_the_timestamp() -> None:
+    """Every real job log examined (steps-1, steps-2) starts with a BOM before the
+    first runner timestamp; it used to keep that timestamp on line one."""
+    log = f"﻿{TS}Current runner version: '2.3'\n{TS}next\n"
+    assert _texts(log) == ["Current runner version: '2.3'\nnext"]
+
+
+def test_a_log_without_a_bom_reads_as_before() -> None:
+    plain = f"{TS}Current runner version: '2.3'\n{TS}next\n"
+    assert _texts(plain) == ["Current runner version: '2.3'\nnext"]
+    assert _texts("﻿" + plain) == _texts(plain)
+
+
+def test_a_bom_inside_the_text_is_content() -> None:
+    log = f"{TS}a﻿b\n﻿{TS}c\n"
+    assert _texts(log) == [f"a﻿b\n﻿{TS}c"]
+
+
+def test_only_one_leading_bom_is_dropped() -> None:
+    log = f"﻿﻿{TS}a\n"
+    assert _texts(log) == [f"﻿{TS}a"]
+
+
+def test_a_log_that_opens_with_a_group_is_split_at_it() -> None:
+    """Dropping the BOM lets the first line's ``##[group]`` be recognised."""
+    log = f"﻿{TS}##[group]Run a\n{TS}a-cmd\n{TS}##[endgroup]\n{TS}a-out\n"
+    assert _texts(log) == ["##[group]Run a\na-cmd\n##[endgroup]", "a-out"]
+
+
+def test_the_recorded_logs_open_with_the_runner_version_line() -> None:
+    """On every recorded job log (steps-1, steps-2; all start with a BOM), the
+    first evidence line is the runner's own, without BOM or timestamp."""
+    import json
+    from pathlib import Path
+
+    root = Path(__file__).parent / "fixtures" / "step-binding"
+    for case in ("steps-1", "steps-2"):
+        calls = json.loads((root / case / "gh-calls.json").read_text())
+        logs = [
+            c["stdout"]
+            for c in calls
+            if c["argv"][-1].endswith("/logs") and "stdout" in c
+        ]
+        assert logs and all(log.startswith("﻿") for log in logs), case
+        for log in logs:
+            first = _texts(log)[0].split("\n", 1)[0]
+            assert first == "Current runner version: '2.337.0'", (case, first)

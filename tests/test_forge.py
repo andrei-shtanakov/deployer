@@ -436,9 +436,7 @@ def test_a_spoofed_group_header_binds_nothing_and_keeps_its_place():
         re.sub(r"\x1b\[[0-9;?]*[ -/]*[@-~]", "", re.sub(r"^\S+Z ", "", raw))
         for raw in log.removeprefix("\ufeff").splitlines()
     ]
-    # From the second line on: forge keeps the log's leading UTF-8 BOM, so its
-    # first line also keeps the runner timestamp (TODO forge-log-leading-bom).
-    assert [x for x in lines if x.strip()][1:] == [x for x in read if x.strip()][1:]
+    assert [x for x in lines if x.strip()] == [x for x in read if x.strip()]
     header = "##[group]Run printf '%s-%s\\n' MARK s5-next"
     order = [
         lines.index(header),
