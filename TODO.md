@@ -98,29 +98,26 @@ paragraph.
   (`tests/test_forge.py`, compared from the second line on). `fix/ci_eval` already drops
   the BOM in its own reader. Harmless for today's rules, but it is text forge did not
   normalise.
-- [ ] Step-level log binding in forge from the per-attempt archive's per-step files, when present @owner:repo:deployer @id:forge-step-level-log-binding @epic:eco.dark-factory
-  Today the diagnostic text (test output, build errors) lands as job-level evidence with
-  `source=None`, and a verdict citing it carries "cited evidence is job-level". The step's
-  output is in the job log after its header group's `##[endgroup]`, but the job log cannot
-  carry a trustworthy boundary (see `forge-group-title-binding-spoofable`). The per-attempt
-  archive (`actions/runs/{id}/attempts/{n}/logs`) can: in `steps-1` it holds one
-  `<job>/<API step number>_<name>.txt` per step, and per job the step files add up to the
-  job log as text (BOM and runner timestamps aside), which ties a directory to a `job_id`
-  by content rather than by name. Archive composition differs between recorded runs —
-  two earlier ones held no per-step files — and the cause is unknown, so the source is
-  sometimes present: absent, mismatched or ambiguous files bind nothing, and bound text is
-  not repeated as job-level evidence. Needs its own spec (binary download; snapshot bump
-  justified by attribution semantics; old snapshots keep their recorded `source`).
-  No consumer compares a stored snapshot's attribution with a fresh read today
-  (`fix confirm` reads job and log in one live call); one that does will need an
-  explicit compatibility policy for attribution semantics across snapshot versions.
-  Sibling: "nothing was fetched" should be a `Completeness` state of its own instead of
-  being inferred from `jobs == []` in `diagnose_run`. Second sibling: with two failed steps
-  in one job and one unbound error block, both verdicts cite that same block; binding
-  removes the duplication only for blocks it proves (`_evidence_pool` still gives every
-  unbound block to every step). (The third, per-job `Completeness` so ONE job's unreadable
-  log no longer erases a sibling's established cause, is DONE: `FailedJob.completeness`,
-  snapshot schema 1.1.)
+- [ ] "Nothing was fetched" as a `Completeness` state of its own instead of being inferred from `jobs == []` in `diagnose_run` @owner:repo:deployer @id:forge-nothing-fetched-state @epic:eco.dark-factory
+- [ ] Record a real repeated attempt of the step-binding polygon run (`steps-1b`, spec §9.3) @owner:github:andrei-shtanakov @id:step-binding-rerun-recording @trigger:"the owner permits one rerun of 37115427715" @epic:eco.dark-factory
+  Without it, the repeated-attempt check is synthetic only (spec §9.2, "attempt mixing").
+  It must be captured within the per-step-file retention window
+  (`step-archive-retention-window`), or its archive will hold no per-step files.
+- [ ] Measure how long per-step files stay in the per-attempt log archive @owner:repo:deployer @id:step-archive-retention-window @epic:eco.dark-factory
+  Run 37115427715 attempt 1: 50 entries with per-step files at 10:09Z and 10:50Z, 12
+  entries without them at 18:44Z on 2026-10-03 (completed 10:08:59Z); run 37109766941
+  had none at ~80 and ~100 min. Age is the strongest candidate, window unmeasured. It
+  decides whether step binding is useful at DarkFactory latency.
+- [ ] Exclude jobs that never started from the step-binding population @owner:repo:deployer @id:step-binding-never-started-jobs @epic:eco.dark-factory
+  Fail-fast matrices cancel siblings before they start; such a job has no log, so today
+  every job of the run reads `unverifiable` (spec §4.1). A job with no steps in the
+  listing cannot own a step directory (every `N` would fail §4.3), so a spec revision
+  could exclude it like `skipped`. Spec change first, no code on this branch.
+- [ ] With two failed steps in one job, both verdicts cite the same unbound block @owner:repo:deployer @id:forge-unbound-block-shared-across-steps @epic:eco.dark-factory
+  `_evidence_pool` gives every unbound (`source=None`) block to every failed step of its
+  job, so whenever step binding does not happen (no archive, refused, unverifiable,
+  unmatched, ambiguous, malformed) two failed steps cite the same error block. Binding
+  removes it only for the blocks it proves (spec §5.2).
 - [ ] Rule-catalogue precision for `diagnose.py`: over-firing prose markers and missed shapes, driven by fixtures @owner:repo:deployer @id:diagnose-rule-catalogue-precision @epic:eco.dark-factory
   Known over-firers (acceptable in the first slice, recorded by review): `failed to fetch`
   (jest's `TypeError: Failed to fetch`), `connection timed out` / `503` printed by tests that
@@ -225,6 +222,19 @@ them is the next thing to pick up.
   choice. Neither repo references the other; recorded so a third copy is a decision
 
 ## Shipped
+
+- [x] Step-level log binding in forge from the per-attempt archive's per-step files, when present @owner:repo:deployer @id:forge-step-level-log-binding @epic:eco.dark-factory
+  Fixed: `fetch_failed_run` binds a job log's blocks to steps only where the runner's
+  per-step archive files prove it by content (spec
+  `docs/superpowers/specs/2026-10-03-forge-archive-step-binding-design.md`); snapshot
+  schema 1.5 (`FailedRun.archive`, `FailedJob.step_binding`; stored older documents keep
+  their recorded `source`); acceptance on the real `steps-1` recording
+  (`tests/test_step_binding_acceptance.py`, spec §9.1) plus synthetic cases (§9.2).
+  The "nothing fetched" sibling and the `steps-1b` rerun are open items above.
+  Still open as a design constraint: no consumer compares a stored snapshot's attribution
+  with a fresh read today (`fix confirm` reads job and log in one live call); one that does
+  will need an explicit compatibility policy for attribution semantics across snapshot
+  versions.
 
 - [x] Stop binding job-log blocks to steps by `##[group]` title: a step's own output can forge the next step's header @owner:repo:deployer @id:forge-group-title-binding-spoofable @epic:eco.dark-factory
   `_bind_log` gives a `##[group]<title>` block to the step whose name equals the title (or

@@ -162,11 +162,11 @@ stdout carries the human-readable summary, stderr the diagnostics.
 `reproduction` section, `"1.3"` once an attempted reproduction adds an
 `admission` section — see below; independent of the report
 `schema_version` above); the run snapshot nested in it carries
-`snapshot_schema_version` (`"1.4"`). Verdict 1.1 is additive over 1.0: the
+`snapshot_schema_version` (`"1.5"`). Verdict 1.1 is additive over 1.0: the
 keys are the same, `causes` is always `[]` and `kind` always `null`; 1.2 adds
 only the `reproduction` key, so a document produced without `--reproduce` has
 the verdict's own keys unchanged from 1.1 — the nested `run` snapshot is
-schema 1.4 either way, so the document as a whole is not byte-identical to a
+schema 1.5 either way, so the document as a whole is not byte-identical to a
 1.1 one. Snapshot 1.1 added a per-job `completeness` — how
 that one job was read — beside the run-level worst-of; 1.2 added `level` on
 each piece of evidence: a GitHub annotation's raw `annotation_level`, and
@@ -179,13 +179,28 @@ reproduction-only field as absent. 1.4 changes no field, only attribution: a
 job log's `##[group]` header is no ground for binding a block to a step (a
 step's own output can print the next step's exact header), so every job-log
 block is `source: null`; a stored 1.3 snapshot keeps the step bindings it
-recorded.
+recorded. 1.5 adds the run's `archive` (how the per-attempt log archive was
+read: `available`, `absent`, `unavailable` or `refused`) and each job's
+`step_binding` (`bound`, `no_archive`, `unverifiable`, `unmatched`, `ambiguous`
+or `malformed`). Where a job is `bound`, its log blocks carry the `StepRef` the
+runner's own per-step files prove. Both fields are `null` on older snapshots:
+not attempted. Per-step files appear to be short-lived (observed gone from one run's
+archive within hours), so binding usually applies only when `diagnose` runs soon after
+the failure; otherwise the archive reads `absent` and evidence stays job-level.
 
 Requires `gh` authenticated for the repository, and a `gh` new enough to
 support `gh api --allow-escape-sequences` (real build logs carry ANSI colour
 and `gh` refuses to print them without it; verified with `gh` 2.98.0). A `gh`
 that fails for its own reasons — unknown flag, timeout, missing binary —
 exits 2 rather than being reported as an unreadable log.
+
+Every `diagnose` also downloads the run attempt's log archive (capped at 64 MiB,
+120 s) and, when it holds per-step files, reads the log of every job of the attempt
+that ran (green ones included) to prove ownership. HTTP errors there are recorded as
+states, and so is a download that times out (`archive: unavailable`): the diagnosis is
+still produced. A malformed green job record makes step binding `unverifiable`. Any
+other failure without an HTTP status (`gh` not starting, a reader error) exits 2 like
+any other `gh` failure.
 
 The reading layer itself is offline and pure: it is a function from the
 fetched snapshot to the verdict. Fixture input is a **test affordance, not a user

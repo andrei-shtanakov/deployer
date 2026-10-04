@@ -90,7 +90,27 @@ here except itself and the recorder.
   Steps-1's archive did not change over 40 minutes, but that does not prove the files
   are durable.
 
+  Later observation (2026-10-03): run 37115427715 attempt 1 (`steps-1`) held 50
+  entries, per-step files included, when downloaded at 10:09:20Z and again at
+  10:49:56Z (the run completed at 10:08:59Z). Downloaded again at 18:44:12Z it held 12
+  entries: only `<i>_<job>.txt` and `<job>/system.txt`, no per-step files. So the same
+  run's archive lost its per-step files somewhere between about 40 minutes and about
+  8.5 hours after completion. Together with run 37109766941 (none at about 80 and 100
+  minutes) this makes age the strongest candidate, but the window is not measured and
+  age is not proven to be the cause.
+
 ## Not recorded
 
 A truncated log could not be produced honestly at this cost. Its handling is to be
 covered by a synthetic test, labelled as such.
+
+## Synthetic cases
+
+The step-binding tests also run on cases derived from `steps-1`. They are built at test
+time by named functions in `tests/step_binding_data.py` (`renamed`, `without`, `edited`,
+`foreign_runner`, `zip_of`), and no derived file is committed. Every derived case is a
+transformation of the recorded entries or logs, named by its test. None of them is a
+recording. `foreign_runner` replaces the `Worker ID` and temporary `HOME` lines, the
+lines that differ between real runs, as a stand-in for another attempt's archive; it is
+not one. Annotations were not recorded, because `read_attempt` does not read them, so
+the acceptance replay serves them empty.

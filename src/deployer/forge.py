@@ -11,10 +11,22 @@ import json
 import os
 import re
 import subprocess
+import threading
+import time
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, Literal, Protocol, TypeGuard
+from itertools import groupby
+from typing import IO, Any, Literal, Protocol, TypeGuard, runtime_checkable
 
 from pydantic import TypeAdapter
+
+from deployer.logarchive import (
+    ArchiveLimits,
+    ArchiveRefused,
+    read_step_directories,
+    short,
+)
+from deployer.stepbinding import JobBinding, StepBindingState, StepSpan, bind_jobs
 
 GH_TIMEOUT_S = 30.0
 """Wall-clock budget for one ``gh api`` invocation."""
@@ -25,7 +37,10 @@ ARCHIVE_TIMEOUT_S = 120.0
 DEFAULT_MAX_ARCHIVE_MB = 200
 """Default ``--max-archive-mb`` cap (spec §1.4) on a fetched source archive."""
 
-SNAPSHOT_SCHEMA_VERSION = "1.4"
+LOG_ARCHIVE_TIMEOUT_S = 120.0
+"""Wall-clock budget for downloading one per-attempt log archive."""
+
+SNAPSHOT_SCHEMA_VERSION = "1.5"
 
 _PER_PAGE = 100
 _FAILED_CONCLUSIONS = frozenset({"failure", "timed_out"})
@@ -140,6 +155,29 @@ here, there were no annotations", which is what 1.0's whole-run
 """
 
 
+ArchiveState = Literal["available", "absent", "unavailable", "refused"]
+
+
+@dataclass(frozen=True)
+class ArchiveStatus:
+    """How the per-attempt log archive was read (snapshot 1.5, spec §6).
+
+    ``None`` on a run means no archive was attempted: an older snapshot, or a
+    runner without the capped download.
+    """
+
+    state: ArchiveState
+    reason: str | None = None
+
+
+@dataclass(frozen=True)
+class StepBinding:
+    """What step binding decided for one job (snapshot 1.5, spec §6)."""
+
+    state: StepBindingState
+    reason: str | None = None
+
+
 @dataclass(frozen=True)
 class FailedJob:
     """A non-green job with its kept steps, job-level evidence and read state.
@@ -156,6 +194,7 @@ class FailedJob:
     evidence: list[Evidence]
     completeness: Completeness = COMPLETE_BY_CONSTRUCTION
     all_steps: list[StepInfo] | None = None
+    step_binding: StepBinding | None = None
 
 
 @dataclass(frozen=True)
@@ -172,6 +211,7 @@ class FailedRun:
     workflow_ref_path: str | None = None
     workflow_path: str | None = None
     event: str | None = None
+    archive: ArchiveStatus | None = None
     snapshot_schema_version: str = SNAPSHOT_SCHEMA_VERSION
 
 
@@ -258,6 +298,10 @@ class GhError(Exception):
         self.status = status
 
 
+class GhTimeout(GhError):
+    """A ``gh api`` call hit its deadline, as opposed to other status-less failures."""
+
+
 class GhRunner(Protocol):
     """Anything that answers ``gh api <argv>`` with stdout text."""
 
@@ -272,6 +316,89 @@ class GhBytesRunner(GhRunner, Protocol):
     def api_bytes(self, argv: list[str], *, timeout: float) -> bytes:
         """Return stdout bytes; raise :class:`GhError` on failure."""
         ...
+
+
+@dataclass(frozen=True)
+class OverCap:
+    """``api_bytes_capped`` stopped reading: more than ``max_bytes`` arrived."""
+
+    max_bytes: int
+
+
+@runtime_checkable
+class GhCappedBytesRunner(GhRunner, Protocol):
+    """A runner whose binary download stops at a byte cap (spec §7.2)."""
+
+    def api_bytes_capped(
+        self, argv: list[str], *, timeout: float, max_bytes: int
+    ) -> bytes | OverCap:
+        """Stdout bytes, or :class:`OverCap`; raise :class:`GhError` on failure."""
+        ...
+
+
+STDERR_TAIL_BYTES = 64 * 1024
+"""How much of a capped call's stderr is kept: its tail, for the error message."""
+_CAPPED_CHUNK = 64 * 1024
+_TERMINATE_GRACE_S = 2.0
+_READER_JOIN_S = 5.0
+_POLL_S = 0.05
+
+
+class _StdoutReader(threading.Thread):
+    """Reads stdout in chunks until EOF or until more than ``max_bytes`` arrived.
+
+    The thread owns its pipe and closes it when it ends, so no other thread
+    can close the descriptor while a read on it is still in flight.
+    """
+
+    def __init__(self, pipe: IO[bytes], max_bytes: int) -> None:
+        super().__init__(daemon=True)
+        self._pipe = pipe
+        self._max = max_bytes
+        self.chunks: list[bytes] = []
+        self.size = 0
+        self.over = threading.Event()
+        self.error: Exception | None = None
+
+    def run(self) -> None:
+        """Append chunks until EOF or the cap; never decide anything."""
+        try:
+            fd = self._pipe.fileno()
+            while chunk := os.read(fd, _CAPPED_CHUNK):
+                self.size += len(chunk)
+                self.chunks.append(chunk)  # at most the cap plus one chunk
+                if self.size > self._max:
+                    self.over.set()
+                    return
+        except Exception as exc:  # surfaced by the caller, never swallowed
+            self.error = exc
+        finally:
+            self._pipe.close()
+
+
+class _StderrTail(threading.Thread):
+    """Drains stderr to EOF, keeping only its last ``STDERR_TAIL_BYTES``.
+
+    Like :class:`_StdoutReader`, the thread owns and closes its pipe.
+    """
+
+    def __init__(self, pipe: IO[bytes]) -> None:
+        super().__init__(daemon=True)
+        self._pipe = pipe
+        self.tail = bytearray()
+        self.error: Exception | None = None
+
+    def run(self) -> None:
+        """Drain to EOF, trimming to the tail after every chunk."""
+        try:
+            fd = self._pipe.fileno()
+            while chunk := os.read(fd, _CAPPED_CHUNK):
+                self.tail += chunk
+                del self.tail[:-STDERR_TAIL_BYTES]
+        except Exception as exc:  # surfaced by the caller, never swallowed
+            self.error = exc
+        finally:
+            self._pipe.close()
 
 
 def _gh_failure(what: str, returncode: int, stderr: str) -> GhError:
@@ -289,12 +416,51 @@ def _gh_env() -> dict[str, str]:
     return {**os.environ, "GH_PROMPT_DISABLED": "1", "GH_NO_UPDATE_NOTIFIER": "1"}
 
 
+def _await_exit(
+    proc: subprocess.Popen[bytes], over: threading.Event, deadline: float
+) -> Literal["exited", "over", "deadline"]:
+    """Wait for the child, an exceeded cap or the deadline, whichever is first.
+
+    Never reads a pipe: the readers do, so no blocking read holds off the
+    deadline.
+    """
+    while True:
+        if over.is_set():
+            return "over"
+        left = deadline - time.monotonic()
+        if left <= 0:
+            return "deadline"
+        try:
+            proc.wait(timeout=min(left, _POLL_S))
+            return "exited"
+        except subprocess.TimeoutExpired:
+            continue
+
+
+def _stop(proc: subprocess.Popen[bytes]) -> None:
+    """Terminate, wait a grace period, then kill; always reap.
+
+    ``Popen`` signals only a child it has not reaped yet, so a child that
+    exited meanwhile is never confused with a reused pid.
+    """
+    proc.terminate()
+    try:
+        proc.wait(timeout=_TERMINATE_GRACE_S)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+
+
 class SubprocessGh:
     """The real runner: ``gh api`` as an argument vector, never a shell."""
 
+    def __init__(self, command: Sequence[str] = ("gh",)) -> None:
+        """``command`` is the program run before ``api`` (``gh`` in production)."""
+        self._command = tuple(command)
+
     def api(self, argv: list[str], *, timeout: float) -> str:
         """Run ``gh api *argv`` under ``timeout`` with prompts disabled."""
-        cmd = ["gh", "api", *argv]
+        cmd = [*self._command, "api", *argv]
         what = " ".join(argv)
         try:
             proc = subprocess.run(
@@ -308,7 +474,7 @@ class SubprocessGh:
                 env=_gh_env(),
             )
         except subprocess.TimeoutExpired as exc:
-            raise GhError(f"gh api {what} timed out after {timeout}s") from exc
+            raise GhTimeout(f"gh api {what} timed out after {timeout}s") from exc
         except OSError as exc:
             raise GhError(f"gh api could not start: {exc}") from exc
         if proc.returncode != 0:
@@ -321,7 +487,7 @@ class SubprocessGh:
         ``gh``'s HTTP client follows the tarball endpoint's redirect. Same
         timeout and status mapping as :meth:`api`.
         """
-        cmd = ["gh", "api", *argv]
+        cmd = [*self._command, "api", *argv]
         what = " ".join(argv)
         try:
             proc = subprocess.run(
@@ -333,13 +499,80 @@ class SubprocessGh:
                 env=_gh_env(),
             )
         except subprocess.TimeoutExpired as exc:
-            raise GhError(f"gh api {what} timed out after {timeout}s") from exc
+            raise GhTimeout(f"gh api {what} timed out after {timeout}s") from exc
         except OSError as exc:
             raise GhError(f"gh api could not start: {exc}") from exc
         if proc.returncode != 0:
             stderr = (proc.stderr or b"").decode("utf-8", errors="replace")
             raise _gh_failure(what, proc.returncode, stderr)
         return proc.stdout
+
+    def api_bytes_capped(
+        self, argv: list[str], *, timeout: float, max_bytes: int
+    ) -> bytes | OverCap:
+        """``gh api *argv`` stdout, stopping once more than ``max_bytes`` arrived.
+
+        The whole lifecycle is owned here (spec §7.2): two reader threads, one
+        deadline in the calling thread, terminate → grace → kill → reap, and
+        both readers finished before any result is chosen, so a child that
+        exits before its last bytes are read can neither hide an exceeded cap
+        nor return partial output.
+        """
+        cmd = [*self._command, "api", *argv]
+        what = " ".join(argv)
+        deadline = time.monotonic() + timeout
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=_gh_env(),
+            )
+        except OSError as exc:
+            raise GhError(f"gh api could not start: {exc}") from exc
+        assert proc.stdout is not None and proc.stderr is not None
+        out = _StdoutReader(proc.stdout, max_bytes)
+        err = _StderrTail(proc.stderr)
+        try:
+            out.start()
+            err.start()
+            ended = _await_exit(proc, out.over, deadline)
+        finally:
+            if proc.returncode is None:
+                _stop(proc)
+            for pipe, reader in ((proc.stdout, out), (proc.stderr, err)):
+                if reader.ident is None:  # never started: nobody else closes it
+                    pipe.close()
+        returncode = proc.wait()  # already reaped: returns at once
+        for reader in (out, err):
+            reader.join(_READER_JOIN_S)
+        return _capped_result(what, timeout, max_bytes, returncode, ended, out, err)
+
+
+def _capped_result(
+    what: str,
+    timeout: float,
+    max_bytes: int,
+    returncode: int,
+    ended: Literal["exited", "over", "deadline"],
+    out: _StdoutReader,
+    err: _StderrTail,
+) -> bytes | OverCap:
+    """Choose the result of a reaped child once both readers have finished."""
+    if out.is_alive() or err.is_alive():
+        raise GhError(f"gh api {what}: an output reader did not finish")
+    for failure in (out.error, err.error):
+        if failure is not None:
+            raise GhError(f"gh api {what}: reading output failed: {failure}")
+    if out.over.is_set():
+        return OverCap(max_bytes)
+    if ended == "deadline":
+        raise GhTimeout(f"gh api {what} timed out after {timeout}s")
+    if returncode != 0:
+        stderr = bytes(err.tail).decode("utf-8", errors="replace")
+        raise _gh_failure(what, returncode, stderr)
+    return b"".join(out.chunks)
 
 
 _run_adapter: TypeAdapter[FailedRun] = TypeAdapter(FailedRun)
@@ -354,6 +587,9 @@ def dump_snapshot(run: FailedRun) -> str:
     field, only attribution: job-log group headers are no ground for a step
     binding, so a 1.4 snapshot's log blocks are all ``source=None``. An older
     document keeps the sources it recorded; nothing rebinds them on load.
+    Schema 1.5 adds the run's ``archive`` and each job's ``step_binding``
+    (spec §6); additive, so a 1.4 or older document loads with both ``None``,
+    which means not attempted.
     """
     return _run_adapter.dump_json(run, indent=2).decode()
 
@@ -383,22 +619,28 @@ def fetch_failed_run(
     unparseable failure) means ``gh`` itself never reached GitHub and
     propagates instead.
     """
-    gh = _Gh(runner if runner is not None else SubprocessGh(), ref.repo)
+    runner = runner if runner is not None else SubprocessGh()
+    gh = _Gh(runner, ref.repo)
     run = gh.json(_run_path(ref.run_id, attempt))
     refusal = _refuse(run)
     if refusal is not None:
         return refusal
     resolved = attempt if attempt is not None else int(run["run_attempt"])
-    kept = [
-        job
-        for job in gh.jobs(ref.run_id, resolved)
-        if job.get("conclusion") not in _GREEN_CONCLUSIONS
-    ]
+    listing = gh.jobs(ref.run_id, resolved)
+    kept = [job for job in listing if job.get("conclusion") not in _GREEN_CONCLUSIONS]
+    reads: dict[int, tuple[str, LogsState]] = {}
+    noted: dict[int, tuple[list[dict[str, Any]], AnnotationsState]] = {}
+    for record in kept:
+        job_id = int(record["id"])
+        reads[job_id] = gh.logs(job_id)
+        noted[job_id] = gh.annotations(job_id)
+    archive, bindings = _bind_steps(runner, gh, ref, resolved, listing, kept, reads)
     jobs: list[FailedJob] = []
     for record in kept:
         job_id = int(record["id"])
-        log_text, logs_state = gh.logs(job_id)
-        annotations, annotations_state = gh.annotations(job_id)
+        log_text, logs_state = reads[job_id]
+        annotations, annotations_state = noted[job_id]
+        binding = bindings.get(job_id)
         jobs.append(
             build_failed_job(
                 record,
@@ -406,6 +648,12 @@ def fetch_failed_run(
                 log_text,
                 annotations,
                 Completeness(logs=logs_state, annotations=annotations_state),
+                spans=binding.spans if binding is not None else (),
+                step_binding=(
+                    StepBinding(binding.state, binding.reason)
+                    if binding is not None
+                    else None
+                ),
             )
         )
     raw_path = run.get("path")
@@ -427,7 +675,110 @@ def fetch_failed_run(
         workflow_ref_path=ref_path,
         workflow_path=normalise_workflow_path(ref_path) if ref_path else None,
         event=str(raw_event) if raw_event is not None else None,
+        archive=archive,
     )
+
+
+def _bind_steps(
+    runner: GhRunner,
+    gh: "_Gh",
+    ref: RunRef,
+    attempt: int,
+    listing: list[dict[str, Any]],
+    kept: list[dict[str, Any]],
+    reads: dict[int, tuple[str, LogsState]],
+) -> tuple[ArchiveStatus | None, dict[int, JobBinding]]:
+    """The archive's state and each kept job's binding (spec §4, §6, §7).
+
+    A runner without the capped download attempts nothing. Only an
+    ``available`` archive costs the population's extra log reads (§4.1).
+    """
+    if not isinstance(runner, GhCappedBytesRunner) or not reads:
+        return None, {}
+    limits = ArchiveLimits()
+    path = f"repos/{ref.repo}/actions/runs/{ref.run_id}/attempts/{attempt}/logs"
+    try:
+        blob = runner.api_bytes_capped(
+            [path], timeout=LOG_ARCHIVE_TIMEOUT_S, max_bytes=limits.download
+        )
+    except GhTimeout as exc:
+        reason = f"the download timed out: {short(exc)}"
+        return ArchiveStatus("unavailable", reason), _each(
+            reads,
+            "no_archive",
+            "the log archive is unavailable: the download timed out",
+        )
+    except GhError as exc:
+        if exc.status is None:
+            raise
+        message = re.sub(r"\s*\(HTTP \d+\)\s*$", "", str(exc))
+        unavailable = ArchiveStatus(
+            "unavailable", f"HTTP {exc.status}: {short(message, 200)}"
+        )
+        return unavailable, _each(reads, "no_archive", "the log archive is unavailable")
+    if isinstance(blob, OverCap):
+        refused = ArchiveStatus(
+            "refused", f"the download exceeds {blob.max_bytes} bytes"
+        )
+        return refused, _each(reads, "no_archive", "the log archive was refused")
+    found = read_step_directories(blob, limits)
+    if isinstance(found, ArchiveRefused):
+        return ArchiveStatus("refused", found.reason), _each(
+            reads, "no_archive", "the log archive was refused"
+        )
+    if not found:
+        return ArchiveStatus("absent", "the archive holds no per-step files"), _each(
+            reads, "no_archive", "the log archive holds no per-step files"
+        )
+    population = [r for r in listing if r.get("conclusion") != "skipped"]
+    for index, record in enumerate(listing):
+        if record.get("conclusion") == "skipped":
+            continue
+        defect = _job_record_defect(record)
+        if defect is None:
+            continue
+        if any(record is k for k in kept):
+            _check_job_record(record)
+        reason = (
+            f"the record of green job {short(repr(record.get('id')))} "
+            f"(listing index {index}) is malformed: {defect}"
+        )
+        return ArchiveStatus("available"), _each(reads, "unverifiable", reason)
+    logs: dict[int, str] = {}
+    for job_id, (text, state) in reads.items():
+        if state != "present":
+            return ArchiveStatus("available"), _each(
+                reads, "unverifiable", f"the log of job {job_id} is {state}"
+            )
+        logs[job_id] = text
+    for record in population:
+        job_id = int(record["id"])
+        if job_id in reads:
+            continue
+        try:
+            text, state = gh.logs(job_id)
+        except GhTimeout:
+            return ArchiveStatus("available"), _each(
+                reads, "unverifiable", f"the log read of green job {job_id} timed out"
+            )
+        if state != "present":
+            return ArchiveStatus("available"), _each(
+                reads, "unverifiable", f"the log of job {job_id} is {state}"
+            )
+        logs[job_id] = text
+    numbers = {
+        int(r["id"]): [int(s["number"]) for s in r.get("steps") or []]
+        for r in population
+    }
+    bound = bind_jobs(logs, numbers, found)
+    return ArchiveStatus("available"), {job_id: bound[job_id] for job_id in reads}
+
+
+def _each(
+    reads: dict[int, tuple[str, LogsState]], state: StepBindingState, reason: str
+) -> dict[int, JobBinding]:
+    """The same binding state for every kept job."""
+    return {job_id: JobBinding(state, reason) for job_id in reads}
 
 
 def list_runs_for_sha(repo: str, sha: str, runner: GhRunner) -> list[RunSummary] | str:
@@ -608,16 +959,23 @@ def _read_all_jobs(
     return jobs, states, texts
 
 
+def _job_record_defect(record: object) -> str | None:
+    """Why ``build_failed_job`` could not read the record without guessing."""
+    if not isinstance(record, dict):
+        return "not an object"
+    if not _is_int(record.get("id")):
+        return "`id` is not an int"
+    steps = record.get("steps")
+    if steps is not None and not isinstance(steps, list):
+        return "`steps` is not a list"
+    if not all(isinstance(s, dict) and _is_int(s.get("number")) for s in steps or []):
+        return "a step without an int `number`"
+    return None
+
+
 def _check_job_record(record: object) -> None:
     """Refuse a job record ``build_failed_job`` could not read without guessing."""
-    steps = record.get("steps") if isinstance(record, dict) else None
-    ok = (
-        isinstance(record, dict)
-        and _is_int(record.get("id"))
-        and (steps is None or isinstance(steps, list))
-        and all(isinstance(s, dict) and _is_int(s.get("number")) for s in steps or [])
-    )
-    if not ok:
+    if _job_record_defect(record) is not None:
         raise GhError(f"job record malformed: {record!r}", None)
 
 
@@ -863,12 +1221,17 @@ def build_failed_job(
     log_text: str,
     annotations: list[dict[str, Any]],
     completeness: Completeness,
+    *,
+    spans: Sequence[StepSpan] = (),
+    step_binding: StepBinding | None = None,
 ) -> FailedJob:
     """A :class:`FailedJob` built from a job ``record`` and its ``log_text``.
 
     Only non-green steps are kept as ``steps`` (``all_steps`` keeps every
     step). Every log block and every annotation is job-level evidence; no
-    step is given evidence from the job log (:func:`_log_evidence`).
+    step is given evidence from the job log (:func:`_log_evidence`). ``spans``
+    (spec §4) bind log lines to steps; without them every log block is
+    job-level.
     """
     all_steps = list(record.get("steps") or [])
     step_infos = [
@@ -889,7 +1252,7 @@ def build_failed_job(
         for step in all_steps
         if step.get("conclusion") not in _GREEN_CONCLUSIONS
     ]
-    job_evidence = _log_evidence(log_text)
+    job_evidence = _log_evidence(log_text, job_id, spans)
     job_evidence.extend(
         Evidence(source=job_id, text=str(a.get("message")), level=_level_of(a))
         for a in annotations
@@ -902,46 +1265,57 @@ def build_failed_job(
         evidence=job_evidence,
         completeness=completeness,
         all_steps=step_infos,
+        step_binding=step_binding,
     )
 
 
-def _log_evidence(log_text: str) -> list[Evidence]:
-    """A job log's blocks, in log order, as job-level evidence (``source=None``).
+def _log_evidence(
+    log_text: str, job_id: int, spans: Sequence[StepSpan] = ()
+) -> list[Evidence]:
+    """A job log's blocks, in log order, as evidence.
 
     A ``##[group]<title>`` header is no ground for binding a block to a step
     (snapshot 1.4): a step's own output can print a group whose title is
     byte-identical to the next step's runner header (recording ``steps-1``,
     job ``s5-spoof``), and a named step's header is ``Run <first script
-    line>``, not its name (``s2-named``). The job log alone carries no
-    boundary its steps cannot forge.
+    line>``, not its name (``s2-named``). Only ``spans`` bind: boundaries the
+    per-attempt archive proved (spec §4). A block that crosses a boundary is
+    cut at it; every piece keeps all its lines, blank ones included, so the
+    pieces of a block join back to the block and ``job_text`` never depends on
+    binding (spec §5.3). Lines outside every span stay ``source=None``.
     """
-    return [
-        Evidence(source=None, text="\n".join(lines))
-        for lines in _split_blocks(log_text)
-    ]
+    owner = {i: span.number for span in spans for i in range(span.start, span.end)}
+    evidence: list[Evidence] = []
+    for block in _split_blocks(log_text):
+        for number, piece in groupby(block, key=lambda item: owner.get(item[0])):
+            source = None if number is None else StepRef(job_id, number)
+            text = "\n".join(line for _, line in piece)
+            evidence.append(Evidence(source=source, text=text))
+    return evidence
 
 
-def _split_blocks(log_text: str) -> list[list[str]]:
-    """Blocks of normalised lines, split at ``##[group]`` and after
-    ``##[endgroup]``; a block with no non-blank line is dropped."""
-    blocks: list[list[str]] = []
-    current: list[str] = []
+def _split_blocks(log_text: str) -> list[list[tuple[int, str]]]:
+    """Blocks of ``(splitlines index, normalised line)``, split at
+    ``##[group]`` and after ``##[endgroup]``; a block with no non-blank line
+    is dropped."""
+    blocks: list[list[tuple[int, str]]] = []
+    current: list[tuple[int, str]] = []
 
     def flush() -> None:
-        if any(line.strip() for line in current):
+        if any(line.strip() for _, line in current):
             blocks.append(current)
 
-    for raw in log_text.splitlines():
+    for index, raw in enumerate(log_text.splitlines()):
         line = RUNNER_LOG_TIMESTAMP_RE.sub("", raw, count=1)
         line = ANSI_CSI_RE.sub("", line)
         if line.startswith(RUNNER_GROUP_PREFIX):
             flush()
-            current = [line]
+            current = [(index, line)]
         elif line == _ENDGROUP:
-            current.append(line)
+            current.append((index, line))
             flush()
             current = []
         else:
-            current.append(line)
+            current.append((index, line))
     flush()
     return blocks
