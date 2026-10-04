@@ -26,6 +26,7 @@ from deployer.logarchive import (
     read_step_directories,
     short,
 )
+from deployer.notexecuted import NotExecuted, basis_holds, recognise
 from deployer.stepbinding import JobBinding, StepBindingState, StepSpan, bind_jobs
 
 GH_TIMEOUT_S = 30.0
@@ -40,7 +41,7 @@ DEFAULT_MAX_ARCHIVE_MB = 200
 LOG_ARCHIVE_TIMEOUT_S = 120.0
 """Wall-clock budget for downloading one per-attempt log archive."""
 
-SNAPSHOT_SCHEMA_VERSION = "1.5"
+SNAPSHOT_SCHEMA_VERSION = "1.6"
 
 _PER_PAGE = 100
 _FAILED_CONCLUSIONS = frozenset({"failure", "timed_out"})
@@ -195,13 +196,19 @@ class StepBinding:
     reason: str | None = None
 
 
+_EXCLUDED = StepBinding("excluded", "cancelled before execution")
+"""A recognised job's binding (not-executed spec §4), whatever the archive."""
+
+
 @dataclass(frozen=True)
 class FailedJob:
     """A non-green job with its kept steps, job-level evidence and read state.
 
     ``completeness`` is this job's own: a sibling whose log could not be
     fetched says nothing about this one. The run's worst-of aggregate lives
-    on :class:`FailedRun`.
+    on :class:`FailedRun`. ``not_executed`` (snapshot 1.6) is the basis on
+    which the job was recognised as cancelled before execution, else ``None``
+    (not-executed spec §3.2); it is trusted only through :func:`is_not_executed`.
     """
 
     job_id: int
@@ -212,6 +219,22 @@ class FailedJob:
     completeness: Completeness = COMPLETE_BY_CONSTRUCTION
     all_steps: list[StepInfo] | None = None
     step_binding: StepBinding | None = None
+    not_executed: NotExecuted | None = None
+
+
+def is_not_executed(job: FailedJob) -> bool:
+    """Whether a job is recognised as cancelled before execution (§3.3):
+    its stored basis holds on its own values and agrees with the job."""
+    ne = job.not_executed
+    return (
+        ne is not None
+        and basis_holds(ne)
+        and job.conclusion == "cancelled"
+        and job.all_steps == []
+        and not job.steps
+        and job.completeness.logs == "error"
+        and all(e.source == job.job_id for e in job.evidence)
+    )
 
 
 @dataclass(frozen=True)
@@ -606,7 +629,8 @@ def dump_snapshot(run: FailedRun) -> str:
     document keeps the sources it recorded; nothing rebinds them on load.
     Schema 1.5 adds the run's ``archive`` and each job's ``step_binding``
     (spec §6); additive, so a 1.4 or older document loads with both ``None``,
-    which means not attempted.
+    which means not attempted. Schema 1.6 adds each job's ``not_executed``
+    (not-executed spec §3.2), additive; older documents load it as ``None``.
     """
     return _run_adapter.dump_json(run, indent=2).decode()
 
@@ -651,13 +675,35 @@ def fetch_failed_run(
         job_id = int(record["id"])
         reads[job_id] = gh.logs(job_id)
         noted[job_id] = gh.annotations(job_id)
-    archive, bindings = _bind_steps(runner, gh, ref, resolved, listing, kept, reads)
+    recognised = {
+        int(r["id"]): ne
+        for r in kept
+        if (ne := recognise(r, reads[int(r["id"])].status)) is not None
+    }
+    archive, bindings = _bind_steps(
+        runner, gh, ref, resolved, listing, kept, reads, set(recognised)
+    )
     jobs: list[FailedJob] = []
     for record in kept:
         job_id = int(record["id"])
         read = reads[job_id]
         log_text, logs_state = read.text, read.state
         annotations, annotations_state = noted[job_id]
+        completeness = Completeness(logs=logs_state, annotations=annotations_state)
+        if job_id in recognised:
+            # Not-executed spec §4: ``excluded`` over every archive state.
+            jobs.append(
+                build_failed_job(
+                    record,
+                    job_id,
+                    log_text,
+                    annotations,
+                    completeness,
+                    step_binding=_EXCLUDED,
+                    not_executed=recognised[job_id],
+                )
+            )
+            continue
         binding = bindings.get(job_id)
         jobs.append(
             build_failed_job(
@@ -665,7 +711,7 @@ def fetch_failed_run(
                 job_id,
                 log_text,
                 annotations,
-                Completeness(logs=logs_state, annotations=annotations_state),
+                completeness,
                 spans=binding.spans if binding is not None else (),
                 step_binding=(
                     StepBinding(binding.state, binding.reason)
@@ -685,7 +731,13 @@ def fetch_failed_run(
         url=str(run.get("html_url", "")),
         jobs=jobs,
         completeness=Completeness(
-            logs=_worst([j.completeness.logs for j in jobs], _LOGS_RANK, "unavailable"),
+            # Not-executed spec §6: a recognised job's expected 404 is not
+            # lost evidence; annotations still cover every job.
+            logs=_worst(
+                [j.completeness.logs for j in jobs if j.job_id not in recognised],
+                _LOGS_RANK,
+                "unavailable",
+            ),
             annotations=_worst(
                 [j.completeness.annotations for j in jobs], _ANNOTATIONS_RANK, "absent"
             ),
@@ -705,13 +757,17 @@ def _bind_steps(
     listing: list[dict[str, Any]],
     kept: list[dict[str, Any]],
     reads: dict[int, LogRead],
+    excluded: set[int],
 ) -> tuple[ArchiveStatus | None, dict[int, JobBinding]]:
     """The archive's state and each kept job's binding (spec §4, §6, §7).
 
     A runner without the capped download attempts nothing. Only an
     ``available`` archive costs the population's extra log reads (§4.1).
+    ``excluded`` jobs (recognised as not executed, not-executed spec §4) are
+    outside the population and get no binding here.
     """
-    if not isinstance(runner, GhCappedBytesRunner) or not reads:
+    active = {job_id: read for job_id, read in reads.items() if job_id not in excluded}
+    if not isinstance(runner, GhCappedBytesRunner) or not active:
         return None, {}
     limits = ArchiveLimits()
     path = f"repos/{ref.repo}/actions/runs/{ref.run_id}/attempts/{attempt}/logs"
@@ -722,7 +778,7 @@ def _bind_steps(
     except GhTimeout as exc:
         reason = f"the download timed out: {short(exc)}"
         return ArchiveStatus("unavailable", reason), _each(
-            reads,
+            active,
             "no_archive",
             "the log archive is unavailable: the download timed out",
         )
@@ -733,24 +789,30 @@ def _bind_steps(
         unavailable = ArchiveStatus(
             "unavailable", f"HTTP {exc.status}: {short(message, 200)}"
         )
-        return unavailable, _each(reads, "no_archive", "the log archive is unavailable")
+        return unavailable, _each(
+            active, "no_archive", "the log archive is unavailable"
+        )
     if isinstance(blob, OverCap):
         refused = ArchiveStatus(
             "refused", f"the download exceeds {blob.max_bytes} bytes"
         )
-        return refused, _each(reads, "no_archive", "the log archive was refused")
+        return refused, _each(active, "no_archive", "the log archive was refused")
     found = read_step_directories(blob, limits)
     if isinstance(found, ArchiveRefused):
         return ArchiveStatus("refused", found.reason), _each(
-            reads, "no_archive", "the log archive was refused"
+            active, "no_archive", "the log archive was refused"
         )
     if not found:
         return ArchiveStatus("absent", "the archive holds no per-step files"), _each(
-            reads, "no_archive", "the log archive holds no per-step files"
+            active, "no_archive", "the log archive holds no per-step files"
         )
-    population = [r for r in listing if r.get("conclusion") != "skipped"]
+    population = [
+        r
+        for r in listing
+        if r.get("conclusion") != "skipped" and not _in(r.get("id"), excluded)
+    ]
     for index, record in enumerate(listing):
-        if record.get("conclusion") == "skipped":
+        if record.get("conclusion") == "skipped" or _in(record.get("id"), excluded):
             continue
         defect = _job_record_defect(record)
         if defect is None:
@@ -761,27 +823,27 @@ def _bind_steps(
             f"the record of green job {short(repr(record.get('id')))} "
             f"(listing index {index}) is malformed: {defect}"
         )
-        return ArchiveStatus("available"), _each(reads, "unverifiable", reason)
+        return ArchiveStatus("available"), _each(active, "unverifiable", reason)
     logs: dict[int, str] = {}
-    for job_id, read in reads.items():
+    for job_id, read in active.items():
         if read.state != "present":
             return ArchiveStatus("available"), _each(
-                reads, "unverifiable", f"the log of job {job_id} is {read.state}"
+                active, "unverifiable", f"the log of job {job_id} is {read.state}"
             )
         logs[job_id] = read.text
     for record in population:
         job_id = int(record["id"])
-        if job_id in reads:
+        if job_id in active:
             continue
         try:
             read = gh.logs(job_id)
         except GhTimeout:
             return ArchiveStatus("available"), _each(
-                reads, "unverifiable", f"the log read of green job {job_id} timed out"
+                active, "unverifiable", f"the log read of green job {job_id} timed out"
             )
         if read.state != "present":
             return ArchiveStatus("available"), _each(
-                reads, "unverifiable", f"the log of job {job_id} is {read.state}"
+                active, "unverifiable", f"the log of job {job_id} is {read.state}"
             )
         logs[job_id] = read.text
     numbers = {
@@ -789,7 +851,13 @@ def _bind_steps(
         for r in population
     }
     bound = bind_jobs(logs, numbers, found)
-    return ArchiveStatus("available"), {job_id: bound[job_id] for job_id in reads}
+    return ArchiveStatus("available"), {job_id: bound[job_id] for job_id in active}
+
+
+def _in(job_id: object, excluded: set[int]) -> bool:
+    """An int ``id`` among the excluded; any other value is not (it stays in
+    the malformed-record check, as before)."""
+    return _is_int(job_id) and job_id in excluded
 
 
 def _each(
@@ -1246,6 +1314,7 @@ def build_failed_job(
     *,
     spans: Sequence[StepSpan] = (),
     step_binding: StepBinding | None = None,
+    not_executed: NotExecuted | None = None,
 ) -> FailedJob:
     """A :class:`FailedJob` built from a job ``record`` and its ``log_text``.
 
@@ -1288,6 +1357,7 @@ def build_failed_job(
         completeness=completeness,
         all_steps=step_infos,
         step_binding=step_binding,
+        not_executed=not_executed,
     )
 
 

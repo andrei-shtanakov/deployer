@@ -59,7 +59,7 @@ REPRODUCTION_VERDICT_SCHEMA_VERSION = "1.2"
 Additive over 1.1: no key of the 1.1 document is renamed or removed: without
 a reproduction section (``render_verdict`` called with none, i.e. no
 ``--reproduce``), the verdict's own keys are unchanged from 1.1 — the nested
-``run`` snapshot is schema 1.5 either way, so the document is not
+``run`` snapshot is schema 1.6 either way, so the document is not
 byte-identical to a 1.1 one.
 """
 
@@ -471,7 +471,7 @@ def render_verdict(
     ``snapshot_schema_version`` (``forge.py``) untouched. With
     ``reproduction`` given, the document gains a ``reproduction`` key and
     reads schema 1.2 (additive); without it, the verdict's own keys are
-    unchanged from 1.1 — the nested ``run`` snapshot is schema 1.5 either
+    unchanged from 1.1 — the nested ``run`` snapshot is schema 1.6 either
     way, so the document as a whole is not byte-identical to a 1.1 one.
     With ``admission`` also given (A §6.2), it gains an ``admission`` key and
     reads schema 1.3, additive over 1.2; an admission needs a reproduction.

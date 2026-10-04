@@ -14,7 +14,14 @@ from pathlib import Path
 from typing import Any
 
 from deployer.diagnose import diagnose_run
-from deployer.forge import FailedRun, GhError, OverCap, RunRef, fetch_failed_run
+from deployer.forge import (
+    FailedRun,
+    GhError,
+    OverCap,
+    RunRef,
+    StepBinding,
+    fetch_failed_run,
+)
 
 CASE = Path(__file__).parent / "fixtures" / "step-binding" / "steps-2"
 _LOGS_RE = re.compile(r"actions/jobs/(\d+)/logs$")
@@ -90,9 +97,12 @@ def test_forge_and_diagnose_today_on_steps_2() -> None:
     logs = {j.name: j.completeness.logs for j in run.jobs}
     assert logs.pop("waiting-legs (never-starts)") == "error"
     assert set(logs.values()) == {"present"}
-    assert {j.step_binding.state for j in run.jobs if j.step_binding} == {
-        "unverifiable"
-    }
+    bindings = {j.name: j.step_binding for j in run.jobs}
+    assert bindings.pop("waiting-legs (never-starts)") == StepBinding(
+        "excluded", "cancelled before execution"
+    )
+    assert len(bindings) == 4
+    assert all(b is not None and b.state == "bound" for b in bindings.values())
     diagnosis = diagnose_run(run)
     assert len(diagnosis.failures) == 5
     assert diagnosis.outcome == "EVIDENCE_UNAVAILABLE"

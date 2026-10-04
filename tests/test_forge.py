@@ -719,7 +719,7 @@ def test_snapshot_round_trips_through_versioned_json(fake_gh):
     assert isinstance(snapshot, FailedRun)
     text = dump_snapshot(snapshot)
     document = json.loads(text)
-    assert document["snapshot_schema_version"] == "1.5"
+    assert document["snapshot_schema_version"] == "1.6"
     assert document["jobs"][0]["completeness"] == {
         "logs": "present",
         "annotations": "present",
@@ -770,7 +770,7 @@ def test_a_document_without_a_version_loads_as_the_current_one():
     )
     del document["snapshot_schema_version"]
     restored = load_snapshot(json.dumps(document))
-    assert restored.snapshot_schema_version == SNAPSHOT_SCHEMA_VERSION == "1.5"
+    assert restored.snapshot_schema_version == SNAPSHOT_SCHEMA_VERSION == "1.6"
 
 
 def test_a_schema_1_0_snapshot_still_loads(fake_gh):
@@ -842,7 +842,7 @@ def test_snapshot_types_construct_positionally():
     refusal = AdapterRefusal("not_failed", "conclusion is success")
     assert refusal.reason == "not_failed"
     run = FailedRun("o/r", 1, 1, "sha", "url", [], Completeness("present", "absent"))
-    assert run.snapshot_schema_version == "1.5"
+    assert run.snapshot_schema_version == "1.6"
     assert FailedJob(1, "j", "failure", [], []).steps == []
     assert FailedStep(StepRef(1, 1), "s", "failure", []).ref.number == 1
     assert Evidence(None, "a line").level is None

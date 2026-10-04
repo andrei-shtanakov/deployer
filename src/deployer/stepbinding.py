@@ -30,7 +30,13 @@ space after it, and only where a line starts with one."""
 _BOM = "\ufeff"
 
 StepBindingState = Literal[
-    "bound", "no_archive", "unverifiable", "unmatched", "ambiguous", "malformed"
+    "bound",
+    "no_archive",
+    "unverifiable",
+    "unmatched",
+    "ambiguous",
+    "malformed",
+    "excluded",
 ]
 
 
