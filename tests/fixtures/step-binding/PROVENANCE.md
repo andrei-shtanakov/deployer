@@ -114,3 +114,39 @@ recording. `foreign_runner` replaces the `Worker ID` and temporary `HOME` lines,
 lines that differ between real runs, as a stand-in for another attempt's archive; it is
 not one. Annotations were not recorded, because `read_attempt` does not read them, so
 the acceptance replay serves them empty.
+
+## `steps-2`: fail-fast matrices (2026-10-04)
+
+One more polygon run, permitted by the owner as one push of `polygon/steps-2` and one
+dispatch, with no repeat. Its purpose was to see real cancelled matrix siblings.
+
+- **The run:** 37191453692, attempt 1, `workflow_dispatch` on the orphan commit `d552fc7`.
+  The archive was downloaded at 09:14:13Z, eight seconds after the run completed.
+- **The workflow** (`steps-2/tree/...`) has two independent fail-fast matrices, each with
+  `timeout-minutes: 5`:
+  - `parallel-legs`: one leg fails after 20 s while two long legs run.
+  - `waiting-legs` (`max-parallel: 1`): the first leg fails while a second waits.
+- **How:** `record_steps2.py`, the same method as `steps-1`. The hypotheses and their
+  caveats (`steps-2/expected.json`) were committed (`f3b88ae`) before the run. The caveats:
+  20 s does not guarantee that the long legs have started, and `max-parallel: 1` does not
+  prove which leg runs first.
+
+**What it shows** (`steps-2/observed.json`):
+
+- **Cancelled mid-execution:** `long-1` and `long-2` each have a runner, 5 steps, a log
+  and archive entries.
+- **Never started:** `never-starts` has `runner_id 0`, `runner_name ""`, 0 steps and
+  `started_at == created_at`.
+  - Its log read fails with the bare stderr line `gh: HTTP 404`, the same form seen on a
+    steward job on 2026-10-03. Since #116 forge reads that as status 404.
+  - The archive has no entry for it at all, and its top-level files are numbered 0, 2,
+    3, 4.
+- **Through forge:** `fetch_failed_run` produces a snapshot. Before #116 the
+  never-started job's log read would have raised, and `diagnose` would have exited 2.
+  - That job's `completeness.logs` is `error`.
+  - Every kept job's binding is `unverifiable`, because of that job.
+  - `diagnose_run` gives 5 verdicts, with the run outcome `EVIDENCE_UNAVAILABLE`: a job
+    that never ran counts as missing evidence for the whole run.
+- **Not shown:** the dispatcher-like shape (a runner, 0 steps, no log) did not appear.
+  A missing archive entry is an observation only, never proof that a job did not run,
+  because per-step files expire.

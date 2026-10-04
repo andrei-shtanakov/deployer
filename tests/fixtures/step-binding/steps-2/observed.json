@@ -1,0 +1,52 @@
+{
+  "hypotheses": "both pre-registered shapes appeared (cancelled mid-execution; never started); the caveats in expected.json still stand for any other run",
+  "jobs": {
+    "parallel-legs (fail-fast)": {
+      "archive": "top-level file and step directory",
+      "conclusion": "failure",
+      "log": "present",
+      "runner_id": 1000047152,
+      "steps": 5
+    },
+    "parallel-legs (long-1)": {
+      "archive": "top-level file and step directory",
+      "conclusion": "cancelled",
+      "log": "present",
+      "runner_id": 1000047150,
+      "shape": "cancelled mid-execution (started 1 s after creation, completed 40 s later)",
+      "steps": 5
+    },
+    "parallel-legs (long-2)": {
+      "archive": "top-level file and step directory",
+      "conclusion": "cancelled",
+      "log": "present",
+      "runner_id": 1000047151,
+      "shape": "cancelled mid-execution",
+      "steps": 5
+    },
+    "waiting-legs (first-fails)": {
+      "archive": "top-level file and step directory",
+      "conclusion": "failure",
+      "log": "present",
+      "runner_id": 1000047149,
+      "steps": 5
+    },
+    "waiting-legs (never-starts)": {
+      "archive": "no entry at all; the top-level files are numbered 0, 2, 3, 4 (no 1)",
+      "conclusion": "cancelled",
+      "log": "gh exited 1 with the bare stderr line 'gh: HTTP 404' (status 404 since #116)",
+      "runner_id": 0,
+      "runner_name": "",
+      "shape": "never started",
+      "started_at_equals_created_at": true,
+      "steps": 0
+    }
+  },
+  "note": "Written after the recording, from the raw data, before any spec of exclusion criteria. Every field below is copied from gh-calls.json (the jobs listing and the log reads) or read from attempt-1.zip.",
+  "through_forge": {
+    "completeness": "never-starts logs 'error'; the four others 'present'",
+    "diagnose_run": "5 verdicts; run outcome EVIDENCE_UNAVAILABLE; run observation 'job 111404326332: logs fetch error'",
+    "fetch_failed_run": "a FailedRun is produced (before #116 the never-started job's log read would have raised); archive 'available'",
+    "step_binding": "every kept job 'unverifiable' (reason: the never-started job's log is 'error')"
+  }
+}
