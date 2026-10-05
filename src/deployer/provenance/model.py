@@ -2,9 +2,9 @@
 
 import hashlib
 import json
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Strict
 
 from deployer.models import ProjectFacts
 
@@ -36,7 +36,9 @@ class Snapshot(BaseModel):
     format_version: Literal["1"]
     source_commit: str
     tree: list[TreeRow]
-    tree_complete: bool
+    tree_complete: Annotated[bool, Strict()]
+    """Only a JSON boolean: lax loading would read ``"true"``, ``"yes"`` or ``1``
+    as a complete listing (TODO admission-strict-tree-complete)."""
     facts: ProjectFacts
 
 
