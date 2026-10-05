@@ -52,10 +52,6 @@ paragraph.
   Any other builder, version or message shape reads `insufficient_grounds` at (3) by
   design. A new row enters only with a real recording of it and an amendment of A §4.1;
   a new defect class is a new spec (A, Non-goals).
-- [ ] Strict `Snapshot.tree_complete` (parked in A3 review) @owner:repo:deployer @id:admission-strict-tree-complete @epic:eco.dark-factory
-  Today a lax bool. The snapshot bytes are hashed and signed by a trusted key, so the
-  coercion only reaches our own output; a hand-crafted signed snapshot with `"true"`
-  would need a trusted key.
 - [ ] Lift the duplicated `_norm` / `_instruction_key` helpers into one shared helper (parked in A3 review) @owner:repo:deployer @id:admission-shared-instruction-key @epic:eco.dark-factory
   `admission/decide.py` carries its own private copies (`_norm`, `_instruction_key`) of
   `reproduce/checks.py:normalize_copy_path` and
@@ -216,6 +212,15 @@ them is the next thing to pick up.
 
 ## Shipped
 
+- [x] Strict `Snapshot.tree_complete` (parked in A3 review) @owner:repo:deployer @id:admission-strict-tree-complete @epic:eco.dark-factory
+  Today a lax bool. The snapshot bytes are hashed and signed by a trusted key, so the
+  coercion only reaches our own output; a hand-crafted signed snapshot with `"true"`
+  would need a trusted key.
+  Fixed: `tree_complete` is `Annotated[bool, Strict()]` (only that field; the model is not
+  strict as a whole). Lax loading read `"true"`, `"yes"` and `1` as complete (checked);
+  now a validly signed snapshot with a non-boolean `tree_complete` is refused at ownership
+  step 6 as "not a well-formed snapshot". Every committed bundle stores a JSON boolean
+  (29 of 29) and the writer emits a bool, so valid sets check as before.
 - [x] Measure how long per-step files stay in the per-attempt log archive @owner:repo:deployer @id:step-archive-retention-window @epic:eco.dark-factory
   Run 37115427715 attempt 1: 50 entries with per-step files at 10:09Z and 10:50Z, 12
   entries without them at 18:44Z on 2026-10-03 (completed 10:08:59Z); run 37109766941

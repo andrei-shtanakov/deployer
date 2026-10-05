@@ -1,5 +1,6 @@
 """Record/snapshot models: strict, canonical, hashable."""
 
+import json
 from typing import Any
 
 import pytest
@@ -60,3 +61,33 @@ def test_set_dir_is_named_by_the_record_hash():
     assert sha256_hex(b"") == (
         "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     )
+
+
+@pytest.mark.parametrize("value", ["true", "yes", 1, 0, None])
+def test_tree_complete_is_strict_on_load(value: object) -> None:
+    """TODO admission-strict-tree-complete: only a JSON boolean is accepted."""
+    document = json.loads(_snapshot().model_dump_json())
+    document["tree_complete"] = value
+    with pytest.raises(ValidationError):
+        Snapshot.model_validate_json(json.dumps(document))
+
+
+@pytest.mark.parametrize("value", [True, False])
+def test_a_json_boolean_tree_complete_loads_as_before(value: bool) -> None:
+    document = json.loads(_snapshot().model_dump_json())
+    document["tree_complete"] = value
+    assert Snapshot.model_validate_json(json.dumps(document)).tree_complete is value
+
+
+def test_only_tree_complete_is_strict() -> None:
+    """The strictness is scoped to this one field; the snapshot model is not
+    switched to strict mode as a whole."""
+    from pydantic import Strict
+
+    assert Snapshot.model_config.get("strict") is None
+    strict = {
+        name
+        for name, field in Snapshot.model_fields.items()
+        if any(isinstance(m, Strict) for m in field.metadata)
+    }
+    assert strict == {"tree_complete"}

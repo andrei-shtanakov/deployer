@@ -375,3 +375,22 @@ def test_trust_inside_under_a_case_variant_spelling_is_step_0(
     )
     assert facts.status == "not_confirmed"
     assert facts.step == 0, facts.reason
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["true", "yes", 1, 0, None],
+    ids=["str-true", "str-yes", "one", "zero", "null"],
+)
+def test_an_ill_typed_tree_complete_is_refused_at_step_6(
+    value: object, admission_set: AdmissionSet
+) -> None:
+    """TODO admission-strict-tree-complete: a validly signed snapshot whose
+    ``tree_complete`` is not a JSON boolean is not a well-formed snapshot; it
+    is refused by the existing step-6 path, never coerced into "complete"."""
+    admission_set.resign_snapshot(lambda snap: snap.update(tree_complete=value))
+    facts = admission_set.verify()
+    assert facts.status == "not_confirmed" and facts.step == 6
+    assert "not a well-formed snapshot" in (facts.reason or "")
+    assert "tree_complete" in (facts.reason or "")
+    assert facts.snapshot is None
