@@ -121,21 +121,33 @@ def _record(repo: str, run_id: int, attempt: int) -> dict[str, Any]:
     meta = _gh_json(
         ["api", f"repos/{OWNER}/{repo}/actions/runs/{run_id}/attempts/{attempt}"]
     )
-    jobs = _gh_json(
+    page = _gh_json(
         [
             "api",
             f"repos/{OWNER}/{repo}/actions/runs/{run_id}/attempts/{attempt}/jobs?per_page=100",
         ]
-    )["jobs"]
-    completed = max(
-        (j["completed_at"] for j in jobs if j.get("completed_at")), default=None
+    )
+    jobs = page["jobs"]
+    total = page.get("total_count")
+    # One page only: a wider attempt is marked truncated, and what the page
+    # cannot establish (the job count, the attempt's completion) is left
+    # absent rather than recorded from a partial listing.
+    truncated = not isinstance(total, int) or total != len(jobs)
+    completed = (
+        None
+        if truncated
+        else max(
+            (j["completed_at"] for j in jobs if j.get("completed_at")), default=None
+        )
     )
     row: dict[str, Any] = {
         "repo": repo,
         "run_id": run_id,
         "attempt": attempt,
         "event": meta.get("event"),
-        "jobs": len(jobs),
+        "jobs": None if truncated else len(jobs),
+        "jobs_listing_truncated": truncated,
+        "jobs_total_count": total,
         "attempt_completed_at": completed,
         "run_updated_at": meta.get("updated_at"),
     }
@@ -201,6 +213,11 @@ def read(pass_name: str) -> int:
 def reread(pass_name: str, targets: list[str]) -> int:
     """Re-read only the named runs (``repo:run_id:attempt``): repeated reads of one
     attempt give the interval "last present -> first absent"."""
+    if len(targets) > LIMIT:
+        print(
+            f"refusing: {len(targets)} targets exceed {LIMIT} per pass", file=sys.stderr
+        )
+        return 2
     out = HERE / f"{pass_name}.json"
     if out.exists():
         print(f"refusing: {out} exists", file=sys.stderr)

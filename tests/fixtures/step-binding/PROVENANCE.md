@@ -190,7 +190,9 @@ selection), `pass-1.json` and `track-<n>m.json`. Each row records:
 - the archive's size and SHA-256 and its entry names;
 - for each directory, whether it holds per-step files.
 
-No log text is stored. HTTP errors, timeouts and cap overruns would have been recorded
+The committed passes predate a recorder fix that marks a jobs listing longer than one page
+as truncated and leaves the count and the completion time absent. They are unaffected: the
+widest recorded attempt had 6 jobs. No log text is stored. HTTP errors, timeouts and cap overruns would have been recorded
 as their own kinds; none occurred.
 
 - **Pass 1** (40 runs over nine repositories, aged 0.02 h to 34 days; events push,
