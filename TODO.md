@@ -52,11 +52,6 @@ paragraph.
   Any other builder, version or message shape reads `insufficient_grounds` at (3) by
   design. A new row enters only with a real recording of it and an amendment of A §4.1;
   a new defect class is a new spec (A, Non-goals).
-- [ ] Lift the duplicated `_norm` / `_instruction_key` helpers into one shared helper (parked in A3 review) @owner:repo:deployer @id:admission-shared-instruction-key @epic:eco.dark-factory
-  `admission/decide.py` carries its own private copies (`_norm`, `_instruction_key`) of
-  `reproduce/checks.py:normalize_copy_path` and
-  `admission/templates.py:instruction_compare_key`; one shared helper keeps them from
-  drifting.
 - [ ] Optionally refuse a trust root inside the git toplevel of the working directory (parked in A3 review) @owner:repo:deployer @id:admission-trust-root-git-toplevel @epic:eco.dark-factory
   Hardening beyond the spec's checked roots (A §2.3), not a known defect.
 - [ ] Real `docker build --check` recordings for the two synthetic reader fixtures @owner:repo:deployer @id:repro-check-output-real-recordings @epic:eco.dark-factory
@@ -212,6 +207,14 @@ them is the next thing to pick up.
 
 ## Shipped
 
+- [x] Lift the duplicated `_norm` / `_instruction_key` helpers into one shared helper (parked in A3 review) @owner:repo:deployer @id:admission-shared-instruction-key @epic:eco.dark-factory
+  `admission/decide.py` carries its own private copies (`_norm`, `_instruction_key`) of
+  `reproduce/checks.py:normalize_copy_path` and
+  `admission/templates.py:instruction_compare_key`; one shared helper keeps them from
+  drifting.
+  Fixed: `admission/decide.py` uses `reproduce.checks.normalize_copy_path` and
+  `admission.templates.instruction_compare_key`; its private copies (byte-identical, no drift)
+  are removed. No new import edge (decide already imported both modules).
 - [x] Strict `Snapshot.tree_complete` (parked in A3 review) @owner:repo:deployer @id:admission-strict-tree-complete @epic:eco.dark-factory
   Today a lax bool. The snapshot bytes are hashed and signed by a trusted key, so the
   coercion only reaches our own output; a hand-crafted signed snapshot with `"true"`

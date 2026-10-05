@@ -16,7 +16,6 @@ path, ``from-args/podman`` needs exactly one bad FROM, and both sides must match
 """
 
 import json
-import posixpath
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -43,18 +42,18 @@ from deployer.admission.templates import (
     CopyMatch,
     FromMatch,
     Row,
+    instruction_compare_key,
     match_copy_ci,
     match_copy_local,
     match_from_ci,
     match_from_local,
 )
 from deployer.provenance.model import TreeRow
-from deployer.reproduce.checks import is_modelled_source
+from deployer.reproduce.checks import is_modelled_source, normalize_copy_path
 from deployer.reproduce.compare import REQUIRED_DIMENSIONS
 from deployer.reproduce.dockerfile import (
     Instruction,
     ParsedDockerfile,
-    normalise,
     opens_heredoc,
     syntax_checks,
     unread_reason,
@@ -319,7 +318,7 @@ def _copy_form(instruction: Instruction, path: str) -> list[str]:
         for source in sources
         if (why := _source_form(instruction.keyword, source)) is not None
     ]
-    if not reasons and path not in {_norm(s) for s in sources}:
+    if not reasons and path not in {normalize_copy_path(s) for s in sources}:
         reasons.append(f"form not admissible: {path} is not a source of the COPY/ADD")
     return reasons
 
@@ -368,7 +367,7 @@ def _source_form(keyword: str, source: str) -> str | None:
         return f"source {source} outside the closed alphabet"
     if GLOB_CHARS & set(source):
         return f"glob source {source}"
-    if _norm(source) == ".":
+    if normalize_copy_path(source) == ".":
         return f"source {source} is the context root"
     return None
 
@@ -594,7 +593,7 @@ def _bind_ci(
             reasons.append(f"CI span {found.lines} is not R's CI instruction")
         if found.lines != lines:
             reasons.append(f"CI span {found.lines} is not the defect at {lines}")
-        key = _instruction_key(found.step_text or "")
+        key = instruction_compare_key(found.step_text or "")
         if key != subject.instruction.text:
             reasons.append(f"CI block {key} is not the defect instruction")
         obj, why = _bind_object(found.path, subject, "CI")
@@ -618,7 +617,7 @@ def _bind_local(
         reasons = _one_bad_from(facts.parsed, subject)
         return (_Side(row, found, None) if not reasons else None), reasons
     assert isinstance(found, CopyMatch)
-    key = _instruction_key(found.step_text or "")
+    key = instruction_compare_key(found.step_text or "")
     spans = [
         (i.first_line, i.last_line) for i in facts.parsed.instructions if i.text == key
     ]
@@ -658,7 +657,7 @@ def _bind_object(
     if path is None:
         return None, [f"{label} object {raw} not bound: normalisation ambiguous"]
     sources, _ = _copy_sources(subject.instruction)
-    count = sum(_norm(s) == path for s in sources)
+    count = sum(normalize_copy_path(s) == path for s in sources)
     if count == 0:
         return None, [f"{label} object {path} not bound: not a source of it"]
     if count > 1:
@@ -673,16 +672,5 @@ def _object_path(raw: str) -> str | None:
     not certain (outside the alphabet, a glob, the root itself)."""
     if not is_modelled_source(raw) or GLOB_CHARS & set(raw):
         return None
-    path = _norm(raw)
+    path = normalize_copy_path(raw)
     return None if path == "." else path
-
-
-def _norm(source: str) -> str:
-    """Context-relative form of a source, clamped at the root; ``.`` for it."""
-    return posixpath.normpath("/" + source).lstrip("/") or "."
-
-
-def _instruction_key(text: str) -> str:
-    """Normalised instruction text with an upper-case keyword, as R compares."""
-    head, _, rest = normalise(text).partition(" ")
-    return f"{head.upper()} {rest}".strip()
