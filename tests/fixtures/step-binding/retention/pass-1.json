@@ -1,0 +1,1014 @@
+{
+  "pass": "pass-1",
+  "rows": [
+    {
+      "age_hours_at_download": 8.32,
+      "attempt": 1,
+      "attempt_completed_at": "2026-10-04T18:16:57Z",
+      "downloaded_at": "2026-10-05T02:35:54Z",
+      "entries": [
+        "0_test.txt",
+        "test/system.txt"
+      ],
+      "event": "push",
+      "jobs": 1,
+      "per_step_files_by_directory": {
+        "test": false
+      },
+      "repo": "deployer",
+      "result": {
+        "kind": "read",
+        "per_step_files": false
+      },
+      "run_id": 37223750447,
+      "run_updated_at": "2026-10-04T18:16:57Z",
+      "sha256": "4c38720673d03c4b77efbe41e27d3a295c1d1ae70b6820e71e5b71750fb2280a",
+      "size": 9168
+    },
+    {
+      "age_hours_at_download": 0.02,
+      "attempt": 1,
+      "attempt_completed_at": "2026-10-05T02:34:38Z",
+      "downloaded_at": "2026-10-05T02:35:57Z",
+      "entries": [
+        "0_CHANGELOG compare links match the version.txt",
+        "CHANGELOG compare links match the version/system.txt",
+        "CHANGELOG compare links match the version/1_Set up job.txt",
+        "CHANGELOG compare links match the version/2_Run actions_checkout@v6.txt",
+        "CHANGELOG compare links match the version/3_Run actions_setup-python@v6.txt",
+        "CHANGELOG compare links match the version/4_Run python scripts_check_changelog_links.py.txt",
+        "CHANGELOG compare links match the version/7_Post Run actions_setup-python@v6.txt",
+        "CHANGELOG compare links match the version/8_Post Run actions_checkout@v6.txt",
+        "CHANGELOG compare links match the version/9_Complete job.txt"
+      ],
+      "event": "pull_request",
+      "jobs": 1,
+      "per_step_files_by_directory": {
+        "CHANGELOG compare links match the version": true
+      },
+      "repo": "spec-runner",
+      "result": {
+        "kind": "read",
+        "per_step_files": true
+      },
+      "run_id": 37255937674,
+      "run_updated_at": "2026-10-05T02:34:39Z",
+      "sha256": "ff5165010d6ee2f438234b1fe9c7541988729947586d7627bbeacd5fb677034e",
+      "size": 11147
+    },
+    {
+      "age_hours_at_download": 8.31,
+      "attempt": 1,
+      "attempt_completed_at": "2026-10-04T18:17:41Z",
+      "downloaded_at": "2026-10-05T02:36:00Z",
+      "entries": [
+        "0_copilot-pull-request-reviewer.txt",
+        "copilot-pull-request-reviewer/system.txt"
+      ],
+      "event": "dynamic",
+      "jobs": 1,
+      "per_step_files_by_directory": {
+        "copilot-pull-request-reviewer": false
+      },
+      "repo": "deployer",
+      "result": {
+        "kind": "read",
+        "per_step_files": false
+      },
+      "run_id": 37223625070,
+      "run_updated_at": "2026-10-04T18:17:41Z",
+      "sha256": "4e7958eae7e64149d0175c536a056f4e73eaeb985f898855fe3b588a834c7ce1",
+      "size": 22204
+    },
+    {
+      "age_hours_at_download": 0.02,
+      "attempt": 1,
+      "attempt_completed_at": "2026-10-05T02:34:39Z",
+      "downloaded_at": "2026-10-05T02:36:03Z",
+      "entries": [
+        "0_governance _ gate.txt",
+        "governance _ gate/system.txt",
+        "governance _ gate/1_Set up job.txt",
+        "governance _ gate/2_checkout caller repo.txt",
+        "governance _ gate/3_checkout governance scripts (umbrella).txt",
+        "governance _ gate/4_Run actions_setup-python@v5.txt",
+        "governance _ gate/5_GOV-003 \u2014 no _cowork_output in runtime.txt",
+        "governance _ gate/10_Post Run actions_setup-python@v5.txt",
+        "governance _ gate/11_Post checkout governance scripts (umbrella).txt",
+        "governance _ gate/12_Post checkout caller repo.txt",
+        "governance _ gate/13_Complete job.txt"
+      ],
+      "event": "pull_request",
+      "jobs": 1,
+      "per_step_files_by_directory": {
+        "governance _ gate": true
+      },
+      "repo": "spec-runner",
+      "result": {
+        "kind": "read",
+        "per_step_files": true
+      },
+      "run_id": 37255938526,
+      "run_updated_at": "2026-10-05T02:34:40Z",
+      "sha256": "bf58ce15eefc0d63821f7df524fe3075f37b78cfb33cd69e9c2efa94066b3ce8",
+      "size": 17322
+    },
+    {
+      "age_hours_at_download": 8.37,
+      "attempt": 1,
+      "attempt_completed_at": "2026-10-04T18:14:09Z",
+      "downloaded_at": "2026-10-05T02:36:06Z",
+      "entries": [
+        "0_governance _ gate.txt",
+        "governance _ gate/system.txt"
+      ],
+      "event": "pull_request",
+      "jobs": 1,
+      "per_step_files_by_directory": {
+        "governance _ gate": false
+      },
+      "repo": "deployer",
+      "result": {
+        "kind": "read",
+        "per_step_files": false
+      },
+      "run_id": 37223620494,
+      "run_updated_at": "2026-10-04T18:14:10Z",
+      "sha256": "07ed9ed4e7b182e0e768fbda13ab19a2484cda08649ecd31dece36abc57a9a10",
+      "size": 6289
+    },
+    {
+      "age_hours_at_download": 8.35,
+      "attempt": 1,
+      "attempt_completed_at": "2026-10-04T18:15:24Z",
+      "downloaded_at": "2026-10-05T02:36:09Z",
+      "entries": [
+        "0_test.txt",
+        "test/system.txt"
+      ],
+      "event": "pull_request",
+      "jobs": 1,
+      "per_step_files_by_directory": {
+        "test": false
+      },
+      "repo": "deployer",
+      "result": {
+        "kind": "read",
+        "per_step_files": false
+      },
+      "run_id": 37223620160,
+      "run_updated_at": "2026-10-04T18:15:25Z",
+      "sha256": "193dfb82c5d2e697a4047028437f4868db57687362b52a87dd53f70fbae4f8ab",
+      "size": 9645
+    },
+    {
+      "age_hours_at_download": 8.43,
+      "attempt": 1,
+      "attempt_completed_at": "2026-10-04T18:10:36Z",
+      "downloaded_at": "2026-10-05T02:36:11Z",
+      "entries": [
+        "0_test.txt",
+        "test/system.txt"
+      ],
+      "event": "push",
+      "jobs": 1,
+      "per_step_files_by_directory": {
+        "test": false
+      },
+      "repo": "deployer",
+      "result": {
+        "kind": "read",
+        "per_step_files": false
+      },
+      "run_id": 37223289983,
+      "run_updated_at": "2026-10-04T18:10:37Z",
+      "sha256": "d166be8b0b7b50a0e275ac4d7bd07e7e85c61b221c301e4f68e792ba6952bdfe",
+      "size": 9262
+    },
+    {
+      "age_hours_at_download": 13.3,
+      "attempt": 1,
+      "attempt_completed_at": "2026-10-04T13:18:02Z",
+      "downloaded_at": "2026-10-05T02:36:14Z",
+      "entries": [
+        "0_test.txt",
+        "test/system.txt"
+      ],
+      "event": "push",
+      "jobs": 1,
+      "per_step_files_by_directory": {
+        "test": false
+      },
+      "repo": "deployer",
+      "result": {
+        "kind": "read",
+        "per_step_files": false
+      },
+      "run_id": 37205045159,
+      "run_updated_at": "2026-10-04T13:18:03Z",
+      "sha256": "1812ad4b190f13b5aa5ec03dce6f28296af3908d8ea3e7b0247440a51d8a93e0",
+      "size": 9250
+    },
+    {
+      "age_hours_at_download": 13.78,
+      "attempt": 1,
+      "attempt_completed_at": "2026-10-04T12:49:13Z",
+      "downloaded_at": "2026-10-05T02:36:17Z",
+      "entries": [
+        "0_watch.txt",
+        "watch/system.txt"
+      ],
+      "event": "schedule",
+      "jobs": 1,
+      "per_step_files_by_directory": {
+        "watch": false
+      },
+      "repo": "maestro",
+      "result": {
+        "kind": "read",
+        "per_step_files": false
+      },
+      "run_id": 37203397238,
+      "run_updated_at": "2026-10-04T12:49:13Z",
+      "sha256": "f8daf7c9e193e7308fabffbc374071fbeb9fd765f92d6bcd12366ec23794ef0b",
+      "size": 5856
+    },
+    {
+      "age_hours_at_download": 13.84,
+      "attempt": 1,
+      "attempt_completed_at": "2026-10-04T12:45:43Z",
+      "downloaded_at": "2026-10-05T02:36:19Z",
+      "entries": [
+        "0_watch.txt",
+        "watch/system.txt"
+      ],
+      "event": "schedule",
+      "jobs": 1,
+      "per_step_files_by_directory": {
+        "watch": false
+      },
+      "repo": "atp-platform",
+      "result": {
+        "kind": "read",
+        "per_step_files": false
+      },
+      "run_id": 37203213873,
+      "run_updated_at": "2026-10-04T12:45:44Z",
+      "sha256": "adffa040aee62e386c8d86b1e04d7efa03ec036fa4f3b349d8ced2705c85ca8b",
+      "size": 5953
+    },
+    {
+      "age_hours_at_download": 14.09,
+      "attempt": 1,
+      "attempt_completed_at": "2026-10-04T12:31:16Z",
+      "downloaded_at": "2026-10-05T02:36:22Z",
+      "entries": [
+        "0_watch.txt",
+        "watch/system.txt"
+      ],
+      "event": "schedule",
+      "jobs": 1,
+      "per_step_files_by_directory": {
+        "watch": false
+      },
+      "repo": "steward",
+      "result": {
+        "kind": "read",
+        "per_step_files": false
+      },
+      "run_id": 37202381472,
+      "run_updated_at": "2026-10-04T12:31:17Z",
+      "sha256": "9d4d865c9a7dcbfabf228f9dddbca14244f7006d32df85f05a5ec77ed78d7aa4",
+      "size": 7412
+    },
+    {
+      "age_hours_at_download": 13.79,
+      "attempt": 1,
+      "attempt_completed_at": "2026-10-04T12:48:55Z",
+      "downloaded_at": "2026-10-05T02:36:24Z",
+      "entries": [
+        "0_watch.txt",
+        "watch/system.txt"
+      ],
+      "event": "schedule",
+      "jobs": 1,
+      "per_step_files_by_directory": {
+        "watch": false
+      },
+      "repo": "dispatcher",
+      "result": {
+        "kind": "read",
+        "per_step_files": false
+      },
+      "run_id": 37203394647,
+      "run_updated_at": "2026-10-04T12:48:56Z",
+      "sha256": "e1459cd735ac89bad7b1675f3f90bd1f52c15b35356ac9bbd7a34aa03b204f8c",
+      "size": 5774
+    },
+    {
+      "age_hours_at_download": 13.86,
+      "attempt": 1,
+      "attempt_completed_at": "2026-10-04T12:45:06Z",
+      "downloaded_at": "2026-10-05T02:36:27Z",
+      "entries": [
+        "0_watch.txt",
+        "watch/system.txt"
+      ],
+      "event": "schedule",
+      "jobs": 1,
+      "per_step_files_by_directory": {
+        "watch": false
+      },
+      "repo": "spec-runner",
+      "result": {
+        "kind": "read",
+        "per_step_files": false
+      },
+      "run_id": 37203174395,
+      "run_updated_at": "2026-10-04T12:45:06Z",
+      "sha256": "877fdb9f2b872deb6df6f66c0801b11e75c997871f5fd0927cded0be4235669e",
+      "size": 5758
+    },
+    {
+      "age_hours_at_download": 13.83,
+      "attempt": 1,
+      "attempt_completed_at": "2026-10-04T12:46:57Z",
+      "downloaded_at": "2026-10-05T02:36:29Z",
+      "entries": [
+        "0_watch.txt",
+        "watch/system.txt"
+      ],
+      "event": "schedule",
+      "jobs": 1,
+      "per_step_files_by_directory": {
+        "watch": false
+      },
+      "repo": "arbiter",
+      "result": {
+        "kind": "read",
+        "per_step_files": false
+      },
+      "run_id": 37203287641,
+      "run_updated_at": "2026-10-04T12:46:58Z",
+      "sha256": "6b317e427431ae88d9385f85e914909aab300555051cdac037fb22bf4debb77d",
+      "size": 6175
+    },
+    {
+      "age_hours_at_download": 31.38,
+      "attempt": 1,
+      "attempt_completed_at": "2026-10-03T19:13:35Z",
+      "downloaded_at": "2026-10-05T02:36:33Z",
+      "entries": [
+        "0_test.txt",
+        "test/system.txt"
+      ],
+      "event": "pull_request",
+      "jobs": 1,
+      "per_step_files_by_directory": {
+        "test": false
+      },
+      "repo": "deployer",
+      "result": {
+        "kind": "read",
+        "per_step_files": false
+      },
+      "run_id": 37147044369,
+      "run_updated_at": "2026-10-03T19:13:36Z",
+      "sha256": "1288dd84fdee0c1bae92f5058f4a419362838d52337873e3b84a6318607d2937",
+      "size": 9576
+    },
+    {
+      "age_hours_at_download": 38.65,
+      "attempt": 1,
+      "attempt_completed_at": "2026-10-03T11:57:48Z",
+      "downloaded_at": "2026-10-05T02:36:36Z",
+      "entries": [
+        "0_watch.txt",
+        "watch/system.txt"
+      ],
+      "event": "schedule",
+      "jobs": 1,
+      "per_step_files_by_directory": {
+        "watch": false
+      },
+      "repo": "maestro",
+      "result": {
+        "kind": "read",
+        "per_step_files": false
+      },
+      "run_id": 37121307806,
+      "run_updated_at": "2026-10-03T11:57:49Z",
+      "sha256": "b16672b344448c13742e15b9772a88c8c1932c731407ae6aa842b5981e585061",
+      "size": 5884
+    },
+    {
+      "age_hours_at_download": 38.68,
+      "attempt": 1,
+      "attempt_completed_at": "2026-10-03T11:55:47Z",
+      "downloaded_at": "2026-10-05T02:36:38Z",
+      "entries": [
+        "0_watch.txt",
+        "watch/system.txt"
+      ],
+      "event": "schedule",
+      "jobs": 1,
+      "per_step_files_by_directory": {
+        "watch": false
+      },
+      "repo": "atp-platform",
+      "result": {
+        "kind": "read",
+        "per_step_files": false
+      },
+      "run_id": 37121200664,
+      "run_updated_at": "2026-10-03T11:55:48Z",
+      "sha256": "ef7d6a975f733f70640ece1d0b32cedbd747c919c16d6f5597d0fed93cf5eea2",
+      "size": 5971
+    },
+    {
+      "age_hours_at_download": 38.8,
+      "attempt": 1,
+      "attempt_completed_at": "2026-10-03T11:48:29Z",
+      "downloaded_at": "2026-10-05T02:36:41Z",
+      "entries": [
+        "0_watch.txt",
+        "watch/system.txt"
+      ],
+      "event": "schedule",
+      "jobs": 1,
+      "per_step_files_by_directory": {
+        "watch": false
+      },
+      "repo": "steward",
+      "result": {
+        "kind": "read",
+        "per_step_files": false
+      },
+      "run_id": 37120817991,
+      "run_updated_at": "2026-10-03T11:48:29Z",
+      "sha256": "10e97320c30086b72b6ef5e11d86fba0cda6202da457f07253abc422fb32aa07",
+      "size": 7410
+    },
+    {
+      "age_hours_at_download": 38.65,
+      "attempt": 1,
+      "attempt_completed_at": "2026-10-03T11:57:39Z",
+      "downloaded_at": "2026-10-05T02:36:44Z",
+      "entries": [
+        "0_watch.txt",
+        "watch/system.txt"
+      ],
+      "event": "schedule",
+      "jobs": 1,
+      "per_step_files_by_directory": {
+        "watch": false
+      },
+      "repo": "dispatcher",
+      "result": {
+        "kind": "read",
+        "per_step_files": false
+      },
+      "run_id": 37121301788,
+      "run_updated_at": "2026-10-03T11:57:40Z",
+      "sha256": "79ed6cb19cb84c77a09d936fce801a32603ef0f4574a0bec72148163c4615de6",
+      "size": 5796
+    },
+    {
+      "age_hours_at_download": 31.87,
+      "attempt": 1,
+      "attempt_completed_at": "2026-10-03T18:44:24Z",
+      "downloaded_at": "2026-10-05T02:36:47Z",
+      "entries": [
+        "0_watch.txt",
+        "watch/system.txt"
+      ],
+      "event": "workflow_dispatch",
+      "jobs": 1,
+      "per_step_files_by_directory": {
+        "watch": false
+      },
+      "repo": "spec-runner",
+      "result": {
+        "kind": "read",
+        "per_step_files": false
+      },
+      "run_id": 37145322041,
+      "run_updated_at": "2026-10-03T18:44:25Z",
+      "sha256": "6a0975b90a7af7892267c13bd907ec6d3e26b001d7bcd70c5e2337fef92e760b",
+      "size": 5755
+    },
+    {
+      "age_hours_at_download": 38.68,
+      "attempt": 1,
+      "attempt_completed_at": "2026-10-03T11:56:31Z",
+      "downloaded_at": "2026-10-05T02:37:10Z",
+      "entries": [
+        "0_watch.txt",
+        "watch/system.txt"
+      ],
+      "event": "schedule",
+      "jobs": 1,
+      "per_step_files_by_directory": {
+        "watch": false
+      },
+      "repo": "arbiter",
+      "result": {
+        "kind": "read",
+        "per_step_files": false
+      },
+      "run_id": 37121243362,
+      "run_updated_at": "2026-10-03T11:56:32Z",
+      "sha256": "3f84c21ded4d54ac5b359fd60342af848789181e8430a83bd9ab1a6d65047b5d",
+      "size": 6199
+    },
+    {
+      "age_hours_at_download": 159.15,
+      "attempt": 1,
+      "attempt_completed_at": "2026-09-28T11:28:20Z",
+      "downloaded_at": "2026-10-05T02:37:24Z",
+      "entries": [
+        "0_test.txt",
+        "test/system.txt"
+      ],
+      "event": "push",
+      "jobs": 1,
+      "per_step_files_by_directory": {
+        "test": false
+      },
+      "repo": "deployer",
+      "result": {
+        "kind": "read",
+        "per_step_files": false
+      },
+      "run_id": 36415729993,
+      "run_updated_at": "2026-09-28T11:28:21Z",
+      "sha256": "f1120aeee45e9eb4e6896ca53b4d8d3adbe7ff1461d912d725de0f6115123dc4",
+      "size": 9161
+    },
+    {
+      "age_hours_at_download": 61.54,
+      "attempt": 1,
+      "attempt_completed_at": "2026-10-02T13:05:18Z",
+      "downloaded_at": "2026-10-05T02:37:31Z",
+      "entries": [
+        "0_watch.txt",
+        "watch/system.txt"
+      ],
+      "event": "schedule",
+      "jobs": 1,
+      "per_step_files_by_directory": {
+        "watch": false
+      },
+      "repo": "maestro",
+      "result": {
+        "kind": "read",
+        "per_step_files": false
+      },
+      "run_id": 37010663676,
+      "run_updated_at": "2026-10-02T13:05:20Z",
+      "sha256": "b50515de0413998f6953392d3f7bcb784d6373fbc8e7eb89ce62b976a176fcee",
+      "size": 5849
+    },
+    {
+      "age_hours_at_download": 61.6,
+      "attempt": 1,
+      "attempt_completed_at": "2026-10-02T13:01:31Z",
+      "downloaded_at": "2026-10-05T02:37:35Z",
+      "entries": [
+        "0_watch.txt",
+        "watch/system.txt"
+      ],
+      "event": "schedule",
+      "jobs": 1,
+      "per_step_files_by_directory": {
+        "watch": false
+      },
+      "repo": "atp-platform",
+      "result": {
+        "kind": "read",
+        "per_step_files": false
+      },
+      "run_id": 37010265022,
+      "run_updated_at": "2026-10-02T13:01:32Z",
+      "sha256": "38f9a87133250b561e05044492ef924cf33a1d4502552e48a6470a87b015f12e",
+      "size": 5993
+    },
+    {
+      "age_hours_at_download": 61.81,
+      "attempt": 1,
+      "attempt_completed_at": "2026-10-02T12:48:45Z",
+      "downloaded_at": "2026-10-05T02:37:38Z",
+      "entries": [
+        "0_watch.txt",
+        "watch/system.txt"
+      ],
+      "event": "schedule",
+      "jobs": 1,
+      "per_step_files_by_directory": {
+        "watch": false
+      },
+      "repo": "steward",
+      "result": {
+        "kind": "read",
+        "per_step_files": false
+      },
+      "run_id": 37008946880,
+      "run_updated_at": "2026-10-02T12:48:46Z",
+      "sha256": "e803982c8ae9c0deb23f297ad1d6a994de63da734a6f556576be6ffe1cd7ad96",
+      "size": 7389
+    },
+    {
+      "age_hours_at_download": 61.54,
+      "attempt": 1,
+      "attempt_completed_at": "2026-10-02T13:05:11Z",
+      "downloaded_at": "2026-10-05T02:37:41Z",
+      "entries": [
+        "0_watch.txt",
+        "watch/system.txt"
+      ],
+      "event": "schedule",
+      "jobs": 1,
+      "per_step_files_by_directory": {
+        "watch": false
+      },
+      "repo": "dispatcher",
+      "result": {
+        "kind": "read",
+        "per_step_files": false
+      },
+      "run_id": 37010655851,
+      "run_updated_at": "2026-10-02T13:05:12Z",
+      "sha256": "e0cba2d03069c92df92261c0ce7cd797e343adea37bacc633e9e15601c800466",
+      "size": 5749
+    },
+    {
+      "age_hours_at_download": 55.76,
+      "attempt": 1,
+      "attempt_completed_at": "2026-10-02T18:52:01Z",
+      "downloaded_at": "2026-10-05T02:37:45Z",
+      "entries": [
+        "0_test (3.11).txt",
+        "test (3.11)/system.txt",
+        "1_test (3.13).txt",
+        "test (3.13)/system.txt",
+        "2_lint.txt",
+        "lint/system.txt",
+        "3_typecheck.txt",
+        "typecheck/system.txt",
+        "4_test (3.12).txt",
+        "test (3.12)/system.txt",
+        "5_review-kit-integrity.txt",
+        "review-kit-integrity/system.txt"
+      ],
+      "event": "push",
+      "jobs": 6,
+      "per_step_files_by_directory": {
+        "lint": false,
+        "review-kit-integrity": false,
+        "test (3.11)": false,
+        "test (3.12)": false,
+        "test (3.13)": false,
+        "typecheck": false
+      },
+      "repo": "spec-runner",
+      "result": {
+        "kind": "read",
+        "per_step_files": false
+      },
+      "run_id": 37049755928,
+      "run_updated_at": "2026-10-02T18:52:02Z",
+      "sha256": "208c651d1cd64aea3fcd37b8435f9fd69e2a591f5d8d9f770859811de605afbd",
+      "size": 407734
+    },
+    {
+      "age_hours_at_download": 61.57,
+      "attempt": 1,
+      "attempt_completed_at": "2026-10-02T13:03:48Z",
+      "downloaded_at": "2026-10-05T02:37:49Z",
+      "entries": [
+        "0_watch.txt",
+        "watch/system.txt"
+      ],
+      "event": "schedule",
+      "jobs": 1,
+      "per_step_files_by_directory": {
+        "watch": false
+      },
+      "repo": "arbiter",
+      "result": {
+        "kind": "read",
+        "per_step_files": false
+      },
+      "run_id": 37010504144,
+      "run_updated_at": "2026-10-02T13:03:49Z",
+      "sha256": "20b19a1375cae254d8cf5e0695fa6409c80ac90ecdb1208f087bab279cb34bed",
+      "size": 6151
+    },
+    {
+      "age_hours_at_download": 201.26,
+      "attempt": 1,
+      "attempt_completed_at": "2026-09-26T17:22:07Z",
+      "downloaded_at": "2026-10-05T02:37:52Z",
+      "entries": [
+        "0_test.txt",
+        "test/system.txt"
+      ],
+      "event": "push",
+      "jobs": 1,
+      "per_step_files_by_directory": {
+        "test": false
+      },
+      "repo": "deployer",
+      "result": {
+        "kind": "read",
+        "per_step_files": false
+      },
+      "run_id": 36258698108,
+      "run_updated_at": "2026-09-26T17:22:08Z",
+      "sha256": "46875b2bd145a8c5d304a3bcd41afd1c4dce26e82aca19ecacab76212fdf8a73",
+      "size": 9141
+    },
+    {
+      "age_hours_at_download": 182.25,
+      "attempt": 1,
+      "attempt_completed_at": "2026-09-27T12:22:54Z",
+      "downloaded_at": "2026-10-05T02:37:55Z",
+      "entries": [
+        "0_watch.txt",
+        "watch/system.txt"
+      ],
+      "event": "schedule",
+      "jobs": 1,
+      "per_step_files_by_directory": {
+        "watch": false
+      },
+      "repo": "maestro",
+      "result": {
+        "kind": "read",
+        "per_step_files": false
+      },
+      "run_id": 36318781372,
+      "run_updated_at": "2026-09-27T12:22:55Z",
+      "sha256": "8ae5f674a1bddc91ec50b0d6a7bbd9cebaa733b1a0481d6862fcb0dd3d4b4f32",
+      "size": 5854
+    },
+    {
+      "age_hours_at_download": 182.29,
+      "attempt": 1,
+      "attempt_completed_at": "2026-09-27T12:20:36Z",
+      "downloaded_at": "2026-10-05T02:37:58Z",
+      "entries": [
+        "0_watch.txt",
+        "watch/system.txt"
+      ],
+      "event": "schedule",
+      "jobs": 1,
+      "per_step_files_by_directory": {
+        "watch": false
+      },
+      "repo": "atp-platform",
+      "result": {
+        "kind": "read",
+        "per_step_files": false
+      },
+      "run_id": 36318657386,
+      "run_updated_at": "2026-09-27T12:20:37Z",
+      "sha256": "0f28a091e1448682a3d9b5df4da601f6eb7fc73e0fd9686354334c3217c846fb",
+      "size": 5919
+    },
+    {
+      "age_hours_at_download": 182.43,
+      "attempt": 1,
+      "attempt_completed_at": "2026-09-27T12:12:08Z",
+      "downloaded_at": "2026-10-05T02:38:01Z",
+      "entries": [
+        "0_watch.txt",
+        "watch/system.txt"
+      ],
+      "event": "schedule",
+      "jobs": 1,
+      "per_step_files_by_directory": {
+        "watch": false
+      },
+      "repo": "steward",
+      "result": {
+        "kind": "read",
+        "per_step_files": false
+      },
+      "run_id": 36318189914,
+      "run_updated_at": "2026-09-27T12:12:09Z",
+      "sha256": "b1c58571c1340590cfb571367c3c3d18aaf72978f315201382ef9731123da960",
+      "size": 7358
+    },
+    {
+      "age_hours_at_download": 182.27,
+      "attempt": 1,
+      "attempt_completed_at": "2026-09-27T12:21:43Z",
+      "downloaded_at": "2026-10-05T02:38:04Z",
+      "entries": [
+        "0_watch.txt",
+        "watch/system.txt"
+      ],
+      "event": "schedule",
+      "jobs": 1,
+      "per_step_files_by_directory": {
+        "watch": false
+      },
+      "repo": "arbiter",
+      "result": {
+        "kind": "read",
+        "per_step_files": false
+      },
+      "run_id": 36318716680,
+      "run_updated_at": "2026-09-27T12:21:44Z",
+      "sha256": "9b6653f5dd1bf371c70d60c9416c2a2f665120a42874c2b46862fb3818b95bcc",
+      "size": 6166
+    },
+    {
+      "age_hours_at_download": 323.32,
+      "attempt": 1,
+      "attempt_completed_at": "2026-09-21T15:19:01Z",
+      "downloaded_at": "2026-10-05T02:38:08Z",
+      "entries": [
+        "0_tools (pytest + ruff + pyrefly).txt",
+        "tools (pytest + ruff + pyrefly)/system.txt",
+        "1_lint bundled .libretto programs.txt",
+        "lint bundled .libretto programs/system.txt",
+        "2_verify committed run ledgers.txt",
+        "verify committed run ledgers/system.txt"
+      ],
+      "event": "push",
+      "jobs": 3,
+      "per_step_files_by_directory": {
+        "lint bundled .libretto programs": false,
+        "tools (pytest + ruff + pyrefly)": false,
+        "verify committed run ledgers": false
+      },
+      "repo": "libretto",
+      "result": {
+        "kind": "read",
+        "per_step_files": false
+      },
+      "run_id": 35618076763,
+      "run_updated_at": "2026-09-21T15:19:02Z",
+      "sha256": "8cbe0ea043b774ef1a40a9024a5be681ab46bca06588fa702df052dce8e6dc7b",
+      "size": 16861
+    },
+    {
+      "age_hours_at_download": 260.48,
+      "attempt": 1,
+      "attempt_completed_at": "2026-09-24T06:09:14Z",
+      "downloaded_at": "2026-10-05T02:38:11Z",
+      "entries": [
+        "0_deploy.txt",
+        "deploy/system.txt",
+        "1_test.txt",
+        "test/system.txt"
+      ],
+      "event": "push",
+      "jobs": 2,
+      "per_step_files_by_directory": {
+        "deploy": false,
+        "test": false
+      },
+      "repo": "robin-runtime",
+      "result": {
+        "kind": "read",
+        "per_step_files": false
+      },
+      "run_id": 35963090284,
+      "run_updated_at": "2026-09-24T06:09:15Z",
+      "sha256": "679dc85cec09d68de80b30c90aa6b7de2a52a72d6df12996cde62f2c31a0c372",
+      "size": 8140
+    },
+    {
+      "age_hours_at_download": 734.95,
+      "attempt": 1,
+      "attempt_completed_at": "2026-09-04T11:41:05Z",
+      "downloaded_at": "2026-10-05T02:38:14Z",
+      "entries": [
+        "0_watch.txt",
+        "watch/system.txt"
+      ],
+      "event": "schedule",
+      "jobs": 1,
+      "per_step_files_by_directory": {
+        "watch": false
+      },
+      "repo": "maestro",
+      "result": {
+        "kind": "read",
+        "per_step_files": false
+      },
+      "run_id": 33869093793,
+      "run_updated_at": "2026-09-04T11:41:07Z",
+      "sha256": "838bb60c2041a7f5b33573c68ffe744b8765d80ece51e6ac9b6befbc0dd92e86",
+      "size": 5802
+    },
+    {
+      "age_hours_at_download": 735.0,
+      "attempt": 1,
+      "attempt_completed_at": "2026-09-04T11:38:23Z",
+      "downloaded_at": "2026-10-05T02:38:18Z",
+      "entries": [
+        "0_watch.txt",
+        "watch/system.txt"
+      ],
+      "event": "schedule",
+      "jobs": 1,
+      "per_step_files_by_directory": {
+        "watch": false
+      },
+      "repo": "arbiter",
+      "result": {
+        "kind": "read",
+        "per_step_files": false
+      },
+      "run_id": 33868884959,
+      "run_updated_at": "2026-09-04T11:38:24Z",
+      "sha256": "de14f4d66393a2cbc575181b0ad9a7b2904f040eb98a5755f3d3b2c6e7b5d371",
+      "size": 5801
+    },
+    {
+      "age_hours_at_download": 825.21,
+      "attempt": 1,
+      "attempt_completed_at": "2026-08-31T17:25:43Z",
+      "downloaded_at": "2026-10-05T02:38:21Z",
+      "entries": [
+        "0_tools (pytest + ruff + pyrefly).txt",
+        "tools (pytest + ruff + pyrefly)/system.txt",
+        "1_verify committed run ledgers.txt",
+        "verify committed run ledgers/system.txt",
+        "2_lint bundled .libretto programs.txt",
+        "lint bundled .libretto programs/system.txt"
+      ],
+      "event": "push",
+      "jobs": 3,
+      "per_step_files_by_directory": {
+        "lint bundled .libretto programs": false,
+        "tools (pytest + ruff + pyrefly)": false,
+        "verify committed run ledgers": false
+      },
+      "repo": "libretto",
+      "result": {
+        "kind": "read",
+        "per_step_files": false
+      },
+      "run_id": 33419483149,
+      "run_updated_at": "2026-08-31T17:25:44Z",
+      "sha256": "ee76047170fb083502e2a6cd779384a87e9f4663ace11a35757f9d271f3c1dd9",
+      "size": 16816
+    },
+    {
+      "age_hours_at_download": 810.64,
+      "attempt": 1,
+      "attempt_completed_at": "2026-09-01T07:59:52Z",
+      "downloaded_at": "2026-10-05T02:38:24Z",
+      "entries": [
+        "0_deploy.txt",
+        "deploy/system.txt",
+        "1_test.txt",
+        "test/system.txt"
+      ],
+      "event": "push",
+      "jobs": 2,
+      "per_step_files_by_directory": {
+        "deploy": false,
+        "test": false
+      },
+      "repo": "robin-runtime",
+      "result": {
+        "kind": "read",
+        "per_step_files": false
+      },
+      "run_id": 33484767520,
+      "run_updated_at": "2026-09-01T07:59:53Z",
+      "sha256": "5ae9f1624bf9dc87cb3581e0f9ca88e8cc100158c5fad09a7896ad2a03992561",
+      "size": 8303
+    },
+    {
+      "age_hours_at_download": 759.02,
+      "attempt": 1,
+      "attempt_completed_at": "2026-09-03T11:37:02Z",
+      "downloaded_at": "2026-10-05T02:38:28Z",
+      "entries": [
+        "0_watch.txt",
+        "watch/system.txt"
+      ],
+      "event": "schedule",
+      "jobs": 1,
+      "per_step_files_by_directory": {
+        "watch": false
+      },
+      "repo": "arbiter",
+      "result": {
+        "kind": "read",
+        "per_step_files": false
+      },
+      "run_id": 33750635776,
+      "run_updated_at": "2026-09-03T11:37:02Z",
+      "sha256": "098bc4d1aa52060fa3a97fdc90f9b3c4e7e688d694554474e5a5ad5321efa62d",
+      "size": 5756
+    }
+  ]
+}

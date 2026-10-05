@@ -178,3 +178,33 @@ derived file is committed.
 The fix boundary (§8) adds a recognised never-started sibling, with the `steps-2` values,
 to the stored run of the `run-1` basename-unique scenario in `tests/fix/test_author.py`;
 that is also a labelled synthetic derivation.
+
+## Archive retention: a passive measurement (2026-10-05)
+
+The owner permitted read-only downloads only: no dispatches, and at most 40 runs per
+pass. Recorder: `measure_retention.py`. Data: `retention/` holds `runs.json` (the
+selection), `pass-1.json` and `track-<n>m.json`. Each row records:
+- `(repo, run_id, attempt)`;
+- the attempt's completion time and the download time, both UTC;
+- the event and the number of jobs;
+- the archive's size and SHA-256 and its entry names;
+- for each directory, whether it holds per-step files.
+
+No log text is stored. HTTP errors, timeouts and cap overruns would have been recorded
+as their own kinds; none occurred.
+
+- **Pass 1** (40 runs over nine repositories, aged 0.02 h to 34 days; events push,
+  pull_request, schedule, workflow_dispatch and dynamic; 1 to 6 jobs): per-step files
+  were present only in the two runs read about one minute after completion (spec-runner
+  37255937674 and 37255938526). They were absent in all 38 runs aged 8.3 h or more.
+- **Repeated reads of those two attempts:** the archive stayed byte-identical (same
+  SHA-256, 9 and 11 entries) at +15 and +30 minutes. At +60 minutes it had 2 entries,
+  `<i>_<job>.txt` and `<job>/system.txt`, and no per-step files.
+- **With `steps-1`** (present about 41 minutes after completion): on the observed
+  attempts, per-step files were last seen present between 30 and 41 minutes after
+  completion and were first seen absent at 60 minutes.
+
+**The practical conclusion is an observation on this sample, not GitHub's policy:**
+step binding applies when `diagnose` runs within about half an hour of the run
+completing. Later, the archive reads `absent` and evidence stays job-level, which is
+safe.

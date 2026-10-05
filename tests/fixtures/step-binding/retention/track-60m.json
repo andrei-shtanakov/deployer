@@ -1,0 +1,53 @@
+{
+  "pass": "track-60m",
+  "rows": [
+    {
+      "age_hours_at_download": 1.0,
+      "attempt": 1,
+      "attempt_completed_at": "2026-10-05T02:34:38Z",
+      "downloaded_at": "2026-10-05T03:34:41Z",
+      "entries": [
+        "0_CHANGELOG compare links match the version.txt",
+        "CHANGELOG compare links match the version/system.txt"
+      ],
+      "event": "pull_request",
+      "jobs": 1,
+      "per_step_files_by_directory": {
+        "CHANGELOG compare links match the version": false
+      },
+      "repo": "spec-runner",
+      "result": {
+        "kind": "read",
+        "per_step_files": false
+      },
+      "run_id": 37255937674,
+      "run_updated_at": "2026-10-05T02:34:39Z",
+      "sha256": "943965eda8221ad144a41c0c1af2e0649a5bf939b4025b013cad19fb0914f09a",
+      "size": 4646
+    },
+    {
+      "age_hours_at_download": 1.0,
+      "attempt": 1,
+      "attempt_completed_at": "2026-10-05T02:34:39Z",
+      "downloaded_at": "2026-10-05T03:34:43Z",
+      "entries": [
+        "0_governance _ gate.txt",
+        "governance _ gate/system.txt"
+      ],
+      "event": "pull_request",
+      "jobs": 1,
+      "per_step_files_by_directory": {
+        "governance _ gate": false
+      },
+      "repo": "spec-runner",
+      "result": {
+        "kind": "read",
+        "per_step_files": false
+      },
+      "run_id": 37255938526,
+      "run_updated_at": "2026-10-05T02:34:40Z",
+      "sha256": "299785583541fc51e928f6bc94bfdf95e208fa1bf84fd0344c708bd63abb52b3",
+      "size": 6836
+    }
+  ]
+}

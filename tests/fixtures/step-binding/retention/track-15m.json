@@ -1,0 +1,69 @@
+{
+  "pass": "track-15m",
+  "rows": [
+    {
+      "age_hours_at_download": 0.25,
+      "attempt": 1,
+      "attempt_completed_at": "2026-10-05T02:34:38Z",
+      "downloaded_at": "2026-10-05T02:49:40Z",
+      "entries": [
+        "0_CHANGELOG compare links match the version.txt",
+        "CHANGELOG compare links match the version/system.txt",
+        "CHANGELOG compare links match the version/1_Set up job.txt",
+        "CHANGELOG compare links match the version/2_Run actions_checkout@v6.txt",
+        "CHANGELOG compare links match the version/3_Run actions_setup-python@v6.txt",
+        "CHANGELOG compare links match the version/4_Run python scripts_check_changelog_links.py.txt",
+        "CHANGELOG compare links match the version/7_Post Run actions_setup-python@v6.txt",
+        "CHANGELOG compare links match the version/8_Post Run actions_checkout@v6.txt",
+        "CHANGELOG compare links match the version/9_Complete job.txt"
+      ],
+      "event": "pull_request",
+      "jobs": 1,
+      "per_step_files_by_directory": {
+        "CHANGELOG compare links match the version": true
+      },
+      "repo": "spec-runner",
+      "result": {
+        "kind": "read",
+        "per_step_files": true
+      },
+      "run_id": 37255937674,
+      "run_updated_at": "2026-10-05T02:34:39Z",
+      "sha256": "ff5165010d6ee2f438234b1fe9c7541988729947586d7627bbeacd5fb677034e",
+      "size": 11147
+    },
+    {
+      "age_hours_at_download": 0.25,
+      "attempt": 1,
+      "attempt_completed_at": "2026-10-05T02:34:39Z",
+      "downloaded_at": "2026-10-05T02:49:43Z",
+      "entries": [
+        "0_governance _ gate.txt",
+        "governance _ gate/system.txt",
+        "governance _ gate/1_Set up job.txt",
+        "governance _ gate/2_checkout caller repo.txt",
+        "governance _ gate/3_checkout governance scripts (umbrella).txt",
+        "governance _ gate/4_Run actions_setup-python@v5.txt",
+        "governance _ gate/5_GOV-003 \u2014 no _cowork_output in runtime.txt",
+        "governance _ gate/10_Post Run actions_setup-python@v5.txt",
+        "governance _ gate/11_Post checkout governance scripts (umbrella).txt",
+        "governance _ gate/12_Post checkout caller repo.txt",
+        "governance _ gate/13_Complete job.txt"
+      ],
+      "event": "pull_request",
+      "jobs": 1,
+      "per_step_files_by_directory": {
+        "governance _ gate": true
+      },
+      "repo": "spec-runner",
+      "result": {
+        "kind": "read",
+        "per_step_files": true
+      },
+      "run_id": 37255938526,
+      "run_updated_at": "2026-10-05T02:34:40Z",
+      "sha256": "bf58ce15eefc0d63821f7df524fe3075f37b78cfb33cd69e9c2efa94066b3ce8",
+      "size": 17322
+    }
+  ]
+}

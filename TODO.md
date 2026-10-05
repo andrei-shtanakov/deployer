@@ -93,13 +93,8 @@ paragraph.
   0 or named multi-stage output (F4b, #100).
 - [ ] Record a real repeated attempt of the step-binding polygon run (`steps-1b`, spec §9.3) @owner:github:andrei-shtanakov @id:step-binding-rerun-recording @trigger:"the owner permits one rerun of 37115427715" @epic:eco.dark-factory
   Without it, the repeated-attempt check is synthetic only (spec §9.2, "attempt mixing").
-  It must be captured within the per-step-file retention window
-  (`step-archive-retention-window`), or its archive will hold no per-step files.
-- [ ] Measure how long per-step files stay in the per-attempt log archive @owner:repo:deployer @id:step-archive-retention-window @epic:eco.dark-factory
-  Run 37115427715 attempt 1: 50 entries with per-step files at 10:09Z and 10:50Z, 12
-  entries without them at 18:44Z on 2026-10-03 (completed 10:08:59Z); run 37109766941
-  had none at ~80 and ~100 min. Age is the strongest candidate, window unmeasured. It
-  decides whether step binding is useful at DarkFactory latency.
+  Its archive must be downloaded within about 30 minutes of the rerun completing (measured
+  retention, `step-archive-retention-window`), or it will hold no per-step files.
 - [ ] Recognise (or keep refusing) a cancelled job with a runner assigned, 0 steps and no log @owner:repo:deployer @id:not-executed-runner-assigned-no-steps @trigger:"a job of this shape is recorded" @epic:eco.dark-factory
   First seen on a CI run of the `dispatcher` repository (run 33061272927, 2026-10-04); that is
   only where the example was found, not a dependency on that repo. Today such a job takes the
@@ -221,6 +216,17 @@ them is the next thing to pick up.
 
 ## Shipped
 
+- [x] Measure how long per-step files stay in the per-attempt log archive @owner:repo:deployer @id:step-archive-retention-window @epic:eco.dark-factory
+  Run 37115427715 attempt 1: 50 entries with per-step files at 10:09Z and 10:50Z, 12
+  entries without them at 18:44Z on 2026-10-03 (completed 10:08:59Z); run 37109766941
+  had none at ~80 and ~100 min. Age is the strongest candidate, window unmeasured. It
+  decides whether step binding is useful at DarkFactory latency.
+  Fixed (passive measurement, 2026-10-05; no dispatches): of 40 runs over nine repos, per-step
+  files were present only in the two read ~1 minute after completion and absent in all 38
+  aged ≥8.3 h. Repeated reads of those two attempts: byte-identical archive at +15 and +30
+  min, per-step files gone at +60 min (with `steps-1`: present at ~41 min). Practical
+  conclusion on this sample, not a GitHub policy: binding applies when `diagnose` runs within
+  about half an hour of completion. Data in `tests/fixtures/step-binding/retention/`.
 - [x] "Nothing was fetched" as a `Completeness` state of its own instead of being inferred from `jobs == []` in `diagnose_run` @owner:repo:deployer @id:forge-nothing-fetched-state @epic:eco.dark-factory
   Fixed: snapshot 1.7 adds the run-level state `none_read` (no job's result counts toward
   that dimension: zero kept jobs, or for logs every kept job recognised as cancelled before
