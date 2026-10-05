@@ -129,3 +129,35 @@ def test_the_spoofed_header_is_byte_identical_to_the_real_one() -> None:
     ]
     header = "##[group]Run printf '%s-%s\\n' MARK s5-next"
     assert [i + 1 for i, text in enumerate(lines) if text == header] == [113, 118]
+
+
+RETENTION = ROOT / "retention"
+TRACKED = (37255937674, 37255938526)
+
+
+def _rows(name: str) -> list[dict[str, Any]]:
+    return json.loads((RETENTION / f"{name}.json").read_text())["rows"]
+
+
+def test_the_retention_facts_are_re_derived_from_the_data() -> None:
+    """PROVENANCE's retention section, re-read from ``retention/`` itself."""
+    rows = _rows("pass-1")
+    assert len(rows) == 40
+    assert {r["result"]["kind"] for r in rows} == {"read"}
+    present = [r for r in rows if r["result"]["per_step_files"]]
+    absent = [r for r in rows if not r["result"]["per_step_files"]]
+    assert sorted(r["run_id"] for r in present) == sorted(TRACKED)
+    assert all(r["age_hours_at_download"] < 0.05 for r in present)
+    assert len(absent) == 38
+    assert min(r["age_hours_at_download"] for r in absent) >= 8.3
+    first = {r["run_id"]: r for r in present}
+    for name in ("track-15m", "track-30m"):
+        for row in _rows(name):
+            assert row["result"]["per_step_files"], (name, row["run_id"])
+            assert row["sha256"] == first[row["run_id"]]["sha256"], (
+                name,
+                row["run_id"],
+            )
+    for row in _rows("track-60m"):
+        assert not row["result"]["per_step_files"]
+        assert len(row["entries"]) == 2
