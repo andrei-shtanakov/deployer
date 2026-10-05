@@ -195,9 +195,11 @@ dimension (zero kept jobs; or, for logs, every kept job recognised as cancelled 
 execution, whose log read did happen and returned 404). It never means "expired" and a
 job never carries it. 1.7 extends an enum, so the compatibility is one-way: a 1.7
 reader reads older snapshots unchanged, while an older reader may reject `none_read`.
-Per-step files appear to be short-lived (observed gone from one run's
-archive within hours), so binding usually applies only when `diagnose` runs soon after
-the failure; otherwise the archive reads `absent` and evidence stays job-level.
+Per-step files are short-lived. On the observed attempts they were present 30–41
+minutes after completion and gone at 60 minutes (a passive measurement, 2026-10-05;
+`tests/fixtures/step-binding/PROVENANCE.md`). So binding applies when `diagnose` runs
+within about half an hour of the run completing. Otherwise the archive reads `absent`
+and evidence stays job-level.
 
 Requires `gh` authenticated for the repository, and a `gh` new enough to
 support `gh api --allow-escape-sequences` (real build logs carry ANSI colour

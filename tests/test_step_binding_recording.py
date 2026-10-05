@@ -15,7 +15,12 @@ from typing import Any
 
 ROOT = Path(__file__).parent / "fixtures" / "step-binding"
 CASE = ROOT / "steps-1"
-NOT_CHECKSUMMED = {"CHECKSUMS.sha256", "record_steps.py", "record_steps2.py"}
+NOT_CHECKSUMMED = {
+    "CHECKSUMS.sha256",
+    "record_steps.py",
+    "record_steps2.py",
+    "measure_retention.py",
+}
 TIMESTAMP_RE = re.compile(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d+Z ", re.MULTILINE)
 BOM = "\ufeff"
 SETUP_STEPS = ("Set up job", "Complete job")
